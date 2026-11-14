@@ -1,25 +1,33 @@
 <script lang="ts">
   // The Wheel lens (M17): modules on a ring in their group's arc, dependencies
-  // bundled through the groups' anchors. Selection dims what does not touch it.
+  // bundled through the groups' anchors. Hovering a module (or selecting one)
+  // dims what does not touch it; a click opens it, a fold is selected.
   import { layoutWheel } from './wheel';
+  import { bandTone } from './view';
   import type { Level0 } from './types';
 
-  let { data, selected = null, onselect, onopen }: {
+  let { data, selected = null, zoom = 1, onselect, onfocus }: {
     data: Level0;
+    /** Over fitting the ring to the column; 1 is fit. */
+    zoom?: number;
     selected?: string | null;
     onselect: (id: string | null) => void;
-    onopen: (id: string) => void;
+    onfocus: (id: string) => void;
   } = $props();
+
+  let hovered = $state<string | null>(null);
+  const focus = $derived(hovered ?? selected);
 
   let width = $state(720);
   const size = $derived(Math.max(480, Math.min(width, 900)));
   const wheel = $derived(layoutWheel(data, size));
-  const touches = (s: string, t: string) => !selected || s === selected || t === selected;
-  const tone = (d: string | null) => (d === 'up' ? 'var(--danger)' : d === 'skip' ? 'var(--warning)' : 'var(--ink-faint)');
+  const touches = (s: string, t: string) => !focus || s === focus || t === focus;
 </script>
 
-<div class="w-full overflow-auto" bind:clientWidth={width} data-testid="codemap-wheel">
-  <svg width={size} height={size} role="img" aria-label="Modules on a ring, dependencies bundled by group">
+<!-- A scrollable region must take focus for keyboard users (axe scrollable-region-focusable). -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="w-full overflow-auto" tabindex="0" role="region" aria-label="Modules on a ring, scrollable" bind:clientWidth={width} data-testid="codemap-wheel">
+  <svg width={size * zoom} height={size * zoom} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Modules on a ring, dependencies bundled by group">
     {#each wheel.arcs as a (a.group)}
       {@const mid = (a.start + a.end) / 2}
       <text
@@ -30,7 +38,7 @@
         fill="var(--ink-mute)">{a.group}</text>
     {/each}
     {#each wheel.bands as b (b.source + '>' + b.target)}
-      <path d={b.path} fill="none" stroke={tone(b.direction)} stroke-width={b.width}
+      <path d={b.path} fill="none" stroke={bandTone(b.direction, true)} stroke-width={b.width}
         stroke-opacity={touches(b.source, b.target) ? 0.6 : 0.05} data-testid={`wheel-band-${b.source}>${b.target}`}>
         <title>{b.source} → {b.target}: {b.weight}</title>
       </path>
@@ -38,9 +46,10 @@
     {#each [...wheel.nodes.values()] as n (n.id)}
       {@const folded = n.block.folded.length > 0}
       <g role="button" tabindex="0" class="cursor-pointer"
-        onclick={() => onselect(selected === n.id ? null : n.id)}
-        ondblclick={() => !folded && onopen(n.id)}
-        onkeydown={(e) => e.key === 'Enter' && (folded ? onselect(n.id) : onopen(n.id))}
+        onclick={() => (folded ? onselect(selected === n.id ? null : n.id) : onfocus(n.id))}
+        onmouseenter={() => (hovered = n.id)}
+        onmouseleave={() => (hovered = null)}
+        onkeydown={(e) => e.key === 'Enter' && (folded ? onselect(n.id) : onfocus(n.id))}
         data-testid={`wheel-node-${n.id}`}>
         <circle cx={n.x} cy={n.y} r={selected === n.id ? 6 : 4}
           fill={selected === n.id ? 'var(--accent)' : 'var(--ink-soft)'} />

@@ -79,7 +79,7 @@ export function toTeamMetricsView(wire: TeamMetricsWire): TeamMetricsView {
 				const days = Object.values(m.metrics).map((a) => a.last_on);
 				return {
 					principalId: m.principal_id,
-					label: personLabel({ principalId: m.principal_id, name: m.display_name, email: m.email }),
+					label: personLabel({ principalId: m.principal_id, name: m.display_name, handle: m.handle, email: m.email }),
 					you: m.you,
 					cells: cellsFor(m.metrics),
 					last: days.length ? days.sort().at(-1)! : null

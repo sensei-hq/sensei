@@ -1,6 +1,6 @@
 /**
  * Observatory daily-view coverage — the post-T3 mockup-gap slice:
- *   • Today: FtrStrip bar strip + "first-try" / "N× rework" corrections column.
+ *   • Today: FtrStrip bar strip + the shared corrections column ("no corrections" / "N corrections").
  *   • Workspaces list: renders workspace cards (filtered by status).
  *   • Insights: Now / Soon / Settled triage columns (or honest empty).
  *   • Upgrades / Impact: real buckets (or honest empty state).
@@ -27,7 +27,7 @@ async function safeJson<T>(url: string, fallback: T): Promise<T> {
 }
 
 test.describe('Observatory — Today', () => {
-  test('Recent Sessions column formats corrections as first-try / N× rework', async ({ tauriPage }) => {
+  test('Recent Sessions column formats corrections in the shared words', async ({ tauriPage }) => {
     const sessions = await safeJson<{ sessions: Array<unknown> }>(
       `${DAEMON_URL}/api/sessions`, { sessions: [] },
     );
@@ -42,7 +42,7 @@ test.describe('Observatory — Today', () => {
         .map(el => el.textContent?.trim() ?? '')
         .join('|')
     `) as string;
-    expect(text).toMatch(/first-try|× rework|—/);
+    expect(text).toMatch(/no corrections|\d+ corrections?|—/);
   });
 
   test('mature-mode FTR header renders the FtrStrip bar strip', async ({ tauriPage }) => {
@@ -67,7 +67,7 @@ test.describe('Observatory — Workspaces list', () => {
       test.skip(true, 'no workspaces registered on this daemon');
       return;
     }
-    await navigateToScreen(tauriPage, '/workspaces', '[data-component="workspaces-page"]');
+    await navigateToScreen(tauriPage, '/workspaces', '[data-screen="workspaces"]');
     // Segmentation is now a status FILTER (All/Active/Dormant/Archived); the
     // list renders workspace cards/rows. With ≥1 workspace registered, at least one
     // card is visible (default filter is All).

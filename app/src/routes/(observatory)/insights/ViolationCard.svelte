@@ -21,6 +21,6 @@
   </div>
   <p class="text-sm text-ink m-0 leading-snug font-medium">{memory.title}</p>
   {#if memory.content?.trim()}
-    <p class="text-xs text-ink-soft mt-1 m-0 leading-normal line-clamp-2">{memory.content}</p>
+    <p class="text-xs text-ink-mute mt-1 m-0 leading-normal line-clamp-2">{memory.content}</p>
   {/if}
 </article>

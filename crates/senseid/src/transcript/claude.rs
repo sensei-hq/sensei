@@ -7,7 +7,7 @@
 use super::{
     MAX_LINE_BYTES, MAX_TRANSCRIPT_BYTES, MAX_TURN_CHARS, ParsedTranscript, SessionTokens,
     SynthEvent, SynthSession, TranscriptAdapter, TranscriptMessage, TranscriptTurn, TurnFacts,
-    UnitRef, human_prompt_text, merge_facts, parse_timestamp, turn_attrs,
+    UnitRef, human_prompt_text, merge_facts, parse_timestamp, turn_attrs, turn_start,
 };
 use std::path::{Path, PathBuf};
 
@@ -138,8 +138,18 @@ fn records<L: AsRef<str>>(
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
             return None;
         }
-        serde_json::from_str(line).ok().map(|v| (n, v))
+        serde_json::from_str(line)
+            .ok()
+            .filter(|v: &serde_json::Value| !is_regenerated(v))
+            .map(|v| (n, v))
     })
+}
+
+/// A line this tool rebuilt from kept turns — skip it, so re-ingesting an
+/// export never overwrites rich rows with poor ones. Checked post-parse on the
+/// top-level key (not a substring): prose *about* the marker must not skip.
+fn is_regenerated(v: &serde_json::Value) -> bool {
+    v.get(super::export::REGENERATED_MARKER).and_then(|m| m.as_bool()) == Some(true)
 }
 
 /// One of the things read out of a transcript, built a record at a time so that
@@ -477,7 +487,7 @@ impl Reader for TurnsReader {
     fn push(&mut self, _n: usize, v: &serde_json::Value) {
         match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "user" => {
-                if let Some(prompt) = human_prompt_text(v) {
+                if let Some((origin, prompt)) = turn_start(v) {
                     if let Some(t) = self.cur.take() {
                         self.turns.push(t);
                     }
@@ -486,14 +496,16 @@ impl Reader for TurnsReader {
                     merge_facts(&mut facts, v);
                     self.cur = Some(TranscriptTurn {
                         turn_index: self.idx,
-                        user_text: Some(prompt),
+                        origin,
+                        prompt_id: v.get("promptId").and_then(|p| p.as_str()).map(str::to_string),
+                        user_text: (!prompt.is_empty()).then_some(prompt),
                         assistant_text: String::new(),
                         started_at: parse_timestamp(v),
                         attrs: turn_attrs(v, &["message", "attachment", "toolUseResult"]),
                         facts,
                     });
                 }
-                // tool_result / meta / injected → not a boundary, ignore.
+                // tool_result / skill body / unlabelled injected notice → not a boundary.
             }
             "assistant" => {
                 if let Some(t) = self.cur.as_mut() {
@@ -758,6 +770,55 @@ mod tests {
         assert_eq!(turns[1].assistant_text, "Wired.");
     }
 
+    // Claude Code labels each turn's origin (`turnOrigin`): human, scheduled (a loop or a
+    // cron tick), peer (an agent's hand-back), task_notification, auto_continuation. Each
+    // starts an assistant turn that spends tokens; only human ones were recorded, so a day
+    // of loop ticks had no tokens at all (user, 2026-10-29). Every origin is a turn now,
+    // labelled, with its promptId (which the hook's prompt_id matches); a skill body
+    // injected after a prompt (`turnCompanion`) is still not one.
+    const ORIGINS: &str = r#"
+{"type":"user","timestamp":"2026-10-24T10:00:00.000Z","turnOrigin":"human","promptId":"p1","message":{"role":"user","content":"add a login page"}}
+{"type":"user","timestamp":"2026-10-24T10:00:00.100Z","isMeta":true,"turnCompanion":true,"promptId":"p1","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: ..."}]}}
+{"type":"assistant","timestamp":"2026-10-24T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Adding it."}],"usage":{"input_tokens":100,"output_tokens":10}}}
+{"type":"user","timestamp":"2026-10-24T11:00:00.000Z","isMeta":true,"turnOrigin":"scheduled","promptId":"p2","scheduledTaskId":"t1","message":{"role":"user","content":"Burndown tick. Read docs/CHECKPOINT.md"}}
+{"type":"assistant","timestamp":"2026-10-24T11:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Ticked."}],"usage":{"input_tokens":500,"output_tokens":50}}}
+{"type":"user","timestamp":"2026-10-24T12:00:00.000Z","isMeta":true,"turnOrigin":"peer","promptId":"p3","message":{"role":"user","content":"Another Claude session sent a message: done"}}
+{"type":"assistant","timestamp":"2026-10-24T12:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Noted."}]}}
+{"type":"user","timestamp":"2026-10-24T13:00:00.000Z","turnOrigin":"task_notification","promptId":"p4","message":{"role":"user","content":"<task-notification>build finished</task-notification>"}}
+{"type":"assistant","timestamp":"2026-10-24T13:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Checked."}]}}
+"#;
+
+    #[test]
+    fn every_turn_origin_is_a_turn_labelled_with_its_origin_and_prompt() {
+        let turns = parse_claude_transcript(ORIGINS);
+        let got: Vec<_> =
+            turns.iter().map(|t| (t.origin.as_str(), t.prompt_id.as_deref())).collect();
+        assert_eq!(
+            got,
+            [
+                ("human", Some("p1")),
+                ("scheduled", Some("p2")),
+                ("peer", Some("p3")),
+                ("task_notification", Some("p4"))
+            ]
+        );
+        assert_eq!(turns[0].user_text.as_deref(), Some("add a login page"));
+        assert_eq!(turns[0].assistant_text, "Adding it.", "the skill body did not start a turn");
+        assert_eq!(turns[1].user_text.as_deref(), Some("Burndown tick. Read docs/CHECKPOINT.md"));
+        assert_eq!(
+            (turns[1].facts.tokens_in, turns[1].facts.tokens_out),
+            (Some(500), Some(50)),
+            "the tick's tokens are its own"
+        );
+    }
+
+    #[test]
+    fn a_transcript_without_origins_reads_as_before() {
+        let turns = parse_claude_transcript(SAMPLE);
+        assert!(turns.iter().all(|t| t.origin == "human"), "an unlabelled prompt is a human one");
+        assert_eq!(turns.len(), 2, "an unlabelled task notification is still not a turn");
+    }
+
     #[test]
     fn parses_started_at_from_prompt_timestamp() {
         let turns = parse_claude_transcript(SAMPLE);
@@ -777,6 +838,42 @@ mod tests {
         assert!(super::super::human_prompt_text(&noise).is_none());
         let real = serde_json::json!({"message":{"content":"fix the bug"}});
         assert_eq!(super::super::human_prompt_text(&real).as_deref(), Some("fix the bug"));
+    }
+
+    #[test]
+    fn a_slash_command_is_the_prompt_its_name_and_arguments() {
+        let prompt = |content: &str| {
+            super::super::human_prompt_text(&serde_json::json!({"message": {"content": content}}))
+        };
+        // Claude Code's current order, then the older one; the arguments carry the key.
+        let now = "<command-message>opsx:explore</command-message>\n<command-name>/opsx:explore</command-name>\n<command-args>P057542601-784 the login flow</command-args>";
+        assert_eq!(prompt(now).as_deref(), Some("/opsx:explore P057542601-784 the login flow"));
+        let before = "<command-name>/review</command-name>\n            <command-message>review</command-message>\n            <command-args>AUTH-12</command-args>";
+        assert_eq!(prompt(before).as_deref(), Some("/review AUTH-12"));
+        let bare = "<command-message>compact</command-message>\n<command-name>/compact</command-name>\n<command-args></command-args>";
+        assert_eq!(prompt(bare).as_deref(), Some("/compact"), "typed by the person, so a prompt");
+        let unslashed = "<command-name>deploy</command-name><command-args>v2</command-args>";
+        assert_eq!(prompt(unslashed).as_deref(), Some("/deploy v2"));
+        // What a command prints is injected, never a prompt.
+        assert_eq!(prompt("<local-command-stdout>Compacted.</local-command-stdout>"), None);
+        assert_eq!(prompt("<command-message>x</command-message>"), None, "no name: not a command");
+    }
+
+    #[test]
+    fn a_session_started_with_a_slash_command_splits_into_turns_there() {
+        let turns = parse_claude_transcript(
+            r#"
+{"type":"user","timestamp":"2026-10-28T04:27:00.000Z","message":{"role":"user","content":"<command-message>opsx:explore</command-message>\n<command-name>/opsx:explore</command-name>\n<command-args>P057542601-784</command-args>"}}
+{"type":"user","timestamp":"2026-10-28T04:27:00.100Z","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: ..."}]}}
+{"type":"assistant","timestamp":"2026-10-28T04:27:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Exploring."}]}}
+{"type":"user","timestamp":"2026-10-28T04:28:00.000Z","message":{"role":"user","content":"<local-command-stdout>ok</local-command-stdout>"}}
+{"type":"user","timestamp":"2026-10-28T04:29:00.000Z","message":{"role":"user","content":"go on"}}
+{"type":"assistant","timestamp":"2026-10-28T04:29:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Going."}]}}
+"#,
+        );
+        let prompts: Vec<_> = turns.iter().map(|t| t.user_text.as_deref()).collect();
+        assert_eq!(prompts, [Some("/opsx:explore P057542601-784"), Some("go on")]);
+        assert_eq!(turns[0].assistant_text, "Exploring.");
     }
 
     #[test]
@@ -983,5 +1080,18 @@ mod tests {
         assert_eq!(first.thinking, None, "no breakdown is unknown, not 0");
         assert_ne!(ms[1].message_id, ms[2].message_id, "each id-less line is its own message");
         assert_eq!(parse_claude_transcript(c)[0].facts.tokens_out, Some(14));
+    }
+
+    #[test]
+    fn regenerated_lines_are_skipped_so_reingest_never_degrades_rows() {
+        let marked = r#"{"type":"user","timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"hi"},"sensei_regenerated":true}"#;
+        assert!(parse_claude_transcript(marked).is_empty());
+        let mixed = format!(
+            "{marked}\n{}",
+            r#"{"type":"user","timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"real"}}"#,
+        );
+        let turns = parse_claude_transcript(&mixed);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].user_text.as_deref(), Some("real"));
     }
 }

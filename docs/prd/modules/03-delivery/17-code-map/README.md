@@ -22,20 +22,22 @@ window's Diagrams list (M16) and the dōjō's Workspace › Code health tab (T3)
 this one map. Schema (Database · ER) is not part of it: tables, columns and keys are
 not the call graph.
 
-> **Build status, per part (2026-10-27).** The merged map exists in the desktop app, from
+> **Build status, per part (2026-10-29).** The merged map exists in the desktop app, from
 > the shared package `packages/codemap` (`@sensei/codemap`); the dōjō embed does not yet.
 >
 > | Part | Status today |
 > |---|---|
-> | L0 · L1 · L2 levels | **built** — `/workspace/[id]/diagrams/codemap` over `GET …/diagrams/codemap` (L0: ≤ 60 blocks, "+N more" per group, hub lane, one band per pair), `/codemap/module` (L1: role columns ≤ 12) and `/codemap/file` (L2: symbols, callers/callees ≤ 7); breadcrumb; list mode under 640px. Atlas and World are retired. |
-> | Structure | **built** on the canvas: group by Layers or Folders, bands coloured by the layering's direction (upward red, skip amber). The role bar on L0 blocks is not built (roles exist at L1). The older Structure and Layers diagrams remain beside it. |
+> | L0 · L1 · L2 levels | **built** — `/workspace/[id]/diagrams/<lens>` over `GET …/diagrams/codemap` (L0: ≤ 60 blocks, "+N more" per group, hub lane, one band per pair), `/codemap/module` (L1: role columns ≤ 12) and `/codemap/file` (L2: symbols, callers/callees ≤ 7); breadcrumb; list mode under 640px. Atlas and World are retired. |
+> | Structure | **built** on the canvas: group by Layers or Folders, bands coloured by the layering's direction (upward red, skip amber). The role bar on L0 blocks is not built (roles exist at L1). The older Structure, Layers and Neighbourhood diagrams are retired (user, 2026-10-29). |
 > | Wheel | **built** as a lens: modules on a ring per group, bands bundled through group anchors. Grouping by Communities still needs Fix 2 (M4). |
 > | Zones | **built** as a lens over `GET …/diagrams/zones`. Illustrative until abstractness is defined per language (see Open gaps). |
 > | Dependency matrix | **built** as the Matrix lens over L0's bands, ordered by group so upward sits below the diagonal. |
-> | Cycles | **built** as a lens (only bands inside a cycle; members tinted), and still as `diagrams/cycles`. |
+> | Cycles | **built** as a lens (only bands inside a cycle; members tinted). |
 > | Hidden coupling | **built** — `GET …/diagrams/codemap/cochange` mines `commit_files` (5+ together, sweeps of 20+ modules left out), drops pairs with a static edge either way, ranks by how often the rarer changes with the other; drawn as dashed bands. |
 > | Complexity | **built** from local qlty (user, 2026-10-27: rely on qlty, not a re-derivation): `measure_complexity` runs `qlty metrics --functions` at HEAD in a temporary worktree with the pinned ruler, only when HEAD moved; `sensei.file_complexity` per file; blocks tinted by share over cyclomatic 10, unmeasured blocks say so. SQL is not measured by qlty. |
 > | File roles | **built at read time** — `analysis::codemap::file_role` (code · test · docs · config · generated, from the path); not stored. |
+> | Header · inspector · controls | **built** (2026-10-29) — each diagram's header carries *shows · use it to · read it* behind "What it's for" (open/closed remembered); a 300px inspector at every level (workspace summary by direction, module, hub, fold, referenced libraries; the open module at L1, the open file at L2); search over drawn and folded modules; band filters (all / violations & cycles, minimum weight ≥ 1 · 10 · 25); Colour by direction on Structure; Fit / 100% (60% floor); Show (roles) at L0 from per-block role counts the daemon now sends; one click opens a module. Database · ER lists what a selected table references, what references it and what reads or writes it. Under 640px every lens is a list. |
+> | Group by Communities | **not built** — needs a module → community rule (communities are per symbol and per repository); waits on a decision. |
 
 ## In scope / out of scope
 
@@ -145,12 +147,14 @@ when looking at a release (D18).
   seven open this one embedded map and switch lens without reloading. The Code map
   supplies the only header for its lenses.
 - **Dōjō, Workspace › Code health (T3)** — the same map, per repository, with the same
-  lens list plus Database · ER. Each gated reading above it (layer conformance, cycles,
-  zone of pain, complexity) opens the lens that explains it.
+  lens list plus Database · ER. Each reading above it that can carry a target (layer
+  conformance, cycles, zone of pain, complexity) opens the lens that explains it.
 - **Metrics (M8)** — the architecture-metric charts (layers histogram, zones, cycles)
   link into the lens here instead of drawing their own diagram.
-- **Routes today** — `/workspace/[id]/diagrams/{codemap,structure,layers,cycles,
-  neighbourhood,schema}`; `codemap` is the default.
+- **Routes today** — `/workspace/[id]/diagrams/{structure,wheel,zones,matrix,cycles,
+  coupling,complexity}` (one `[lens]` route over one shared map state, so a lens switch
+  keeps the level and selection) and `/diagrams/schema`; `structure` is the default. The
+  sidebar's Diagrams subsection lists them; the map draws no lens switch of its own.
 - **API** — `GET /api/graph/nodes` · `/communities` (POST) · `/communities/info` ·
   `/callers` · `/callees` · `/call-flow` · `/{repoId}/tree`;
   `/api/workspaces/{id}/diagrams/{codemap,codemap/module,codemap/file,structure,layering,
@@ -204,8 +208,8 @@ when looking at a release (D18).
 
 ```bash
 curl -s "http://localhost:7744/api/graph/communities/info?repoId=$ID" | jq 'length'
-curl -s "http://localhost:7744/api/projects/$ID/diagrams/structure?level=module" | jq '.nodes|length'
-curl -s "http://localhost:7744/api/projects/$ID/diagrams/zones" | jq '.coverage'
+curl -s "http://localhost:7744/api/workspaces/$ID/diagrams/structure?level=module" | jq '.nodes|length'
+curl -s "http://localhost:7744/api/workspaces/$ID/diagrams/zones" | jq '.coverage'
 ```
 
 ## Wrong gate

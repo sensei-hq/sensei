@@ -16,13 +16,13 @@ const okRead = <T,>(data: T) => ({ ok: true as const, data });
 describe('phaseDisplay', () => {
   it('absent -> "not pulled", muted, no progress, actionable, not in flight', () => {
     expect(phaseDisplay({ phase: 'absent' })).toEqual({
-      label: 'not pulled', tone: 'ink-mute', percent: null, actionable: true, inFlight: false,
+      label: 'not pulled', tone: 'ink-soft', percent: null, actionable: true, inFlight: false,
     });
   });
 
   it('queued -> "queued…", soft ink, in flight, not actionable', () => {
     expect(phaseDisplay({ phase: 'queued' })).toEqual({
-      label: 'queued…', tone: 'ink-soft', percent: null, actionable: false, inFlight: true,
+      label: 'queued…', tone: 'ink-mute', percent: null, actionable: false, inFlight: true,
     });
   });
 
@@ -46,13 +46,13 @@ describe('phaseDisplay', () => {
 
   it('verifying -> "verifying…", in flight', () => {
     expect(phaseDisplay({ phase: 'verifying' })).toMatchObject({
-      label: 'verifying…', tone: 'ink-soft', inFlight: true, actionable: false, percent: null,
+      label: 'verifying…', tone: 'ink-mute', inFlight: true, actionable: false, percent: null,
     });
   });
 
   it('loading -> "loading…", in flight', () => {
     expect(phaseDisplay({ phase: 'loading' })).toMatchObject({
-      label: 'loading…', tone: 'ink-soft', inFlight: true, actionable: false, percent: null,
+      label: 'loading…', tone: 'ink-mute', inFlight: true, actionable: false, percent: null,
     });
   });
 
@@ -71,7 +71,7 @@ describe('phaseDisplay', () => {
   it('an unknown phase degrades to a neutral, non-actionable label (wire-API-wins)', () => {
     const weird = { phase: 'teleporting' } as unknown as ProvisionPhase;
     expect(phaseDisplay(weird)).toEqual({
-      label: 'unknown', tone: 'ink-mute', percent: null, actionable: false, inFlight: false,
+      label: 'unknown', tone: 'ink-soft', percent: null, actionable: false, inFlight: false,
     });
   });
 });

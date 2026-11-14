@@ -5,18 +5,14 @@
 //! 1,182,758 nodes and, as of 2026-09-28, exactly zero metrics read either
 //! (#156). This is the first group that does.
 //!
-//! ## Tier 1 only, and that boundary is measured rather than cautious
+//! ## Module-level shape lives beside it (#156)
 //!
-//! The obvious architecture metrics — coupling, instability, dependency cycles —
-//! are all MODULE-level, and #156 measured what the module graph currently is:
-//! collapsed to distinct module→module pairs, this whole repository yields
-//! **13 edges**, two of them in one cycle, and all 13 TypeScript. Rust
-//! contributes none (#146, #151, #152).
-//!
-//! A coupling number over 13 edges is a confident number over nothing, which is
-//! the fabricated-signal failure the no-fabrication rule forbids. So the module
-//! metrics are NOT here; they are blocked on the resolver, not on metric design.
-//! The three below need no resolved module graph at all.
+//! When this was written the module graph held 13 edges, all TypeScript, so the
+//! module metrics were left out — a coupling number over 13 edges is a confident
+//! number over nothing. The code map's module graph now resolves Rust in full,
+//! and [`super::architecture_shape`] reads it per repository through the same
+//! reads the lenses make: cycles, Up edges, the zone of pain, hidden coupling and
+//! complexity outliers.
 //!
 //! ## `graph_confidence` gates the other two, and eventually the rest
 //!
@@ -133,6 +129,10 @@ pub(super) async fn compute(
             written += 1;
         }
     }
+
+    // The module-level shape (#156): cycles, Up edges, the zone of pain, hidden
+    // coupling and complexity outliers, per repository.
+    written += super::architecture_shape::write_shape(pg, &workspace_id, day, &ids).await?;
 
     Ok(written)
 }

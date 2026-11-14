@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { Notice } from '@sensei/ui';
+    import { Button } from '@rokkit/ui';
     import { memoryState, isTerminalStatus } from '$lib/memoryState.svelte.js';
 </script>
 
@@ -8,7 +10,7 @@
     {#each memoryState.active as m (m.id)}
         {@const acting = memoryState.isActing(m.id)}
         {@const terminal = isTerminalStatus(m.status)}
-        {@const err = memoryState.actionError(m.id)}
+        {@const notice = memoryState.actionNotice(m.id)}
         <article
             class="memory-row"
             class:selected={memoryState.selected === m.id}
@@ -22,43 +24,23 @@
             </div>
             <button type="button" class="title-btn" onclick={() => memoryState.select(m.id)}>{m.title}</button>
             <div class="metrics">
-                <span title="strength">★ {m.strength.toFixed(1)} / 5</span>
+                <span title="strength">★ {memoryState.strengthOf(m).label}</span>
                 <span title="applied">✓ {m.applied_count}</span>
                 <span title="violated">✗ {m.violated_count}</span>
             </div>
             <div class="flex flex-wrap gap-2 mt-2">
-                <button
-                    type="button"
-                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-accent border border-accent-soft cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    data-testid="reinforce-btn"
-                    disabled={acting}
-                    onclick={() => memoryState.reinforce(m.id)}
-                >Reinforce</button>
-                <button
-                    type="button"
-                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    data-testid="challenge-btn"
-                    disabled={acting || terminal}
-                    onclick={() => memoryState.challenge(m.id)}
-                >Challenge</button>
+                <Button style="outline" size="sm" data-testid="reinforce-btn" disabled={acting}
+                        onclick={() => memoryState.reinforce(m.id)} label="Reinforce" />
+                <Button style="outline" size="sm" data-testid="challenge-btn" disabled={acting || terminal}
+                        onclick={() => memoryState.challenge(m.id)} label="Challenge" />
                 <span class="flex-1"></span>
-                <button
-                    type="button"
-                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    data-testid="archive-btn"
-                    disabled={acting}
-                    onclick={() => memoryState.archiveMemory(m.id)}
-                >Archive</button>
-                <button
-                    type="button"
-                    class="px-2.5 py-1 rounded-md text-xs bg-transparent text-danger border border-danger-soft cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    data-testid="dismiss-btn"
-                    disabled={acting || terminal}
-                    onclick={() => memoryState.dismiss(m.id)}
-                >Dismiss</button>
+                <Button style="outline" size="sm" data-testid="archive-btn" disabled={acting}
+                        onclick={() => memoryState.archiveMemory(m.id)} label="Archive" />
+                <Button variant="danger" style="outline" size="sm" data-testid="dismiss-btn" disabled={acting || terminal}
+                        onclick={() => memoryState.dismiss(m.id)} label="Dismiss" />
             </div>
-            {#if err}
-                <p class="text-xs text-danger m-0 mt-1" data-testid="action-error">{err}</p>
+            {#if notice}
+                <div class="mt-1"><Notice size="inline" bare expanded {...notice} data-testid="action-error" /></div>
             {/if}
         </article>
     {/each}

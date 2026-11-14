@@ -12,7 +12,6 @@
 | ├ `bootstrap` |                   | Installer / prereq checker                    |
 | └ `logger`    |                   | Structured logging crate                      |
 | `dojo/`       | SvelteKit         | Dōjō web app (developer/maintainer/admin/lead consoles; kavach+Supabase) |
-| `website/`    | SvelteKit         | Marketing website                             |
 | `docs/`       | Markdown          | Design docs, mockups, DDL, backlog            |
 | `homebrew/`   | Ruby              | Homebrew tap (subtree → sensei-hq/homebrew-tap) |
 | `marketplace/`| JSON/Markdown     | Skills & plugins (subtree → sensei-hq/marketplace) |
@@ -20,6 +19,7 @@
 **Sibling repos** (pulled in as dependencies, not in this tree):
 
 - **[sensei-hq/gateway](https://github.com/sensei-hq/gateway)** — LLM routing library. `crates/senseid` consumes it as `gateway-embedded` git dep. Was previously `crates/gateway/`; moved out so it can release to crates.io independently.
+- **[sensei-hq/website](https://github.com/sensei-hq/website)** — sensei-hq.com, checked out beside this repo. Was `website/`; moved out (#346) because it serves the whole studio and changes on its own schedule. It shows no Sensei version, so a release does not touch it.
 
 ## Version
 
@@ -82,7 +82,9 @@ DB. For iterating on DDL without publishing a release tag, set
 - Commit and push when a logical chunk is complete
 - Work in `develop` branch; merge to `main` (PR, green) to release — then bump and tag ON main (see Version)
 - `homebrew/` and `marketplace/` are edited in-repo and mirrored to their own GitHub repos (not git subtrees despite the name — each target clones and copies)
-  - `marketplace/` → `make marketplace-push`, run by `make bump`
+  - `marketplace/` → `make marketplace-push`, run by `make release` (right after the tag is pushed). `make bump`
+    only stamps the new version into `marketplace/*.json`, so the mirror keeps serving the last released version
+    until the release runs — a plugin version must never point at binaries that do not exist yet
   - `homebrew/` holds **templates** with `REPLACE_WITH_*_SHA256`, since a checksum needs the release assets. `release.yml`'s `update-tap` is the SOLE writer of the tap's formula and cask: it renders these templates via `scripts/render-homebrew-tap.py`. `make bump` does NOT push the tap, and `make tap-push` refuses while a placeholder remains — pushing an unrendered template is what left `brew install` broken for ~8 releases
 
 ## Hard rules — never break without explicit user approval

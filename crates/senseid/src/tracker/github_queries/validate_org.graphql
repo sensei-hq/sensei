@@ -1,0 +1,3 @@
+query ValidateOrg($owner: String!, $number: Int!) {
+  organization(login: $owner) { projectV2(number: $number) { ...Board } }
+}

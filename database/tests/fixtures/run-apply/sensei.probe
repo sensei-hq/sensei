@@ -1,0 +1,14 @@
+-- Plane probe: passes only on the sensei database (no dojo schema) with the
+-- applied canary visible. Tells "the plane took effect" from "always dojo" (F1).
+do $$
+declare
+    v integer;
+begin
+    if to_regnamespace('dojo') is not null then
+        raise exception 'sensei-plane-probe: dojo schema is present';
+    end if;
+    select sensei.__apply_s() into v;
+    if v <> 1 then
+        raise exception 'sensei-plane-probe: expected __apply_s() = 1, got %', v;
+    end if;
+end $$;

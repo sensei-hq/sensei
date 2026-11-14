@@ -27,7 +27,7 @@
           placeholder="Search workspaces or repositories"
           aria-label="Search workspaces or repositories"
           class="w-full text-sm px-3 py-2 rounded-md border border-paper-edge bg-paper-soft text-ink
-                 placeholder:text-ink-faint outline-none focus:border-ink-soft"
+                 placeholder:text-ink-faint outline-none focus:border-ink-mute"
         />
       </div>
     </div>

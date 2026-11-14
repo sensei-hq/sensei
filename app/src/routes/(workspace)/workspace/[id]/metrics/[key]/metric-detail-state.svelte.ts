@@ -18,13 +18,24 @@ import {
   linkifyMetrics,
   metricTickFormatter,
 } from '$lib/metrics/metric-view.js';
+import type { MetricSeriesPoint, MetricsNarrative, RegistryMetric, WorkspaceMetricRow } from '$lib/metrics/metric-view.js';
+import type { Recommendation } from '$lib/types.js';
 import { buildActionItems } from '../action-items.js';
-import type { PageData } from './$types.js';
+import type { Grain } from '../metrics-state.svelte.js';
 
-export type MetricDetailData = Pick<
-  PageData,
-  'rows' | 'registry' | 'narrative' | 'selectedKey' | 'grain' | 'series' | 'formula' | 'recommendations'
->;
+/** What the detail reads: the workspace's values and registry (for the rail), the
+ *  selected metric and grain, its series, formula and the pending recommendations. */
+export interface MetricDetailData {
+  workspaceId: string;
+  rows: WorkspaceMetricRow[];
+  registry: RegistryMetric[];
+  narrative: MetricsNarrative | null;
+  selectedKey: string;
+  grain: Grain;
+  series: MetricSeriesPoint[];
+  formula: string | null;
+  recommendations: Recommendation[];
+}
 
 export class MetricDetailState {
   /** A window start the user chose, and the series (key + grain) it was chosen on. */
@@ -122,5 +133,5 @@ export class MetricDetailState {
       return terms.some((t) => hay.includes(t));
     });
   });
-  readonly actionItems = $derived(buildActionItems(this.relevantRecs));
+  readonly actionItems = $derived.by(() => buildActionItems(this.relevantRecs, this.read().workspaceId));
 }

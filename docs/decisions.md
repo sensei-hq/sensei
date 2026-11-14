@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-25
+updated: 2026-11-05
 ---
 
 # Decisions
@@ -9,6 +9,160 @@ updated: 2026-10-25
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-11-05 — Tracker delivery metrics: what leaves the machine, and who sees it (user)
+
+Decided over the delivery-metrics slice (`docs/spec/daemon/tracker-delivery-metrics.md`, #351–#356).
+
+| # | Decision |
+|---|---|
+| D87 | **Ticket titles, board and sprint names travel to the Dōjō for every classification** (B9, B12, B15), overriding `tracker_tasks.summary`'s "never leaves the machine". A title is the only ticket free text that travels: never a description, comment, assignee, attachment or URL. |
+| D88 | **Replace and withdraw** (B13): each push replaces everything that install reported for the board; deleting the tracker, or the board losing consent, withdraws it. Signing out keeps the data, shown as stale. |
+| D89 | **Each person's cost at their own rate, summed** (B14); the rate itself, `minutes_per_point`, `expected_minutes` and `time_variance_minutes` never travel. |
+| D90 | **Cost and one-contributor figures are gated** (B16): merged cost at the contributors' rates, and every figure of an item with one contributor (its report time and staleness included), show only to readers allowed per-person rows (`can_read_repository_metric` over every source repository). Known limit, accepted: the daemon's #240 filter is the only proof a row is that person's own, so a member forging a push can still difference the merge. |
+
+Alternatives weighed: not sending cost at all (loses B14's team cost), and showing every merged value to every workspace reader (exposes a solo contributor's numbers and, through cost ÷ time, their rate).
+
+---
+
+## 2026-11-03 — PRD alignment round: D47–D70 (user, answering the orientation review)
+
+Decided with the user over the 2026-11-03 orientation (`docs/review/2026-11-03-orientation.md`), in
+order to make the PRD, journeys and specs consistent before the parallel lanes start
+(`docs/plan/2026-11-03-parallel-lanes.md`). **F4 supersedes the entry below it** ("WP4 F4 needed no
+new decision"): the user revisited D10 for viewer pools and chose to withhold them; teams and sprints
+bring the cross-team comparison D10 named as its trigger. D57 was first stated wrongly by the
+reviewer ("mandatory final, else most specific") and corrected to the code before recording.
+
+| # | Decision |
+|---|---|
+| D47 | A **target** is a metric threshold. A target set to `block` *gates* work. The UI says "target missed (blocking)". "Gate" stays relay's human-approval word. |
+| D48 | Target ladder: **Dōjō → Workspace → Repository → Sprint → Task type → Task**, most specific wins. Teams report results and own no targets. No Epic level in v1. |
+| D49 | Tracker connections: **dōjō-owned for org workspaces** (Wave C, needs the #310 secret store); the daemon path stays for solo/personal use. New adapters (GitHub Issues, ADO) go on the dōjō path. (amended 2026-11-06, D91: GitLab and GitHub on the daemon path.) |
+| D50 | Ticket writeback (ac7822d2b) is **opt-in per workspace, off by default**. This amends D3. |
+| D51 | The menu order in orientation §5 is approved: Cowork mocks it, then implements it. |
+| F4 | A viewer pool with fewer than 2 contributors is withheld (supersedes D10 for viewer pools). |
+| D52 | **A solo developer gets everything free**, blocking targets included, on their personal dōjō. **Paid targets are an org feature, and only for private repositories.** An org's public repositories get targets free. This follows D46's line (org private = subscribed) and narrows D24's "gating is paid" to org-private. |
+| D53 | **The dōjō is the client; there is no client separation** (reaffirms D34). A session in a repository is governed by **that repository's dōjō** alone: its rules and its targets. No employer floor carries into another dōjō. A person's own `user`-rung rules still apply locally, below the dōjō by the scope ladder. Remove T3:113/225 and T2:118 ("client binding", "client's tracker and gates", "employer floor") and the membership-contexts line at objectives:76–78. |
+| D54 | **Who sets targets:** Dōjō + Workspace levels = admin; Repository = maintainer+ on it; Sprint / Task type / Task = maintainer+ on any repository in the workspace. Leads read results per person (D38); viewers read aggregates only (D8). The manager persona splits: a member manager → maintainer or lead; an outside manager or client → viewer. |
+| D55 | **No pairing.** The relay acts only through the signed-in person's dōjō session, with explicit, revocable permissions. R6 is rewritten to say this; vision:115 stands. |
+| D56 | **The knowledge promotion path runs opposite to the governance ladder:** user → repository → workspace → dōjō → global shared. Each step outward is a promotion; it is never a precedence. Crossing out of a dōjō into global shared keeps k ≥ 3 contributors (D26/T1). `memory_scope` must gain the `user`, `repository` and `dojo` steps (today: global, workspace, stack, task_type, module). That is a schema item for the learnings lane. |
+| D57 | **Governance precedence = the code** (`pg_store/governance.rs:61,339`: enforcement desc, then scope desc): the **stronger enforcement wins** (mandatory > required > recommended > advisory, and mandatory is never overridden); between rules of equal enforcement, the **most specific scope wins** (general → user → dōjō → workspace → repository). A repository can tighten a dōjō rule but cannot weaken it. (Corrected 2026-11-03: L0 had first stated it as "mandatory final, else most specific".) |
+| D58 | **Lead** = the team lead (D38). `decisions.md:151` (Lead as the client-confidentiality role) is marked superseded. Add a Lead persona: sees teammates' metrics per person across the workspaces the lead can read; sets targets only if also a maintainer. |
+| D59 | **Pricing** (P1–P3): SSO and audit are **free** (audit is governance, D19). The subscription is **per org, priced by the seats who work on its private repositories**; contributors to public repositories and viewers are never counted. The relay's team on-call queue (R8) is **free**. |
+| D60 | **Vocabulary:** "solution" was the earlier name for a **workspace**, "org" in a ladder is the **dōjō**, "module" in a ladder is the **repository**. The multi-repository cascade is general → dōjō → workspace → repository. |
+| D61 | **A missed blocking target is information plus a handoff, not a hard stop** (F1). Sensei says which targets are missed and what to fix, and hands the fix to the assistant to clear them. On the dōjō side a **lead or admin accepts the deviation** with a note, and may open a follow-up ticket for the issues the miss identified. Opening a ticket writes to the tracker, so it follows D50: opt-in per workspace; otherwise Sensei drafts the ticket for the lead to file. |
+| D62 | **Targets reach the assistant through MCP** (F2), together with the ticket's own rules, at the start of work on a ticket. |
+| D63 | **A ticket is the unit of work handed to the assistant** (F3). The sync lists the tickets assigned to the user. The user hands the assistant a ticket key; the assistant fetches it through a **tracker-agnostic MCP tool served by the daemon**. That fetch **marks the start of work on the ticket** and links the session to it. Branch/commit/prompt key matching stays as the fallback, for an agent that fetched the ticket elsewhere (e.g. `gh issue view`). |
+| D64 | **A personal dōjō is created at sign-in** (F4). |
+| D65 | **Learning verbs:** one verb, **Share →**, along the D56 promotion path; **Reinforce / Retire**, driven by Impact's verdict; "skill" becomes a memory kind (F5). |
+| D66 | **Two misses of a blocking target on the same cause propose a memory** at the user step; it is offered for promotion up the D56 path once it helps (F6). |
+| D67 | **"What applies here"** on the desktop Dōjō screen: the resolved rules and targets for the current workspace, each with its source (F7). |
+| D68 | **A minimal viewer shell this week** (F8): the granted workspaces, **metrics first**, to judge whether the overall workflow is healthy; target results in aggregate; nothing else. |
+| D69 | **The dōjō Home is a "needs you" queue** (F9): missed targets awaiting acceptance, a sync that has stopped, approvals. No email or Slack this week. |
+| D70 | **Menus** (a, b, c): "Needs you" becomes **Act**; Constitution moves into the dōjō's **Govern** group; setup's "Join your dōjō" step is **skippable**. |
+| D71 | **Ticket data is read live** (Q1): `get_ticket` and "assigned to me" are live tracker reads made with the person's own access. No person data is stored; the `tracker_tasks` mirror is unchanged. For GitHub Issues the daemon uses the person's own forge sign-in, read-only, until dōjō-owned connections (D49) exist; write-back is `spec/daemon/tracker-metrics-writeback.md`. (amended 2026-11-09, D92: GitHub ticket reads use the GitHub tracker's token, not the forge sign-in.) |
+| D72 | **warn vs block** (Q2): a `warn` miss is shown and needs no acceptance. A `block` miss is handed to the assistant, enters the "needs you" queue (D69), and needs a lead's or admin's acceptance (D61). |
+| D73 | **"The ticket's rules"** (Q3) = the repository's resolved rules (D57) plus the ticket's own acceptance criteria. There is no ticket level in governance. |
+| D74 | **Neutral Impact verdict** (Q4): the memory is kept by default, and Retire is offered. |
+| D75 | **The paid plan is called "Pro"** (Q5, user). Messages name it: "Targets on private repositories need Pro." **The price is "to be announced"** until a payment provider exists; the `$12` code constant is not a decision. |
+| D76 | **"What applies here"** (Q6) lives on the desktop Dōjō screen, scoped to the current workspace; Workspace › About links to it. |
+| D77 | **SCIM is free**, along with SSO (Q7, D59). |
+| D78 | **The dead client routing** (`crates/senseid/src/dojo/routing.rs` and its two `.feature` scenarios) is removed (Q8, D53). |
+| D79 | **Govern shows to everyone, with a minimum role per item** (the D70 Constitution move): Constitution for every member; Triage, Approvals and Knowledge for maintainer and up. |
+| D80 | **Narrower target levels may only tighten** (user): a level below can raise the bar or turn `warn` into `block`, never lower either. Loosening needs the role that set the wider level (D54). Resolution takes the strictest applicable level, which keeps targets consistent with D57's "stronger enforcement wins". |
+| D81 | **Target measurement** (user, accepting the spec's Q1–Q5): the rule-check target is absolute (zero failing hard rules on the change's tree); a hard rule is a checker rule whose resolved enforcement is mandatory or required, resolved as `get_rules` resolves it (adoption overrides included); baselines are per repository, metric and path filter; sprints and task types use the tracker's own keys (no invented issue-type mapping); a coverage reading counts once 50% of guarded files appear, and a graph reading once the index is complete (`folder_completeness.subtree_complete`). |
+| D82 | **"Moving the wrong way"** (user, WP5): compare the second half of the window with the first. A repository is flagged when a metric that has a direction (`sensei.metrics.direction` higher_better or lower_better) moved the wrong way by **≥ 10%**, and only when **each half has at least 5 days** of readings. `neutral` metrics are never flagged. The panel names the worst repository as its next step. Direction reaches the dōjō wire through L1's own `workspace_metric_series`. |
+| D83 | **No fabricated values, anywhere** (user, 2026-11-03): showing a made-up number, list, plan or status when the real data is unavailable is misinformation. Every layer (SQL, daemon, MCP, both apps, shared packages) surfaces a failed read as an error state and never as a plausible value. The system-wide audit (`coord/audits/fabrication-2026-11-03.md`) assigns each failure-mask to its owning lane, and a ratchet guard in `make test-fast` stops new ones. Honest-empty is correct only when the data truly is empty. |
+| D84 | **S6 (diagram history) waits until every sync works** (user): after #314's production verification, not this week. S6's Q1–Q6 stay open until then. |
+| D85 | **The billing screen is Cowork's new mockup work of 2026-11-03** (user). The earlier mockups in `docs/mockups/Sensei/` are its reference. The decision-driven fixes (Pro, "to be announced", nothing free listed as paid) apply. |
+| D86 | **What the paid tier sells, in words** (clarifies D24 and D20 after D47/D52): the paid benefit is **blocking targets on an organisation's private repositories**, plus integrations and consolidated metrics. "Gating" in D20/D24 means exactly that. A target that only warns, and any target on public or personal repositories, is free. |
+| D87 | **One screen shell for every screen** (user, 2026-11-04). A sticky header (icon/kanji, title, description, a toolbar toggling info/stats/filters/sidebar, an optional action bar); an info section (3 columns); a stats row from a stats state (`{title, icon|kanji, value, description?}` on a 12-column grid, cards spanning 1–3 columns); a filter band (a snippet, or a schema rendered by `@rokkit/forms`); body and sidebar scroll independently; sticky footer. Kanji and icon glyph modes both supported. Generic parts go upstream: the shell and stats grid into `@rokkit/app` (app chrome), StatCard `description` into `@rokkit/ui`; glyph-mode wiring stays in `@sensei/ui`. It replaces the app's `PageHeader` and the dōjō's `Screen`. Design (Cowork) designs it from the diagrams (incl. ER) and the sync screen; L0 coordinates rokkit; L1 moves the diagrams first; every other screen adopts it when its lane next touches it. **Remembered panels:** every view registers a stable view id; the first visit opens everything, later visits restore what the user left. All view states load once at startup into a shared app state (desktop: `appState` config from the daemon, synced across windows), never per-screen storage. The rokkit shell takes panel state as a bindable prop and stays storage-agnostic. **Actionable stats:** a stat may carry a filter (or an `href`); clicking it filters the screen's data to that problem and marks the stat active; a stat with neither isn't clickable. **The shell is chrome only:** body and sidebar are per-screen snippets that keep the existing components (the tree view, ER and structure diagrams, the inspector) unchanged. Every screen gets free-form search. Adopting the shell loses nothing: existing specs and e2e stay green unedited, and each migration reports a before → after parity list. **Info band look (user, 2026-11-04):** the first-run "Your first session" panel is the info design everywhere: a role wash (role colour mixed into paper, mode-aware), not an opaque `-soft` tint; eyebrow + kanji + display title; kanji steps; a progress/stat column. Contract final: `coord/mockups/screen-shell/CONTRACT.md`. |
+| D88 | **Past due: no grace** (user, 2026-11-04). The moment an org's subscription isn't active or trialing, its private repositories are hidden (the entitlement view refuses them as `not_subscribed`). Hidden, never deleted: once paid they are reinstated as they were. |
+| D89 | **Sync targets: one or many dōjōs** (user, 2026-11-04). `SENSEI_DOJO_URLS` (comma list; unset = production only; `DOJO_URL`/config remain a one-element list). Tests sync to a local dōjō, normal use to production, a developer may sync to both. Each target syncs independently: its own memberships, session, cycle, failures and **per-target sent marks** (a row is unsent for a target until that target confirms it stored it). Every log and status line names the target. No fallback between targets. Brief: `coord/briefs/L3-sync-targets.md`. |
+| D90 | **Relay lanes** (user, 2026-11-05). Sensei brokers work between assistant sessions a person opened: one coordinator plus contributors on lanes. A review-first queue (`get_tasks` / bounded `wait_for_task`); Markdown reports and reviews with telemetry; decisions and messages. Task stages: assigned → working → in_review → rework → approved → done (+ blocked, interrupted, cancelled), with phases inside one task. One `relay` schema in the daemon and the dōjō (`user_id` everywhere, desktop-minted uuid v7, no FK outside `relay`). Tables: crews, lanes, leases, items, tasks, actions (Markdown `body_md` + `props`). Tickets referenced by provider+key. One Relay screen (replaces Intake; same components in the dōjō, report bodies only when shared). Docs: `docs/prd/modules/03-delivery/21-relay/lanes.md`, `lanes-data.md`; UX `coord/mockups/relay-lanes/`. |
+| D91 | **Forge trackers on the daemon path** (user, 2026-11-06; amends D49). GitLab (gitlab.com and self-managed, Free/CE up) and GitHub (github.com) are tracker adapters on the **daemon** path, with the token in the local Keychain, like Jira, ahead of the dōjō-owned path (#310). GitLab detects iterations by probing for them and falls back to milestones; GitHub milestones are sprints. A board with no milestones connects at the chosen level and shows its tickets in no sprint; no sprint is invented. GitLab auth is a PAT (`read_api`); GitHub uses the person's forge sign-in (D71). Analysis `docs/analysis/2026-11-06-forge-trackers.md` (FT1–FT6); GitLab spec `docs/spec/daemon/tracker-gitlab.md`. (amended 2026-11-09, D92: GitHub sprints come from a Project's Iteration field, and the tracker uses a GitHub token.) |
+| D92 | **GitHub tracker: Projects iterations and a token** (user, 2026-11-09; amends D71, D91, FT3, FT5, O5, O6). A GitHub board is a **Project (v2)**; its **Iteration field** gives the sprints, milestones are not read. The tracker authenticates with **a GitHub token given at connect** (fine-grained, read permissions only: Projects, Issues and Metadata read; a classic `repo` + `read:project` token also works but can write), kept in the local keychain like Jira's and GitLab's; live GitHub ticket reads (`get_ticket`, D71) use that token too. The forge sign-in lacks `read:project`; the dōjō sign-in is not changed. Spec `docs/spec/daemon/tracker-github.md`. A GitHub token is shared per project owner, not per site (user, 2026-11-09, the linkage spec's D14 narrowed through `params.credential_scope`), because a fine-grained token covers one owner. |
+
+---
+
+## 2026-11-03 — WP4 F4 needed no new decision: D10 shows viewer pools of one
+
+The WP4 review asked whether a viewer-pooled metric row over fewer than N = 2
+contributors should be withheld. No new call: **D10 already answers it** —
+"Hide aggregates over very small groups? **No.** An aggregate over one
+contributor is shown" (`docs/roadmap/09-dojo-expansion.md`, the #307 round that
+also designed the workspace viewer, D8) — and **D26 later reaffirmed D10 stands
+for metric aggregates**. The review's N = 2 recommendation was not applied; the
+lone-day pool in `database/tests/dojo/repository_metric_series.sql` pins
+"shown, carrying its rate".
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **F4 follows D10** | `workspace_metric_series` shows pools of one to viewers, labelled by `props.pooled_rows = 1`. | Re-deriving a settled choice is how the log rots; D10 was decided with the viewer design in hand. |
+| **Not the team-totals floor** | `team_metric_totals`' k ≥ 3-others floor (user, 2026-10-22) stays where it is: member-included team totals, where a reader subtracts their own number. Viewer pools are a different shape and keep D10. | The floor's rationale is the subtraction attack on totals that include the reader. |
+
+Known edge, left open: a viewer who also contributes rows could subtract their
+own from a pool of two. D10's revisit clause (comparison charts across people or
+teams) does not cover it — a future call if it matters.
+
+---
+
+## 2026-10-29 — SDLC metrics from AI sessions and tracker history, written back like usage
+
+The daemon derives ticket, sprint and project SDLC figures:
+- defects, build runs, timing, rework and holds, from the hook events of a ticket's linked
+  AI sessions;
+- commitment, scope change, carry-over and velocity, replayed from Jira changelogs;
+- predictability, and tokens and prompts per ticket.
+
+The Tickets screen shows them. The 21 S9 keys can be mapped into write-back fields beside
+the 13 usage keys (`spec/daemon/tracker-sdlc-metrics.md`, analysis D1–D11, amendments A1–A10).
+
+| Decision | Why | Alternatives |
+|---|---|---|
+| **A null always carries a reason code** (`reason_codes` domain `sdlc_metrics`, served by `GET /api/reason-codes/{domain}`) | Never fabricate: an unknown figure must not pass for zero, and the screen shows the reason in words | Zeros or "—" for unknowns (indistinguishable from real values) |
+| **Only a derivation lag holds write-back back** (A9) | A failed derivation is permanent until its inputs change, so waiting on it froze a ticket's fields for ever | Skip any ticket with an underived figure |
+| **Rate- and calibration-derived figures are never written** (S9) | `effort_cost`, `rework_cost`, `expected_minutes` and `time_variance_minutes` depend on settings, not measurement; `estimated_points` is Jira's own field (`spec/daemon/tracker-metrics-writeback.md`) | Write them all |
+| **The hourly rate is project-level only** (D3) | No per-person cost | A rate per person |
+
+---
+
+## 2026-10-28 — A slash command is a prompt
+
+The transcript parser listed `<command-name` and `<command-message` among the injected
+markers (#73 v1, 2026-06-22, no recorded reason), so a session begun with
+`/opsx:explore P057542601-784` kept no prompt: it parsed as 0 turns, and ticket linkage,
+which reads prompts, never saw the key.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **A slash command is a prompt** | A `user` record naming a command is the prompt `/name args` (`human_prompt_text`), and a turn boundary. What a command prints (`<local-command-stdout>` etc.) stays injected. | The person typed it, and its arguments are where a ticket key or a task goes. |
+| **Re-read once** | Claude and Cursor transcripts are read again once (`transcripts.slash_prompts_v1`, through `reset_watermarks_once`). | Their watermarks say "read" for files parsed under the old rule. |
+
+Effect: more transcript turns per session where commands were used. Rejected: keeping only
+commands with arguments (a bare `/compact` is still the person's turn).
+
+---
+
+## 2026-10-26 — Usage metrics are written back to the tracker (superseded 2026-10-29 (tracker-sdlc-metrics): SDLC metrics too)
+
+Each ticket's usage (sessions, active time, tokens, cost) was visible only in sensei. The user
+reversed the read-only rule for that one thing: the local daemon writes it back after every
+successful sync, on by default for every board, existing ones included
+(`spec/daemon/tracker-metrics-writeback.md`). Supersedes, for usage metrics only (superseded 2026-10-29 (tracker-sdlc-metrics)), the 2026-10-14
+"Read-only means read-only" row and roadmap/09 D3.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **One write path: metrics** | Sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The local daemon writes usage metrics, nothing else (`spec/daemon/tracker-metrics-writeback.md`; superseded 2026-10-29 (tracker-sdlc-metrics)). | The rest of the read-only rule still holds; only the figures people asked to see in Jira move. |
+| **Only the assignee's daemon writes** | A ticket is written only by the daemon whose token owner is its assignee. The assignee is compared, never stored. | Two teammates who both mention a ticket would otherwise overwrite each other with partial figures. |
+| **Mapped fields, else one comment** | A board with custom fields mapped (`sensei.tracker_fields`) gets those fields; otherwise one sensei comment per ticket, edited in place. | Users who set up a field want it there; a comment works with no Jira admin. |
+| **Every sync, on by default** (superseded 2026-11-03, D50: off by default, a workspace opts in) | Written after each successful sync; a per-board switch turns it off. | Asked for by the user; a figure that lags the sync is a wrong figure. |
+
+Rejected: a manual export action; writing from the dōjō; storing the assignee.
 
 ---
 
@@ -85,13 +239,14 @@ The T3 spec (Dōjō Project Planning) had drifted from its design source. Its se
 "gating targets" were a different set from the mockup's, one of them gated on FTR —
 which reorg §9.3 lists as **improvement-only** — and its Done gate said the
 adapters "export status back" while its own wrong-gate said read-only. Reconciled
-to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source.
+to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source. (Its read-only
+row is superseded 2026-10-26 for metrics write-back: `spec/daemon/tracker-metrics-writeback.md`.)
 
 | Decision | Locked answer | Why |
 |---|---|---|
 | **Targets gate on the code; insights never gate** | Every gated reading is code-derived. Behavioural readings — **FTR, corrections/session, AI-assisted share, gate wait time** — are insights only and can never block a merge or sprint close. The old "FTR ≥ baseline + δ" gate is **removed**. | reorg §9.1/§9.3 and the mockup both state it; an inherited codebase would otherwise fail every sprint on behaviour it did not cause. |
 | **The seven targets are the mockup's seven** | 1 hard-rule violations `=0` · 2 coverage on guarded paths `≥75/80%` · 3 new layer violations `=0` · 4 new dependency cycles `=0` · 5 modules in the zone of pain `≤2/1` (warn) · 6 changed functions over complexity 10 `≤3/2` · 7 new high-severity anti-patterns `=0` (warn). Coupling/cohesion are **not** gates — they are absolute project-level ratios (improvement-only). | Matches `PJ_TARGETS` in the mockup and reorg §9.2's buildable map (1 ✅, 2 🟡 scoped reads, 4 ⛔ #156). |
-| **Read-only means read-only** | Tracker adapters **never write back**. There is no export-back path; the Done-gate line is removed and the gaps feature's export scenarios are replaced by one read-only scenario. | The mockup is unambiguous (*"synced read-only"*); the spec contradicted its own wrong-gate. |
+| **Read-only means read-only** — *superseded 2026-10-26 (tracker-metrics-writeback) for usage metrics* | Tracker adapters **never write back**. There is no export-back path; the Done-gate line is removed and the gaps feature's export scenarios are replaced by one read-only scenario. | The mockup is unambiguous (*"synced read-only"*); the spec contradicted its own wrong-gate. |
 | **Inheritance is most-specific-wins** | Dōjō → Project → Sprint → Task type → Task; a target with no value at a scope **inherits** the nearest ancestor's. Overrides narrow, never widen. | `PJ_CHAIN` in the mockup; reorg §9.1. |
 | **Modes are `block` / `warn` / `off`** | Only `block` prevents a sprint close; `warn` surfaces; `off` disables the check. | `TargetEditor` in the mockup offers all three. |
 | **A blocking miss needs a note; unlinked sessions don't count** | A sprint missing a blocking target cannot close without a note (maintainer+). A session counts toward a task only when its branch, commit or prompt carries the ticket key; the rest are unlinked and count toward nothing. | Mockup sprint-close rule + key-linkage row. |

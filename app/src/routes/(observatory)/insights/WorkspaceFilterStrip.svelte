@@ -38,10 +38,10 @@
     data-chip="all"
     class="shrink-0 rounded-full border text-xs py-1 px-3 cursor-pointer"
     class:border-accent={selectedId === null}
-    class:text-accent={selectedId === null}
+    class:text-on-accent-soft={selectedId === null}
     class:bg-accent-soft={selectedId === null}
     class:border-paper-edge={selectedId !== null}
-    class:text-ink-soft={selectedId !== null}
+    class:text-ink-mute={selectedId !== null}
     class:bg-paper-soft={selectedId !== null}
     onclick={() => pick(null)}
   >
@@ -55,14 +55,14 @@
       data-chip={p.id}
       class="shrink-0 inline-flex items-center gap-1 rounded-full border text-xs py-1 px-3 cursor-pointer"
       class:border-accent={active}
-      class:text-accent={active}
+      class:text-on-accent-soft={active}
       class:bg-accent-soft={active}
       class:border-paper-edge={!active}
-      class:text-ink-soft={!active}
+      class:text-ink-mute={!active}
       class:bg-paper-soft={!active}
       onclick={() => pick(p.id)}
     >
-      <Kanji char={p.kanji} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs {active ? 'text-accent' : 'text-ink-mute'}" />
+      <Kanji char={p.kanji} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs {active ? 'text-on-accent-soft' : 'text-ink-soft'}" />
       <span>{p.name}</span>
     </button>
   {/each}
@@ -93,7 +93,7 @@
               class="w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-xs text-ink bg-transparent border-none cursor-pointer hover:bg-paper-mute"
               onclick={() => pick(p.id)}
             >
-              <Kanji char={p.kanji} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs text-ink-mute" />
+              <Kanji char={p.kanji} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs text-ink-soft" />
               <span class="truncate">{p.name}</span>
             </button>
           </li>

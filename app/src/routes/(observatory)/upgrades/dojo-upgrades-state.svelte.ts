@@ -12,6 +12,7 @@
 // so an unrecognised value degrades to a neutral chip rather than being dropped
 // -- mirroring the dojo-connections state module's discipline.
 
+import { failureNotice } from '@sensei/ui';
 import type { ApiResult, SenseiApi } from '$lib/api.js';
 import type { DojoUpgrade, DojoUpgradeScope } from '$lib/types.js';
 
@@ -43,10 +44,10 @@ export function stateTone(state: string): StateTone {
  *  raw wire state (honest -- a chip never claims a state the daemon didn't). */
 export function stateChip(state: string): ChipClasses {
   switch (stateTone(state)) {
-    case 'info':    return { bg: 'bg-info-soft',    text: 'text-info',     label: state };
-    case 'success': return { bg: 'bg-success-soft', text: 'text-success',  label: state };
-    case 'accent':  return { bg: 'bg-accent-soft',  text: 'text-accent',   label: state };
-    default:        return { bg: 'bg-paper-mute',   text: 'text-ink-mute', label: state };
+    case 'info':    return { bg: 'bg-info-soft',    text: 'text-on-info-soft',     label: state };
+    case 'success': return { bg: 'bg-success-soft', text: 'text-on-success-soft',  label: state };
+    case 'accent':  return { bg: 'bg-accent-soft',  text: 'text-on-accent-soft',   label: state };
+    default:        return { bg: 'bg-paper-mute',   text: 'text-ink-soft', label: state };
   }
 }
 
@@ -101,6 +102,11 @@ export class UpgradeActions {
   busyId = $state<string | null>(null);
   /** The last action error, or null. Cleared at the start of each action. */
   error = $state<string | null>(null);
+
+  /** Notice props for an action that did not land (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice("Couldn't apply that upgrade", this.error);
+  }
 
   #api: SenseiApi;
   #reload: () => Promise<void> | void;

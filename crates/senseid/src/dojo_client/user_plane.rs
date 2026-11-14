@@ -164,9 +164,10 @@ pub struct RegisterResult {
 pub struct SyncPlan {
     #[serde(default)]
     pub allowed: Vec<MappedRepo>,
-    /// Always empty in phase 1 — `all_my_repositories` hardcodes
-    /// `sync_enabled = true`. Decoded anyway (D6): the shape must not start
-    /// crashing the daemon on the day the gate arrives.
+    /// Live entitlement refusals (`not_subscribed`, `forge_visibility_unknown`,
+    /// …) from `dojo.all_my_repositories` — the repositories the daemon must
+    /// not sync, each with the reason it may show. `#[serde(default)]` so a
+    /// dōjō that predates the field still decodes.
     #[serde(default)]
     pub denied: Vec<DeniedRepo>,
 }
@@ -245,16 +246,47 @@ async fn send(req: reqwest::RequestBuilder, token: &str, what: &str) -> Result<S
     Ok(text)
 }
 
-/// `POST /v1/you/repositories` — register these repositories and learn their tenants.
+/// Repositories registered per request. The dōjō runs on Cloudflare Workers,
+/// which cap the outbound calls one request may make (50 on the free plan), and
+/// registering costs one or two per repository: 157 in one request failed in
+/// production with "Too many subrequests" (2026-11-03).
+pub const REGISTER_BATCH: usize = 15;
+
+/// `POST /v1/you/repositories` — register these repositories and learn their
+/// tenants, [`REGISTER_BATCH`] at a time; the answers are one answer.
 pub async fn register_repositories(
     dojo_url: &str,
     token: &str,
     repos: &[RepoInput<'_>],
 ) -> Result<RegisterResult, String> {
-    let req = crate::federation::http_client()
-        .post(endpoint(dojo_url, "repositories"))
-        .json(&serde_json::json!({ "repos": repos }));
-    decode("registration", &send(req, token, "registration").await?)
+    register_in_batches(repos, REGISTER_BATCH, |batch| async move {
+        let req = crate::federation::http_client()
+            .post(endpoint(dojo_url, "repositories"))
+            .json(&serde_json::json!({ "repos": batch }));
+        decode("registration", &send(req, token, "registration").await?)
+    })
+    .await
+}
+
+/// Register `repos` `size` at a time and merge the answers, in order. A batch
+/// that fails fails the whole: half an answer read as the whole would record
+/// verdicts for half the repositories as if they were final.
+async fn register_in_batches<'r, F, Fut>(
+    repos: &'r [RepoInput<'r>],
+    size: usize,
+    mut register: F,
+) -> Result<RegisterResult, String>
+where
+    F: FnMut(&'r [RepoInput<'r>]) -> Fut,
+    Fut: std::future::Future<Output = Result<RegisterResult, String>>,
+{
+    let mut all = RegisterResult { mapped: Vec::new(), unmapped: Vec::new() };
+    for batch in repos.chunks(size.max(1)) {
+        let one = register(batch).await?;
+        all.mapped.extend(one.mapped);
+        all.unmapped.extend(one.unmapped);
+    }
+    Ok(all)
 }
 
 /// The three calls the sync cycle makes, behind a trait.
@@ -342,6 +374,149 @@ pub trait UserPlane: Send + Sync {
         metric: &str,
         enabled: bool,
     ) -> Result<ActivationOutcome, String>;
+
+    /// Push one tracker board's delivery facts (`POST /v1/you/delivery`,
+    /// tracker-delivery-metrics D3/D4). `body` is the serialized request, already
+    /// size-checked.
+    async fn push_delivery(
+        &self,
+        token: &str,
+        body: &[u8],
+    ) -> Result<DeliveryOutcome, DeliveryError>;
+
+    /// `DELETE /v1/you/delivery/{board_key}?tenant_id=&source=` — withdraw what this
+    /// install reported for a board (tracker-delivery-metrics B13; #355). `Ok` when
+    /// the dōjō removed it or had nothing of it (204 or 404).
+    async fn withdraw_delivery(
+        &self,
+        token: &str,
+        board_key: &str,
+        tenant_id: uuid::Uuid,
+        source: uuid::Uuid,
+    ) -> Result<(), DeliveryError>;
+
+    /// The dōjō this plane talks to — for log lines that must name it
+    /// (sync-hardening F8: the legacy-complement warn; the cycle-complete
+    /// line). Sync, because it is configuration, not a call.
+    fn dojo_url(&self) -> &str;
+}
+
+/// What the dōjō did with a board's facts: `accepted`, or `stale` (it keeps a
+/// better copy).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct DeliveryOutcome {
+    pub facts: String,
+}
+
+/// Why a board push did not land.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliveryError {
+    /// The dōjō answered and refused (4xx): the same body would be refused again,
+    /// so it waits for a change or the backoff. A 409 is `workspace_ambiguous`.
+    Refused { status: u16, body: String },
+    /// Not reached, a 5xx, or an answer that cannot be read: tried again next tick.
+    Failed(String),
+}
+
+impl std::fmt::Display for DeliveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeliveryError::Refused { status, body } => {
+                write!(f, "dōjō returned {status} for the board push: {body}")
+            }
+            DeliveryError::Failed(e) => f.write_str(e),
+        }
+    }
+}
+
+/// Read a board push's answer: a 4xx is a refusal, any other failure or an answer
+/// that is neither `accepted` nor `stale` is a failure. Pure.
+pub fn delivery_answer(status: u16, text: &str) -> Result<DeliveryOutcome, DeliveryError> {
+    if (400..500).contains(&status) {
+        return Err(DeliveryError::Refused { status, body: text.to_string() });
+    }
+    if !(200..300).contains(&status) {
+        return Err(DeliveryError::Failed(format!(
+            "dōjō returned {status} for the board push: {text}"
+        )));
+    }
+    let out: DeliveryOutcome = decode("board push result", text).map_err(DeliveryError::Failed)?;
+    if out.facts != "accepted" && out.facts != "stale" {
+        return Err(DeliveryError::Failed(format!(
+            "dōjō answered the board push with facts = {}",
+            out.facts
+        )));
+    }
+    Ok(out)
+}
+
+/// What a withdrawal's answer means: removed (204), or the withdrawal route's own
+/// "nothing of yours" (404 `{"withdrawn": false}`), are done. Any other 404 — a dōjō
+/// without the route, a proxy — proves nothing and is tried again; any other 4xx is
+/// refused as sent; anything else is tried again.
+pub fn withdrawal_answer(status: u16, text: &str) -> Result<(), DeliveryError> {
+    let nothing_there = || {
+        serde_json::from_str::<serde_json::Value>(text)
+            .is_ok_and(|v| v.get("withdrawn") == Some(&serde_json::Value::Bool(false)))
+    };
+    match status {
+        204 => Ok(()),
+        404 if nothing_there() => Ok(()),
+        404 => Err(DeliveryError::Failed(format!(
+            "dōjō answered 404 without a withdrawal's answer: {text}"
+        ))),
+        400..=499 => Err(DeliveryError::Refused { status, body: text.to_string() }),
+        _ => {
+            Err(DeliveryError::Failed(format!("dōjō returned {status} for the withdrawal: {text}")))
+        }
+    }
+}
+
+/// `DELETE /v1/you/delivery/{board_key}?tenant_id=&source=`.
+pub async fn withdraw_delivery(
+    dojo_url: &str,
+    token: &str,
+    board_key: &str,
+    tenant_id: uuid::Uuid,
+    source: uuid::Uuid,
+) -> Result<(), DeliveryError> {
+    let r = crate::federation::http_client()
+        .delete(endpoint(dojo_url, &format!("delivery/{board_key}")))
+        .query(&[("tenant_id", tenant_id.to_string()), ("source", source.to_string())])
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| {
+            DeliveryError::Failed(format!("could not reach dōjō for the withdrawal: {e}"))
+        })?;
+    let status = r.status().as_u16();
+    let text = r.text().await.map_err(|e| {
+        DeliveryError::Failed(format!("dōjō's answer to the withdrawal could not be read: {e}"))
+    })?;
+    withdrawal_answer(status, &text)
+}
+
+/// `POST /v1/you/delivery` with a serialized, size-checked body.
+pub async fn push_delivery(
+    dojo_url: &str,
+    token: &str,
+    body: &[u8],
+) -> Result<DeliveryOutcome, DeliveryError> {
+    let r = crate::federation::http_client()
+        .post(endpoint(dojo_url, "delivery"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body.to_vec())
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| {
+            DeliveryError::Failed(format!("could not reach dōjō for the board push: {e}"))
+        })?;
+    let status = r.status().as_u16();
+    let text = r.text().await.map_err(|e| {
+        DeliveryError::Failed(format!("dōjō's answer to the board push could not be read: {e}"))
+    })?;
+    delivery_answer(status, &text)
 }
 
 /// What the dōjō says the ruling now is, re-read rather than echoed.
@@ -399,6 +574,9 @@ impl UserPlane for HttpUserPlane {
     ) -> Result<ActivationOutcome, String> {
         set_metric_activation(&self.dojo_url, token, repo_key, metric, enabled).await
     }
+    fn dojo_url(&self) -> &str {
+        &self.dojo_url
+    }
     async fn provision(
         &self,
         token: &str,
@@ -412,6 +590,24 @@ impl UserPlane for HttpUserPlane {
         metrics: &[MetricPush<'_>],
     ) -> Result<IngestResult, String> {
         push_metrics(&self.dojo_url, token, metrics).await
+    }
+
+    async fn push_delivery(
+        &self,
+        token: &str,
+        body: &[u8],
+    ) -> Result<DeliveryOutcome, DeliveryError> {
+        push_delivery(&self.dojo_url, token, body).await
+    }
+
+    async fn withdraw_delivery(
+        &self,
+        token: &str,
+        board_key: &str,
+        tenant_id: uuid::Uuid,
+        source: uuid::Uuid,
+    ) -> Result<(), DeliveryError> {
+        withdraw_delivery(&self.dojo_url, token, board_key, tenant_id, source).await
     }
     async fn graph_hashes(
         &self,
@@ -463,6 +659,21 @@ pub struct RejectedMetric {
     pub reason: String,
 }
 
+/// One pushed row the dōjō confirms it stored (sync-hardening H2): the row's
+/// identity as pushed, echoed back. Field for field with [`MetricPush`] minus
+/// the payload — the daemon marks a row shared only on a full-key match.
+/// `computed_on` stays a string (YYYY-MM-DD, as pushed) so a skewed echo
+/// fails matching, never decoding.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct StoredMetricKey {
+    pub repo_key: String,
+    pub metric: String,
+    pub scope: String,
+    pub computed_on: String,
+    pub grain: String,
+    pub commit_sha: Option<String>,
+}
+
 /// What the dōjō did with a batch.
 ///
 /// Partial acceptance is the designed outcome — one bad row must not block a
@@ -475,6 +686,12 @@ pub struct IngestResult {
     pub accepted: u32,
     #[serde(default)]
     pub rejected: Vec<RejectedMetric>,
+    /// Per-row stored confirmation (H2). `None` — field absent — is a dōjō that
+    /// predates confirmation: the daemon falls back to the complement of
+    /// `rejected`. `Some` (even empty) is a dōjō that confirms: only listed
+    /// rows are marked. Phase A declares it; phase B reads it.
+    #[serde(default)]
+    pub stored: Option<Vec<StoredMetricKey>>,
 }
 
 /// `POST /v1/you/metrics` — push metric rows.
@@ -661,6 +878,93 @@ pub async fn provision(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_board_push_answer_is_a_refusal_a_failure_or_an_outcome() {
+        assert_eq!(
+            delivery_answer(200, r#"{"facts":"accepted"}"#),
+            Ok(DeliveryOutcome { facts: "accepted".into() })
+        );
+        assert_eq!(
+            delivery_answer(200, r#"{"facts":"stale"}"#),
+            Ok(DeliveryOutcome { facts: "stale".into() })
+        );
+        assert_eq!(
+            delivery_answer(409, r#"{"error":"workspace_ambiguous"}"#),
+            Err(DeliveryError::Refused {
+                status: 409,
+                body: r#"{"error":"workspace_ambiguous"}"#.into()
+            })
+        );
+        assert!(matches!(
+            delivery_answer(403, "no"),
+            Err(DeliveryError::Refused { status: 403, .. })
+        ));
+        assert!(
+            matches!(delivery_answer(500, "boom"), Err(DeliveryError::Failed(_))),
+            "a 5xx is tried again"
+        );
+        assert!(matches!(
+            delivery_answer(200, r#"{"facts":"maybe"}"#),
+            Err(DeliveryError::Failed(_))
+        ));
+        assert!(matches!(delivery_answer(200, "not json"), Err(DeliveryError::Failed(_))));
+    }
+
+    fn input(key: &str) -> RepoInput<'_> {
+        RepoInput { repo_key: key, remote_url: None, name: key, workspace: None }
+    }
+
+    /// The dōjō runs on Cloudflare Workers, which cap the outbound calls one
+    /// request may make; registration costs one or two per repository, so 157
+    /// at once failed in production with "Too many subrequests" (2026-11-03) —
+    /// while the local dev dōjō, on Node, has no cap. The offer goes in batches.
+    #[tokio::test]
+    async fn registration_goes_in_batches_and_answers_as_one() {
+        let keys: Vec<String> = (0..37).map(|i| format!("github.com/o/r{i}")).collect();
+        let repos: Vec<RepoInput> = keys.iter().map(|k| input(k)).collect();
+        let mut sizes = Vec::new();
+        let out = register_in_batches(&repos, 15, |batch| {
+            sizes.push(batch.len());
+            let mapped = batch.iter().filter(|r| r.repo_key.ends_with('0')).map(|r| r.repo_key.to_string());
+            let unmapped = batch.iter().filter(|r| !r.repo_key.ends_with('0')).map(|r| r.repo_key.to_string());
+            let result = RegisterResult {
+                mapped: mapped.map(|k| serde_json::from_value(serde_json::json!({ "repo_key": k, "tenant": "organization/o", "tenant_id": "00000000-0000-0000-0000-000000000001", "repo_id": "00000000-0000-0000-0000-000000000002" })).unwrap()).collect(),
+                unmapped: unmapped.map(|k| UnmappedRepo { repo_key: k, reason: "no_connection".into() }).collect(),
+            };
+            async move { Ok(result) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(sizes, vec![15, 15, 7]);
+        assert_eq!(out.mapped.len() + out.unmapped.len(), 37, "every repository answered once");
+        assert_eq!(
+            out.mapped.iter().map(|m| m.repo_key.as_str()).collect::<Vec<_>>(),
+            ["github.com/o/r0", "github.com/o/r10", "github.com/o/r20", "github.com/o/r30"]
+        );
+    }
+
+    /// A batch that fails fails the registration: half an answer read as the
+    /// whole would record verdicts for half the repositories as if final.
+    #[tokio::test]
+    async fn a_failed_batch_fails_the_registration() {
+        let keys: Vec<String> = (0..20).map(|i| format!("github.com/o/r{i}")).collect();
+        let repos: Vec<RepoInput> = keys.iter().map(|k| input(k)).collect();
+        let mut calls = 0;
+        let out = register_in_batches(&repos, 15, |_| {
+            calls += 1;
+            let n = calls;
+            async move {
+                if n == 2 {
+                    Err("dōjō returned 500 for the registration".to_string())
+                } else {
+                    Ok(RegisterResult { mapped: vec![], unmapped: vec![] })
+                }
+            }
+        })
+        .await;
+        assert_eq!(out.unwrap_err(), "dōjō returned 500 for the registration");
+    }
 
     #[test]
     fn an_ingest_result_decodes_and_names_what_was_refused() {
@@ -1111,5 +1415,26 @@ mod repo_input_workspace_tests {
         )
         .unwrap();
         assert_eq!(r.mapped[0].workspace_error.as_deref(), Some("not a member"));
+    }
+
+    #[test]
+    fn a_withdrawal_is_done_when_removed_or_already_gone() {
+        assert_eq!(withdrawal_answer(204, ""), Ok(()));
+        assert_eq!(withdrawal_answer(404, r#"{"withdrawn": false}"#), Ok(()));
+        // A 404 that is not the route's own answer proves nothing.
+        assert!(matches!(withdrawal_answer(404, "Not Found"), Err(DeliveryError::Failed(_))));
+        assert!(matches!(
+            withdrawal_answer(404, r#"{"error": "x"}"#),
+            Err(DeliveryError::Failed(_))
+        ));
+        assert!(matches!(
+            withdrawal_answer(400, "bad"),
+            Err(DeliveryError::Refused { status: 400, .. })
+        ));
+        assert!(
+            matches!(withdrawal_answer(200, "{}"), Err(DeliveryError::Failed(_))),
+            "only 204 says removed"
+        );
+        assert!(matches!(withdrawal_answer(503, ""), Err(DeliveryError::Failed(_))));
     }
 }

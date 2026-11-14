@@ -197,6 +197,8 @@ fn parse_journal_transcript(content: &str) -> Vec<TranscriptTurn> {
         }
         turns.push(TranscriptTurn {
             turn_index: req.index as i32 + 1,
+            origin: "human".to_string(),
+            prompt_id: None,
             user_text: (!req.user_text.is_empty()).then_some(req.user_text),
             assistant_text,
             started_at: req.timestamp_ms.and_then(chrono::DateTime::from_timestamp_millis),
@@ -242,6 +244,8 @@ fn parse_transcript_content(content: &str) -> Vec<TranscriptTurn> {
                     }
                     cur = Some(TranscriptTurn {
                         turn_index: turns.len() as i32 + 1,
+                        origin: "human".to_string(),
+                        prompt_id: None,
                         user_text: Some(text.to_string()),
                         assistant_text: String::new(),
                         started_at: parse_timestamp(&v),
@@ -314,6 +318,8 @@ fn parse_otel_content(content: &str) -> Vec<TranscriptTurn> {
             }
             cur = Some(TranscriptTurn {
                 turn_index: turns.len() as i32 + 1,
+                origin: "human".to_string(),
+                prompt_id: None,
                 user_text: Some(content_text.to_string()),
                 assistant_text: String::new(),
                 started_at: None,

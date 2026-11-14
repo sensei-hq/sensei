@@ -1,9 +1,10 @@
 /**
- * Inspect the REAL Schema diagram (#221) for this repository's workspace. Done
- * gate 1: `ErDiagram` and `DependencyDiagram` MOUNT against the live payload
- * (169 tables, 184 keys, 784 deps) without a runtime throw — the e2e DB has no
- * schema to draw, so only this harness can show it. Captures
- * /tmp/sensei-shots/schema-*.png. Run: `bun run test:inspect`.
+ * Inspect the REAL Database · ER (#221) for this repository's workspace — dbd's
+ * viewer from @rokkit/graph/schema (user, 2026-11-02): the design's Overview,
+ * Diagram and Entities, an entity's page on selection, the sidebar on the right,
+ * against the live payload (tables, keys, objects, enums). The e2e DB has no schema
+ * to draw, so only this harness can show it. Captures /tmp/sensei-shots/schema-*.png.
+ * Run: `bun run test:inspect`.
  */
 import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, navigateToScreen, installErrorTrap, readErrors, DAEMON_URL, shot } from '../helpers';
@@ -34,30 +35,17 @@ async function snap(tauriPage: TauriPageLike, name: string): Promise<void> {
   }
 }
 
-/** Cards and lines the canvas actually drew. */
-async function drawn(tauriPage: TauriPageLike): Promise<{ nodes: number; edges: number }> {
-  return (await tauriPage.evaluate(`({
-    nodes: document.querySelectorAll('[data-testid="schema-diagram"] [data-graph-node]').length,
-    edges: document.querySelectorAll('[data-testid="schema-diagram"] [data-graph-edge]').length,
-  })`)) as { nodes: number; edges: number };
+/** Open the sidebar entry named `name` (a rokkit Tree row) and let its page render. */
+async function open(tauriPage: TauriPageLike, name: string): Promise<void> {
+  await tauriPage.evaluate(`(() => {
+    const row = [...document.querySelectorAll('[data-testid="schema-sidebar"] [data-tree-item-content]')]
+      .find((n) => n.textContent.trim() === ${JSON.stringify(name)});
+    row?.click();
+  })()`);
+  await settle(1500);
 }
 
-/** Click the toolbar button whose label starts with `label`. The tauri bridge's
- *  locator engine has no `:has-text`, so the button is found in the page. */
-async function pick(tauriPage: TauriPageLike, toolbar: string, label: string): Promise<void> {
-  const clicked = await tauriPage.evaluate(`
-    (() => {
-      const bar = document.querySelector('[data-toolbar][aria-label="${toolbar}"]');
-      const btn = [...(bar?.querySelectorAll('button') ?? [])]
-        .find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)}));
-      btn?.click();
-      return !!btn;
-    })()
-  `);
-  expect(clicked, `${toolbar} → ${label}`).toBe(true);
-}
-
-test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
+test('schema — sensei, dbd’s viewer over live data', async ({ tauriPage }) => {
   test.setTimeout(240_000);
   mkdirSync(DIR, { recursive: true });
   const id = await idForName('sensei');
@@ -69,65 +57,66 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   await installErrorTrap(tauriPage);
 
   await navigateToScreen(tauriPage, `/workspace/${id}/diagrams/schema`, '[data-testid="schema-screen"]');
-  await tauriPage.waitForSelector('[data-testid="schema-diagram"], [data-testid="schema-error"], [data-testid="schema-none"]', 60_000);
+  await tauriPage.waitForSelector('[data-testid="schema-layout"], [data-testid="schema-error"], [data-testid="schema-none"]', 60_000);
   await settle();
-  const coverage = await text(tauriPage, '[data-testid="schema-coverage"]');
-  console.log(`[inspect] schema coverage (all): ${coverage}`);
-  expect(coverage).toContain('169 tables');
-  expect(coverage).toContain('184 keys');
-  const all = await drawn(tauriPage);
-  console.log(`[inspect] drawn (all): ${JSON.stringify(all)}`);
-  expect(all.nodes, 'one card per table').toBe(169);
-  expect(all.edges).toBeGreaterThan(0);
-  await snap(tauriPage, 'schema-er-all');
+  const payload = (await (await fetch(`${DAEMON_URL}/api/workspaces/${id}/diagrams/schema`)).json()) as {
+    version: number;
+    tables: { schema: string; name: string }[];
+    entities: { schema: string; name: string }[];
+    enums?: { schema: string; name: string; values: string[] }[];
+  };
+  const n = (v: number) => v.toLocaleString('en-US');
 
-  // Done gate 3: selecting a table on the canvas shows its columns, in order.
-  const hit = await tauriPage.evaluate(`
-    (() => {
-      const card = [...document.querySelectorAll('[data-testid="schema-diagram"] [data-graph-node]')]
-        .find((n) => n.querySelector('[data-graph-node-title]')?.textContent?.trim() === 'schema_refs');
-      card?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      return !!card;
-    })()
-  `);
-  expect(hit, 'the schema_refs card is on the canvas').toBe(true);
-  await settle(1500);
-  const entity = await text(tauriPage, '[data-testid="schema-entity"]');
-  console.log(`[inspect] entity panel: ${entity?.slice(0, 200)}`);
-  expect(entity).toContain('from_node_id');
-  expect(entity?.indexOf('from_column')).toBeGreaterThan(entity?.indexOf('from_node_id') ?? -1);
-  await snap(tauriPage, 'schema-er-selected');
-
-  // One schema: only its tables, and the keys leading out of it counted.
-  await pick(tauriPage, 'Schema', 'dojo');
+  // The counts are the header's stat cards (user, 2026-11-03) — not the Overview's —
+  // and the sidebar has no design-name row: the page is already the workspace's.
+  const card = (label: string) => text(tauriPage, `[data-testid="diagram-stat-${label}"] [data-stat-card-value]`);
+  await tauriPage.evaluate(`(() => {
+    const t = document.querySelector('[data-testid="diagram-stats-toggle"]');
+    if (t?.getAttribute('aria-pressed') === 'false') t.click();
+  })()`);
   await settle();
-  const filtered = await text(tauriPage, '[data-testid="schema-coverage"]');
-  console.log(`[inspect] schema coverage (dojo): ${filtered}`);
-  // Done gate 2, against counts derived independently from the live payload
-  // (2026-10-12): dojo has 39 tables, 63 keys inside it and 4 with one end out.
-  expect(filtered).toContain('39 tables · 63 keys');
-  expect(filtered).toContain('4 keys lead out of the shown schema, not drawn');
-  const dojo = await drawn(tauriPage);
-  console.log(`[inspect] drawn (dojo): ${JSON.stringify(dojo)}`);
-  expect(dojo.nodes, 'only the chosen schema').toBe(39);
-  await snap(tauriPage, 'schema-er-dojo');
+  const cards = await text(tauriPage, '[data-testid="diagram-stats"]');
+  console.log(`[inspect] schema stats: ${cards?.replace(/\s+/g, ' ').slice(0, 300)}`);
+  expect(await card('Tables')).toBe(n(payload.tables.length));
+  if (payload.enums?.length) expect(await card('Enums')).toBe(n(payload.enums.length));
+  expect(await tauriPage.evaluate(`!!document.querySelector('[data-graph-section="counts"]')`)).toBe(false);
+  expect(await tauriPage.evaluate(`!!document.querySelector('[data-graph-design-header]')`), 'only the tabs head the design').toBe(false);
+  expect(await tauriPage.evaluate(`!!document.querySelector('[data-testid="schema-sidebar"] [data-graph-design-home]')`)).toBe(false);
+  const sideIsRight = (await tauriPage.evaluate(
+    `document.querySelector('[data-testid="schema-layout"]')?.lastElementChild?.getAttribute('data-testid') === 'schema-sidebar'`,
+  )) as boolean;
+  expect(sideIsRight, 'the sidebar sits on the right').toBe(true);
+  await snap(tauriPage, 'schema-overview');
 
-  await pick(tauriPage, 'Show', 'Dependencies');
-  await settle();
-  const deps = await text(tauriPage, '[data-testid="schema-coverage"]');
-  console.log(`[inspect] schema coverage (deps, dojo): ${deps}`);
-  expect(deps).toContain('51 objects · 159 dependencies');
-  expect(deps).toContain('18 dependencies cross out of the shown schema, not drawn');
-  expect(deps).toContain('80 dependencies on a built-in or undescribed object, drawn dimmed');
-  await snap(tauriPage, 'schema-deps-dojo');
+  // The Diagram tab draws every table.
+  await tauriPage.evaluate(`(() => {
+    const tab = [...document.querySelectorAll('[data-testid="schema-tabs"] [role="tab"], [data-testid="schema-tabs"] button')]
+      .find((t) => t.textContent.trim() === 'Diagram');
+    tab?.click();
+  })()`);
+  await settle(4000);
+  const nodes = (await tauriPage.evaluate(
+    `document.querySelectorAll('[data-testid="schema-diagram"] [data-graph-node]').length`,
+  )) as number;
+  console.log(`[inspect] schema diagram: ${nodes} nodes for ${payload.tables.length} tables`);
+  expect(nodes).toBeGreaterThanOrEqual(payload.tables.length);
+  await snap(tauriPage, 'schema-diagram');
 
-  await pick(tauriPage, 'Schema', 'All');
-  await settle();
-  const allDeps = await text(tauriPage, '[data-testid="schema-coverage"]');
-  console.log(`[inspect] schema coverage (deps, all): ${allDeps}`);
-  expect(allDeps).toContain('262 objects · 784 dependencies');
-  expect(allDeps).toContain('360 dependencies on a built-in or undescribed object, drawn dimmed');
-  await snap(tauriPage, 'schema-deps-all');
+  // A table's page, and an enum's with its values.
+  const aTable = payload.tables[0];
+  await open(tauriPage, aTable.name);
+  expect(await tauriPage.evaluate(`document.querySelector('[data-testid="schema-page"]')?.getAttribute('data-page')`)).toBe('table');
+  await snap(tauriPage, 'schema-table');
+  const anEnum = payload.enums?.[0];
+  if (anEnum) {
+    await open(tauriPage, anEnum.name);
+    expect(await tauriPage.evaluate(`document.querySelector('[data-testid="schema-page"]')?.getAttribute('data-page')`)).toBe('enum');
+    const page = await text(tauriPage, '[data-testid="schema-page"]');
+    expect(page).toContain(anEnum.values[0]);
+    await snap(tauriPage, 'schema-enum');
+  } else {
+    console.log('[inspect] no enums in the payload — the daemon predates v3 enums, or the design has none');
+  }
 
   const errs = await readErrors(tauriPage);
   console.log(`[inspect] runtime errors: ${JSON.stringify(errs)}`);

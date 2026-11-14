@@ -1,0 +1,5 @@
+-- A test file with a whole-line COMMIT WORK. --apply must refuse it (exit 2
+-- with a named message), like every commit form (L-c). Run with noop.ddl,
+-- which persists nothing even unguarded.
+select 1;
+COMMIT WORK;

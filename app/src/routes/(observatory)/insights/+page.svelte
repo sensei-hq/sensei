@@ -1,13 +1,14 @@
 <script lang="ts">
+  import { Notice, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
-  import { PageHeader, Screen, ScreenState } from '$lib/components';
+  import { PageHeader, Screen } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
-  import { InsightsBoardState, type RecCardVm } from './insights-board.svelte.js';
+  import { InsightsBoardState, columnToneClass, type RecCardVm } from './insights-board.svelte.js';
   import WorkspaceFilterStrip from './WorkspaceFilterStrip.svelte';
   import RecCard from './RecCard.svelte';
   import ViolationCard from './ViolationCard.svelte';
@@ -41,10 +42,7 @@
 {#snippet stat(n: number, label: string, tone: 'now' | 'soon' | 'settled')}
   <div class="text-center">
     <div
-      class="font-mono text-lg font-light leading-none"
-      class:text-accent={tone === 'now'}
-      class:text-warning={tone === 'soon'}
-      class:text-success={tone === 'settled'}
+      class="font-mono text-lg font-light leading-none {columnToneClass(tone)}"
     >{n}</div>
     <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">{label}</div>
   </div>
@@ -72,17 +70,14 @@
         char={kanji}
         size="xl"
         tone="inherit"
-        class={tone === 'now' ? 'text-accent' : tone === 'soon' ? 'text-warning' : tone === 'settled' ? 'text-success' : ''}
+        class={columnToneClass(tone)}
       />
       <div class="flex-1 min-w-0">
         <div class="text-sm text-ink font-medium">{title}</div>
-        <div class="text-xs text-ink-soft mt-0.5">{sub}</div>
+        <div class="text-xs text-ink-mute mt-0.5">{sub}</div>
       </div>
       <span
-        class="font-mono text-xs"
-        class:text-accent={tone === 'now'}
-        class:text-warning={tone === 'soon'}
-        class:text-success={tone === 'settled'}
+        class="font-mono text-xs {columnToneClass(tone)}"
       >{count}</span>
     </div>
     <!-- Keyboard-focusable so a keyboard user can scroll the column (a11y:
@@ -181,20 +176,18 @@
     </div>
 
     {#if board.actionError}
-      <div
-        role="alert"
-        class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
-      >
-        <Kanji char="警" size="inherit" tone="inherit" class="text-xs text-danger" />
-        <span class="text-xs text-danger">{board.actionError}</span>
-      </div>
+      {#if board.actionNotice}
+        <div class="py-2 px-6 border-b border-paper-edge shrink-0">
+          <Notice size="inline" expanded {...board.actionNotice} data-insights-action-error />
+        </div>
+      {/if}
     {/if}
   {/snippet}
   {#if board.loadError}
     <!-- The board could not be read (#288) — not three quiet columns. Retry
          re-reads the current scope through the state, which owns the board. -->
     <div class="p-8">
-      <ScreenState status="error" error={board.loadError} onretry={() => void board.retry(api)} />
+      <StateView status="error" error={board.loadError} onretry={() => void board.retry(api)} />
     </div>
   {:else}
   <div class="grid grid-cols-3 flex-1 min-h-0" data-triage-grid>

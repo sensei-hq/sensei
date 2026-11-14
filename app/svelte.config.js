@@ -10,10 +10,23 @@ const config = {
       '$lib': './src/lib',
       // Shared with the dōjō (#133); vite.config.ts lets the dev server read it.
       '@sensei/glyphs': '../packages/glyphs/index.js',
+      '@sensei/sdlc-figures': '../packages/sdlc-figures/index.js',
       // Svelte components shared with the dōjō (#293).
       '@sensei/ui': '../packages/ui/index.js',
       // The Code map (M17), shared with the dōjō.
       '@sensei/codemap': '../packages/codemap/index.ts',
+    },
+    typescript: {
+      // The shared packages import rokkit, which each host installs; their own
+      // folder has no node_modules. vite.config.ts dedupes it for the build; this
+      // tells the type checker where it is — the exact names only, so a subpath
+      // (`@rokkit/graph/schema`) still resolves through the package's exports.
+      // Relative to .svelte-kit/, where the generated tsconfig is written.
+      config: (tsconfig) => {
+        const paths = (tsconfig.compilerOptions.paths ??= {});
+        for (const name of ['@rokkit/ui', '@rokkit/graph', '@rokkit/states', '@rokkit/app']) paths[name] = [`../node_modules/${name}`];
+        return tsconfig;
+      },
     },
   },
   vitePlugin: {

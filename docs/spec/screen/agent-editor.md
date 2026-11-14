@@ -2,7 +2,7 @@
 
 **Segment:** 02 · Preferences / Extensions
 **Route:** `/settings/extensions/agents/[id]`  (drill-down from the Extensions browser at `/settings/extensions`, kind filter `者 Agents`)
-**Source mockup:** [`lib/observatory/agent-persona-editors.jsx`](../../mockups/Sensei/lib/observatory/agent-persona-editors.jsx) → `AgentEditor`
+**Source mockup:** `lib/observatory/agent-persona-editors.jsx` → `AgentEditor`
 **Data:** reads/writes a subagent definition file — built-in agents at `marketplace/plugins/sensei/agents/*.md`, custom ones at `.sensei/agents/<name>.md` (YAML frontmatter + body). Replay fixtures read historical sessions from `sensei.sessions` / `sensei.hook_events`.
 **App file:** _greenfield_
 **Daemon files:** _greenfield_ — no HTTP handler for agent definitions exists; only the CLI references `.sensei/agents/` (`crates/cli/src/main.rs`).

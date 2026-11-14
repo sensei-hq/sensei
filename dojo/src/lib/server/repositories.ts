@@ -90,7 +90,7 @@ export interface PlannedRepo extends MappedRepo {
 	 * Default first, then by name. Empty → the graph does not sync, never a
 	 * guessed `main`.
 	 */
-	graph_branches: { branch: string; is_default: boolean }[];
+	graph_branches: GraphBranch[];
 }
 
 /** Why a repository could not be attached to a tenant. Each is a different
@@ -235,6 +235,11 @@ const PAGE = 1000;
  * from "there is more", so it costs one extra empty request rather than risking
  * a lost tail — the off-by-one that would otherwise drop exactly the rows of a
  * user whose count is a multiple of the page size.
+ *
+ * Every caller MUST order deterministically (a total order, unique per row):
+ * each page re-runs the read with a fresh OFFSET, and without an ORDER BY
+ * Postgres keeps no row order between runs — past 1,000 rows a row can land on
+ * two pages or on none, with no error (WP4 F1).
  */
 export async function readAllPages<T>(
 	page: (
@@ -254,6 +259,13 @@ export async function readAllPages<T>(
 	}
 }
 
+/** One tracked branch of a repository's shared code graph, as a screen needs
+ *  it. The same shape the plan carries in `PlannedRepo.graph_branches`. */
+export interface GraphBranch {
+	branch: string;
+	is_default: boolean;
+}
+
 /** One row of `dojo.all_my_repositories`, as a screen needs it. */
 export interface MyRepository {
 	repository_id: string;
@@ -261,24 +273,74 @@ export interface MyRepository {
 	name: string | null;
 	tenant: string;
 	owning_org: string | null;
+	/** The tenant's origin, as the view owns it — the billing predicate reads
+	 *  this, never a parse of `tenant`. */
+	origin: 'personal' | 'organization';
 	forge_visibility: 'public' | 'private' | null;
 	authority: 'user' | 'organization' | null;
 	may_share: boolean;
 	elected: boolean;
 	sync_enabled: boolean;
 	configurable_by_me: boolean;
+	/** The entitlement axis's own refusal (`unclaimed`, `not_subscribed`,
+	 *  `subscription_expired`, a capture refusal), or null when entitled. The
+	 *  billing hide/count predicate (WP8 F5) reads THIS, not `reason_code`:
+	 *  the final reason may be an election refusal on an entitled row. */
+	entitlement_refusal: string | null;
 	reason_code: string | null;
 	reason: string | null;
 	remedy: string | null;
 	reason_actor: string | null;
 	last_synced_at: string | null;
 	metric_rows: number | null;
+	/** The branches whose code graph this repository shares. Empty → the graph
+	 *  does not sync, never a guessed `main`. */
+	graph_branches: GraphBranch[];
+	/** Billing hides this row AND counts it on the member line (WP8 F5).
+	 *  Computed here, at the one load, by `isBillingHiddenRepo` — no screen
+	 *  re-derives the set, so the list and the count cannot disagree. */
+	billing_hidden: boolean;
 }
 
 /** The columns a screen needs. Named rather than `*` so a view rename fails here
  *  instead of rendering `undefined` as a missing permission. */
 const MY_REPO_COLUMNS =
-	'repository_id, repo_key, name, tenant, owning_org, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
+	'repository_id, repo_key, name, tenant, owning_org, origin, forge_visibility, authority, may_share, elected, sync_enabled, configurable_by_me, entitlement_refusal, reason_code, reason, remedy, reason_actor, last_synced_at, metric_rows';
+
+/**
+ * Whether Billing hides this row — and counts it on the member line instead.
+ *
+ * ONE predicate for both (WP8 F5): the list and the count cannot disagree
+ * because neither re-derives the set. Hidden is an org-private repository
+ * whose ENTITLEMENT refuses for a billing reason — `unclaimed`,
+ * `not_subscribed`, `subscription_expired` (D88: no grace). A capture refusal
+ * is not a billing state, so it never hides; neither does an election
+ * refusal on an entitled row, which is why this reads `entitlement_refusal`
+ * and not `reason_code`.
+ *
+ * Hidden rows still reach the load (`listMyRepositories` filters nothing):
+ * hidden is presentation, and the count is impossible if the read drops them.
+ */
+/** The entitlement refusals that hide an org-private repository from Billing's
+ *  list and count it on the member line instead (D88: no grace — a lapsed
+ *  period hides the day it lapses). Capture refusals are not billing states
+ *  and never hide. */
+const BILLING_HIDDEN_REFUSALS: ReadonlySet<string> = new Set([
+	'unclaimed',
+	'not_subscribed',
+	'subscription_expired'
+]);
+
+export function isBillingHiddenRepo(
+	row: Pick<MyRepository, 'origin' | 'forge_visibility' | 'entitlement_refusal'>
+): boolean {
+	return (
+		row.origin === 'organization' &&
+		row.forge_visibility === 'private' &&
+		row.entitlement_refusal !== null &&
+		BILLING_HIDDEN_REFUSALS.has(row.entitlement_refusal)
+	);
+}
 
 /**
  * Every repository the caller can see, with the verdict AND what to do about it.
@@ -295,12 +357,83 @@ const MY_REPO_COLUMNS =
  * FAILS CLOSED. A read error throws rather than returning `[]`, because an empty
  * list reads as "you have no repositories" — a different and load-bearing claim.
  */
+/**
+ * Every repository's tracked graph branches, keyed by repository id.
+ *
+ * Through a function gated by the caller's sync verdict, not the table: the
+ * table's read policy is the team read, and a syncing member on no team would
+ * be told of no branch. Default first, then by name.
+ *
+ * One reader for both consumers — the plan AND the screen — so what a user is
+ * shown and what the daemon pushes cannot disagree.
+ */
+async function graphBranchesByRepo(db: DojoClient): Promise<Map<string, GraphBranch[]>> {
+	const branchRows = await readAllPages<{ repository_id: string; branch: string; is_default: boolean }>(
+		(from, to) =>
+			db.rpc('my_graph_branches').select('repository_id, branch, is_default').order('repository_id').order('branch').range(from, to)
+	);
+	const branchesOf = new Map<string, GraphBranch[]>();
+	for (const b of branchRows ?? []) {
+		branchesOf.set(b.repository_id, [
+			...(branchesOf.get(b.repository_id) ?? []),
+			{ branch: b.branch, is_default: b.is_default }
+		]);
+	}
+	for (const list of branchesOf.values()) {
+		list.sort((x, y) => Number(y.is_default) - Number(x.is_default) || x.branch.localeCompare(y.branch));
+	}
+	return branchesOf;
+}
+
 export async function listMyRepositories(db: DojoClient): Promise<MyRepository[]> {
 	// dojo.my_repositories() pins the CALLER's principal in the database (#236):
 	// no consumer-side filter to forget.
-	return readAllPages<MyRepository>((from, to) =>
-		db.rpc('my_repositories').select(MY_REPO_COLUMNS).range(from, to)
-	);
+	const [repos, branchesOf] = await Promise.all([
+		readAllPages<MyRepository>((from, to) =>
+			db.rpc('my_repositories').select(MY_REPO_COLUMNS).order('repository_id').range(from, to)
+		),
+		graphBranchesByRepo(db)
+	]);
+	return repos.map((r) => ({
+		...r,
+		graph_branches: branchesOf.get(r.repository_id) ?? [],
+		billing_hidden: isBillingHiddenRepo(r)
+	}));
+}
+
+/** What `dojo.set_graph_branch` reports — the branch's tracking after the write. */
+export interface GraphBranchOutcome {
+	repo_key: string;
+	branch: string;
+	tracked: boolean;
+	is_default: boolean;
+}
+
+/**
+ * Track (or untrack) a branch of a repository's shared code graph, as the
+ * signed-in person.
+ *
+ * Decides nothing here: `dojo.set_graph_branch` reads the caller's own verdict
+ * row for permission, as elections do, and untracking deletes that branch's
+ * graph — which is why the screen confirms first.
+ */
+export async function setGraphBranch(
+	db: DojoClient,
+	repoKey: string,
+	branch: string,
+	tracked: boolean,
+	label: string | null
+): Promise<GraphBranchOutcome> {
+	const { data, error } = await db
+		.rpc('set_graph_branch', {
+			p_repo_key: repoKey,
+			p_branch: branch,
+			p_tracked: tracked,
+			p_label: label
+		})
+		.single();
+	if (error) throw new AdminError(refusalStatus(error), error.message);
+	return data as GraphBranchOutcome;
 }
 
 /**
@@ -399,6 +532,7 @@ export async function syncPlan(db: DojoClient): Promise<SyncPlan> {
 		db
 			.rpc('my_repositories')
 			.select('repository_id, repo_key, tenant, tenant_id, sync_enabled, denied_reason')
+			.order('repository_id')
 			.range(from, to)
 	);
 
@@ -409,22 +543,7 @@ export async function syncPlan(db: DojoClient): Promise<SyncPlan> {
 		...new Set(rowsIn.filter((r) => r.sync_enabled).map((r) => r.tenant_id))
 	]);
 
-	// Through a function gated by the caller's sync verdict, not the table: its
-	// read policy is the team read, and a syncing member on no team would be
-	// told of no branch.
-	const branchRows = await readAllPages<{ repository_id: string; branch: string; is_default: boolean }>(
-		(from, to) => db.rpc('my_graph_branches').select('repository_id, branch, is_default').range(from, to)
-	);
-	const branchesOf = new Map<string, { branch: string; is_default: boolean }[]>();
-	for (const b of branchRows ?? []) {
-		branchesOf.set(b.repository_id, [
-			...(branchesOf.get(b.repository_id) ?? []),
-			{ branch: b.branch, is_default: b.is_default }
-		]);
-	}
-	for (const list of branchesOf.values()) {
-		list.sort((x, y) => Number(y.is_default) - Number(x.is_default) || x.branch.localeCompare(y.branch));
-	}
+	const branchesOf = await graphBranchesByRepo(db);
 
 	const allowed: PlannedRepo[] = [];
 	const denied: { repo_key: string; tenant: string; reason: string }[] = [];

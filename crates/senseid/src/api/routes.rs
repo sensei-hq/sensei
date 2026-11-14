@@ -32,6 +32,7 @@ use crate::api::handlers::planner;
 use crate::api::handlers::playbook;
 use crate::api::handlers::preferences;
 use crate::api::handlers::query;
+use crate::api::handlers::relay;
 use crate::api::handlers::review;
 use crate::api::handlers::runs;
 use crate::api::handlers::scan_events;
@@ -51,8 +52,15 @@ fn tracker_routes() -> Router<AppState> {
             "/api/workspaces/{id}/trackers",
             get(trackers::list_trackers).post(trackers::connect_tracker),
         )
-        .route("/api/workspaces/{id}/trackers/{tracker}", delete(trackers::disconnect_tracker))
+        .route(
+            "/api/workspaces/{id}/trackers/{tracker}",
+            delete(trackers::disconnect_tracker).patch(trackers::patch_tracker),
+        )
         .route("/api/workspaces/{id}/trackers/{tracker}/sync", post(trackers::sync_tracker))
+        .route(
+            "/api/workspaces/{id}/trackers/{tracker}/fields",
+            get(trackers::get_tracker_fields).put(trackers::put_tracker_fields),
+        )
         .route("/api/workspaces/{id}/trackers/{tracker}/sprints", get(trackers::list_sprints))
         .route("/api/workspaces/{id}/trackers/{tracker}/tasks", get(trackers::list_tracker_tasks))
         .route(
@@ -64,6 +72,18 @@ fn tracker_routes() -> Router<AppState> {
         .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
 }
 
+/// A workspace's SDLC metric settings (spec tracker-sdlc-metrics S1), guarded like
+/// the tracker routes: the hourly rate is not for other origins to read.
+fn metric_settings_routes() -> Router<AppState> {
+    use crate::api::handlers::metric_settings;
+    Router::new()
+        .route(
+            "/api/workspaces/{id}/metric-settings",
+            get(metric_settings::get_metric_settings).put(metric_settings::put_metric_settings),
+        )
+        .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
+}
+
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health
@@ -72,6 +92,46 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/watcher/unregister", axum::routing::post(health::watcher_unregister))
         // Scan events (SSE)
         .route("/api/scan/events", get(scan_events::scan_events_sse))
+        // Relay lanes (L3): lane routes under /api/relay, person routes
+        // exactly as relay-api.ts calls them. Paths are L3's to publish (Q9).
+        .route("/api/relay/register", post(relay::register))
+        .route("/api/relay/heartbeat", post(relay::heartbeat))
+        .route("/api/relay/reregister", post(relay::reregister))
+        .route("/api/relay/unregister", post(relay::unregister))
+        .route("/api/relay/limit_pause", post(relay::limit_pause))
+        .route("/api/relay/tasks", get(relay::get_tasks))
+        .route("/api/relay/tasks/wait", get(relay::wait_for_task))
+        .route("/api/relay/events", get(relay::relay_events_sse))
+        .route("/api/relay/tasks/plan", post(relay::plan))
+        // Queue cutover: the claim loop, in-turn saves, and the pause's end.
+        .route("/api/relay/tasks/claim_next", post(relay::claim_next))
+        .route("/api/relay/tasks/{id}/claim", post(relay::claim_task))
+        .route("/api/relay/tasks/{id}/checkpoint", post(relay::checkpoint))
+        .route("/api/relay/tasks/{id}/release", post(relay::release))
+        .route("/api/relay/limit_resume", post(relay::limit_resume))
+        .route("/api/relay/queue", get(relay::lane_queue))
+        .route("/relay/runs", post(relay::create_run))
+        .route("/api/relay/tasks/{id}/assign", post(relay::assign))
+        .route("/api/relay/tasks/{id}/report", post(relay::report))
+        .route("/api/relay/tasks/{id}/claim_review", post(relay::claim_review))
+        .route("/api/relay/tasks/{id}/review", post(relay::review))
+        .route("/api/relay/tasks/{id}/merge", post(relay::merge))
+        .route("/api/relay/tasks/{id}/cancel", post(relay::cancel))
+        .route("/api/relay/tasks/{id}/handover", post(relay::handover))
+        .route("/api/relay/tasks/{id}/steps", post(relay::post_step))
+        .route("/api/relay/crews/{id}/close", post(relay::close_crew))
+        .route("/api/relay/decisions", post(relay::ask))
+        .route("/api/relay/decisions/{id}/answer", post(relay::lane_answer))
+        .route("/api/relay/messages", post(relay::lane_message))
+        .route("/api/relay/resources/request", post(relay::request_resource))
+        .route("/api/relay/resources/release", post(relay::release_resource))
+        .route("/relay/now", get(relay::now))
+        .route("/relay/queue", get(relay::queue))
+        .route("/relay/tasks/{crew_id}/{task_id}", get(relay::task_view))
+        .route("/relay/messages", post(relay::person_message))
+        .route("/relay/answers", post(relay::person_answer))
+        .route("/relay/triage", post(relay::triage))
+        .route("/relay/backlog", post(relay::backlog))
         // Gateway
         .route("/api/gateway/status", get(gateway::gateway_status))
         .route("/api/gateway/infer", post(gateway::infer))
@@ -126,7 +186,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/workspaces/merge", post(observatory::merge_workspaces))
         .route(
             "/api/workspaces/{id}",
-            put(observatory::update_solution).delete(observatory::delete_solution),
+            get(observatory::get_solution)
+                .put(observatory::update_solution)
+                .delete(observatory::delete_solution),
         )
         .route(
             "/api/workspaces/{id}/repos",
@@ -138,6 +200,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/diagrams/codemap/module", get(diagrams::codemap_module))
         .route("/api/workspaces/{id}/diagrams/codemap/file", get(diagrams::codemap_file))
         .route("/api/workspaces/{id}/diagrams/codemap/cochange", get(diagrams::codemap_cochange))
+        .route(
+            "/api/workspaces/{id}/diagrams/codemap/complexity",
+            get(diagrams::codemap_complexity),
+        )
         .route("/api/workspaces/{id}/diagrams/layering", get(diagrams::layering))
         .route("/api/workspaces/{id}/diagrams/zones", get(diagrams::zones))
         .route("/api/workspaces/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
@@ -204,6 +270,12 @@ pub fn create_router(state: AppState) -> Router {
             "/api/workspaces/{id}/recommendations/{rec_id}/materialize",
             post(workspace_detail::materialize_recommendation),
         )
+        .route(
+            "/api/workspaces/{id}/recommendations/{rec_id}/snooze",
+            post(workspace_detail::snooze_workspace_recommendation),
+        )
+        // TG5 · MCP get_ticket: read a ticket live and start work on it (D63).
+        .route("/api/tickets/{key}/fetch", post(crate::targets::http::fetch_ticket))
         .route("/api/workspaces/{id}/impact", get(workspace_detail::get_workspace_impact))
         .route(
             "/api/workspaces/{id}/impact-verdicts",
@@ -333,6 +405,9 @@ pub fn create_router(state: AppState) -> Router {
         // #218: reading an assistant's history is its own consent, per source.
         .route("/api/transcripts/consent", get(observatory::transcript_consent))
         .route("/api/transcripts/consent/{source}", put(observatory::set_transcript_consent))
+        // Lossy export: rebuild JSONL from kept turns for files gone from disk.
+        .route("/api/transcripts/export/{session}", get(observatory::transcript_export))
+        .route("/api/transcripts/missing", get(observatory::transcripts_missing))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))
         .route("/api/workspaces/{id}/roles", get(observatory::solution_roles))
         // Folder mutations (setup wizard — Workspaces stage)
@@ -459,6 +534,7 @@ pub fn create_router(state: AppState) -> Router {
         // the whole estate is unbounded; `/summary` is the aggregated shape.
         .route("/api/metrics/status", get(metrics::get_metric_status))
         .route("/api/metrics/status/summary", get(metrics::get_metric_status_summary))
+        .route("/api/reason-codes/{domain}", get(metrics::get_reason_codes))
         .route("/api/metrics/{workspace}", get(observatory::get_metrics))
         // Workflow state
         .route(
@@ -544,6 +620,7 @@ pub fn create_router(state: AppState) -> Router {
         // Tracker integrations (spec docs/spec/daemon/tracker-jira-linkage.md R8):
         // a route group behind the local-caller guard (foreign Origin / rebound Host → 403).
         .merge(tracker_routes())
+        .merge(metric_settings_routes())
         .with_state(state)
         .layer(axum::middleware::from_fn(crate::api::origin_guard::caller_guard))
 }
@@ -1418,9 +1495,71 @@ mod tests {
                 .unwrap()
                 .clone()
         };
-        assert_eq!(block("alpha")["complexity"], serde_json::json!({"functions": 6, "complex": 1}));
-        assert_eq!(block("beta")["complexity"], serde_json::json!({"functions": 1, "complex": 0}));
+        assert_eq!(
+            block("alpha")["complexity"],
+            serde_json::json!({"functions": 6, "complex": 1, "tier": "warning"})
+        );
+        assert_eq!(
+            block("beta")["complexity"],
+            serde_json::json!({"functions": 1, "complex": 0, "tier": "neutral"})
+        );
         assert!(block("gamma")["complexity"].is_null(), "gamma was never measured");
+    }
+
+    /// The Complexity lens as a tree (user, 2026-11-02): each measured file under
+    /// its module and folders, every level summed, most complex first, with the
+    /// workspace's totals — and no maintainability figure where none is computed.
+    #[tokio::test]
+    async fn the_complexity_tree_rolls_measured_files_up_module_and_folder() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, fid) = seed_two_modules(&state).await;
+        let repo = state
+            .pg
+            .repository_id_for_folder(&fid)
+            .await
+            .unwrap()
+            .expect("the fixture's repository");
+        let measured: std::collections::HashMap<String, crate::qlty::FileComplexity> = [
+            (
+                "alpha/a.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 4, complex: 1, max_cyclo: 14 },
+            ),
+            (
+                "alpha/tests/a_test.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 2, complex: 0, max_cyclo: 3 },
+            ),
+            (
+                "beta/b.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 1, complex: 0, max_cyclo: 2 },
+            ),
+        ]
+        .into_iter()
+        .collect();
+        state.pg.replace_file_complexity(&repo, "abc123", &measured).await.unwrap();
+
+        let (st, body) =
+            req(app, "GET", &format!("/api/workspaces/{pid}/diagrams/codemap/complexity"), None)
+                .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["total"],
+            serde_json::json!({"functions": 7, "complex": 1, "maxCyclo": 14, "files": 3, "tier": "warning"})
+        );
+        let alpha = &body["modules"][0];
+        assert_eq!(alpha["id"], format!("{pkg}/alpha"), "{body}");
+        assert_eq!(alpha["kind"], "module");
+        assert_eq!((alpha["functions"].as_i64(), alpha["complex"].as_i64()), (Some(6), Some(1)));
+        let labels: Vec<&str> = alpha["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(labels, vec!["a.rs", "tests"], "{body}");
+        assert!(
+            body["maintainability"].is_null(),
+            "no module_quality computed: no figure, not zero"
+        );
     }
 
     /// The Code map's L0 (M17): modules as blocks grouped by layer or folder,
@@ -1474,6 +1613,73 @@ mod tests {
             app,
             "GET",
             &format!("/api/workspaces/{pid}/diagrams/codemap?groupBy=astrology"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+    }
+
+    /// A focus (user, 2026-11-03) narrows L0 to the module and its direct
+    /// neighbours before folding, and says what it focused on; a segment focuses
+    /// a whole group. A focus that names nothing is not found — never an empty
+    /// map — and one request asks for one focus, not two.
+    #[tokio::test]
+    async fn the_code_map_narrows_to_a_focus_and_its_neighbours() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, _) = seed_two_modules(&state).await;
+        let (alpha, beta) = (format!("{pkg}/alpha"), format!("{pkg}/beta"));
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?focus={alpha}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let mut ids: Vec<&str> =
+            body["blocks"].as_array().unwrap().iter().filter_map(|b| b["id"].as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, [alpha.as_str(), beta.as_str()], "gamma is not a neighbour: {body}");
+        assert_eq!(
+            body["focus"],
+            serde_json::json!({"kind": "module", "id": alpha, "members": [alpha], "neighbours": [beta]})
+        );
+
+        let (_, whole) =
+            req(app.clone(), "GET", &format!("/api/workspaces/{pid}/diagrams/codemap"), None).await;
+        let layer =
+            whole["blocks"].as_array().unwrap().iter().find(|b| b["id"] == alpha.as_str()).unwrap()
+                ["group"]
+                .as_str()
+                .unwrap()
+                .to_string();
+        let (st, seg) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?segment={layer}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{seg}");
+        assert_eq!(seg["focus"]["kind"], "segment");
+        assert_eq!(seg["focus"]["id"], layer.as_str());
+        assert!(
+            seg["focus"]["members"].as_array().unwrap().contains(&serde_json::json!(alpha)),
+            "{seg}"
+        );
+
+        let (st, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?focus={pkg}/nowhere"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+        let (st, _) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?focus={alpha}&segment={layer}"),
             None,
         )
         .await;
@@ -1543,6 +1749,45 @@ mod tests {
         };
         assert_eq!(icon(here)["available"], true);
         assert_eq!(icon(gone)["available"], false, "its folder is not on disk");
+    }
+
+    /// The workspace window reads its one workspace, not all of them (it loaded
+    /// every workspace and a folder tree each — 4–11 s — to show one): the
+    /// single read is the list's own entry for it, folders and icon included,
+    /// by uuid or by name; one that does not exist is a 404.
+    #[tokio::test]
+    async fn one_workspace_reads_as_its_entry_in_the_list() {
+        let (app, state) = test_app().await;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("logo.svg"), "<svg/>").unwrap();
+        let (pid, _) = crate::tasks::test_support::seed_workspace_folder_at(
+            &state.pg,
+            &uuid::Uuid::new_v4(),
+            &dir.path().to_string_lossy(),
+        )
+        .await;
+        state
+            .pg
+            .set_workspace_icon(
+                &pid,
+                &serde_json::json!({"kind": "image", "value": "logo.svg", "source": "logo_file"}),
+            )
+            .await
+            .unwrap();
+
+        let (st, list) = req(app.clone(), "GET", "/api/workspaces", None).await;
+        assert_eq!(st, StatusCode::OK);
+        let entry =
+            list.as_array().unwrap().iter().find(|w| w["id"] == pid.to_string()).unwrap().clone();
+        let (st, one) = req(app.clone(), "GET", &format!("/api/workspaces/{pid}"), None).await;
+        assert_eq!(st, StatusCode::OK, "{one}");
+        assert_eq!(one, entry);
+        let name = entry["name"].as_str().unwrap().to_string();
+        let (st, by_name) = req(app.clone(), "GET", &format!("/api/workspaces/{name}"), None).await;
+        assert_eq!((st, by_name["id"].clone()), (StatusCode::OK, entry["id"].clone()));
+        let (st, _) =
+            req(app, "GET", &format!("/api/workspaces/{}", uuid::Uuid::new_v4()), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
     }
 
     /// A request as the CLI or the app sends it: addressed to loopback, which
@@ -1969,6 +2214,27 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
+    }
+
+    /// `GET /api/reason-codes/{domain}`: a domain's vocabulary, for screens whose
+    /// figures carry codes in lists (tracker-sdlc-metrics A10). Every SDLC reason
+    /// resolves to a summary; a domain with no codes is a 404, never `{}`.
+    #[tokio::test]
+    async fn a_reason_domain_is_served_whole_and_an_unknown_one_is_not_found() {
+        let (app, _state) = test_app().await;
+        let (st, body) = req(app.clone(), "GET", "/api/reason-codes/sdlc_metrics", None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let reasons = body["reasons"].as_object().expect("keyed by code");
+        let codes = crate::sdlc::registered_reasons();
+        assert!(!codes.is_empty(), "the datafile registers sdlc_metrics codes");
+        for code in codes {
+            assert!(
+                reasons[&code]["summary"].as_str().is_some_and(|s| !s.is_empty()),
+                "{code} has a summary"
+            );
+        }
+        let (st, _) = req(app, "GET", "/api/reason-codes/no_such_domain", None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
     }
 
     /// `GET /api/metrics/status?repo=` — one repository's per-metric computation
@@ -2689,6 +2955,13 @@ mod tests {
             .find(|m| m["metric"].as_str() == Some(key_b.as_str()))
             .expect("metric B present");
         assert_eq!(b["value"], 0.25);
+        // The sparklines' daily series ride along, dated (the app read one series
+        // per metric, 27 requests, after this one returned).
+        assert_eq!(
+            body["series"][key_b.as_str()],
+            serde_json::json!([{ "period": w1.to_string(), "value": 0.25 }]),
+            "{body}"
+        );
         // Honest-null trend: B has a single week → prior/delta null, never a fake 0.
         assert!(b["prior"].is_null(), "B has no prior week — null, not a fabricated 0");
         assert!(b["delta"].is_null());
@@ -4104,6 +4377,140 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND, "an unknown source is not stored");
 
         crate::transcript::consent::set(&state.pg, "zed", false).await.unwrap();
+    }
+
+    async fn seed_export_turn(state: &AppState, source: &str, sess: &str, user: &str, asst: &str) {
+        state
+            .pg
+            .upsert_transcript_turns(
+                &crate::db::pg_store::TranscriptSource {
+                    source,
+                    session_id: sess,
+                    family: "test",
+                    provider: None,
+                    model: Some("test-model"),
+                },
+                &[crate::transcript::TranscriptTurn {
+                    turn_index: 1,
+                    user_text: Some(user.into()),
+                    assistant_text: asst.into(),
+                    attrs: serde_json::json!({ "uuid": "u1" }),
+                    ..Default::default()
+                }],
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn seed_export_mark(state: &AppState, sess: &str, file_path: &str) {
+        state
+            .pg
+            .set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+                source: "claude_code",
+                file_path,
+                session_id: Some(sess),
+                mtime_ns: 1,
+                turns: 1,
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Export serves kept turns as marked JSONL; an unknown session is a 404.
+    #[tokio::test]
+    async fn transcript_export_serves_marked_jsonl_and_404s_unknown() {
+        let (app, state) = test_app().await;
+        seed_export_turn(&state, "claude_code", "_test-export-jsonl", "do it", "done").await;
+        seed_export_mark(&state, "_test-export-jsonl", "/nonexistent/sensei-test-gone.jsonl").await;
+
+        let resp = app
+            .clone()
+            .oneshot(
+                local_request()
+                    .uri("/api/transcripts/export/_test-export-jsonl")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "application/x-ndjson");
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        let lines: Vec<serde_json::Value> =
+            text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["message"]["content"], "do it");
+        assert_eq!(lines[1]["message"]["content"][0]["text"], "done");
+        assert!(lines.iter().all(|l| l["sensei_regenerated"] == true));
+
+        let (status, _) =
+            req(app, "GET", "/api/transcripts/export/_test-export-nobody", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// A file that still exists — or no watermark to judge by — is a 409:
+    /// only proven-gone files are rebuilt, never touched otherwise.
+    #[tokio::test]
+    async fn transcript_export_refuses_present_and_unwatermarked_files() {
+        let (app, state) = test_app().await;
+        seed_export_turn(&state, "claude_code", "_test-export-here", "do it", "done").await;
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("here.jsonl");
+        std::fs::write(&here, "{}\n").unwrap();
+        seed_export_mark(&state, "_test-export-here", here.to_str().unwrap()).await;
+        seed_export_turn(&state, "claude_code", "_test-export-nowm", "do it", "done").await;
+
+        let (status, _) =
+            req(app.clone(), "GET", "/api/transcripts/export/_test-export-here", None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) = req(app, "GET", "/api/transcripts/export/_test-export-nowm", None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    /// Shapes the exporter doesn't know are refused, not misshaped.
+    #[tokio::test]
+    async fn transcript_export_refuses_unsupported_sources() {
+        let (app, state) = test_app().await;
+        seed_export_turn(&state, "zed", "_test-export-zed", "do it", "done").await;
+
+        let (status, body) =
+            req(app, "GET", "/api/transcripts/export/_test-export-zed", None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    /// The missing-file list: gone paths with kept turns, not present files.
+    #[tokio::test]
+    async fn transcript_missing_lists_gone_paths_with_turns() {
+        let (app, state) = test_app().await;
+        seed_export_turn(&state, "claude_code", "_test-missing-gone", "do it", "done").await;
+        seed_export_turn(&state, "claude_code", "_test-missing-here", "do it", "done").await;
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("here.jsonl");
+        std::fs::write(&here, "{}\n").unwrap();
+        for (sess, path) in [
+            ("_test-missing-gone", "/nonexistent/sensei-test-gone.jsonl"),
+            ("_test-missing-here", here.to_str().unwrap()),
+        ] {
+            state
+                .pg
+                .set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+                    source: "claude_code",
+                    file_path: path,
+                    session_id: Some(sess),
+                    mtime_ns: 1,
+                    turns: 1,
+                })
+                .await
+                .unwrap();
+        }
+
+        let (status, body) = req(app, "GET", "/api/transcripts/missing", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ids: Vec<&str> =
+            body.as_array().unwrap().iter().map(|r| r["session_id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"_test-missing-gone"), "{ids:?}");
+        assert!(!ids.contains(&"_test-missing-here"), "{ids:?}");
     }
 
     #[tokio::test]
@@ -6614,5 +7021,200 @@ mod tests {
         purge_assistant_events(pg, &[&csid_auto]).await;
         purge_corrections(pg, &[&sig_a, &sig_b]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
+    // ── L3 · ActionItems act: snooze, and acting only through the rec's own workspace ──
+
+    async fn rec_in(state: &AppState, ws: &uuid::Uuid, action_type: &str) -> uuid::Uuid {
+        state
+            .pg
+            .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+                workspace_id: ws,
+                title: "_test:rec_actions_api",
+                why: "why",
+                impact: None,
+                action_type,
+                urgency: "medium",
+                based_on: &serde_json::json!({}),
+                reasoning_trace_id: None,
+                prompt: None,
+            })
+            .await
+            .unwrap()
+    }
+
+    async fn test_workspace(state: &AppState) -> uuid::Uuid {
+        let name = format!("_test:rec_actions_{}", uuid::Uuid::new_v4().simple());
+        state.pg.create_workspace(&name, None, None).await.unwrap()
+    }
+
+    async fn pending_ids(app: &Router, ws: &uuid::Uuid) -> Vec<String> {
+        let uri = format!("/api/workspaces/{ws}/recommendations?status=pending");
+        let (st, list) = req(app.clone(), "GET", &uri, None).await;
+        assert_eq!(st, StatusCode::OK, "{list}");
+        list.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap().to_string()).collect()
+    }
+
+    fn snooze_uri(ws: impl std::fmt::Display, rec: impl std::fmt::Display) -> String {
+        format!("/api/workspaces/{ws}/recommendations/{rec}/snooze")
+    }
+
+    /// A snooze hides the recommendation from the pending read and says when it
+    /// wakes. A re-snooze replaces the wake time (coordinator ruling, r1 L1).
+    #[tokio::test]
+    async fn snoozing_a_recommendation_hides_it_from_the_pending_read() {
+        let (app, state) = test_app().await;
+        let ws = test_workspace(&state).await;
+        let rec = rec_in(&state, &ws, "cross_workspace").await;
+        let wake = |body: &serde_json::Value| {
+            chrono::DateTime::parse_from_rfc3339(
+                body["snoozed_until"].as_str().expect("snoozed_until"),
+            )
+            .expect("rfc3339")
+        };
+
+        let (st, body) =
+            req(app.clone(), "POST", &snooze_uri(ws, rec), Some(serde_json::json!({ "days": 7 })))
+                .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["ok"], true, "{body}");
+        let week = wake(&body);
+        assert!(week > chrono::Utc::now() + chrono::Duration::days(6), "{body}");
+        assert!(pending_ids(&app, &ws).await.is_empty(), "the snoozed rec is not pending-shown");
+
+        let (st, body) =
+            req(app.clone(), "POST", &snooze_uri(ws, rec), Some(serde_json::json!({ "days": 2 })))
+                .await;
+        assert_eq!(st, StatusCode::OK, "a re-snooze answers: {body}");
+        let two = wake(&body);
+        assert!(two < week, "a re-snooze replaces the wake time: {two} vs {week}");
+        assert!(two > chrono::Utc::now() + chrono::Duration::days(1), "{body}");
+        state.pg.delete_workspace(&ws).await.unwrap();
+    }
+
+    /// Refusals say what was wrong, never a 200 that did nothing: a snooze length
+    /// outside 1–90 days, a malformed id, a rec that is not this workspace's
+    /// (404, coordinator ruling r1 M2), a rec already decided (409), and a
+    /// workspace the daemon does not know (404).
+    #[tokio::test]
+    async fn a_snooze_it_cannot_make_is_refused() {
+        let (app, state) = test_app().await;
+        let ws = test_workspace(&state).await;
+        let rec = rec_in(&state, &ws, "cross_workspace").await;
+        let snooze = |uri: String, days: serde_json::Value| {
+            let app = app.clone();
+            async move { req(app, "POST", &uri, Some(serde_json::json!({ "days": days }))).await }
+        };
+        for days in [serde_json::json!(0), serde_json::json!(91), serde_json::json!(-1)] {
+            let (st, body) = snooze(snooze_uri(ws, rec), days.clone()).await;
+            assert_eq!(st, StatusCode::BAD_REQUEST, "days={days}: {body}");
+        }
+        let (st, body) = snooze(snooze_uri(ws, "not-a-uuid"), serde_json::json!(7)).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        let (st, body) = snooze(snooze_uri(ws, uuid::Uuid::new_v4()), serde_json::json!(7)).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "unknown rec: {body}");
+        let no_ws = format!("no-such-{}", uuid::Uuid::new_v4().simple());
+        let (st, body) = snooze(snooze_uri(no_ws, rec), serde_json::json!(7)).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "unknown workspace: {body}");
+        assert_eq!(pending_ids(&app, &ws).await, vec![rec.to_string()], "no refusal changed it");
+
+        state.pg.reject_recommendation(&rec).await.unwrap();
+        let (st, body) = snooze(snooze_uri(ws, rec), serde_json::json!(7)).await;
+        assert_eq!(st, StatusCode::CONFLICT, "a decided rec: {body}");
+        assert_eq!(
+            body["error"].as_str().map(|e| e.contains("already decided")),
+            Some(true),
+            "the refusal says why: {body}"
+        );
+        state.pg.delete_workspace(&ws).await.unwrap();
+    }
+
+    /// Every recommendation action acts only through the rec's own workspace
+    /// (coordinator ruling r1 M2): through another workspace's URL it is a 404 and
+    /// nothing changes (the rec stays pending, no memory is written); through its
+    /// own it works. Accept, reject, preview, materialize and snooze each ignored
+    /// the path's workspace before. One test per handler, over this helper.
+    async fn acts_only_through_its_own_workspace(
+        verb: &str,
+        method: &str,
+        action_type: &str,
+        body: Option<serde_json::Value>,
+    ) {
+        let (app, state) = test_app().await;
+        let a = test_workspace(&state).await;
+        let b = test_workspace(&state).await;
+        let rec = rec_in(&state, &a, action_type).await;
+        let uri = |ws: &uuid::Uuid| format!("/api/workspaces/{ws}/recommendations/{rec}/{verb}");
+        let memories = || async {
+            let (n,): (i64,) =
+                sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.memories")
+                    .fetch_one(state.pg.pool())
+                    .await
+                    .unwrap();
+            n
+        };
+
+        let before = memories().await;
+        let (st, out) = req(app.clone(), method, &uri(&b), body.clone()).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{verb} through another workspace: {out}");
+        assert!(
+            pending_ids(&app, &a).await.contains(&rec.to_string()),
+            "{verb} through another workspace left the rec pending"
+        );
+        assert_eq!(memories().await, before, "{verb} through another workspace wrote no memory");
+
+        let (st, out) = req(app.clone(), method, &uri(&a), body).await;
+        assert_eq!(st, StatusCode::OK, "{verb} through its own workspace: {out}");
+        state.pg.delete_workspace(&a).await.unwrap();
+        state.pg.delete_workspace(&b).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn accept_acts_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace(
+            "accept",
+            "POST",
+            "cross_workspace",
+            Some(serde_json::json!({})),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn reject_acts_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace(
+            "reject",
+            "POST",
+            "cross_workspace",
+            Some(serde_json::json!({})),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn preview_reads_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace("preview", "GET", "revise_rule", None).await;
+    }
+
+    #[tokio::test]
+    async fn materialize_acts_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace(
+            "materialize",
+            "POST",
+            "revise_rule",
+            Some(serde_json::json!({ "gov_scope": "general" })),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn snooze_acts_only_through_the_recs_own_workspace() {
+        acts_only_through_its_own_workspace(
+            "snooze",
+            "POST",
+            "cross_workspace",
+            Some(serde_json::json!({ "days": 7 })),
+        )
+        .await;
     }
 }

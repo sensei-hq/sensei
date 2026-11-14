@@ -8,14 +8,16 @@
 // billing_accounts.seats_used snapshot.
 import type { DojoClient } from './rules-data';
 import type {
-	BillableUserWire as BillableUser,
+	SeatHolderWire as SeatHolder,
 	BillingAccountWire as BillingAccount,
-	SeatUsageWire as SeatUsage
+	SeatCountWire as SeatCount
 } from '$lib/billing-view';
 export type { DojoClient };
 export type {
 	BillableUserWire as BillableUser,
+	SeatHolderWire as SeatHolder,
 	BillingAccountWire as BillingAccount,
+	SeatCountWire as SeatCount,
 	SeatUsageWire as SeatUsage
 } from '$lib/billing-view';
 
@@ -49,8 +51,8 @@ const ACCOUNT_COLS =
  *  (deduped on user_id); public-only users contribute nothing. Pure — the single
  *  source of truth for the route's count, mirroring the dojo.tenant_seat_usage
  *  view so the two never diverge. */
-export function summarizeSeatUsage(rows: SeatRow[]): SeatUsage {
-	const byUser = new Map<string, BillableUser['workspaces']>();
+export function summarizeSeatUsage(rows: SeatRow[]): SeatCount {
+	const byUser = new Map<string, SeatHolder['workspaces']>();
 	for (const r of rows) {
 		if (r.visibility !== 'private') continue; // public work never consumes a seat
 		const workspaces = byUser.get(r.user_id) ?? [];

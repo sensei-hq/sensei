@@ -1,11 +1,7 @@
-export { default as DaemonStatusBanner } from './DaemonStatusBanner.svelte';
-export { default as SignInOverlay } from './SignInOverlay.svelte';
-export { default as EmptyState } from './EmptyState.svelte';
 export { default as Eyebrow } from './Eyebrow.svelte';
 export { default as FtrStrip } from './FtrStrip.svelte';
 export { default as GateRow } from './GateRow.svelte';
 export { default as Kanji } from './Kanji.svelte';
-export { default as MemoryList } from './MemoryList.svelte';
 export { default as MetricCard } from './MetricCard.svelte';
 export { default as MetricSparkline } from './MetricSparkline.svelte';
 export { default as MoeReasoningPanel } from './MoeReasoningPanel.svelte';
@@ -13,7 +9,6 @@ export { default as PageHeader } from './PageHeader.svelte';
 // The screen layout is shared with the dōjō (#293).
 export { Screen } from '@sensei/ui';
 export { default as ProgressCard } from './ProgressCard.svelte';
-export { default as ScreenState } from './ScreenState.svelte';
 export { default as SignInPending } from './SignInPending.svelte';
 export { default as UnreadWorkspacesNotice } from './UnreadWorkspacesNotice.svelte';
 export { default as Spinner } from './Spinner.svelte';
@@ -24,3 +19,4 @@ export { default as Switch } from './Switch.svelte';
 export { default as TabBar } from './TabBar.svelte';
 export { default as TurnBar } from './TurnBar.svelte';
 export { default as Wordmark } from './Wordmark.svelte';
+export { default as Rail } from './Rail.svelte';

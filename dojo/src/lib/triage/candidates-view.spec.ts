@@ -35,19 +35,19 @@ describe('flattenCandidates — every candidate across the scope groups, in orde
 
 describe('impactTone — token classes for the impact chip', () => {
 	it('tints high impact accent', () => {
-		expect(impactTone('high').text).toBe('text-accent');
+		expect(impactTone('high').text).toBe('text-on-accent-soft');
 		expect(impactTone('high').soft).toBe('bg-accent-soft');
 	});
 
 	it('tints safety impact danger', () => {
-		expect(impactTone('safety').text).toBe('text-danger');
+		expect(impactTone('safety').text).toBe('text-on-danger-soft');
 		expect(impactTone('safety').soft).toBe('bg-danger-soft');
 	});
 
 	it('falls back to a neutral tone for normal/low/unknown', () => {
-		expect(impactTone('normal').text).toBe('text-ink-mute');
-		expect(impactTone('low').text).toBe('text-ink-mute');
-		expect(impactTone('whatever').text).toBe('text-ink-mute');
+		expect(impactTone('normal').text).toBe('text-ink-soft');
+		expect(impactTone('low').text).toBe('text-ink-soft');
+		expect(impactTone('whatever').text).toBe('text-ink-soft');
 	});
 });
 

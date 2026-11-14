@@ -52,7 +52,6 @@ test.describe('Workspace · Diagrams · Schema', () => {
     ).toBe(0);
     expect(await tauriPage.count('[data-testid="schema-none"]')).toBe(1);
     expect(await tauriPage.count('[data-testid="schema-diagram"]')).toBe(0);
-    expect(await tauriPage.count('[data-testid="diagrams-tab-schema"]')).toBe(1);
 
     expectNoRuntimeErrors(await readErrors(tauriPage), 'schema mount');
   });

@@ -123,6 +123,6 @@ export const orgs: DojoOrg[] = [
 // kind → semantic token role for the chip tint (mockup used raw --ink-2/--accent
 // /--success/--ink-3; map onto named tokens).
 export const kindToneClass: Record<OrgKind, string> = {
-	Organization: 'text-ink-soft',
-	Personal: 'text-ink-mute'
+	Organization: 'text-ink-mute',
+	Personal: 'text-ink-soft'
 };

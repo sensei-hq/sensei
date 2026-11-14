@@ -2,7 +2,7 @@
 
 **Segment:** Dōjō · console (SaaS or self-hosted)
 **Route:** `console/developer` (the contributor seat)
-**Source mockup:** [`lib/dojo/dojo-developer.jsx`](../../mockups/Sensei/lib/dojo/dojo-developer.jsx) → `DojoDeveloperConsole` (panels: My teams · My contributions · For me)
+**Source mockup:** `lib/dojo/dojo-developer.jsx` → `DojoDeveloperConsole` (panels: My teams · My contributions · For me)
 **Data:** `dojo.memberships` (per user), the contribute outbox / `federated_memories` ledger (per-destination status), the downstream inbox
 **App file:** _dojo web app (`dojo/`), developer view — greenfield_
 **Backend files:** the dojo Worker's `/v1` (`dojo/src/routes/v1/…` — memberships, contribute, routing; ported from the removed `dojo-mind` Rust service; a per-user read view is greenfield)

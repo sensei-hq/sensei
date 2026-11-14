@@ -65,24 +65,27 @@ expose why it moved?**
 The Dōjō is not a linear "segment 5" — it threads through the Observatory and the
 workspace window (the developer's flows live **in the Observatory**) and adds a web
 **console**. **Every user logs into the Dōjō** — contributor · maintainer · lead ·
-admin (D1); the team benefit is primary, but a developer in multiple teams gets a
+admin (D1), where a lead is a team lead who reads teammates' metrics per person (D38, D58);
+a **dōjō viewer** is invited in without a membership and reads a workspace's aggregates
+only (D8). The team benefit is primary, but a developer in multiple teams gets a
 contributor console view too. The web Dōjō keeps **Relay and an inbox for contributors**:
 tickets assigned to you in the tracker mirror sit under the relay session that carries
-their key, and tickets with no session yet are listed below them. The Dōjō is a **hosted
-service** — there is no self-hosting (Q14). A dōjō comes from a git integration — a GitHub or Azure DevOps organization, or another provider — and an import may land as workspaces in one dōjō (D20). Its core principles (from the journey map):
+their key, and tickets with no session yet are listed below them. **The code is open
+source** and anyone can run it (D24); there is no self-hosting product or tier (D17). A dōjō comes from a git integration — a GitHub or Azure DevOps organization, or another provider — and an import may land as workspaces in one dōjō (D20). Its core principles (from the journey map):
 **identity is the discovery · pull never push · never blind, always preview ·
 one universal strip · specificity wins conflicts.**
 
-**Membership contexts** — one developer, many orgs: *Employer · Client orgs ·
-Communities · Personal.* The org boundary is the **membership**, with
-client-precedence as the tiebreaker.
+**Whose dōjō governs** — a dōjō is an organization's or a personal one (D11, D20). A
+session in a repository is governed by **that repository's dōjō alone**: its rules and
+its targets (D53). No floor from another dōjō carries in; a person's own `user`-rung
+rules still apply locally, below the dōjō.
 
 ### Developer (in-app)
 
 ```mermaid
 flowchart LR
     d1[Discover<br/>my org runs a Dōjō] --> d2[Authenticate<br/>SSO · OAuth · device-code]
-    d2 --> d3[Bind workspace → org] --> d4[A finding forms<br/>memory / pattern / guard]
+    d2 --> d3[Work in a repository<br/>governed by its dōjō] --> d4[A finding forms<br/>memory / pattern / guard]
     d4 --> d5[Share upstream<br/>right attribution + confidentiality]
     d5 --> d6[Watch it travel] --> d7[Receive downstream<br/>approved org knowledge where I work]
 ```
@@ -123,10 +126,10 @@ flowchart LR
 | # | Objective | Met when |
 |---|---|---|
 | DJ1 | Personal sensei works with **no** Dōjō | Every local capability functions with zero memberships |
-| DJ2 | The org boundary is exact (theme 5) | A lesson from a client's dōjō never leaves without anonymization + preview |
+| DJ2 | The org boundary is exact (theme 5) | A lesson from a dōjō never leaves without anonymization + preview |
 | DJ3 | Pull, never push | Downstream knowledge arrives by opt-in pull, never forced |
-| DJ4 | Attribution + confidentiality are automatic | One universal strip runs on every client lesson; a lesson that can't be stripped doesn't leave |
-| DJ5 | Distribution respects priority ladders, not a rigid hierarchy | Specificity wins conflicts; memberships route by precedence |
+| DJ4 | Attribution + confidentiality are automatic | One universal strip runs on every lesson that leaves a dōjō; a lesson that can't be stripped doesn't leave |
+| DJ5 | Distribution respects priority ladders, not a rigid hierarchy | The stronger enforcement wins (mandatory is never overridden); between equal enforcement the most specific scope wins: general → user → dōjō → workspace → repository (D57) |
 
 ---
 
@@ -144,7 +147,7 @@ Visual: [`journeys/relay.md`](../journeys/relay.md).
 | R3 | Status is legible **remotely** | workspace-level *done · doing · next* on the phone; a stalled track **nudges** |
 | R4 | Human-in-the-loop is **minimal + exact** | a gate shows the **exact command** to approve, or a **decision as 3–4 options + a free reply** |
 | R5 | **Zero-knowledge** by construction | agents run on the user's hardware; the coordinator publishes only *filtered status* through the relay — never code or transcripts |
-| R6 | **Secure pairing + permissions** | an encrypted pairing round-trip; explicit, revocable permissions bound what the relay can do |
+| R6 | **No pairing; bounded permissions** | the relay acts only through the signed-in person's dōjō session; explicit, revocable permissions bound what it can do (D55) |
 | R7 | **Multi-agent, multi-machine** | Claude Code · Codex · OpenCode · Aider across machines, grouped by machine |
 | R8 | Team relay routes to **on-call** (Dōjō) | org gates fan into one shared queue; each decision carries attribution and lands in the Dōjō record |
 

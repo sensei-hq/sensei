@@ -33,7 +33,7 @@
 >
   <!-- workspace chip + (focal) do-first marker -->
   <div class="flex items-center gap-2 mb-1">
-    <span class="inline-flex items-center gap-1 text-xs text-ink-soft" data-rec-workspace>
+    <span class="inline-flex items-center gap-1 text-xs text-ink-mute" data-rec-workspace>
       <Kanji char={rec.workspaceKanji} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs text-accent" />
       <span class="truncate max-w-[140px]">{rec.workspaceName}</span>
     </span>
@@ -46,7 +46,7 @@
   <p class="text-sm text-ink m-0 leading-snug">{rec.title}</p>
 
   {#if rec.why}
-    <p class="text-xs text-ink-soft mt-1 m-0 leading-normal line-clamp-2">{rec.why}</p>
+    <p class="text-xs text-ink-mute mt-1 m-0 leading-normal line-clamp-2">{rec.why}</p>
   {/if}
 
   {#if rec.impact}

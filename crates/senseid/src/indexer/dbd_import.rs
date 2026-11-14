@@ -96,6 +96,23 @@ pub fn facts_of(model: &SchemaModel, package: &str) -> Result<Imported, String> 
             columns: Vec::new(),
             indexes: Vec::new(),
             refs: Vec::new(),
+            enum_values: Vec::new(),
+        });
+    }
+
+    for e in &model.enums {
+        facts.push(SchemaFact {
+            fqn: identity(package, &e.schema, &e.name)?,
+            kind: SchemaKind::Enum,
+            db_schema: e.schema.clone(),
+            source: SchemaSource::Dbd,
+            naming: Naming::Stated,
+            note: e.note.clone(),
+            note_md: e.note_md.clone(),
+            columns: Vec::new(),
+            indexes: Vec::new(),
+            refs: Vec::new(),
+            enum_values: e.values.clone(),
         });
     }
 
@@ -157,6 +174,7 @@ fn table_fact(table: &TableNode, package: &str) -> Result<SchemaFact, String> {
             })
             .collect(),
         refs: Vec::new(),
+        enum_values: Vec::new(),
     })
 }
 
@@ -316,6 +334,27 @@ mod tests {
             && r.to.as_str().contains("·schema_entities·")
             && r.to_column == "node_id"));
         assert!(fact.note.as_deref().is_some_and(|n| n.contains("column PAIR")));
+    }
+
+    /// Database · ER's Overview counts a design's enums and opens each on its
+    /// values (dbd's viewer): an enum is imported as one, its values in order.
+    #[test]
+    fn an_enum_is_imported_with_its_values() {
+        let mut m = model(vec![], vec![], vec![]);
+        m.enums = vec![dbd_core::schema_model::EnumNode {
+            schema: "app".into(),
+            name: "order_status".into(),
+            values: vec!["pending".into(), "paid".into(), "shipped".into()],
+            note: Some("Lifecycle state.".into()),
+            note_md: None,
+            module: None,
+        }];
+        let got = facts_of(&m, "p").unwrap();
+        assert_eq!(got.facts.len(), 1);
+        let e = &got.facts[0];
+        assert_eq!(e.kind, SchemaKind::Enum);
+        assert_eq!(e.enum_values, vec!["pending", "paid", "shipped"]);
+        assert_eq!(e.note.as_deref(), Some("Lifecycle state."));
     }
 
     fn model(tables: Vec<TableNode>, entities: Vec<EntityNode>, refs: Vec<Ref>) -> SchemaModel {

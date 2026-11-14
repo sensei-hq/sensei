@@ -1,0 +1,75 @@
+-- WP8: a personal repository syncs by default, and its opt-out holds (D46:
+-- personal is the person's, absent is elected — unchanged by WP8, proved
+-- end to end on a PRIVATE repo where entitlement is the new half).
+--
+-- WHAT BREAKS THIS TEST (today): the default half — a personal private repo
+-- refuses `not_subscribed`, so nothing syncs. The opt-out half passes today
+-- and after (guard pin on unchanged personal election).
+--
+-- Run through --apply (the view DDL is passed in, not \ir'd): the file seeds,
+-- asserts, rolls back. Nothing persists.
+begin;
+
+insert into dojo.principals (id, auth_user_id, display_name) values
+  ('a5555555-5555-5555-5555-555555555555', 'aa555555-5555-5555-5555-555555555555', 'Alice');
+
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url, claimed_at) values
+  ('b5555555-5555-5555-5555-555555555555', 'personal/ztest-wp8-alice', 'personal', 'ztest-wp8-alice',
+   'Alice''s Dōjō', 'dojo.sensei-hq.org/personal/ztest-wp8-alice', null);
+
+insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role, disabled_at) values
+  ('b5555555-5555-5555-5555-555555555555', 'a5555555-5555-5555-5555-555555555555',
+   'personal', 'github_oauth', 'admin', null);
+
+insert into dojo.repositories (tenant_id, repo_key, remote_url, name, provider, visibility, visibility_captured_at) values
+  ('b5555555-5555-5555-5555-555555555555', 'github.com/ztest-wp8-alice/notes',
+   'git@github.com:ztest-wp8-alice/notes.git', 'notes', 'github', 'private', now());
+
+do $$
+declare
+    r record;
+begin
+    -- Default: entitled and elected, so syncing.
+    select may_share, elected, sync_enabled
+      into r
+      from dojo.all_my_repositories
+     where principal_id = 'a5555555-5555-5555-5555-555555555555'
+       and repo_key = 'github.com/ztest-wp8-alice/notes';
+    if r is null then
+        raise exception 'personal private row missing entirely.';
+    end if;
+    if r.may_share is not true then
+        raise exception 'personal private repo not entitled.';
+    end if;
+    if r.elected is not true then
+        raise exception 'personal repo with no decision is not elected.';
+    end if;
+    if r.sync_enabled is not true then
+        raise exception 'personal repo does not sync by default.';
+    end if;
+end $$;
+
+-- The person's own opt-out: recorded and honoured.
+insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected)
+  select r.tenant_id, r.id, 'user', 'a5555555-5555-5555-5555-555555555555', false
+    from dojo.repositories r
+   where r.repo_key = 'github.com/ztest-wp8-alice/notes';
+
+do $$
+declare
+    v_elected boolean;
+    v_enabled boolean;
+begin
+    select elected, sync_enabled into v_elected, v_enabled
+      from dojo.all_my_repositories
+     where principal_id = 'a5555555-5555-5555-5555-555555555555'
+       and repo_key = 'github.com/ztest-wp8-alice/notes';
+    if v_elected is not false then
+        raise exception 'personal opt-out did not hold.';
+    end if;
+    if v_enabled is not false then
+        raise exception 'opted-out personal repo still syncs.';
+    end if;
+end $$;
+
+rollback;

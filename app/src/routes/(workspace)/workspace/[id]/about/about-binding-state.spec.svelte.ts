@@ -10,6 +10,7 @@ import {
   resolveBinding,
   type BindableWorkspace,
   type InferredBinding,
+  bindingLoadNotice,
 } from './about-binding-state.svelte.js';
 
 const MEMBERSHIP_ID = '11111111-2222-4333-8444-555555555555';
@@ -29,6 +30,7 @@ const membership = (over: Partial<DojoMembership> = {}): DojoMembership => ({
   last_heartbeat_at: null,
   enabled: true,
   bound_workspaces: [],
+  persona_slot: null,
   ...over,
 });
 
@@ -62,13 +64,13 @@ describe('confirmedChip / inferredChip', () => {
   it('confirmed reads the success tone with a sentence-case label', () =>
     expect(confirmedChip()).toEqual({
       bg: 'bg-success-soft',
-      text: 'text-success',
+      text: 'text-on-success-soft',
       label: 'confirmed',
     }));
   it('inferred reads the warning tone with a sentence-case label', () =>
     expect(inferredChip()).toEqual({
       bg: 'bg-warning-soft',
-      text: 'text-warning',
+      text: 'text-on-warning-soft',
       label: 'inferred',
     }));
 });
@@ -186,5 +188,15 @@ describe('BindingAction', () => {
     expect(action.error).toBe('unknown membership');
     expect(action.confirmed).toBeNull();
     expect(action.pending).toBe(false);
+  });
+});
+
+describe('bindingLoadNotice', () => {
+  it('a binding that could not be read: a fault Notice, never "no binding"', () => {
+    expect(bindingLoadNotice({ state: 'error', message: 'daemon unreachable' })).toEqual({
+      tone: 'fault', title: "Couldn't read this workspace's dōjō binding", detail: 'daemon unreachable',
+      remedy: 'Retry. If it keeps failing, reload the page.',
+    });
+    expect(bindingLoadNotice({ state: 'empty' })).toBeNull();
   });
 });

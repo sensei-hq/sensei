@@ -3,9 +3,9 @@ use std::io::{BufRead, Write};
 
 use sensei_mcp::{
     ActiveWorkspace, DaemonRequest, HttpMethod, NEEDS_WORKSPACE, WORKSPACES_FOR_RESOLUTION,
-    WorkspaceResolution, build_log_event_body, daemon_request_for, handle_initialize,
-    handle_list_tools, resolve_active_workspace_in, resolve_default_workspace, resolve_from_cwd_in,
-    resolve_workspace_in,
+    WorkspaceResolution, build_log_event_body, build_relay_wait_request, daemon_request_for,
+    handle_initialize, handle_list_tools, resolve_active_workspace_in, resolve_default_workspace,
+    resolve_from_cwd_in, resolve_workspace_in,
 };
 
 /// The active-workspace pin for THIS MCP session, held in memory — NOT a file.
@@ -24,8 +24,29 @@ fn prepend_note(result: &mut Value, note: &str) {
     }
 }
 
-fn daemon_url() -> String {
-    sensei_bootstrap::daemon_url()
+/// Scan argv for `--daemon-url <value>` / `--daemon-url=<value>` (F1: the
+/// run-01 broker was unreachable because no override existed). A manual scan:
+/// one flag does not justify a CLI parser dep. Unknown args are ignored (the
+/// MCP speaks stdio; historical launchers pass none). A dangling trailing
+/// `--daemon-url` — or one followed by another `--*`-shaped flag (F1-L1:
+/// `--daemon-url --other` must not eat `--other` as the value) — yields
+/// `None` and `main` warns; it falls through to `SENSEI_DAEMON_URL`/default
+/// rather than failing the session. The `=` form assigns literally, even a
+/// flag-shaped suffix (explicit assignment wins).
+fn parse_daemon_url_flag(args: &[String]) -> Option<String> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--daemon-url" {
+            match iter.next() {
+                Some(next) if !next.starts_with("--") => return Some(next.clone()),
+                _ => return None,
+            }
+        }
+        if let Some(value) = arg.strip_prefix("--daemon-url=") {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 /// Convert a daemon HTTP result to an MCP content response.
@@ -71,8 +92,9 @@ fn daemon_result(result: reqwest::Result<reqwest::blocking::Response>) -> Value 
 fn send_daemon_request(
     client: &reqwest::blocking::Client,
     req: &DaemonRequest,
+    base: &str,
 ) -> reqwest::Result<reqwest::blocking::Response> {
-    let url = format!("{}{}", daemon_url(), req.path);
+    let url = format!("{base}{}", req.path);
     // Build a fresh RequestBuilder each attempt (send() consumes it).
     let build = || {
         let mut rb = match req.method {
@@ -86,6 +108,12 @@ fn send_daemon_request(
         }
         if let Some(body) = &req.body {
             rb = rb.json(body);
+        }
+        // Inside the per-attempt closure: the connect retry rebuilds the
+        // whole request, and relay lane calls authenticate over these
+        // headers (dropped here, every authed call 401s).
+        for (name, value) in &req.headers {
+            rb = rb.header(name, value);
         }
         rb
     };
@@ -115,6 +143,18 @@ fn main() {
     // Detect current workspace from CWD
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
+    // Daemon base, resolved once: --daemon-url flag > SENSEI_DAEMON_URL env >
+    // default. Threaded explicitly (not a global): the call graph below is
+    // small enough that the data flow stays visible.
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let flag = parse_daemon_url_flag(&argv);
+    if argv.iter().any(|a| a == "--daemon-url") && flag.is_none() {
+        eprintln!(
+            "sensei-mcp: --daemon-url without a value — falling through to SENSEI_DAEMON_URL/default"
+        );
+    }
+    let base = sensei_bootstrap::daemon_url_with_flag(flag.as_deref());
+
     for line in stdin.lock().lines() {
         let line = match line {
             Ok(l) => l,
@@ -137,7 +177,7 @@ fn main() {
             "initialize" => handle_initialize(),
             "notifications/initialized" => continue,
             "tools/list" => handle_list_tools(),
-            "tools/call" => handle_call_tool(&params, &client, &cwd),
+            "tools/call" => handle_call_tool(&params, &client, &cwd, &base),
             "resources/list" => json!({"resources": []}),
             "prompts/list" => json!({"prompts": []}),
             _ => {
@@ -157,7 +197,12 @@ fn main() {
     }
 }
 
-fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &str) -> Value {
+fn handle_call_tool(
+    params: &Value,
+    client: &reqwest::blocking::Client,
+    cwd: &str,
+    base: &str,
+) -> Value {
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
@@ -176,7 +221,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     // `use_workspace` pins the named workspace; its `workspace` arg is the pin TARGET,
     // not a scoping hint, so handle it before the generic resolution below.
     if tool_name == "use_workspace" {
-        return handle_use_workspace(&args, client);
+        return handle_use_workspace(&args, client, base);
     }
 
     // Resolve the workspace for scoping. `repo_id` is the resolved workspace NAME
@@ -188,7 +233,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     let explicit = if workspace_hint.is_empty() {
         None
     } else {
-        match resolve_workspace(workspace_hint, client) {
+        match resolve_workspace(workspace_hint, client, base) {
             Ok(Some(name)) => Some(name),
             Ok(None) => {
                 return json!({
@@ -215,7 +260,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     let (pin, cwd_name) = if explicit.is_some() {
         (None, String::new())
     } else {
-        (ACTIVE_PIN.lock().unwrap().clone(), resolve_workspace_from_cwd(cwd, client))
+        (ACTIVE_PIN.lock().unwrap().clone(), resolve_workspace_from_cwd(cwd, client, base))
     };
     // A resolved cwd beats a conflicting (stale) pin; the override is surfaced, not silent.
     let (repo_id, resolution_note) =
@@ -230,7 +275,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     // standard response conversion — prepending a stale-pin note so a mis-resolution
     // is visible to the caller instead of silently returning the wrong workspace's state.
     if let Some(req) = daemon_request_for(tool_name, &args, cwd, resolved) {
-        let mut result = daemon_result(send_daemon_request(client, &req));
+        let mut result = daemon_result(send_daemon_request(client, &req, base));
         if let Some(note) = resolution_note {
             prepend_note(&mut result, &format!("⟦workspace: {repo_id} — {note}⟧"));
         }
@@ -257,8 +302,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 "max_tokens": max_tokens,
             });
 
-            let result =
-                client.post(format!("{}/api/gateway/infer", daemon_url())).json(&body).send();
+            let result = client.post(format!("{}/api/gateway/infer", base)).json(&body).send();
 
             match result {
                 Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
@@ -295,14 +339,13 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 "model": model,
             });
 
-            let result =
-                client.post(format!("{}/api/gateway/embed", daemon_url())).json(&body).send();
+            let result = client.post(format!("{}/api/gateway/embed", base)).json(&body).send();
 
             daemon_result(result)
         }
 
         "gateway_status" => {
-            let result = client.get(format!("{}/api/gateway/status", daemon_url())).send();
+            let result = client.get(format!("{}/api/gateway/status", base)).send();
             daemon_result(result)
         }
 
@@ -327,10 +370,8 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 .build()
                 .unwrap_or_else(|_| client.clone());
 
-            let result = consensus_client
-                .post(format!("{}/api/gateway/consensus", daemon_url()))
-                .json(&body)
-                .send();
+            let result =
+                consensus_client.post(format!("{}/api/gateway/consensus", base)).json(&body).send();
 
             match result {
                 Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
@@ -423,7 +464,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 .unwrap_or_else(|_| client.clone());
 
             let result = image_client
-                .post(format!("{}/api/gateway/image/generate", daemon_url()))
+                .post(format!("{}/api/gateway/image/generate", base))
                 .json(&body)
                 .send();
             daemon_result(result)
@@ -438,8 +479,25 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             // The `data` object (if any) is the base payload; the routing fields
             // are overlaid by build_log_event_body (the pure, tested mapper).
             let body = build_log_event_body(&args, cwd);
-            let result = client.post(format!("{}/hook/event", daemon_url())).json(&body).send();
+            let result = client.post(format!("{}/hook/event", base)).json(&body).send();
             daemon_result(result)
+        }
+
+        // ── Relay: the long hold (≤50 s outlives the default 30 s client),
+        // so it rides its own client — but through the standard send path,
+        // which is what puts the Authorization header on the wire.
+        "relay_wait_for_task" => {
+            let req = build_relay_wait_request(
+                args["lane_id"].as_str().unwrap_or(""),
+                args["lane_token"].as_str().unwrap_or(""),
+                args["timeout_ms"].as_u64(),
+                args["timeout_seconds"].as_u64(),
+            );
+            let wait_client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_else(|_| client.clone());
+            daemon_result(send_daemon_request(&wait_client, &req, base))
         }
 
         // Reached only when the library returned `None` — no workspace given
@@ -464,7 +522,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
 /// process-global (this MCP process == one session), so it never outlives the
 /// session or leaks to another repo. The resolve logic lives in the lib
 /// (unit-tested); this only drives the daemon fetch and the in-memory set.
-fn handle_use_workspace(args: &Value, client: &reqwest::blocking::Client) -> Value {
+fn handle_use_workspace(args: &Value, client: &reqwest::blocking::Client, base: &str) -> Value {
     let hint = args["workspace"].as_str().unwrap_or("");
     if hint.is_empty() {
         return json!({
@@ -472,7 +530,7 @@ fn handle_use_workspace(args: &Value, client: &reqwest::blocking::Client) -> Val
             "isError": true
         });
     }
-    let workspaces = match get_workspaces(client) {
+    let workspaces = match get_workspaces(client, base) {
         Ok(p) => p,
         Err(e) => {
             return json!({
@@ -508,15 +566,16 @@ fn handle_use_workspace(args: &Value, client: &reqwest::blocking::Client) -> Val
 fn resolve_workspace(
     hint: &str,
     client: &reqwest::blocking::Client,
+    base: &str,
 ) -> Result<Option<String>, String> {
-    Ok(resolve_workspace_in(&get_workspaces(client)?, hint))
+    Ok(resolve_workspace_in(&get_workspaces(client, base)?, hint))
 }
 
 /// Resolve current workspace name from CWD by matching against registered workspace
 /// folder paths. Best-effort: a daemon error yields "" (→ Unresolved, handled by
 /// the caller), logged to stderr — never a fabricated match.
-fn resolve_workspace_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> String {
-    match get_workspaces(client) {
+fn resolve_workspace_from_cwd(cwd: &str, client: &reqwest::blocking::Client, base: &str) -> String {
+    match get_workspaces(client, base) {
         Ok(workspaces) => resolve_from_cwd_in(&workspaces, cwd),
         Err(e) => {
             eprintln!("sensei-mcp: cwd workspace resolution skipped — {e}");
@@ -529,8 +588,8 @@ fn resolve_workspace_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> 
 /// failure. NEVER collapse an error to `[]` — that made every named workspace look
 /// nonexistent during a daemon bounce (a fabricated "workspace not found"). Mirrors
 /// `send_daemon_request`'s connect-retry so an upgrade restart is survived.
-fn get_workspaces(client: &reqwest::blocking::Client) -> Result<Vec<Value>, String> {
-    let url = format!("{}{WORKSPACES_FOR_RESOLUTION}", daemon_url());
+fn get_workspaces(client: &reqwest::blocking::Client, base: &str) -> Result<Vec<Value>, String> {
+    let url = format!("{base}{WORKSPACES_FOR_RESOLUTION}");
     let resp = match client.get(&url).send() {
         Err(e) if e.is_connect() => {
             std::thread::sleep(std::time::Duration::from_millis(300));
@@ -543,4 +602,44 @@ fn get_workspaces(client: &reqwest::blocking::Client) -> Result<Vec<Value>, Stri
         return Err(format!("daemon returned HTTP {} for /api/workspaces", resp.status()));
     }
     resp.json::<Vec<Value>>().map_err(|e| format!("unreadable /api/workspaces response: {e}"))
+}
+
+#[cfg(test)]
+mod daemon_url_flag_tests {
+    use super::parse_daemon_url_flag;
+
+    fn argv(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    #[test]
+    fn space_form_takes_next_arg() {
+        assert_eq!(
+            parse_daemon_url_flag(&argv(&["--daemon-url", "127.0.0.1:7844"])),
+            Some("127.0.0.1:7844".to_string())
+        );
+    }
+
+    #[test]
+    fn equals_form_reads_suffix() {
+        assert_eq!(
+            parse_daemon_url_flag(&argv(&["--daemon-url=http://h:1"])),
+            Some("http://h:1".to_string())
+        );
+    }
+
+    #[test]
+    fn absent_and_dangling_yield_none() {
+        assert_eq!(parse_daemon_url_flag(&argv(&[])), None);
+        assert_eq!(parse_daemon_url_flag(&argv(&["--other"])), None);
+        assert_eq!(parse_daemon_url_flag(&argv(&["--daemon-url"])), None);
+    }
+
+    #[test]
+    fn flag_shaped_next_arg_counts_as_dangling() {
+        // F1-L1: `--daemon-url --other` must not consume `--other` as the
+        // value — a `--*`-shaped next arg is dangling (None + warn + fall
+        // through), same as a trailing `--daemon-url`.
+        assert_eq!(parse_daemon_url_flag(&argv(&["--daemon-url", "--other"])), None);
+    }
 }

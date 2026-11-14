@@ -1,0 +1,12 @@
+{"code": "silent_drop", "label": "Silent drop (D83)"}
+{"code": "missing_failure_test", "label": "Missing failure test"}
+{"code": "surviving_mutant", "label": "Surviving mutant"}
+{"code": "fabricated_default", "label": "Fabricated default"}
+{"code": "tenant_leak", "label": "Tenant leak"}
+{"code": "role_gap", "label": "Role-matrix gap"}
+{"code": "secret_leak", "label": "Secret in response or log"}
+{"code": "flaky_time", "label": "Wall-clock or string-time compare"}
+{"code": "skipped_live", "label": "Live test skipped"}
+{"code": "unverified_claim", "label": "Claim without evidence"}
+{"code": "merge_conflict", "label": "Merge conflict"}
+{"code": "build_failure", "label": "Build or verify failure"}

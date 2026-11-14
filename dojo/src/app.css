@@ -51,7 +51,7 @@ body {
 	border-radius: 6px;
 	font-size: 13px;
 	font-weight: 400;
-	color: var(--ink-mute);
+	color: var(--ink-soft);
 	background: transparent;
 }
 [data-toggle][data-toggle-variant='group'] [data-toggle-option][data-selected='true'] {

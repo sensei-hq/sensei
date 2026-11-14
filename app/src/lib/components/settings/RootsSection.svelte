@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { Notice, failureNotice } from '@sensei/ui';
+    import { Button } from '@rokkit/ui';
     import { wizardState } from "$lib/wizard-state.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { appState } from "$lib/appstate.svelte.js";
@@ -9,6 +11,7 @@
     let adding = $state(false);
     /** Why the last add failed; the typed path stays in the box (#304). */
     let addError = $state<string | null>(null);
+    const addNotice = $derived(failureNotice("Couldn't add that root", addError));
 
     async function addRoot() {
         if (adding) return;
@@ -78,7 +81,7 @@
 </script>
 
 <div class="max-w-[780px]">
-    <p class="text-sm text-ink-soft leading-normal m-0 mb-6">
+    <p class="text-sm text-ink-mute leading-normal m-0 mb-6">
         Where your work lives. Sensei recurses each root and finds repositories.
     </p>
 
@@ -93,14 +96,10 @@
             placeholder="~/Developer"
             disabled={adding}
         />
-        <button class="btn-solid" onclick={addRoot} disabled={adding} data-testid="root-add">
-            {adding ? "Adding…" : "Add"}
-        </button>
+        <Button variant="primary" size="sm" onclick={addRoot} disabled={adding} data-testid="root-add" label={adding ? "Adding…" : "Add"} />
     </div>
-    {#if addError}
-        <p class="text-xs text-warning m-0 -mt-4 mb-6" data-testid="root-add-error">
-            The root was not added: {addError}
-        </p>
+    {#if addNotice}
+        <div class="-mt-4 mb-6"><Notice size="inline" expanded {...addNotice} data-testid="root-add-error" /></div>
     {/if}
 
     <div class="flex flex-col gap-3 mb-8">
@@ -117,7 +116,7 @@
                         {r.path}
                     </div>
                     {#if r.repos_found > 0}
-                        <div class="text-xs text-ink-soft mt-0.5">
+                        <div class="text-xs text-ink-mute mt-0.5">
                             {r.repos_found} repositories found
                         </div>
                     {/if}
@@ -125,39 +124,41 @@
                 {#if r.status === "paused"}
                     <span
                         data-testid="root-paused"
-                        class="text-xs text-ink-soft border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="text-xs text-ink-mute border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
                         >paused · not syncing</span
                     >
                 {:else if r.status === "watching"}
                     <span
-                        class="chip-watching text-xs text-success border border-success bg-success-soft rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="chip-watching text-xs text-on-success-soft border border-success bg-success-soft rounded-md px-2 py-0.5 whitespace-nowrap"
                         >watching</span
                     >
                 {:else}
                     <span
-                        class="text-xs text-ink-soft border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="text-xs text-ink-mute border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
                         >recursive</span
                     >
                 {/if}
-                <button
+                <!-- The count is the controller's, not the loaded root's: it is seeded
+                     from `r.excluded` and is authoritative afterwards, so it follows an
+                     add or a remove instead of going stale. -->
+                <Button
+                    style="outline"
+                    size="sm"
                     data-testid="root-skips"
-                    class="text-xs text-ink-soft border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap cursor-pointer hover:text-ink"
                     onclick={() => {
                         openFor = openFor === r.id ? null : r.id;
                         draft = "";
                     }}
-                >
-                    <!-- From the controller, not the loaded root: it is seeded from
-                         `r.excluded` and is authoritative afterwards, so the count
-                         follows an add or a remove instead of going stale. -->
-                    {exclusionsFor(r).excluded.length} skipped
-                </button>
-                <button
+                    label="{exclusionsFor(r).excluded.length} skipped"
+                />
+                <Button
+                    style="ghost"
+                    size="sm"
+                    icon="i-solar-close-circle-bold-duotone"
                     data-testid="root-remove"
-                    class="text-base text-ink-soft bg-none border-none cursor-pointer px-1 leading-none hover:text-accent"
                     aria-label="Remove {r.path}"
-                    onclick={() => startRemoval(r.id)}>×</button
-                >
+                    onclick={() => startRemoval(r.id)}
+                />
             </div>
 
             {#if removingFor === r.id && removal}
@@ -178,7 +179,7 @@
                     {/if}
 
                     {#if removal.loaded && removal.outcome === null}
-                        <p class="text-xs text-ink-soft m-0" data-testid="root-removal-question">
+                        <p class="text-xs text-ink-mute m-0" data-testid="root-removal-question">
                             {removal.question}
                         </p>
                         {#if removal.repositories.length > 0}
@@ -186,38 +187,44 @@
                                 {#each removal.repositories as repo (repo.path)}
                                     <li class="flex items-baseline gap-3">
                                         <span class="text-xs font-mono text-ink truncate flex-1 min-w-0">{repo.path}</span>
-                                        <button
-                                            class="text-xs text-ink-soft bg-none border-none cursor-pointer hover:text-accent"
+                                        <Button
+                                            style="link"
+                                            size="sm"
                                             disabled={removal.busy}
                                             onclick={() => removal?.pruneRepository(repo.path)}
-                                            >remove this one</button
-                                        >
+                                            label="remove this one"
+                                        />
                                     </li>
                                 {/each}
                             </ul>
                         {/if}
                         <div class="flex flex-wrap gap-2">
-                            <button
-                                class="btn-solid text-xs"
+                            <Button
+                                variant="primary"
+                                size="sm"
                                 data-testid="root-removal-keep"
                                 disabled={!removal.canDecide}
                                 onclick={() => decide(r.id, "keep")}
-                                >Stop syncing, keep the data</button
-                            >
-                            <button
-                                class="text-xs px-3 py-1 rounded-md border border-danger text-danger bg-transparent cursor-pointer"
+                                label="Stop syncing, keep the data"
+                            />
+                            <Button
+                                variant="danger"
+                                style="outline"
+                                size="sm"
                                 data-testid="root-removal-remove"
                                 disabled={!removal.canDecide}
                                 onclick={() => decide(r.id, "remove")}
-                                >Remove everything indexed here</button
-                            >
-                            <button
-                                class="text-xs px-3 py-1 rounded-md border border-paper-edge bg-transparent cursor-pointer"
+                                label="Remove everything indexed here"
+                            />
+                            <Button
+                                style="outline"
+                                size="sm"
                                 onclick={() => {
                                     removingFor = null;
                                     removal = null;
-                                }}>Cancel</button
-                            >
+                                }}
+                                label="Cancel"
+                            />
                         </div>
                     {/if}
                 </div>
@@ -230,13 +237,13 @@
                     data-root={r.id}
                     class="ml-8 -mt-1 px-5 py-4 bg-paper-soft rounded-lg"
                 >
-                    <p class="text-xs text-ink-soft m-0 mb-3 max-w-[560px] leading-normal">
+                    <p class="text-xs text-ink-mute m-0 mb-3 max-w-[560px] leading-normal">
                         Folders sensei will not walk under this root. A plain name skips
                         every folder with that name; a full path skips one subtree.
                     </p>
 
                     {#if ex.excluded.length === 0}
-                        <p class="text-xs text-ink-mute m-0 mb-3" data-empty>
+                        <p class="text-xs text-ink-soft m-0 mb-3" data-empty>
                             Nothing skipped. Only .gitignore and the built-in list
                             (node_modules, target, dist…) bound this root — a folder that
                             is not a git repository has neither.
@@ -252,11 +259,13 @@
                                     <span class="text-xs text-ink-faint flex-1 min-w-0 truncate">
                                         {ex.describe(value)}
                                     </span>
-                                    <button
-                                        class="text-xs text-ink-soft bg-none border-none cursor-pointer hover:text-accent"
+                                    <Button
+                                        style="link"
+                                        size="sm"
                                         disabled={ex.saving}
-                                        onclick={() => ex.remove(value)}>remove</button
-                                    >
+                                        onclick={() => ex.remove(value)}
+                                        label="remove"
+                                    />
                                 </div>
                             {/each}
                         </div>
@@ -274,11 +283,13 @@
                             placeholder="node_modules  ·  {r.path}/some/subtree"
                             disabled={ex.saving}
                         />
-                        <button
-                            class="btn-solid"
+                        <Button
+                            variant="primary"
+                            size="sm"
                             disabled={ex.saving || !draft.trim()}
-                            onclick={() => addExclusion(r)}>Skip</button
-                        >
+                            onclick={() => addExclusion(r)}
+                            label="Skip"
+                        />
                     </div>
 
                     {#if draft.trim() && !ex.error}
@@ -288,8 +299,8 @@
                             {ex.describe(draft.trim())}
                         </p>
                     {/if}
-                    {#if ex.error}
-                        <p class="text-xs text-danger mt-2 mb-0" data-error>{ex.error}</p>
+                    {#if ex.notice}
+                        <div class="mt-2"><Notice size="inline" bare expanded {...ex.notice} data-error /></div>
                     {/if}
                 </div>
             {/if}
@@ -300,9 +311,9 @@
 <style>
     /* Folder input pseudo-classes */
     .folder-input::placeholder {
-        color: var(--ink-soft);
+        color: var(--ink-mute);
     }
     .folder-input:focus {
-        border-color: var(--ink-soft);
+        border-color: var(--ink-mute);
     }
 </style>

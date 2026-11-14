@@ -8,11 +8,11 @@
 ##     mcp        — MCP server
 ##     bootstrap  — installer/prereq checker
 ##     logger     — structured logging crate
-##   website/     — Marketing website
 ##   docs/        — Documentation
 ##
 ## Sibling repos (pulled in as git deps, not in this tree):
 ##   sensei-hq/gateway — LLM routing library (git dep `gateway-embedded`)
+##   sensei-hq/website — sensei-hq.com, its own repo (not a dependency)
 ##
 ## Versioning:
 ##   VERSION file is the single source of truth.
@@ -27,7 +27,7 @@
 ##
 ## Mirrored to their own GitHub repos (editable in-repo; each target clones and
 ## copies — these are not git subtrees despite the historical wording):
-##   marketplace/ → sensei-hq/marketplace    (make marketplace-push, run by bump)
+##   marketplace/ → sensei-hq/marketplace    (make marketplace-push, run by release; bump only stamps the version)
 ##   homebrew/    → sensei-hq/homebrew-tap   — TEMPLATES. Rendered and published
 ##                  by release.yml's `update-tap`, never by `bump`. `tap-push` is
 ##                  a manual escape hatch that refuses an unrendered template.
@@ -36,7 +36,6 @@
         install install-service install-app install-debug \
         db-backup-essential \
         app-dev app-check \
-        website-dev website-build \
         test test-fast test-crates test-crates-fast \
         test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build app-e2e-bundle \
         _e2e-cold-pre _e2e-cold-post reset-e2e-db \
@@ -248,6 +247,7 @@ install-app: db-backup-essential
 	  fi; \
 	  rm -rf /Applications/Sensei.app; \
 	  cp -R app/src-tauri/target/release/bundle/macos/Sensei.app /Applications/; \
+	  scripts/codesign-local.sh --keep-identifier /Applications/Sensei.app; \
 	  echo "Installed Sensei.app to /Applications/"; \
 	else \
 	  echo "Warning: app/src-tauri/target/release/bundle/macos/Sensei.app not found — skipping /Applications copy"; \
@@ -362,14 +362,6 @@ app-e2e-bundle:
 app-check:
 	cd app && bun run check
 
-# ── Website ───────────────────────────────────────────────────────────────────
-
-website-dev:
-	cd website && bun run dev
-
-website-build:
-	cd website && bun run build
-
 # ── Tests ─────────────────────────────────────────────────────────────────────
 #
 # test-fast — no external dependencies; used by the pre-commit hook
@@ -379,7 +371,7 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard test-crates-fast test-app-unit test-plugin
+test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-no-now-relay check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin test-db-apply
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -396,6 +388,22 @@ test-crates-fast:
 check-sql-in-layer:
 	@scripts/check-sql-in-layer.py
 
+## D83: a failed read must surface as an error, never a plausible value. A ratchet
+## over failure-mask shapes per (rule, file) — scripts/fabrication-baseline.json may
+## only go down; reviewed non-masks live in scripts/fabrication-allow.tsv. The guard
+## mutation-tests itself first (--test), the way check-leak-guard does. No build and
+## no database, so it rides the pre-commit path; CI calls this same target.
+.PHONY: check-no-fabrication
+# Every relative link in the docs points at a file git tracks (dead links went unnoticed:
+# docs/mockups/ is untracked). Pending fixes are listed in scripts/doc-links-allow.tsv.
+check-doc-links:
+	@python3 scripts/check-doc-links.py --test >/dev/null
+	@python3 scripts/check-doc-links.py
+
+check-no-fabrication:
+	@python3 scripts/check-no-fabrication.py --test >/dev/null || python3 scripts/check-no-fabrication.py --test
+	@python3 scripts/check-no-fabrication.py
+
 check-ddl-grants:
 	@python3 scripts/check-grant-targets.py
 
@@ -409,6 +417,14 @@ check-ddl-grants:
 check-ddl-comments:
 	@python3 scripts/check-ddl-comments.py
 
+# dbd 0.27.8 resolved the `now()` call to the `relay.now` view (cyclic
+# dependency, relay impl r1 blocker B1). Fixed upstream in 0.27.9, but the
+# daemon's embedded dbd-core may lag the CLI — so no relay DDL file may call
+# `now()` at all. Static and instant, no database.
+check-no-now-relay:
+	@python3 scripts/check-no-now-relay.py --test >/dev/null
+	@python3 scripts/check-no-now-relay.py
+
 # A tap resolves `sensei-hq/tap/<token>` by filename, and it searches the formula
 # and cask namespaces SEPARATELY — so `brew install` with no `--cask` falls
 # through to the casks when no formula matches. That is why README's install
@@ -419,6 +435,34 @@ check-ddl-comments:
 check-brew-tokens:
 	@python3 scripts/check-brew-tokens.py
 
+# Docs that still call trackers read-only (spec/daemon/tracker-metrics-writeback.md
+# gate 26): since 2026-10-26 the daemon writes usage metrics back, so every such
+# statement is narrowed and names the spec. The self-test runs first, so a broken
+# check can't pass clean. Instant and needs no network.
+.PHONY: check-tracker-docs
+check-tracker-docs:
+	@bash scripts/check-tracker-readonly-docs.sh --test >/dev/null || bash scripts/check-tracker-readonly-docs.sh --test
+	@bash scripts/check-tracker-readonly-docs.sh
+
+# The Jira admin script that creates and maps sensei's write-back fields
+# (spec/daemon/tracker-metrics-writeback.md W7): its self-test runs against an
+# in-memory Jira, and reads the metrics from the enum and the app, so a metric
+# added to one and not the other fails here. Instant and needs no network.
+.PHONY: check-jira-fields-script
+check-jira-fields-script:
+	@python3 -I scripts/jira-create-sensei-fields.py --self-test >/dev/null || python3 -I scripts/jira-create-sensei-fields.py --self-test
+
+# app and the dōjō are two bun installs with two lockfiles, so nothing made a
+# dependency they share agree: jsdom ^29 vs ^25, vitest ^4.1.5 vs ^4, and the
+# Libraries screen listed every spread as a version conflict (audit 2026-11-03).
+# One spec per shared name; a deliberate difference goes in
+# scripts/shared-js-specs-allow.tsv. Self-test first, then the tree. Instant and
+# needs no install, so it runs on every commit.
+.PHONY: check-shared-js-specs
+check-shared-js-specs:
+	@python3 scripts/check-shared-js-specs.py --self-test >/dev/null || python3 scripts/check-shared-js-specs.py --self-test
+	@python3 scripts/check-shared-js-specs.py
+
 # The leak guard's own self-test (#213): every rule catches its case and passes
 # the legitimate one, a hit is reported on its own line, and a message or stdin
 # hit exits non-zero. It ran only when someone remembered `--test`.
@@ -426,7 +470,7 @@ check-brew-tokens:
 check-leak-guard:
 	@bash .githooks/check-no-leaks.sh --test >/dev/null || bash .githooks/check-no-leaks.sh --test
 
-test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
+test: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
@@ -473,7 +517,10 @@ test-template:
 
 # SQL assertions against a REAL Postgres — RLS, constraints, policy grants: the
 # things a mocked supabase-js client cannot check and therefore cannot fail on.
-#   DATABASE_URL overrides the target; defaults to the local Supabase.
+#   DATABASE_URL overrides the dōjō target (default: local Supabase);
+#   TEST_DATABASE_URL overrides the sensei-plane target (default: a
+#   branch-derived sensei_test_<lane> run.sh creates). The live daemon DB
+#   is refused, whatever names it.
 test-db:
 	./database/tests/run.sh
 
@@ -494,6 +541,17 @@ test-db-if-reachable:
 	@./database/tests/run.sh; s=$$?; \
 	if [ $$s -eq 69 ] || [ $$s -eq 127 ]; then \
 		echo "  SKIPPED SQL tests — no reachable database (run 'supabase start', then 'make test-db')"; \
+	elif [ $$s -ne 0 ]; then \
+		exit $$s; \
+	fi
+
+# run.sh --apply's self-test — same 69/127 loud-skip contract as
+# test-db-if-reachable: an unreachable database or missing psql skips, a
+# genuine failure fails the build.
+test-db-apply:
+	@./database/tests/self-test-apply.sh; s=$$?; \
+	if [ $$s -eq 69 ] || [ $$s -eq 127 ]; then \
+		echo "  SKIPPED run.sh --apply self-test — no reachable database"; \
 	elif [ $$s -ne 0 ]; then \
 		exit $$s; \
 	fi
@@ -569,12 +627,10 @@ update:
 	cargo update
 	@echo "Updating Node dependencies (app)..."
 	cd app && bun update
-	@echo "Updating Node dependencies (website)..."
-	cd website && bun update
 	@echo "Running tests to verify updates..."
 	$(MAKE) test
 	@echo "All dependencies updated and tests passed."
-	@echo "Review: git diff Cargo.lock app/bun.lock website/bun.lock"
+	@echo "Review: git diff Cargo.lock app/bun.lock"
 
 # ── Version bump ──────────────────────────────────────────────────────────────
 # Usage:
@@ -640,7 +696,6 @@ bump:
 	@echo "$(_v)" > VERSION
 	@# Node manifests
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/package.json
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' website/package.json
 	@# Dōjō web app — the version is stamped into the build (vite reads
 	@# package.json) and shown in the console footer / served at /version.
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' dojo/package.json
@@ -671,8 +726,6 @@ bump:
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/catalog.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/.claude-plugin/marketplace.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/plugins/sensei/.claude-plugin/plugin.json
-	@# Website footer version
-	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(_v)<\/div>/' website/src/routes/+page.svelte
 	@# Capture the schema as a versioned snapshot — but ONLY once the project is
 	@# released. Pre-release nothing is written, so `database/snapshots/` does not
 	@# exist and the folder stays clean until there is a baseline worth diffing
@@ -701,7 +754,7 @@ bump:
 	@# Commit everything
 	@git add VERSION Cargo.lock app/src-tauri/Cargo.lock \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
-	  website/package.json website/src/routes/+page.svelte dojo/package.json \
+	  dojo/package.json \
 	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml \
 	  crates/bootstrap/Cargo.toml crates/logger/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \

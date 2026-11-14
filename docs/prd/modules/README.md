@@ -80,6 +80,12 @@ Who touches it, and how — app screen / MCP tool / daemon task / CLI / web.
 
 ## Signals shown
 What each visible number / card / chip means, with worked examples.
+**Required column: "Decision it drives / next step"** — the concrete
+decision or action each signal leads to (open the file or lens, fix X,
+propose a rule, adopt a pack, set a target). Sensei is a guide and mentor:
+a signal that drives no decision or next step is incomplete. When one
+genuinely drives nothing, write "none — candidate to cut" rather than
+invent an action.
 
 ## Done gate
 The English claim we make when the module is finished. Prefer a

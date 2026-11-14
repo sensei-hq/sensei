@@ -27,6 +27,108 @@ pub struct TrackerRow {
     pub last_error: Option<String>,
     /// R11: transcript turns ingested up to here have been checked for unknown keys.
     pub discovered_through: chrono::DateTime<chrono::Utc>,
+    /// The token owner's provider id (W1); NULL until known.
+    pub owner_ref: Option<crate::tracker::AccountRef>,
+    /// Why `owner_ref` is NULL (`sensei.tracker_owner_state`).
+    pub owner_state: Option<String>,
+    /// The last owner lookup's failure code (`sensei.tracker_error`).
+    pub owner_error: Option<String>,
+    /// Whether usage and SDLC metrics are written back (W8).
+    pub writeback_enabled: bool,
+    /// Why the last write-back pass could not run or ended early (W2).
+    pub writeback_error: Option<String>,
+}
+
+#[cfg(test)]
+impl TrackerRow {
+    /// A row with every field empty, for pure tests that set the few they read.
+    pub fn test_default() -> Self {
+        TrackerRow {
+            id: uuid::Uuid::nil(),
+            workspace_id: uuid::Uuid::nil(),
+            kind: String::new(),
+            level: "sprint".into(),
+            base_url: String::new(),
+            account: String::new(),
+            external_scope: String::new(),
+            board_ref: String::new(),
+            params: serde_json::json!({}),
+            secret_service: String::new(),
+            last_attempt_at: None,
+            last_success_at: None,
+            last_error: None,
+            discovered_through: chrono::DateTime::UNIX_EPOCH,
+            owner_ref: None,
+            owner_state: None,
+            owner_error: None,
+            writeback_enabled: false,
+            writeback_error: None,
+        }
+    }
+}
+
+impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for TrackerRow {
+    fn from_row(r: &'r sqlx_postgres::PgRow) -> Result<Self, sqlx_core::Error> {
+        use sqlx_core::row::Row;
+        Ok(TrackerRow {
+            id: r.try_get("id")?,
+            workspace_id: r.try_get("workspace_id")?,
+            kind: r.try_get("kind")?,
+            level: r.try_get("level")?,
+            base_url: r.try_get("base_url")?,
+            account: r.try_get("account")?,
+            external_scope: r.try_get("external_scope")?,
+            board_ref: r.try_get("board_ref")?,
+            params: r.try_get("params")?,
+            secret_service: r.try_get("secret_service")?,
+            last_attempt_at: r.try_get("last_attempt_at")?,
+            last_success_at: r.try_get("last_success_at")?,
+            last_error: r.try_get("last_error")?,
+            discovered_through: r.try_get("discovered_through")?,
+            owner_ref: r
+                .try_get::<Option<String>, _>("owner_ref")?
+                .map(crate::tracker::AccountRef::new),
+            owner_state: r.try_get("owner_state")?,
+            owner_error: r.try_get("owner_error")?,
+            writeback_enabled: r.try_get("writeback_enabled")?,
+            writeback_error: r.try_get("writeback_error")?,
+        })
+    }
+}
+
+/// One ticket a write-back pass may write (spec W4), in pass order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WritebackTask {
+    pub id: uuid::Uuid,
+    pub external_id: String,
+    pub comment_ref: Option<String>,
+    pub hash: Option<String>,
+    /// `sensei.tracker_writeback_status`, NULL when never attempted.
+    pub status: Option<String>,
+    /// When a write last landed (W4 "written before"); a mapping change never clears it.
+    pub written_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When a write was last attempted, landed or not.
+    pub tried_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// One `sensei.tracker_fields` row (W6): mapped when it has a metric, retired when not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRow {
+    /// `sensei.tracker_metric`; NULL for a retired field.
+    pub metric: Option<String>,
+    pub field_ref: String,
+    pub retired_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// What the per-ticket re-check (W2) found just before a write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteTarget {
+    /// Write it.
+    Go,
+    /// No longer the token owner's: skip it, carry on.
+    Reassigned,
+    /// The tracker is gone, write-back is off, or the token changed: end the pass.
+    Stop,
 }
 
 /// The workspace that already owns a board.
@@ -49,6 +151,8 @@ pub struct NewTracker {
     pub board_ref: String,
     pub params: serde_json::Value,
     pub secret_service: String,
+    /// Who the token belongs to, from `validate` (W1).
+    pub owner: crate::tracker::OwnerLookup,
 }
 
 /// Why persisting a connect failed.
@@ -99,6 +203,13 @@ pub struct TaskDetail {
     pub issue_type: Option<String>,
     pub status: Option<String>,
     pub removed: bool,
+    /// Whether the token owner is the assignee (W1); NULL while the owner is unknown.
+    pub assigned_to_me: Option<bool>,
+    /// The last write-back outcome (W9), and when a write last landed.
+    pub writeback_status: Option<String>,
+    pub writeback_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The SDD framework pinned onto the ticket (blueprint B1, B13); `None` while none is.
+    pub sdd_framework: Option<String>,
     pub sessions: Vec<LinkedSession>,
 }
 
@@ -122,46 +233,12 @@ pub enum ApplyError {
 }
 
 const TRACKER_SELECT: &str =
-    "SELECT id, workspace_id, kind::text, level::text, base_url, account, external_scope, board_ref,
-        params, secret_service, last_attempt_at, last_success_at, last_error::text,
-        discovered_through
+    "SELECT id, workspace_id, kind::text AS kind, level::text AS level, base_url, account,
+        external_scope, board_ref, params, secret_service, last_attempt_at, last_success_at,
+        last_error::text AS last_error, discovered_through, owner_ref,
+        owner_state::text AS owner_state, owner_error::text AS owner_error, writeback_enabled,
+        writeback_error::text AS writeback_error
    FROM sensei.trackers";
-
-type TrackerTuple = (
-    uuid::Uuid,
-    uuid::Uuid,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    serde_json::Value,
-    String,
-    Option<chrono::DateTime<chrono::Utc>>,
-    Option<chrono::DateTime<chrono::Utc>>,
-    Option<String>,
-    chrono::DateTime<chrono::Utc>,
-);
-
-fn tracker_row(t: TrackerTuple) -> TrackerRow {
-    TrackerRow {
-        id: t.0,
-        workspace_id: t.1,
-        kind: t.2,
-        level: t.3,
-        base_url: t.4,
-        account: t.5,
-        external_scope: t.6,
-        board_ref: t.7,
-        params: t.8,
-        secret_service: t.9,
-        last_attempt_at: t.10,
-        last_success_at: t.11,
-        last_error: t.12,
-        discovered_through: t.13,
-    }
-}
 
 /// Last occurrence wins, so overlapping provider pages never make one upsert touch a row twice.
 fn dedupe_by<T: Clone, K: std::hash::Hash + Eq>(items: &[T], key: impl Fn(&T) -> K) -> Vec<T> {
@@ -193,6 +270,89 @@ fn is_unique_violation(e: &sqlx_core::Error) -> bool {
 
 type Conn = sqlx_postgres::PgConnection;
 
+/// How long the pass's pin waits for a ticket a tracker apply holds (blueprint B15).
+pub const PIN_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Which tickets a pin reconsiders (blueprint B16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinScope {
+    /// Every ticket of this tracker.
+    Tracker(uuid::Uuid),
+    /// The tickets linked to this session or pinned from it.
+    Session(uuid::Uuid),
+}
+
+/// Pin the SDD framework onto the tickets in `scope`, on the caller's transaction
+/// (blueprint B1, B11, B13–B18). The scope's tickets are fixed first, so a ticket the
+/// follow clears is still pinned afresh. A session's tickets are taken `SKIP LOCKED`:
+/// the pass never waits on a ticket a tracker apply holds (B15), so the two can never
+/// deadlock; the apply pins what was skipped. Then a ticket whose provenance session
+/// is still running follows it (B14), and each ticket still without one takes its
+/// earliest-started eligible session (B13). Returns the tickets changed.
+pub(crate) async fn pin_ticket_frameworks(
+    c: &mut Conn,
+    scope: PinScope,
+) -> Result<u64, sqlx_core::Error> {
+    let (select, id) = match scope {
+        PinScope::Tracker(id) => ("SELECT id FROM sensei.tracker_tasks WHERE tracker_id = $1", id),
+        PinScope::Session(id) => (
+            "SELECT id FROM sensei.tracker_tasks
+              WHERE id IN (SELECT task_id FROM sensei.session_task_links WHERE session_id = $1)
+                 OR sdd_framework_session_id = $1
+              ORDER BY id
+                FOR NO KEY UPDATE SKIP LOCKED",
+            id,
+        ),
+    };
+    let tasks: Vec<uuid::Uuid> =
+        sqlx_core::query_scalar::query_scalar(select).bind(id).fetch_all(&mut *c).await?;
+    if tasks.is_empty() {
+        return Ok(0);
+    }
+    let followed: Vec<uuid::Uuid> = sqlx_core::query_scalar::query_scalar(
+        "UPDATE sensei.tracker_tasks t
+            SET sdd_framework = CASE WHEN s.eligible THEN s.sdd_framework END,
+                sdd_framework_session_id = CASE WHEN s.eligible THEN s.id END,
+                sdd_framework_at = CASE WHEN s.eligible THEN now() END
+           FROM (SELECT id, sdd_framework,
+                        coalesce(sdd_framework_source IN ('behavioural', 'static'), false) AS eligible
+                   FROM activity.sessions WHERE completed_at IS NULL) s
+          WHERE s.id = t.sdd_framework_session_id AND t.id = ANY($1)
+            AND (NOT s.eligible OR s.sdd_framework IS DISTINCT FROM t.sdd_framework)
+         RETURNING t.id",
+    )
+    .bind(&tasks)
+    .fetch_all(&mut *c)
+    .await?;
+    let pinned: Vec<uuid::Uuid> = sqlx_core::query_scalar::query_scalar(&format!(
+        "WITH pick AS (
+             SELECT DISTINCT ON (l.task_id) l.task_id, s.id AS session_id, s.sdd_framework
+               FROM sensei.session_task_links l
+               JOIN sensei.tracker_tasks t ON t.id = l.task_id
+               JOIN activity.sessions s ON s.id = l.session_id
+              WHERE t.sdd_framework IS NULL AND t.id = ANY($1)
+                AND s.sdd_framework_source IN ('behavioural', 'static')
+                AND l.session_id IN (SELECT session_id FROM ({candidates}) c)
+              ORDER BY l.task_id, s.started_at, s.id),
+         held AS (
+             SELECT id FROM activity.sessions
+              WHERE id IN (SELECT session_id FROM pick) FOR KEY SHARE)
+         UPDATE sensei.tracker_tasks t
+            SET sdd_framework = p.sdd_framework, sdd_framework_session_id = p.session_id,
+                sdd_framework_at = now()
+           FROM pick p JOIN held h ON h.id = p.session_id
+          WHERE t.id = p.task_id AND t.sdd_framework IS NULL
+         RETURNING t.id",
+        candidates = candidate_sessions("t.tracker_id"),
+    ))
+    .bind(&tasks)
+    .fetch_all(&mut *c)
+    .await?;
+    let changed: std::collections::HashSet<uuid::Uuid> =
+        followed.into_iter().chain(pinned).collect();
+    Ok(changed.len() as u64)
+}
+
 /// Upsert tickets by `(tracker_id, external_id)`: a seen ticket is live again.
 async fn upsert_tasks(
     c: &mut Conn,
@@ -205,16 +365,32 @@ async fn upsert_tasks(
     let t_summary: Vec<Option<String>> = tasks.iter().map(|t| t.summary.clone()).collect();
     let t_type: Vec<Option<String>> = tasks.iter().map(|t| t.issue_type.clone()).collect();
     let t_status: Vec<Option<String>> = tasks.iter().map(|t| t.status.clone()).collect();
+    // Compared with the owner here, in the apply's transaction; never stored (W1).
+    let t_assignee: Vec<Option<&str>> =
+        tasks.iter().map(|t| t.assignee.as_ref().map(|a| a.as_str())).collect();
+    let t_created: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+        tasks.iter().map(|t| t.created_at).collect();
+    let t_updated: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+        tasks.iter().map(|t| t.updated_at).collect();
+    let t_category: Vec<Option<String>> = tasks.iter().map(|t| t.status_category.clone()).collect();
     sqlx_core::query::query(
         "INSERT INTO sensei.tracker_tasks
-                (tracker_id, external_id, key, scope, summary, issue_type, status, removed_at, last_seen_at)
-         SELECT $1, x.e, x.k, x.sc, x.su, x.ty, x.st, NULL, now()
-           FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
-                AS x(e, k, sc, su, ty, st)
+                (tracker_id, external_id, key, scope, summary, issue_type, status, removed_at, last_seen_at,
+                 assigned_to_me, issue_created_at, issue_updated_at, status_category)
+         SELECT $1, x.e, x.k, x.sc, x.su, x.ty, x.st, NULL, now(),
+                CASE WHEN o.owner_ref IS NULL THEN NULL ELSE coalesce(x.a = o.owner_ref, false) END,
+                x.cr, x.up, x.ca
+           FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[],
+                       $9::timestamptz[], $10::timestamptz[], $11::text[])
+                AS x(e, k, sc, su, ty, st, a, cr, up, ca)
+          CROSS JOIN (SELECT owner_ref FROM sensei.trackers WHERE id = $1) o
          ON CONFLICT (tracker_id, external_id) DO UPDATE
             SET key = excluded.key, scope = excluded.scope, summary = excluded.summary,
                 issue_type = excluded.issue_type, status = excluded.status,
-                removed_at = NULL, last_seen_at = now()",
+                removed_at = NULL, last_seen_at = now(), assigned_to_me = excluded.assigned_to_me,
+                issue_created_at = excluded.issue_created_at,
+                issue_updated_at = excluded.issue_updated_at,
+                status_category = excluded.status_category",
     )
     .bind(id)
     .bind(&t_ext)
@@ -223,6 +399,24 @@ async fn upsert_tasks(
     .bind(&t_summary)
     .bind(&t_type)
     .bind(&t_status)
+    .bind(&t_assignee)
+    .bind(&t_created)
+    .bind(&t_updated)
+    .bind(&t_category)
+    .execute(&mut *c)
+    .await?;
+    // Points only for the rows that asked (S4): one not asked keeps its value.
+    let (p_ext, p_raw): (Vec<String>, Vec<Option<String>>) =
+        tasks.iter().filter_map(|t| t.points.clone().map(|p| (t.external_id.clone(), p))).unzip();
+    sqlx_core::query::query(
+        "UPDATE sensei.tracker_tasks t
+            SET points = CASE WHEN x.p ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN x.p::numeric END
+           FROM unnest($2::text[], $3::text[]) AS x(e, p)
+          WHERE t.tracker_id = $1 AND t.external_id = x.e",
+    )
+    .bind(id)
+    .bind(&p_ext)
+    .bind(&p_raw)
     .execute(&mut *c)
     .await
     .map(|_| ())
@@ -301,7 +495,8 @@ async fn add_task_keys(c: &mut Conn, id: uuid::Uuid) -> Result<(), sqlx_core::Er
 }
 
 /// Write links for the sessions still present (locked against a concurrent
-/// prune), resolving external ids in SQL. A link already there is refreshed.
+/// prune), resolving external ids in SQL. A link already there is refreshed. Then
+/// the tracker's tickets are pinned, in the same transaction (blueprint B16).
 async fn write_links(
     c: &mut Conn,
     id: uuid::Uuid,
@@ -327,7 +522,7 @@ async fn write_links(
     let l_key: Vec<String> = kept.iter().map(|l| l.matched_key.clone()).collect();
     let l_mentions: Vec<i32> =
         kept.iter().map(|l| i32::try_from(l.mentions).unwrap_or(i32::MAX)).collect();
-    sqlx_core::query::query(
+    let linked = sqlx_core::query::query(
         "INSERT INTO sensei.session_task_links (session_id, task_id, source, matched_key, mentions)
          SELECT x.s, t.id, x.src::sensei.link_source, x.k, x.m
            FROM unnest($2::uuid[], $3::text[], $4::text[], $5::text[], $6::int[]) AS x(s, e, src, k, m)
@@ -342,18 +537,56 @@ async fn write_links(
     .bind(&l_key)
     .bind(&l_mentions)
     .execute(&mut *c)
-    .await
-    .map(|r| r.rows_affected())
+    .await?
+    .rows_affected();
+    pin_ticket_frameworks(c, PinScope::Tracker(id)).await?;
+    Ok(linked)
 }
 
 impl PgStore {
+    /// The session-signals pass's pin (blueprint B15): the tickets linked to or pinned
+    /// from `session_id`, in their own short transaction after the session's write.
+    pub async fn pin_session_tickets(&self, session_id: uuid::Uuid) -> Result<u64, String> {
+        let db = |e: sqlx_core::Error| format!("pin_session_tickets({session_id}): {e}");
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        sqlx_core::query::query(&format!(
+            "SET LOCAL lock_timeout = '{}ms'",
+            PIN_LOCK_TIMEOUT.as_millis()
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        let n = pin_ticket_frameworks(&mut tx, PinScope::Session(session_id)).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(n)
+    }
+
     pub async fn tracker_by_id(&self, id: uuid::Uuid) -> Result<Option<TrackerRow>, String> {
-        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!("{TRACKER_SELECT} WHERE id = $1"))
+        sqlx_core::query_as::query_as::<_, TrackerRow>(&format!("{TRACKER_SELECT} WHERE id = $1"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await
-            .map(|r| r.map(tracker_row))
             .map_err(|e| e.to_string())
+    }
+
+    /// The workspace's trackers whose mirror holds a live task of the repository
+    /// `scope` (a `normalize_repo_key` value): the GitHub boards `get_ticket` tries
+    /// first for a key of that repository (tracker-github §H5).
+    pub async fn trackers_holding_scope(
+        &self,
+        workspace_id: uuid::Uuid,
+        scope: &str,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        sqlx_core::query_scalar::query_scalar(
+            "SELECT DISTINCT t.id FROM sensei.trackers t
+               JOIN sensei.tracker_tasks tt ON tt.tracker_id = t.id
+              WHERE t.workspace_id = $1 AND tt.scope = $2 AND tt.removed_at IS NULL",
+        )
+        .bind(workspace_id)
+        .bind(scope)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
     }
 
     /// The workspace's trackers, by level (epic, sprint, task) then age.
@@ -361,13 +594,12 @@ impl PgStore {
         &self,
         workspace_id: uuid::Uuid,
     ) -> Result<Vec<TrackerRow>, String> {
-        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
+        sqlx_core::query_as::query_as::<_, TrackerRow>(&format!(
             "{TRACKER_SELECT} WHERE workspace_id = $1 ORDER BY level, created_at, id"
         ))
         .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
-        .map(|rows| rows.into_iter().map(tracker_row).collect())
         .map_err(|e| e.to_string())
     }
 
@@ -435,11 +667,25 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
+        let (field, learned): (Option<String>, bool) = sqlx_core::query_as::query_as(
+            "SELECT estimation_field, terms_at IS NOT NULL FROM sensei.trackers WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .unwrap_or((None, false));
+        let estimation = match (learned, field) {
+            (false, _) => crate::tracker::Estimation::NotLearned,
+            (true, None) => crate::tracker::Estimation::NoField,
+            (true, Some(f)) => crate::tracker::Estimation::Field(f),
+        };
         Ok(PrevState {
             members_fetched_state: rows
                 .into_iter()
                 .map(|(ext, state)| (ext, state.as_deref().and_then(SprintState::parse)))
                 .collect(),
+            estimation,
         })
     }
 
@@ -527,6 +773,15 @@ impl PgStore {
 
         // Tickets.
         upsert_tasks(&mut tx, id, &tasks).await.map_err(db)?;
+        // The field these points were read under (S4, A6), in the same apply.
+        if let Some(field) = &snapshot.points_field {
+            sqlx_core::query::query("UPDATE sensei.trackers SET points_field = $2 WHERE id = $1")
+                .bind(id)
+                .bind(field)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
         let t_ext: Vec<String> = tasks.iter().map(|t| t.external_id.clone()).collect();
         let removed_tasks = sqlx_core::query::query(
             "UPDATE sensei.tracker_tasks SET removed_at = now()
@@ -587,10 +842,13 @@ impl PgStore {
         // has now leaves the R11 negative cache.
         add_task_keys(&mut tx, id).await.map_err(db)?;
 
-        // Relink: a full replacement.
+        // Relink: a full replacement of what key matching found. A `fetch` link is
+        // the start of work (the assistant fetched the ticket, D63): no text
+        // supports it, so the relink keeps it, `started_at` included.
         sqlx_core::query::query(
             "DELETE FROM sensei.session_task_links
-              WHERE task_id IN (SELECT id FROM sensei.tracker_tasks WHERE tracker_id = $1)",
+              WHERE task_id IN (SELECT id FROM sensei.tracker_tasks WHERE tracker_id = $1)
+                AND source <> 'fetch'",
         )
         .bind(id)
         .execute(&mut *tx)
@@ -710,12 +968,37 @@ impl PgStore {
         key: &str,
     ) -> Result<Option<TaskDetail>, String> {
         let err = |e: sqlx_core::Error| e.to_string();
-        let Some((task_id, tracker_id, key, summary, issue_type, status, removed)) =
+        let Some((
+            task_id,
+            tracker_id,
+            key,
+            summary,
+            issue_type,
+            status,
+            removed,
+            assigned_to_me,
+            writeback_status,
+            writeback_at,
+            sdd_framework,
+        )) =
             sqlx_core::query_as::query_as::<
                 _,
-                (uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Option<String>, bool),
+                (
+                    uuid::Uuid,
+                    uuid::Uuid,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    bool,
+                    Option<bool>,
+                    Option<String>,
+                    Option<chrono::DateTime<chrono::Utc>>,
+                    Option<String>,
+                ),
             >(
-                "SELECT t.id, t.tracker_id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL
+                "SELECT t.id, t.tracker_id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL,
+                        t.assigned_to_me, t.writeback_status::text, t.writeback_at, t.sdd_framework::text
                    FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
                   WHERE tr.workspace_id = $1
                     AND (upper(t.key) = upper($2)
@@ -766,6 +1049,10 @@ impl PgStore {
             summary,
             issue_type,
             status,
+            assigned_to_me,
+            writeback_status,
+            writeback_at,
+            sdd_framework,
             removed,
             sessions,
         }))
@@ -950,6 +1237,8 @@ impl PgStore {
         .await
         .map_err(db)?;
 
+        let (owner_ref, owner_state) = t.owner.columns();
+        let owner_state = owner_state.map(|s| s.as_str());
         let outcome = match existing {
             Some((id,)) => {
                 // The secret_service update fires the swap trigger, tombstoning the old secret.
@@ -957,7 +1246,9 @@ impl PgStore {
                     "UPDATE sensei.trackers
                         SET level = $2::sensei.tracker_level, account = $3, external_scope = $4,
                             params = params || $5, secret_service = $6,
-                            last_success_at = NULL, last_error = NULL
+                            last_success_at = NULL, last_error = NULL,
+                            owner_ref = $7, owner_state = $8::sensei.tracker_owner_state, owner_error = NULL,
+                            writeback_error = NULL
                       WHERE id = $1",
                 )
                 .bind(id)
@@ -966,6 +1257,8 @@ impl PgStore {
                 .bind(&t.external_scope)
                 .bind(&t.params)
                 .bind(&t.secret_service)
+                .bind(owner_ref)
+                .bind(owner_state)
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
@@ -974,8 +1267,10 @@ impl PgStore {
             None => {
                 let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
                     "INSERT INTO sensei.trackers
-                            (workspace_id, kind, level, base_url, account, external_scope, board_ref, params, secret_service)
-                     VALUES ($1, $2::sensei.tracker_kind, $3::sensei.tracker_level, $4, $5, $6, $7, $8, $9)
+                            (workspace_id, kind, level, base_url, account, external_scope, board_ref, params,
+                             secret_service, owner_ref, owner_state)
+                     VALUES ($1, $2::sensei.tracker_kind, $3::sensei.tracker_level, $4, $5, $6, $7, $8, $9,
+                             $10, $11::sensei.tracker_owner_state)
                      RETURNING id",
                 )
                 .bind(t.workspace_id)
@@ -987,6 +1282,8 @@ impl PgStore {
                 .bind(&t.board_ref)
                 .bind(&t.params)
                 .bind(&t.secret_service)
+                .bind(owner_ref)
+                .bind(owner_state)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
@@ -997,10 +1294,15 @@ impl PgStore {
         // One credential per site (D14): the workspace's other boards on this site
         // move to the new token; the swap trigger tombstones each old secret. The
         // old token's failure no longer describes them; the caller re-syncs them.
+        // An adapter whose tokens cover less than a site names that narrower scope in
+        // `params.credential_scope` (GitHub: the project's owner); only boards with
+        // the same scope share the token. Jira and GitLab name none (NULL = NULL).
         let rekeyed: Vec<uuid::Uuid> = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
-            "UPDATE sensei.trackers SET account = $4, secret_service = $5, last_error = NULL
+            "UPDATE sensei.trackers SET account = $4, secret_service = $5, last_error = NULL,
+                    owner_ref = NULL, owner_state = NULL, owner_error = NULL, writeback_error = NULL
               WHERE workspace_id = $1 AND kind = $2::sensei.tracker_kind AND base_url = $3
                 AND secret_service <> $5
+                AND (params->>'credential_scope') IS NOT DISTINCT FROM $6
              RETURNING id",
         )
         .bind(t.workspace_id)
@@ -1008,12 +1310,26 @@ impl PgStore {
         .bind(&t.base_url)
         .bind(&t.account)
         .bind(&t.secret_service)
+        .bind(t.params.get("credential_scope").and_then(|v| v.as_str()))
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?
         .into_iter()
         .map(|(id,)| id)
         .collect();
+
+        // Whose tickets these are was decided against the old owner (W11).
+        let reset: Vec<uuid::Uuid> = rekeyed.iter().copied().chain(Some(outcome.0)).collect();
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks
+                SET assigned_to_me = NULL, writeback_comment_ref = NULL, writeback_hash = NULL,
+                    writeback_status = NULL
+              WHERE tracker_id = ANY($1)",
+        )
+        .bind(&reset)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
 
         let cleared = sqlx_core::query::query(
             "DELETE FROM sensei.tracker_secret_tombstones WHERE secret_service = $1",
@@ -1030,14 +1346,353 @@ impl PgStore {
         Ok((outcome.0, outcome.1, rekeyed))
     }
 
+    /// Store the owner a sync looked up (W1 backfill), only while the row still
+    /// names the token it was looked up with and still has none. `Ok(false)` when a
+    /// re-key or re-connect got there first.
+    pub async fn set_tracker_owner(
+        &self,
+        id: uuid::Uuid,
+        secret_service: &str,
+        owner: &crate::tracker::OwnerLookup,
+    ) -> Result<bool, String> {
+        let (owner_ref, owner_state) = owner.columns();
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers
+                SET owner_ref = $3, owner_state = $4::sensei.tracker_owner_state, owner_error = NULL
+              WHERE id = $1 AND secret_service = $2
+                AND owner_ref IS NULL AND owner_state IS DISTINCT FROM 'not_a_person'",
+        )
+        .bind(id)
+        .bind(secret_service)
+        .bind(owner_ref)
+        .bind(owner_state.map(|s| s.as_str()))
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// Record why the owner lookup failed (W1), under the same conditions.
+    pub async fn set_tracker_owner_error(
+        &self,
+        id: uuid::Uuid,
+        secret_service: &str,
+        code: &str,
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET owner_error = $3::sensei.tracker_error
+              WHERE id = $1 AND secret_service = $2 AND owner_ref IS NULL",
+        )
+        .bind(id)
+        .bind(secret_service)
+        .bind(code)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// The tracker's write-back candidates (W4): live tickets assigned to the
+    /// token owner, never-tried first, then by oldest attempt, then by id (W2).
+    pub async fn writeback_candidates(
+        &self,
+        tracker_id: uuid::Uuid,
+    ) -> Result<Vec<WritebackTask>, String> {
+        self.writeback_tasks(tracker_id, true).await
+    }
+
+    /// Every live ticket's write-back state; with `assigned_only`, the pass's candidates.
+    pub async fn writeback_tasks(
+        &self,
+        tracker_id: uuid::Uuid,
+        assigned_only: bool,
+    ) -> Result<Vec<WritebackTask>, String> {
+        sqlx_core::query_as::query_as::<
+            _,
+            (
+                uuid::Uuid,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<chrono::DateTime<chrono::Utc>>,
+                Option<chrono::DateTime<chrono::Utc>>,
+            ),
+        >(
+            "SELECT id, external_id, writeback_comment_ref, writeback_hash, writeback_status::text,
+                    writeback_at, writeback_tried_at
+               FROM sensei.tracker_tasks
+              WHERE tracker_id = $1 AND (assigned_to_me OR NOT $2) AND removed_at IS NULL
+              ORDER BY writeback_tried_at NULLS FIRST, id",
+        )
+        .bind(tracker_id)
+        .bind(assigned_only)
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(id, external_id, comment_ref, hash, status, written_at, tried_at)| {
+                    WritebackTask {
+                        id,
+                        external_id,
+                        comment_ref,
+                        hash,
+                        status,
+                        written_at,
+                        tried_at,
+                    }
+                })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// The per-ticket re-check before a write (W2), against the pass's token.
+    pub async fn writeback_target(
+        &self,
+        task_id: uuid::Uuid,
+        secret_service: &str,
+    ) -> Result<WriteTarget, String> {
+        let row = sqlx_core::query_as::query_as::<_, (bool, bool, Option<bool>)>(
+            "SELECT tr.writeback_enabled, tr.secret_service = $2, t.assigned_to_me
+               FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
+              WHERE t.id = $1",
+        )
+        .bind(task_id)
+        .bind(secret_service)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(match row {
+            None | Some((false, _, _)) | Some((_, false, _)) => WriteTarget::Stop,
+            Some((true, true, Some(true))) => WriteTarget::Go,
+            Some((true, true, _)) => WriteTarget::Reassigned,
+        })
+    }
+
+    /// A write landed: its hash, the comment it wrote, `ok` and the time, while the
+    /// token is the pass's. `Ok(false)` when it isn't (superseded).
+    pub async fn record_write_ok(
+        &self,
+        task_id: uuid::Uuid,
+        secret_service: &str,
+        hash: &str,
+        comment_ref: Option<&str>,
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks t
+                SET writeback_hash = $3, writeback_comment_ref = coalesce($4, t.writeback_comment_ref),
+                    writeback_status = 'ok', writeback_at = now(), writeback_tried_at = now()
+               FROM sensei.trackers tr
+              WHERE t.id = $1 AND tr.id = t.tracker_id AND tr.secret_service = $2",
+        )
+        .bind(task_id)
+        .bind(secret_service)
+        .bind(hash)
+        .bind(comment_ref)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// A write failed: only its status, under the same condition.
+    pub async fn record_write_status(
+        &self,
+        task_id: uuid::Uuid,
+        secret_service: &str,
+        status: &str,
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks t
+                SET writeback_status = $3::sensei.tracker_writeback_status, writeback_tried_at = now()
+               FROM sensei.trackers tr
+              WHERE t.id = $1 AND tr.id = t.tracker_id AND tr.secret_service = $2",
+        )
+        .bind(task_id)
+        .bind(secret_service)
+        .bind(status)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// Drop retired fields the tracker refuses to clear (W6), under the token condition.
+    pub async fn delete_retired_fields(
+        &self,
+        tracker_id: uuid::Uuid,
+        secret_service: &str,
+        field_refs: &[String],
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "DELETE FROM sensei.tracker_fields f
+              USING sensei.trackers tr
+              WHERE f.tracker_id = $1 AND f.metric IS NULL AND f.field_ref = ANY($3)
+                AND tr.id = f.tracker_id AND tr.secret_service = $2",
+        )
+        .bind(tracker_id)
+        .bind(secret_service)
+        .bind(field_refs)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+        .map_err(|e| e.to_string())
+    }
+
+    /// Set (or, with `None`, clear) the pass-level failure (W2), under the token condition.
+    pub async fn set_writeback_error(
+        &self,
+        tracker_id: uuid::Uuid,
+        secret_service: &str,
+        code: Option<&str>,
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET writeback_error = $3::sensei.tracker_error
+              WHERE id = $1 AND secret_service = $2",
+        )
+        .bind(tracker_id)
+        .bind(secret_service)
+        .bind(code)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// Switch write-back on or off (W8). Switching it on clears what was waiting
+    /// for that: the sticky statuses, and a removed comment's id and hash, so the
+    /// next pass posts a new one. `Ok(false)` when there is no such tracker.
+    pub async fn set_writeback_enabled(
+        &self,
+        tracker_id: uuid::Uuid,
+        enabled: bool,
+    ) -> Result<bool, String> {
+        let err = |e: sqlx_core::Error| e.to_string();
+        let mut tx = self.pool.begin().await.map_err(err)?;
+        let Some((was,)) = sqlx_core::query_as::query_as::<_, (bool,)>(
+            "SELECT writeback_enabled FROM sensei.trackers WHERE id = $1 FOR UPDATE",
+        )
+        .bind(tracker_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(err)?
+        else {
+            return Ok(false);
+        };
+        sqlx_core::query::query("UPDATE sensei.trackers SET writeback_enabled = $2 WHERE id = $1")
+            .bind(tracker_id)
+            .bind(enabled)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+        if !was && enabled {
+            sqlx_core::query::query(
+                "UPDATE sensei.tracker_tasks
+                    SET writeback_comment_ref = CASE WHEN writeback_status = 'comment_removed' THEN NULL
+                                                     ELSE writeback_comment_ref END,
+                        writeback_hash = CASE WHEN writeback_status = 'comment_removed' THEN NULL
+                                              ELSE writeback_hash END,
+                        writeback_status = NULL
+                  WHERE tracker_id = $1
+                    AND writeback_status IN ('comment_removed', 'forbidden', 'not_found', 'field_invalid')",
+            )
+            .bind(tracker_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+        }
+        tx.commit().await.map_err(err)?;
+        Ok(true)
+    }
+
+    /// The tracker's field rows: mapped ones in metric order, then retired ones (W6).
+    pub async fn tracker_fields(&self, tracker_id: uuid::Uuid) -> Result<Vec<FieldRow>, String> {
+        sqlx_core::query_as::query_as::<
+            _,
+            (Option<String>, String, Option<chrono::DateTime<chrono::Utc>>),
+        >(
+            "SELECT metric::text, field_ref, retired_at FROM sensei.tracker_fields
+              WHERE tracker_id = $1 ORDER BY metric NULLS LAST, field_ref",
+        )
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(metric, field_ref, retired_at)| FieldRow { metric, field_ref, retired_at })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// Replace the mapped set (W7): a field no longer mapped is retired, a retired
+    /// one mapped again comes back, every task's hash is cleared and so is
+    /// `field_invalid` — in one transaction.
+    pub async fn replace_tracker_fields(
+        &self,
+        tracker_id: uuid::Uuid,
+        mapping: &[(String, String)],
+    ) -> Result<(), String> {
+        let err = |e: sqlx_core::Error| e.to_string();
+        let mut tx = self.pool.begin().await.map_err(err)?;
+        // Retire everything first, so a metric can move to another field without a
+        // unique clash; a field mapped again comes back below.
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_fields SET metric = NULL, retired_at = now()
+              WHERE tracker_id = $1 AND metric IS NOT NULL",
+        )
+        .bind(tracker_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?;
+        let metrics: Vec<&str> = mapping.iter().map(|(m, _)| m.as_str()).collect();
+        let refs: Vec<&str> = mapping.iter().map(|(_, r)| r.as_str()).collect();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.tracker_fields (tracker_id, metric, field_ref, retired_at)
+             SELECT $1, x.m::sensei.tracker_metric, x.r, NULL FROM unnest($2::text[], $3::text[]) AS x(m, r)
+             ON CONFLICT (tracker_id, field_ref) DO UPDATE SET metric = excluded.metric, retired_at = NULL",
+        )
+        .bind(tracker_id)
+        .bind(&metrics)
+        .bind(&refs)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?;
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks
+                SET writeback_hash = NULL,
+                    writeback_status = CASE WHEN writeback_status = 'field_invalid' THEN NULL
+                                            ELSE writeback_status END
+              WHERE tracker_id = $1",
+        )
+        .bind(tracker_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?;
+        tx.commit().await.map_err(err)
+    }
+
+    /// `(assigned, failing)` for the board card (W8).
+    pub async fn writeback_counts(&self, tracker_id: uuid::Uuid) -> Result<(i64, i64), String> {
+        sqlx_core::query_as::query_as(
+            "SELECT count(*) FILTER (WHERE assigned_to_me),
+                    count(*) FILTER (WHERE assigned_to_me AND writeback_status <> 'ok')
+               FROM sensei.tracker_tasks WHERE tracker_id = $1 AND removed_at IS NULL",
+        )
+        .bind(tracker_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
     /// Every tracker, for the scheduled sync.
     pub async fn list_trackers(&self) -> Result<Vec<TrackerRow>, String> {
-        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
+        sqlx_core::query_as::query_as::<_, TrackerRow>(&format!(
             "{TRACKER_SELECT} ORDER BY created_at"
         ))
         .fetch_all(&self.pool)
         .await
-        .map(|rows| rows.into_iter().map(tracker_row).collect())
         .map_err(|e| e.to_string())
     }
 
@@ -1054,6 +1709,8 @@ impl PgStore {
     }
 
     /// Delete one of the workspace's trackers. `false` when the workspace has no such tracker.
+    /// Its board pushes are queued for withdrawal by the delete itself
+    /// (`sensei.queue_delivery_withdrawals`, B13; #355).
     pub async fn delete_tracker(
         &self,
         workspace_id: uuid::Uuid,
@@ -1158,7 +1815,7 @@ impl PgStore {
 }
 
 #[cfg(test)]
-mod schema_tests {
+pub(crate) mod schema_tests {
     use crate::db::pg_store::PgStore;
 
     async fn workspace(pg: &PgStore, tag: &str) -> uuid::Uuid {
@@ -1167,7 +1824,91 @@ mod schema_tests {
             .unwrap()
     }
 
-    async fn insert_tracker(
+    /// S4: the apply stores the ticket's times and status category; its points only
+    /// when they were asked for.
+    #[tokio::test]
+    async fn the_apply_stores_times_category_and_points_only_when_asked() {
+        use crate::tracker::{Snapshot, TaskRow};
+        let pg = PgStore::test_store().await;
+        let w = pg
+            .create_workspace(&format!("_test:apply:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let svc = format!("svc-{}", uuid::Uuid::new_v4());
+        let t = insert_tracker(
+            &pg,
+            w,
+            &format!("https://a{}.atlassian.net", uuid::Uuid::new_v4().simple()),
+            "42",
+            &svc,
+        )
+        .await
+        .unwrap();
+        let created =
+            chrono::DateTime::parse_from_rfc3339("2026-09-01T10:00:00Z").unwrap().to_utc();
+        let row = |points: Option<Option<&str>>| TaskRow {
+            external_id: "10001".into(),
+            key: "AUTH-1".into(),
+            created_at: Some(created),
+            updated_at: Some(created),
+            status_category: Some("done".into()),
+            points: points.map(|p| p.map(String::from)),
+            ..Default::default()
+        };
+        let read = || async {
+            sqlx_core::query_as::query_as::<
+                _,
+                (Option<f64>, Option<chrono::DateTime<chrono::Utc>>, Option<String>),
+            >(
+                "SELECT points::float8, issue_created_at, status_category FROM sensei.tracker_tasks
+                  WHERE tracker_id = $1 AND external_id = '10001'",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+        };
+        let apply = |points| {
+            let snapshot = Snapshot { tasks: vec![row(points)], ..Default::default() };
+            let (pg, svc) = (&pg, svc.clone());
+            async move {
+                pg.apply_tracker_snapshot(
+                    t,
+                    &super::TrackerSnapshotApply {
+                        secret_service: &svc,
+                        snapshot: &snapshot,
+                        params_patch: &serde_json::json!({}),
+                        links: &[],
+                    },
+                )
+                .await
+                .unwrap()
+            }
+        };
+        apply(Some(Some("3"))).await;
+        assert_eq!(read().await, (Some(3.0), Some(created), Some("done".to_string())));
+        apply(None).await;
+        assert_eq!(read().await.0, Some(3.0), "not asked: kept");
+        apply(Some(Some("lots"))).await;
+        assert_eq!(read().await.0, None, "not a number: NULL");
+        apply(Some(Some("2.5"))).await;
+        apply(Some(None)).await;
+        assert_eq!(read().await.0, None, "asked, none: cleared");
+    }
+
+    /// D83: a tracker that is gone is an error, never "no history yet".
+    #[tokio::test]
+    async fn the_history_state_of_an_unknown_tracker_is_an_error() {
+        let pg = PgStore::test_store().await;
+        let w = workspace(&pg, "history-state").await;
+        let svc = format!("svc-{}", uuid::Uuid::new_v4());
+        let url = format!("https://h{}.atlassian.net", uuid::Uuid::new_v4().simple());
+        let t = insert_tracker(&pg, w, &url, "42", &svc).await.unwrap();
+        assert_eq!(pg.tracker_history_state(t).await, Ok((None, None)), "not read yet");
+        assert!(pg.tracker_history_state(uuid::Uuid::new_v4()).await.is_err());
+    }
+
+    pub(crate) async fn insert_tracker(
         pg: &PgStore,
         workspace_id: uuid::Uuid,
         base_url: &str,

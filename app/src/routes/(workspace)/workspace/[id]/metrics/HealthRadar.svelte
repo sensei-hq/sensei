@@ -29,7 +29,7 @@
 
   const spokes = $derived(toSpokes(components));
   const axes = $derived(toAxes(spokes));
-  const tone = $derived(score === null ? 'ink-mute' : scoreTone(score));
+  const tone = $derived(score === null ? 'ink-soft' : scoreTone(score));
 
   // RadarChart types its rows as the library's loose `Record<string, unknown>`,
   // which a precise interface can't satisfy without an index signature. Casting
@@ -45,7 +45,7 @@
   <header class="flex items-baseline justify-between gap-3">
     <div>
       <h2 class="display text-base font-normal m-0 text-ink">Health · all signals</h2>
-      <p class="text-xs text-ink-mute m-0 mt-1">
+      <p class="text-xs text-ink-soft m-0 mt-1">
         every rated metric on one 0–5 scale
       </p>
     </div>
@@ -72,7 +72,7 @@
     <!-- Honest-empty: nothing was rated, so there is no shape to draw. A radar
          collapsed to its centre would read as "everything failing" when it
          means "not measured yet" (spec I1/I4). -->
-    <p class="text-sm text-ink-soft m-0 py-6 text-center" data-testid="health-radar-empty">
+    <p class="text-sm text-ink-mute m-0 py-6 text-center" data-testid="health-radar-empty">
       No rated metrics yet. Signals appear here as they are computed.
     </p>
   {:else}

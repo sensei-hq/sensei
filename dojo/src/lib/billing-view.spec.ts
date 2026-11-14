@@ -1,44 +1,51 @@
 import { describe, expect, it } from 'vitest';
-import { monthlyTotal, relayTone, tierCtaLabel } from './billing-view';
+import { attachNotice, tierAction, currentTier } from './billing-view';
+import { toKitBilling } from './billing-map';
 
-// The admin billing helpers — the live monthly-total math + the free-vs-paid
-// relay tone + the tier CTA label. Pure functions, so they assert without a DOM.
+// The admin billing helpers — the plan actions, which plan is current, and what
+// the screen says about changing plan. Pure, so they assert without a DOM.
 
-describe('monthlyTotal — active contributors × per-seat', () => {
-	it('multiplies billable seats by the per-seat price', () => {
-		expect(monthlyTotal({ seatsActive: 34, perSeat: 12 })).toBe(408);
+describe('tierAction — each plan card\'s button', () => {
+	it('the current plan has none', () => {
+		expect(tierAction('free', 'free')).toBeNull();
+		expect(tierAction('pro', 'pro')).toBeNull();
 	});
 
-	it('is zero when there are no billable seats', () => {
-		expect(monthlyTotal({ seatsActive: 0, perSeat: 12 })).toBe(0);
-		// No price set, or no seat count: there is no total to show (#106).
-		expect(monthlyTotal({ seatsActive: 34, perSeat: null })).toBeNull();
-		expect(monthlyTotal({ seatsActive: null, perSeat: 12 })).toBeNull();
-	});
-});
-
-describe('relayTone — free vs paid', () => {
-	it('reads a free row as success with the individuals label', () => {
-		const t = relayTone(true);
-		expect(t.text).toBe('text-success');
-		expect(t.soft).toBe('bg-success-soft');
-		expect(t.label).toBe('free · individuals');
+	it('on Free, Pro offers to attach; on Pro, Free offers to move back', () => {
+		expect(tierAction('pro', 'free')).toEqual({ label: 'Attach Pro', primary: true });
+		expect(tierAction('free', 'pro')).toEqual({ label: 'Move to Free', primary: false });
 	});
 
-	it('reads a paid row as accent with the team label', () => {
-		const t = relayTone(false);
-		expect(t.text).toBe('text-accent');
-		expect(t.label).toBe('paid · team');
+	it('with no known current plan, nothing is offered', () => {
+		expect(tierAction('pro', null)).toBeNull();
 	});
 });
 
-describe('tierCtaLabel', () => {
-	it('offers a downgrade to the free tier', () => {
-		expect(tierCtaLabel('free')).toBe('Downgrade');
+describe('currentTier', () => {
+	it('the current tier, or null when the plan is unknown', () => {
+		const usage = { seats_used: 0, total_active_seats: 0, billable_users: [] };
+		expect(currentTier(toKitBilling({ account: null, usage }))).toBe('free');
+		const unknown = toKitBilling({ account: { plan: 'x', status: 'active', seats_included: 0, seats_used: 0, seats_computed_at: null, period_start: null, period_end: null }, usage });
+		expect(currentTier(unknown)).toBeNull();
+	});
+});
+
+describe('attachNotice — why the plan buttons cannot run yet (M6)', () => {
+	it('on Free: plan changes open once payments are connected, and what Free means meanwhile', () => {
+		expect(attachNotice('free')).toEqual({
+			tone: 'normal',
+			title: 'Plan changes open once payments are connected',
+			detail: "Until then this organization stays on Free: its public repositories sync, and its private ones stay hidden.",
+			code: 'billing_not_connected'
+		});
 	});
 
-	it('routes paid tiers to sales', () => {
-		expect(tierCtaLabel('ent')).toBe('Contact sales');
-		expect(tierCtaLabel('team')).toBe('Contact sales');
+	it('on Pro: the same, and the plan stays as it is', () => {
+		expect(attachNotice('pro')).toEqual({
+			tone: 'normal',
+			title: 'Plan changes open once payments are connected',
+			detail: 'Until then this plan stays as it is.',
+			code: 'billing_not_connected'
+		});
 	});
 });

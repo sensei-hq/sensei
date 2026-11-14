@@ -38,6 +38,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("capture_drain", "Capture-spool drain — re-imports hook events dead-lettered to disk"),
     ("contribute", "Dōjō upstream contribute cadence"),
     (
+        "derive_session_signals",
+        "SDLC signals — derives each changed session's builds, tests, reviews and work slices from its hook events",
+    ),
+    (
         "dojo_sync",
         "Dōjō sync — maps shared repositories to tenants, fetches the sync plan, and pushes allowed metric rows",
     ),
@@ -59,8 +63,12 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("metrics", "Metrics engine — one compute wave per workspace against its watermark"),
     ("reconcile", "Folder/index reconcile — self-healing scan-drift repair"),
     (
+        "relay_lease",
+        "Relay lease sweeper — expires lapsed lane leases, suspends their work, re-offers past the grace, re-picks dead reviewers",
+    ),
+    (
         "tracker_sync",
-        "Tracker sync — mirrors each connected Jira board's sprints and tickets (read-only) and drains removed credentials",
+        "Tracker sync — mirrors each connected Jira, GitLab or GitHub board's sprints and tickets, writes usage and SDLC metrics back to tickets assigned to you (Jira), and drains removed credentials",
     ),
     ("watchdog", "Run watchdog — stalled-run detection and recovery"),
 ];
@@ -586,5 +594,13 @@ mod tests {
         assert_eq!(body["window"], serde_json::json!("22:00–05:00"), "rendered by window_label");
         assert!(!stored.enabled, "the response must describe what was actually stored");
         assert_eq!(stored.interval_secs, 4242);
+    }
+
+    #[test]
+    fn the_tracker_sync_description_names_every_tracker() {
+        let d = super::DESCRIPTIONS.iter().find(|(k, _)| *k == "tracker_sync").unwrap().1;
+        for name in ["Jira", "GitLab", "GitHub"] {
+            assert!(d.contains(name), "{d}");
+        }
     }
 }

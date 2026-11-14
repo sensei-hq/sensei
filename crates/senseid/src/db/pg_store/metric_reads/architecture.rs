@@ -111,4 +111,51 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())
     }
+
+    /// Each module of the workspace's code map, with the repository it lives in
+    /// (#156): structure_graph's file → its folder → that folder's repository.
+    /// A module in two repositories is answered as it is; the caller refuses it.
+    pub async fn architecture_module_repositories(
+        &self,
+        workspace_id: &uuid::Uuid,
+    ) -> Result<Vec<(String, uuid::Uuid)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT DISTINCT sensei.module_of(sg.package, sg.module), f.repository_id
+               FROM sensei.structure_graph sg
+               JOIN sensei.files fi ON fi.id = sg.file_id
+               JOIN sensei.folders f ON f.id = fi.folder_id
+              WHERE sg.workspace_id = $1
+                AND f.repository_id IS NOT NULL",
+        )
+        .bind(workspace_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Whether each repository of the workspace is fully indexed: every one of
+    /// its ROOT folders (no parent) in the workspace has
+    /// `folder_completeness.subtree_complete` — a root's subtree covers its subfolders.
+    /// A root folder with no completeness row is NOT complete — never assumed.
+    /// The readiness read targets (TG4) share.
+    pub async fn repository_index_complete(
+        &self,
+        workspace_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, bool)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT f.repository_id, bool_and(coalesce(fc.subtree_complete, false))
+               FROM sensei.folders f
+               JOIN sensei.folder_workspaces fw ON fw.folder_id = f.id
+               LEFT JOIN sensei.folder_completeness fc ON fc.id = f.id
+              WHERE fw.workspace_id = $1
+                AND f.repository_id IS NOT NULL
+                AND f.parent_id IS NULL
+              GROUP BY f.repository_id
+              ORDER BY f.repository_id",
+        )
+        .bind(workspace_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
 }

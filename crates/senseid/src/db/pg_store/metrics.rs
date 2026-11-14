@@ -937,6 +937,24 @@ impl PgStore {
     /// federated) and for an id with no row. Used to look a repository up in the
     /// dōjō's activation ruling, which is keyed on `repo_key` because that is the
     /// one identity both planes share — `repositories.id` is per-install.
+    /// The `repo_key` of a folder's repository: `None` when the folder has no
+    /// repository or its repository has no key (a local-only repo).
+    pub async fn repo_key_of_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT r.repo_key FROM sensei.folders f
+               JOIN sensei.repositories r ON r.id = f.repository_id
+              WHERE f.id = $1",
+        )
+        .bind(folder_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("repo_key_of_folder: {e}"))?;
+        Ok(row.and_then(|(k,)| k))
+    }
+
     pub async fn repo_key_for_repository(
         &self,
         repository_id: &uuid::Uuid,
@@ -1161,9 +1179,9 @@ impl PgStore {
     pub async fn get_workspace_metric_daily_series_all(
         &self,
         workspace_id: &uuid::Uuid,
-    ) -> Result<std::collections::HashMap<String, Vec<f64>>, String> {
-        let rows: Vec<(String, f64)> = sqlx_core::query_as::query_as(
-            "SELECT metric, value::float8
+    ) -> Result<std::collections::HashMap<String, Vec<(chrono::NaiveDate, f64)>>, String> {
+        let rows: Vec<(String, chrono::NaiveDate, f64)> = sqlx_core::query_as::query_as(
+            "SELECT metric, date, value::float8
                FROM sensei.workspace_metric_daily
               WHERE workspace_id = $1
               ORDER BY metric, date",
@@ -1172,10 +1190,10 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        let mut by_metric: std::collections::HashMap<String, Vec<f64>> =
+        let mut by_metric: std::collections::HashMap<String, Vec<(chrono::NaiveDate, f64)>> =
             std::collections::HashMap::new();
-        for (metric, value) in rows {
-            by_metric.entry(metric).or_default().push(value);
+        for (metric, date, value) in rows {
+            by_metric.entry(metric).or_default().push((date, value));
         }
         Ok(by_metric)
     }

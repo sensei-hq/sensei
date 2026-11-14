@@ -65,8 +65,8 @@
 .divide-paper-mute > :not([hidden]) ~ :not([hidden]) { border-color: var(--paper-mute); }
 .divide-paper-edge > :not([hidden]) ~ :not([hidden]) { border-color: var(--paper-edge); }
 .divide-ink-faint  > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink-faint); }
-.divide-ink-soft   > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink-soft); }
 .divide-ink-mute   > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink-mute); }
+.divide-ink-soft   > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink-soft); }
 .divide-ink        > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink); }
 
 /*

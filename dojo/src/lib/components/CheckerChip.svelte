@@ -9,7 +9,7 @@
 </script>
 
 <span
-	class="mono bg-paper border-paper-edge text-ink-soft inline-flex items-center gap-1 whitespace-nowrap rounded-full border text-xs"
+	class="mono bg-paper border-paper-edge text-ink-mute inline-flex items-center gap-1 whitespace-nowrap rounded-full border text-xs"
 	style="padding: 2px 8px"
 >
 	<span

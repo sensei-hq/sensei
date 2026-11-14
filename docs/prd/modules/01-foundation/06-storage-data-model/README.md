@@ -59,11 +59,11 @@ learned ever vanishes"*.
 
 ## Signals shown
 
-| Element | Value | Meaning |
-|---|---|---|
-| Schema drift | dbd reconcile/deploy output | the schema is the source of truth; drift fails loudly |
-| `data.md` "Where the gaps are" | orphaned/empty tables | honesty surface (e.g. no writer on `inference.*`) |
-| Gate checks | check-* CI lines | layer rules: no SQL outside `db/pg_store/`, grants owned by the schema, comments well-formed |
+| Element | Value | Meaning | Decision it drives / next step |
+|---|---|---|---|
+| Schema drift | dbd reconcile/deploy output | the schema is the source of truth; drift fails loudly | fix the DDL and converge with `dbd reconcile` before deploy |
+| `data.md` "Where the gaps are" | orphaned/empty tables | honesty surface (e.g. no writer on `inference.*`) | write the missing writer, or drop the orphan table |
+| Gate checks | check-* CI lines | layer rules: no SQL outside `db/pg_store/`, grants owned by the schema, comments well-formed | move the SQL into `db/pg_store/`, or fix the grant or comment the check names |
 
 ## Done gate
 
@@ -99,8 +99,9 @@ learned ever vanishes"*.
 
 - Orphaned tables in `inference` (no writer, superseded by `narration_cache`) and
   empty-by-design dojo tables — see [06-gaps.md](../../../../roadmap/06-gaps.md).
-- [D-12/D-13](../../../../roadmap/06-gaps.md) — dependency drift (P0(deps)) live in the
-  register; not schema, but they press on `database@vVERSION` bump discipline.
+- ~~D-12~~/D-13 — D-12 **closed 2026-11-03** by `eefc6c119` (kavach 1.3.2 → one
+  `@rokkit` family); D-13's 28 advisories are not schema but press on
+  `database@vVERSION` bump discipline.
 
 ## Related
 

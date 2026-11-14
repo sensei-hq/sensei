@@ -88,7 +88,7 @@
     {#if description}
       <p
         data-component="page-header-description"
-        class="{s.desc} text-ink-soft leading-normal m-0 mt-1 max-w-[720px] {clampDescription
+        class="{s.desc} text-ink-mute leading-normal m-0 mt-1 max-w-[720px] {clampDescription
           ? 'line-clamp-2'
           : ''}"
       >{description}</p>

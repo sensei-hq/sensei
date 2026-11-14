@@ -1,6 +1,6 @@
 [package]
 name = "sensei-mcp"
-version = "0.21.1"
+version = "0.22.0"
 edition = "2024"
 description = "Sensei MCP server — wraps senseid daemon for Claude Code integration"
 
@@ -13,7 +13,7 @@ name = "sensei-mcp"
 path = "src/main.rs"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
-sensei-bootstrap = { path = "../bootstrap" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true, features = ["blocking"] }
+sensei-bootstrap = { workspace = true }

@@ -1,16 +1,18 @@
 <script lang="ts">
+  import { Notice } from '@sensei/ui';
+  import { Button } from '@rokkit/ui';
   // The Tickets screen (docs/spec/screen/workspace-tickets.md).
   // PRESENTATIONAL: the numbers, words and requests are tickets-state's; this
   // renders them and reports clicks.
   import { Select } from '@rokkit/ui';
   import { PageHeader, Screen } from '$lib/components';
   import { replayHref } from '$lib/sessions-digest.js';
+  import type { SdlcFigure } from '$lib/sdlc-figures.js';
   import { usageCells, type TicketsState } from './tickets-state.svelte.js';
 
   let { screen, workspaceId }: { screen: TicketsState; workspaceId: string } = $props();
 
   const COLS = 'grid grid-cols-[minmax(12rem,1fr)_7rem_5rem_6rem_6rem_5rem_5rem_5rem_4rem] items-center gap-3';
-  const button = 'rounded-md border border-paper-edge px-3 py-1.5 text-sm text-ink hover:bg-paper-mute';
 
   const when = (iso: string | null) =>
     iso
@@ -22,12 +24,20 @@
   {@const c = usageCells(u)}
   <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
     <span class="text-ink">{label}</span>
-    <span class="text-ink-mute">sessions <span class="text-ink">{u.sessions}</span></span>
-    <span class="text-ink-mute">active AI time <span class="text-ink">{c.active}</span></span>
-    <span class="text-ink-mute">fresh tokens <span class="text-ink">{c.fresh}</span></span>
-    <span class="text-ink-mute">out tokens <span class="text-ink">{c.out}</span></span>
-    <span class="text-ink-mute">API cost <span class="text-ink">{c.cost}</span></span>
+    <span class="text-ink-soft">sessions <span class="text-ink">{u.sessions}</span></span>
+    <span class="text-ink-soft">active AI time <span class="text-ink">{c.active}</span></span>
+    <span class="text-ink-soft">fresh tokens <span class="text-ink">{c.fresh}</span></span>
+    <span class="text-ink-soft">out tokens <span class="text-ink">{c.out}</span></span>
+    <span class="text-ink-soft">API cost <span class="text-ink">{c.cost}</span></span>
   </div>
+{/snippet}
+
+{#snippet sdlcFigures(figures: SdlcFigure[])}
+  {#each figures as f (f.key)}
+    <span class="text-ink-mute"
+      >{f.label} <span data-sdlc={f.key} class={f.reason ? 'text-ink-soft' : 'text-ink'}>{f.text}</span></span
+    >
+  {/each}
 {/snippet}
 
 <Screen>
@@ -37,25 +47,24 @@
       icon="i-solar-ticket-bold-duotone"
       eyebrow="Tickets"
       title={screen.boardTitle || 'Tickets'}
-      description="Active AI time and tokens per ticket and sprint, from AI sessions whose branch or prompt names the ticket. Read from Jira; nothing is changed there."
+      description="Active AI time and tokens per ticket and sprint, from AI sessions whose branch or prompt names the ticket. Read from the connected tracker. On Jira tickets assigned to you, sensei writes these numbers back, as set on Integrations."
     />
   {/snippet}
 <section data-screen="tickets" class="flex flex-col">
 
   <div class="px-6 py-6">
     {#if screen.view === 'loading'}
-      <p class="m-0 text-sm text-ink-soft">Reading tickets…</p>
+      <p class="m-0 text-sm text-ink-mute">Reading tickets…</p>
     {:else if screen.view === 'not_connected'}
       <div data-view="not_connected" class="flex flex-col gap-2 text-sm text-ink">
         <p class="m-0">This workspace has no sprint board connected.</p>
         <a href="/workspace/{workspaceId}/integrations" class="self-start text-primary underline">Connect one in Integrations</a>
       </div>
     {:else if screen.view === 'daemon_error'}
-      <div data-view="daemon_error" class="flex flex-col gap-3 rounded-md border border-paper-edge bg-paper-soft p-4">
-        <p role="alert" class="m-0 text-sm text-danger">{screen.loadError}</p>
-        <div>
-          <button type="button" class={button} data-action="retry" onclick={() => screen.load()}>Retry</button>
-        </div>
+      <div data-view="daemon_error">
+        {#if screen.loadNotice}
+          <Notice size="panel" {...screen.loadNotice} primary={{ label: 'Retry', onclick: () => screen.load(), name: 'retry' }} />
+        {/if}
       </div>
     {:else}
       <div class="flex min-w-0 flex-col gap-4">
@@ -64,32 +73,41 @@
           {@const time = usageCells(t.usage)}
           <div data-view="ticket" class="flex flex-col gap-4">
             <div>
-              <button type="button" class={button} data-action="back" onclick={() => screen.closeTicket()}
-                >{screen.backLabel}</button
-              >
+              <Button style="outline" size="sm" data-action="back" onclick={() => screen.closeTicket()} label={screen.backLabel} />
             </div>
             <div class="flex flex-col gap-1">
               <h2 class="m-0 font-heading text-lg text-ink">{t.task.key} · {t.task.summary ?? ''}</h2>
-              <p class="m-0 text-xs text-ink-mute">
+              <p class="m-0 text-xs text-ink-soft">
                 {t.task.status ?? '—'}{t.task.removed ? ' · no longer on the board' : ''}
               </p>
             </div>
             {@render usageRow('This ticket', t.usage)}
             <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
               <span class="text-ink">Time</span>
-              <span class="text-ink-mute">Claude <span class="text-ink" data-time="claude">{time.claude}</span></span>
-              <span class="text-ink-mute">you <span class="text-ink" data-time="you">{time.you}</span></span>
-              <span class="text-ink-mute">session time <span class="text-ink" data-time="wall">{time.wall}</span></span>
-              <span class="text-ink-mute"
+              <span class="text-ink-soft">Claude <span class="text-ink" data-time="claude">{time.claude}</span></span>
+              <span class="text-ink-soft">you <span class="text-ink" data-time="you">{time.you}</span></span>
+              <span class="text-ink-soft">session time <span class="text-ink" data-time="wall">{time.wall}</span></span>
+              <span class="text-ink-soft"
                 >cycle time <span class="text-ink" data-time="cycle">{time.cycle}</span>{#if t.usage.first_at && t.usage.last_at}<span
-                    class="text-ink-soft"> · {when(t.usage.first_at)} → {when(t.usage.last_at)}</span
+                    class="text-ink-mute"> · {when(t.usage.first_at)} → {when(t.usage.last_at)}</span
                   >{/if}</span
               >
             </div>
 
+            <div data-section="sdlc" class="flex flex-col gap-1">
+              <h3 class="m-0 text-sm text-ink">SDLC</h3>
+              {#each screen.ticketSdlc as row (row.id)}
+                <div data-sdlc-row={row.id} class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                  <span class="text-ink">{row.label}</span>
+                  {@render sdlcFigures(row.figures)}
+                  {#if row.note}<span data-sdlc-note class="text-ink-soft">{row.note}</span>{/if}
+                </div>
+              {/each}
+            </div>
+
             <h3 class="m-0 text-sm text-ink">By repository</h3>
             {#if t.by_repo.length === 0}
-              <p class="m-0 text-sm text-ink-soft">No AI sessions linked yet.</p>
+              <p class="m-0 text-sm text-ink-mute">No AI sessions linked yet.</p>
             {:else}
               <ul class="m-0 flex list-none flex-col gap-2 p-0">
                 {#each t.by_repo as r (r.repository_id)}
@@ -100,21 +118,21 @@
 
             <h3 class="m-0 text-sm text-ink">Sessions</h3>
             {#if t.sessions.length === 0}
-              <p class="m-0 text-sm text-ink-soft">No AI sessions linked yet.</p>
+              <p class="m-0 text-sm text-ink-mute">No AI sessions linked yet.</p>
             {:else}
               <ul class="m-0 flex list-none flex-col gap-1 p-0">
                 {#each t.sessions as s (s.id)}
                   <li class="flex flex-wrap gap-3 text-sm">
                     <a href={replayHref(s.id)} data-session={s.id} class="text-primary underline">{when(s.started_at)}</a>
-                    <span class="text-ink-mute">{screen.linksText(s)}</span>
+                    <span class="text-ink-soft">{screen.linksText(s)}</span>
                   </li>
                 {/each}
               </ul>
             {/if}
           </div>
         {:else}
-          {#if screen.ticketError}
-            <p role="alert" class="m-0 text-sm text-danger">{screen.ticketError}</p>
+          {#if screen.ticketNotice}
+            <Notice size="inline" {...screen.ticketNotice} expanded />
           {/if}
           <div class="flex min-w-0 flex-col gap-6 xl:flex-row">
             {#each screen.lanes as lane (lane.id)}
@@ -127,7 +145,7 @@
                   <h2 class="m-0 font-heading text-base text-ink">{lane.title}</h2>
                 {/if}
               <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
-                <label class="flex items-center gap-2 text-sm text-ink-mute">
+                <label class="flex items-center gap-2 text-sm text-ink-soft">
                   <span>Sprint</span>
                   <div class="min-w-[14rem]" data-filter="sprint">
                     <Select
@@ -142,14 +160,14 @@
                   <input type="checkbox" id="tickets-ai-only-{lane.id}" data-filter="ai-only" bind:checked={lane.aiOnly} />
                   <label for="tickets-ai-only-{lane.id}">Only tickets with AI sessions</label>
                 </span>
-                <p data-count class="m-0 text-sm text-ink-mute">{lane.countLine}</p>
+                <p data-count class="m-0 text-sm text-ink-soft">{lane.countLine}</p>
               </div>
 
               {#if lane.strip}
                 {@const strip = lane.strip}
                 <div data-strip class="flex flex-col gap-2 rounded-lg border border-paper-edge bg-paper-soft p-4">
                   {#if strip.kind === 'reason'}
-                    <p class="m-0 text-sm text-ink-soft">{strip.text}</p>
+                    <p class="m-0 text-sm text-ink-mute">{strip.text}</p>
                   {:else}
                     <p class="m-0 text-sm text-ink">{strip.total}</p>
                     {#each strip.parts as part (part.label)}
@@ -165,41 +183,41 @@
                         {:else}
                           <span class="text-ink">{part.label}</span>
                         {/if}
-                        <span class="text-ink-mute">sessions <span class="text-ink">{part.sessions}</span></span>
-                        <span class="text-ink-mute">active AI time <span class="text-ink">{part.active}</span></span>
-                        <span class="text-ink-mute">fresh tokens <span class="text-ink">{part.fresh}</span></span>
+                        <span class="text-ink-soft">sessions <span class="text-ink">{part.sessions}</span></span>
+                        <span class="text-ink-soft">active AI time <span class="text-ink">{part.active}</span></span>
+                        <span class="text-ink-soft">fresh tokens <span class="text-ink">{part.fresh}</span></span>
                       </div>
                     {/each}
                   {/if}
                 </div>
               {/if}
 
-              {#if lane.unlinkedError}
-                <p role="alert" class="m-0 text-sm text-danger">{lane.unlinkedError}</p>
+              {#if lane.unlinkedNotice}
+                <Notice size="inline" {...lane.unlinkedNotice} expanded />
               {/if}
               {#if lane.unlinked}
                 <ul class="m-0 flex list-none flex-col gap-1 p-0" aria-label="Sessions not linked to a ticket">
                   {#each lane.unlinked as u (u.id)}
                     <li class="flex flex-wrap gap-3 text-sm">
                       <a href={replayHref(u.id)} data-session={u.id} class="text-primary underline">{when(u.started_at)}</a>
-                      <span class="text-ink-mute">{u.task || 'session'}</span>
+                      <span class="text-ink-soft">{u.task || 'session'}</span>
                     </li>
                   {/each}
                 </ul>
               {/if}
 
 
-              {#if lane.tasksError}
-                <p role="alert" class="m-0 text-sm text-danger">{lane.tasksError}</p>
+              {#if lane.tasksNotice}
+                <Notice size="inline" {...lane.tasksNotice} expanded />
               {:else if lane.tasks === null}
-                <p class="m-0 text-sm text-ink-soft">Reading tickets…</p>
+                <p class="m-0 text-sm text-ink-mute">Reading tickets…</p>
               {:else if lane.visibleTasks.length === 0}
-                <p class="m-0 text-sm text-ink-soft">No tickets to show.</p>
+                <p class="m-0 text-sm text-ink-mute">No tickets to show.</p>
               {:else}
                 <div class="overflow-x-auto">
                   <div class="min-w-[52rem]">
-                    <div aria-hidden="true" class="{COLS} border-b border-paper-edge px-2 pb-1 text-xs text-ink-mute">
-                      <span>Ticket</span><span>Sprint</span><span>Status</span><span>Sessions (branch/prompt)</span>
+                    <div aria-hidden="true" class="{COLS} border-b border-paper-edge px-2 pb-1 text-xs text-ink-soft">
+                      <span>Ticket</span><span>Sprint</span><span>Status</span><span>Sessions (branch/prompt/fetch)</span>
                       <span>Active AI time</span><span>Cycle time</span><span>Fresh tokens</span><span>Out tokens</span><span>API cost</span>
                     </div>
                     <ul class="m-0 list-none p-0">
@@ -213,11 +231,11 @@
                             onclick={() => screen.openTicket(lane, t.key)}
                           >
                             <span class="flex min-w-0 flex-col">
-                              <span class="font-mono text-xs text-ink-mute">{t.key}</span>
+                              <span class="font-mono text-xs text-ink-soft">{t.key}</span>
                               <span class="truncate text-ink" title={t.summary ?? ''}>{t.summary ?? ''}</span>
                             </span>
-                            <span class="truncate text-ink-mute"><span class="sr-only">sprint </span><span data-cell="sprint">{lane.sprintOf(t)}</span></span>
-                            <span class="truncate text-ink-mute"><span class="sr-only">status </span>{t.status ?? '—'}</span>
+                            <span class="truncate text-ink-soft"><span class="sr-only">sprint </span><span data-cell="sprint">{lane.sprintOf(t)}</span></span>
+                            <span class="truncate text-ink-soft"><span class="sr-only">status </span>{t.status ?? '—'}</span>
                             <span><span class="sr-only">sessions </span><span data-cell="sessions">{c.sessions}</span></span>
                             <span><span class="sr-only">active AI time </span><span data-cell="active">{c.active}</span></span>
                             <span><span class="sr-only">cycle time </span><span data-cell="cycle">{c.cycle}</span></span>
@@ -231,10 +249,10 @@
                   </div>
                 </div>
                 {#if lane.sharedNote}
-                  <p class="m-0 text-xs text-ink-soft">{lane.sharedNote}</p>
+                  <p class="m-0 text-xs text-ink-mute">{lane.sharedNote}</p>
                 {/if}
                 {#if lane.costNote}
-                  <p class="m-0 text-xs text-ink-soft">{lane.costNote}</p>
+                  <p class="m-0 text-xs text-ink-mute">{lane.costNote}</p>
                 {/if}
               {/if}
               </section>

@@ -14,6 +14,7 @@
 // free wire string, so it degrades to a fallback glyph rather than being
 // dropped — mirroring the connections module.
 
+import { failureNotice } from '@sensei/ui';
 import type { SenseiApi } from '$lib/api.js';
 import type { DojoBindingSuggestion, DojoMembership } from '$lib/types.js';
 // Reuse the connections module's kind→kanji map rather than duplicating it —
@@ -75,12 +76,12 @@ export function bindingKanji(kind: string): string {
 
 /** Pure: the confirmed-state chip — success tone, sentence-case label. */
 export function confirmedChip(): BindingChip {
-  return { bg: 'bg-success-soft', text: 'text-success', label: 'confirmed' };
+  return { bg: 'bg-success-soft', text: 'text-on-success-soft', label: 'confirmed' };
 }
 
 /** Pure: the inferred-state chip — warning tone, sentence-case label. */
 export function inferredChip(): BindingChip {
-  return { bg: 'bg-warning-soft', text: 'text-warning', label: 'inferred' };
+  return { bg: 'bg-warning-soft', text: 'text-on-warning-soft', label: 'inferred' };
 }
 
 /** Pure: find the membership this workspace is bound to, or null. Confirmed when
@@ -146,6 +147,11 @@ export class BindingAction {
   /** The confirmed view to render after a successful confirm, or null before. */
   confirmed = $state<ConfirmedBinding | null>(null);
 
+  /** Notice props for a confirm the daemon refused (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice("Couldn't bind this workspace to the dōjō", this.error);
+  }
+
   /**
    * Confirm the inferred binding. Builds the confirmed view from the inferred
    * one so the row swaps without a reload. Resolves `true` on success (the page
@@ -168,4 +174,9 @@ export class BindingAction {
     this.error = res.error.message;
     return false;
   }
+}
+
+/** Notice props for a binding that could not be read — never "no binding". */
+export function bindingLoadNotice(view: { state: string; message?: string }) {
+  return view.state === 'error' ? failureNotice("Couldn't read this workspace's dōjō binding", view.message) : null;
 }

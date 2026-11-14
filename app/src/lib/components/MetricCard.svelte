@@ -10,7 +10,7 @@
     const trendClass: Record<'good' | 'bad' | 'neutral', string> = {
         good: 'text-success',
         bad: 'text-danger',
-        neutral: 'text-ink-mute',
+        neutral: 'text-ink-soft',
     };
     const trendArrow: Record<'up' | 'down' | 'flat', string> = {
         up: '↑',
@@ -21,7 +21,7 @@
 
 <div data-component="metric-card" class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-3">
     <div class="flex items-start justify-between gap-2 mb-1">
-        <span class="text-xs tracking-wide uppercase text-ink-mute">{card.name}</span>
+        <span class="text-xs tracking-wide uppercase text-ink-soft">{card.name}</span>
         {#if card.trend}
             <span
                 data-component="metric-trend"
@@ -41,6 +41,6 @@
     </div>
 
     {#if card.sub}
-        <div data-component="metric-sub" class="text-xs text-ink-mute mt-1">{card.sub}</div>
+        <div data-component="metric-sub" class="text-xs text-ink-soft mt-1">{card.sub}</div>
     {/if}
 </div>

@@ -47,6 +47,42 @@ pub struct SyncStateRow {
     /// The identity (session slot) whose sync last wrote it; `None` on a row
     /// written before identities were recorded.
     pub persona: Option<String>,
+    /// What the reader can do about a `skipped` row, resolved from
+    /// `sensei.reason_codes` (domain `repository_sharing`); `None` when the
+    /// reason names no code. The screen renders this, never its own copy.
+    pub remedy: Option<String>,
+}
+
+/// One repository's verdict from a single plan pass: what the dōjō answered
+/// about it, as one `sync_state` row under `repository`.
+pub struct RepositoryVerdict<'a> {
+    /// The durable cross-install key — never a local uuid.
+    pub repo_key: &'a str,
+    pub state: RepositoryVerdictState,
+    /// The row's `last_error`: the namespaced reason on `skipped`
+    /// (`unmapped:no_connection`), the filing error on `partial`, `None` on
+    /// `synced` so no stale message sits beside a success.
+    pub detail: Option<String>,
+}
+
+/// The only states a repository verdict takes. Never `error`: a refusal is a
+/// deliberate outcome, and recording one as an error would cry wolf about
+/// every private repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepositoryVerdictState {
+    Synced,
+    Skipped,
+    Partial,
+}
+
+impl RepositoryVerdictState {
+    fn as_str(self) -> &'static str {
+        match self {
+            RepositoryVerdictState::Synced => "synced",
+            RepositoryVerdictState::Skipped => "skipped",
+            RepositoryVerdictState::Partial => "partial",
+        }
+    }
 }
 
 /// The push query's column tuple. Named for the same reason `ScheduleRow` and
@@ -63,6 +99,7 @@ type PushableRow = (
     Option<String>,
     serde_json::Value,
     String,
+    Option<chrono::DateTime<chrono::Utc>>,
 );
 
 /// The user-scoped rows a push could consider: this machine's, unsent or changed
@@ -78,9 +115,48 @@ const PROVABLY_THEIRS: &str = "(rm.identity IS NULL AND r.repo_key = ANY($3)) \
                                WHERE e.persona_id = $1 AND e.source = 'claimed' \
                                  AND e.removed_at IS NULL)";
 
-/// A selected row as the push carries it.
+/// A row whose backoff has elapsed (or was never backed off): the only rows a
+/// push window offers. A waiting row holds no share of the limit — it waits
+/// its turn, then is re-offered.
+const BACKOFF_ELAPSED: &str = "(rm.next_attempt_at IS NULL OR rm.next_attempt_at <= now())";
+
+/// The push read's columns and joins, shared by the repo and user queries so
+/// the carried shape — including the commits join behind `props.authored_at`
+/// — cannot drift between the two paths. The join is the commits primary key,
+/// so a row is never duplicated; a sha with no row yields NULL, never an
+/// invented time.
+const PUSHABLE_ROWS_FROM: &str = "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
+      , rm.value::float8, rm.commit_sha, rm.props, rm.source::text, c.authored_at \
+   FROM sensei.repository_metrics rm \
+   JOIN sensei.repositories r ON r.id = rm.repository_id \
+   JOIN sensei.metrics m      ON m.id = rm.metric_id \
+   LEFT JOIN sensei.commits c ON c.repository_id = rm.repository_id AND c.sha = rm.commit_sha";
+
+/// A selected row as the push carries it. A per-commit row carries its commit's
+/// own time as `props.authored_at` (F4: the instant the dōjō's
+/// latest-per-person order reads); an unknown sha is sent without the key,
+/// never with an invented time.
 fn pushable(row: PushableRow) -> PushableMetric {
-    let (id, repo_key, metric, scope, grain, computed_on, value, commit_sha, props, source) = row;
+    let (
+        id,
+        repo_key,
+        metric,
+        scope,
+        grain,
+        computed_on,
+        value,
+        commit_sha,
+        mut props,
+        source,
+        authored_at,
+    ) = row;
+    // The join yields a time only for a row whose sha resolves in
+    // sensei.commits, so `authored_at` present already implies per-commit.
+    if let Some(at) = authored_at
+        && let Some(obj) = props.as_object_mut()
+    {
+        obj.insert("authored_at".to_string(), serde_json::Value::String(at.to_rfc3339()));
+    }
     PushableMetric {
         id,
         repo_key,
@@ -92,6 +168,52 @@ fn pushable(row: PushableRow) -> PushableMetric {
         commit_sha,
         props,
         source,
+    }
+}
+
+/// One pushed row's identity, as the dōjō echoes it in
+/// [`StoredMetricKey`](crate::dojo_client::user_plane::StoredMetricKey):
+/// the streak is per ROW, because one (repo, metric) pair holds rows at
+/// different dates — one confirmed and one unconfirmed is then neither clean
+/// nor short for the pair.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ShortfallKey {
+    pub repo_key: String,
+    pub metric: String,
+    pub scope: String,
+    pub computed_on: chrono::NaiveDate,
+    pub grain: String,
+    pub commit_sha: Option<String>,
+}
+
+/// Consecutive stored-confirmation shortfalls per row: H2's quiet-then-loud
+/// rule. In-memory on purpose: a restart resets to N quiet retries, which
+/// bounds silence to N cycles per process lifetime without schema churn (D89
+/// may persist it). Owned by [`PgStore`] so it outlives cycles; fresh per
+/// test store so tests never share counts. Phase A declares it with its
+/// counting rules; phase B records into it from `push_allowed`.
+#[derive(Debug, Default)]
+pub struct ShortfallTracker {
+    strikes: std::collections::HashMap<ShortfallKey, u32>,
+}
+
+impl ShortfallTracker {
+    /// Shortfalls before a row goes loud.
+    pub const LOUD_AFTER: u32 = 3;
+
+    /// One cycle pushed a row with a shortfall. Returns the new consecutive
+    /// count for that row's identity.
+    pub fn record_shortfall(&mut self, key: &ShortfallKey) -> u32 {
+        let n = self.strikes.entry(key.clone()).or_insert(0);
+        *n += 1;
+        *n
+    }
+
+    /// A cycle pushed a row with no shortfall: its streak ends. Keys with
+    /// nothing pushed keep their count (nothing was tried, nothing was
+    /// learned).
+    pub fn record_clean(&mut self, key: &ShortfallKey) {
+        self.strikes.remove(key);
     }
 }
 
@@ -249,6 +371,49 @@ impl PgStore {
         Ok(())
     }
 
+    /// Record every repository's verdict from one plan pass in a single
+    /// statement — one round trip for the whole offer set, not one per
+    /// repository.
+    ///
+    /// Per-row semantics match the single-row writers: `synced` clears
+    /// `last_error` and sets `synced_at`, `partial` sets both the detail and
+    /// `synced_at`, `skipped` sets the detail and leaves `synced_at` standing.
+    ///
+    /// One entry per repository — the caller dedupes. Postgres rejects a batch
+    /// that touches one row twice, failing the whole statement.
+    pub async fn mark_repository_verdicts(
+        &self,
+        persona: &str,
+        verdicts: &[RepositoryVerdict<'_>],
+    ) -> Result<(), String> {
+        if verdicts.is_empty() {
+            return Ok(());
+        }
+        let keys: Vec<&str> = verdicts.iter().map(|v| v.repo_key).collect();
+        let states: Vec<&str> = verdicts.iter().map(|v| v.state.as_str()).collect();
+        let details: Vec<Option<String>> = verdicts.iter().map(|v| v.detail.clone()).collect();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.sync_state \
+                 (entity, entity_key, direction, persona, state, last_error, attempted_at, synced_at, updated_at) \
+             SELECT 'repository'::sensei.sync_entity, k, 'push'::sensei.sync_direction, $1, s, e, \
+                 now(), CASE WHEN s IN ('synced', 'partial') THEN now() ELSE NULL END, now() \
+             FROM unnest($2::text[], $3::text[], $4::text[]) AS v(k, s, e) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET persona = EXCLUDED.persona, \
+                 state = EXCLUDED.state, last_error = EXCLUDED.last_error, attempted_at = now(), \
+                 synced_at = CASE WHEN EXCLUDED.state IN ('synced', 'partial') THEN now() \
+                                 ELSE sensei.sync_state.synced_at END, \
+                 updated_at = now()",
+        )
+        .bind(persona)
+        .bind(keys)
+        .bind(states)
+        .bind(details)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("mark_repository_verdicts: {e}"))?;
+        Ok(())
+    }
+
     /// Every `sensei.sync_state` row: what has been agreed with the dōjō, when,
     /// and what went wrong where it has not.
     ///
@@ -306,18 +471,36 @@ impl PgStore {
         .await
         .map_err(|e| format!("sync_state_rows: {e}"))?;
 
+        // The sharing surface resolves here (reasons.rs): one registry read,
+        // then per-row resolution in Rust — not a second SQL reader. Only
+        // `skipped` rows translate: a failure message is the fault's own text
+        // even when it happens to spell a code.
+        let codes = self.reason_codes("repository_sharing").await?;
+        let remedy_of = |state: &str, last_error: Option<&str>| -> Option<String> {
+            if state != "skipped" {
+                return None;
+            }
+            let detail = last_error?;
+            let code = detail.split_once(':').map(|(_, c)| c).unwrap_or(detail);
+            codes.iter().find(|c| c.code == code).and_then(|c| c.remedy.clone())
+        };
+
         Ok(rows
             .into_iter()
-            .map(|r| SyncStateRow {
-                entity: r.0,
-                entity_key: r.1,
-                direction: r.2,
-                state: r.3,
-                last_error: r.4,
-                attempted_at: r.5,
-                synced_at: r.6,
-                updated_at: r.7,
-                persona: r.8,
+            .map(|r| {
+                let remedy = remedy_of(&r.3, r.4.as_deref());
+                SyncStateRow {
+                    entity: r.0,
+                    entity_key: r.1,
+                    direction: r.2,
+                    state: r.3,
+                    last_error: r.4,
+                    attempted_at: r.5,
+                    synced_at: r.6,
+                    updated_at: r.7,
+                    persona: r.8,
+                    remedy,
+                }
             })
             .collect())
     }
@@ -396,19 +579,16 @@ impl PgStore {
         allowed_keys: &[&str],
         limit: i64,
     ) -> Result<Vec<PushableMetric>, String> {
-        let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(
-            "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
-                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text \
-               FROM sensei.repository_metrics rm \
-               JOIN sensei.repositories r ON r.id = rm.repository_id \
-               JOIN sensei.metrics m      ON m.id = rm.metric_id \
+        let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(&format!(
+            "{PUSHABLE_ROWS_FROM} \
               WHERE rm.computed_by = 'local' \
                 AND rm.scope::text = ANY($1) \
                 AND r.repo_key = ANY($2) \
                 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at) \
+                AND {BACKOFF_ELAPSED} \
               ORDER BY rm.computed_on DESC, rm.id \
-              LIMIT $3",
-        )
+              LIMIT $3"
+        ))
         .bind(scopes.iter().map(|s| s.to_string()).collect::<Vec<_>>())
         .bind(allowed_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
         .bind(limit)
@@ -438,12 +618,8 @@ impl PgStore {
         limit: i64,
     ) -> Result<Vec<PushableMetric>, String> {
         let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(&format!(
-            "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
-                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text \
-               FROM sensei.repository_metrics rm \
-               JOIN sensei.repositories r ON r.id = rm.repository_id \
-               JOIN sensei.metrics m      ON m.id = rm.metric_id \
-              WHERE {USER_ROWS_IN_PLAY} AND ({PROVABLY_THEIRS}) \
+            "{PUSHABLE_ROWS_FROM} WHERE {USER_ROWS_IN_PLAY} AND ({PROVABLY_THEIRS}) \
+              AND {BACKOFF_ELAPSED} \
               ORDER BY rm.computed_on DESC, rm.id \
               LIMIT $4"
         ))
@@ -481,17 +657,85 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// One-time backfill (F4/L1): per-commit user rows pushed before
+    /// `props.authored_at` existed carry no key, so keyed and keyless rows
+    /// would mix until each day is recomputed. Backfills the key from
+    /// `sensei.commits` and clears `shared_at` so the next tick re-pushes the
+    /// rows through the existing upsert, now with the key. Unknown shas have
+    /// no time and are left alone (they push keyless, by rule). Guarded by a
+    /// config key like `reset_watermarks_once`; returns rows touched, 0 once
+    /// done. A second run changes nothing.
+    pub async fn backfill_push_authored_at_once(&self) -> Result<u64, String> {
+        const DONE: &str = "dojo_sync.push_authored_at_v1";
+        if self.get_config(DONE).await?.is_some() {
+            return Ok(0);
+        }
+        let n = sqlx_core::query::query(
+            "UPDATE sensei.repository_metrics rm \
+                SET props = rm.props || jsonb_build_object('authored_at', c.authored_at), \
+                    shared_at = NULL \
+               FROM sensei.commits c \
+              WHERE c.repository_id = rm.repository_id \
+                AND c.sha = rm.commit_sha \
+                AND rm.scope = 'user' \
+                AND rm.commit_sha IS NOT NULL \
+                AND rm.props->>'authored_at' IS NULL",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("backfill_push_authored_at_once: {e}"))?
+        .rows_affected();
+        self.set_config(DONE, &chrono::Utc::now().to_rfc3339()).await?;
+        Ok(n)
+    }
+
     pub async fn mark_metric_rows_shared(&self, ids: &[uuid::Uuid]) -> Result<u64, String> {
         if ids.is_empty() {
             return Ok(0);
         }
+        // A fresh mark clears the backoff: it was spent waiting on an older
+        // value, and a recomputed row must re-offer at once, not wait out a
+        // stale sentence.
         let n = sqlx_core::query::query(
-            "UPDATE sensei.repository_metrics SET shared_at = now() WHERE id = ANY($1)",
+            "UPDATE sensei.repository_metrics \
+                SET shared_at = now(), next_attempt_at = NULL \
+              WHERE id = ANY($1)",
         )
         .bind(ids)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("mark_metric_rows_shared: {e}"))?
+        .rows_affected();
+        Ok(n)
+    }
+
+    /// Record a stored-confirmation shortfall for one pushed row (H2);
+    /// returns the new consecutive count for the row's identity.
+    pub fn record_shortfall(&self, key: &ShortfallKey) -> u32 {
+        self.shortfalls.lock().unwrap().record_shortfall(key)
+    }
+
+    /// A pushed row was confirmed: its streak ends (H2).
+    pub fn record_clean(&self, key: &ShortfallKey) {
+        self.shortfalls.lock().unwrap().record_clean(key)
+    }
+
+    /// Hold loud rows out of the push window for an hour (H2/F4): the dōjō
+    /// is not confirming them, so re-offering every cycle is noise. The
+    /// window re-offers them once the backoff elapses.
+    pub async fn set_metric_backoff(&self, ids: &[uuid::Uuid]) -> Result<u64, String> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let n = sqlx_core::query::query(
+            "UPDATE sensei.repository_metrics \
+                SET next_attempt_at = now() + interval '1 hour' \
+              WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_metric_backoff: {e}"))?
         .rows_affected();
         Ok(n)
     }
@@ -792,5 +1036,34 @@ mod offered_workspace_tests {
             .await;
             exec(&pg, "DELETE FROM sensei.workspaces WHERE name = $1", &[name]).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod shortfall_tracker_tests {
+    use super::*;
+
+    // L2: the shortfall streak is per ROW, not per (repo, metric) pair — one
+    // date confirmed every cycle must not clear another date's streak. (Not
+    // moot under F-E's backoff: the backoff skips re-offering a loud row,
+    // while the tracker counts unconfirmed cycles — orthogonal mechanisms.)
+    #[test]
+    fn a_confirmed_date_does_not_clear_another_dates_streak() {
+        let day = |d: u32| ShortfallKey {
+            repo_key: "r".into(),
+            metric: "m".into(),
+            scope: "repo".into(),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap(),
+            grain: "daily".into(),
+            commit_sha: None,
+        };
+        let (confirmed, never) = (day(1), day(2));
+        let mut t = ShortfallTracker::default();
+        let mut n = 0;
+        for _ in 0..ShortfallTracker::LOUD_AFTER {
+            t.record_clean(&confirmed);
+            n = t.record_shortfall(&never);
+        }
+        assert_eq!(n, ShortfallTracker::LOUD_AFTER, "the unconfirmed date still goes loud at 3");
     }
 }

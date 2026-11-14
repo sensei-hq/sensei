@@ -1,0 +1,92 @@
+{
+  "body": {
+    "_links": {
+      "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/44/award_emoji",
+      "closed_as_duplicate_of": null,
+      "notes": "https://gitlab.example.com/api/v4/projects/424/issues/44/notes",
+      "project": "https://gitlab.example.com/api/v4/projects/424",
+      "self": "https://gitlab.example.com/api/v4/projects/424/issues/44"
+    },
+    "assignee": {
+      "avatar_url": null,
+      "id": 2,
+      "locked": false,
+      "name": "Person 1",
+      "public_email": null,
+      "state": "active",
+      "username": "person1",
+      "web_url": "https://gitlab.example.com/person1"
+    },
+    "assignees": [
+      {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      }
+    ],
+    "author": {
+      "avatar_url": null,
+      "id": 2,
+      "locked": false,
+      "name": "Person 1",
+      "public_email": null,
+      "state": "active",
+      "username": "person1",
+      "web_url": "https://gitlab.example.com/person1"
+    },
+    "closed_at": null,
+    "closed_by": null,
+    "confidential": false,
+    "created_at": "2026-09-01T03:43:31.555Z",
+    "description": null,
+    "discussion_locked": null,
+    "downvotes": 0,
+    "due_date": null,
+    "has_tasks": true,
+    "id": 9416,
+    "iid": 44,
+    "imported": false,
+    "imported_from": "none",
+    "issue_type": "issue",
+    "labels": [],
+    "merge_requests_count": 0,
+    "milestone": null,
+    "moved_to_id": null,
+    "project_id": 424,
+    "references": {
+      "full": "acme/backend#44",
+      "relative": "#44",
+      "short": "#44"
+    },
+    "service_desk_reply_to": null,
+    "severity": "UNKNOWN",
+    "start_date": null,
+    "state": "opened",
+    "subscribed": false,
+    "task_completion_status": {
+      "completed_count": 0,
+      "count": 0
+    },
+    "task_status": "",
+    "time_stats": {
+      "human_time_estimate": null,
+      "human_total_time_spent": null,
+      "time_estimate": 0,
+      "total_time_spent": 0
+    },
+    "title": "Issue 44",
+    "type": "ISSUE",
+    "updated_at": "2026-09-01T03:43:31.555Z",
+    "upvotes": 0,
+    "user_notes_count": 0,
+    "web_url": "https://gitlab.example.com/acme/backend/-/work_items/44"
+  },
+  "headers": {},
+  "request": "projects/424/issues/44",
+  "status": 200
+}

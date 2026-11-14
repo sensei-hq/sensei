@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Icon from './Icon.svelte';
 	import NeedsRow from './NeedsRow.svelte';
-	import EmptyState from './EmptyState.svelte';
+	import { EmptyState } from '@sensei/ui';
 	import { type NeedsAction } from './needs';
 	import type { KitNeed } from './types';
 
@@ -38,7 +38,7 @@
 		>
 		<span class="mono text-accent text-xs">{open}</span>
 		<span class="flex-1"></span>
-		<span class="mono text-ink-mute hidden text-xs md:inline"
+		<span class="mono text-ink-soft hidden text-xs md:inline"
 			>{open ? 'act here — nothing routes you away' : 'nothing else is blocked on you'}</span
 		>
 	</div>

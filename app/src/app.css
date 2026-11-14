@@ -94,21 +94,6 @@ button {
     user-select: none;
 }
 
-/* F9 — the design system's primary CTA is INK-on-paper, not the vermillion accent.
- * rokkit's skin maps primary→shu (vermillion), so <Button variant="primary"> renders
- * vermillion. Override it globally to ink to match the mockup btnPrimary; reach for
- * variant="accent" on the rare vermillion button. These rules sit after the theme
- * @imports so they win at equal specificity. (docs/spec/2026-08-05-mockup-drift-audit.md F9) */
-[data-button][data-variant="primary"] {
-    background: var(--ink);
-    color: var(--on-primary);
-    border-color: var(--ink);
-}
-[data-button][data-variant="primary"]:hover:not(:disabled) {
-    background: var(--ink-soft);
-    border-color: var(--ink-soft);
-}
-
 /* Sidebar vibrancy */
 .sidebar-vibrancy {
     background: color-mix(
@@ -132,71 +117,4 @@ button {
 /* Selection */
 ::selection {
     background: color-mix(in oklch, var(--accent) 12%, transparent);
-}
-
-/*
- * Observatory rail — size/space overrides for the rokkit List.
- *
- * The List renders its own <nav data-list>/<a data-list-item>/<button
- * data-list-group> DOM, so utility classes on our snippet content can't reach
- * the wrappers. rokkit's base/zen-sumi themes target those data-attributes; we
- * override the geometry here (colour/hover/active still come from the zen-sumi
- * theme) to match the mockup (docs/mockups/Sensei/lib/observatory.jsx ~L181-323).
- * Scoped to the sidebar so other Lists keep the theme defaults. These sit after
- * the @imports above, so they win at equal specificity.
- */
-[data-component="observatory-sidebar"] [data-list] {
-    gap: 4px; /* mockup: items container gap-1 */
-}
-[data-component="observatory-sidebar"] [data-list] [data-list-item] {
-    gap: 8px; /* kanji ↔ label ↔ badge (mockup gap-2) */
-    padding: 8px; /* mockup py-2 px-2 */
-    font-size: 13px; /* mockup nav fontSize 13 (rokkit default is 14) */
-    border-radius: 6px; /* mockup borderRadius 6 — rounds the hover/active wash */
-}
-[data-component="observatory-sidebar"] [data-list] [data-list-group] {
-    padding: 12px 8px 4px; /* mockup cluster pt-3 pb-1 px-2 */
-    font-size: 9.5px; /* mockup cluster fontSize 9.5 (rokkit default is 12) */
-    letter-spacing: 0.14em; /* mockup cluster letterSpacing 0.14em */
-}
-[data-component="observatory-sidebar"] [data-list] [data-list-separator] {
-    margin-block: 8px; /* breathing room before the Preferences section */
-}
-/* Header eyebrow ("Observatory") — size it to match the cluster labels
-   ([data-list-group]) so the section header isn't larger than the clusters. */
-[data-component="observatory-sidebar"] [data-component="eyebrow"] {
-    font-size: 9.5px;
-    letter-spacing: 0.14em;
-}
-
-/*
- * Phase-1 rokkit override — List / Toggle label CONTRAST (mockup-drift-audit).
- *
- * The zen-sumi theme paints List item + Toggle option labels with `--ink-mute`
- * at ~55% opacity, which axe measured at 1.98:1 (light) / 2.79:1 (dark) — a
- * WCAG-AA fail on every nav rail + toggle. Force AA-safe NAMED tokens at full
- * opacity on the rokkit part selectors. `!important` because the vendor theme's
- * `a[data-list-item]` selectors out-specify an app rule; this is the sanctioned
- * "override the rokkit part" seam (colour stays a semantic token — no literals).
- */
-[data-list] [data-list-item],
-[data-list] [data-list-item] [data-item-label],
-[data-list] [data-list-item] [data-item-text] {
-    color: var(--ink-soft) !important;
-    opacity: 1 !important;
-}
-[data-list] [data-list-item][data-selected="true"],
-[data-list] [data-list-item][data-selected="true"] [data-item-label],
-[data-list] [data-list-item][data-active="true"],
-[data-list] [data-list-item][data-active="true"] [data-item-label] {
-    color: var(--ink) !important;
-}
-[data-toggle] [data-toggle-option],
-[data-toggle] [data-toggle-option] [data-toggle-label] {
-    color: var(--ink-mute) !important;
-    opacity: 1 !important;
-}
-[data-toggle] [data-toggle-option][data-selected="true"],
-[data-toggle] [data-toggle-option][data-selected="true"] [data-toggle-label] {
-    color: var(--on-primary) !important;
 }

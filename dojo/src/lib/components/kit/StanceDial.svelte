@@ -43,7 +43,7 @@
 		<span class="flex-1"></span>
 		<span class="mono text-accent text-xs">{dial.levels[v]}</span>
 	</div>
-	<div class="mono text-ink-mute text-xs" style="margin-bottom: 12px">{dial.caption}</div>
+	<div class="mono text-ink-soft text-xs" style="margin-bottom: 12px">{dial.caption}</div>
 	<div class="flex items-center" style="gap: 0">
 		{#each steps as i (i)}
 			<button

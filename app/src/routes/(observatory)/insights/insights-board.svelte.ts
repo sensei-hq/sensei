@@ -15,8 +15,10 @@
  * is testable with a hand-rolled mock and never reaches for a global.
  */
 
+import { failureNotice } from '@sensei/ui';
 import { SvelteSet } from 'svelte/reactivity';
 import { failureReason, type SenseiApi } from '$lib/api.js';
+import { strengthView, type StrengthView } from '$lib/memoryState.svelte.js';
 import type {
   InsightsBoard,
   InsightColumn,
@@ -85,8 +87,8 @@ export interface MemoryRowVm {
   id: string;
   title: string;
   content: string;
-  /** Strength as a 0–1 fraction (bar fill). */
-  strength: number;
+  /** Strength on the daemon's 1–5 scale: label, bar width, whether full. */
+  strength: StrengthView;
   scope: string;
   violatedCount: number;
 }
@@ -146,8 +148,9 @@ export function toMemoryRowVm(m: InsightMemory): MemoryRowVm {
     id: m.id,
     title: m.title,
     content: m.content,
-    // Clamp to 0–1 so the bar never overflows even if the daemon rescales.
-    strength: Math.max(0, Math.min(1, m.strength)),
+    // The daemon's 1–5 scale, viewed once (audit 2026-10-28, item 1: a 0–1
+    // clamp drew every memory as a full bar).
+    strength: strengthView(m.strength),
     scope: m.scope,
     violatedCount: m.violated_count,
   };
@@ -178,6 +181,14 @@ export class InsightsBoardState {
   removedIds = new SvelteSet<string>();
   /** Set when an action round-trip fails; the card is restored alongside. */
   actionError = $state<string | null>(null);
+  /** What the last failed action names, and why — for its Notice. */
+  #actionTitle = $state<string | null>(null);
+  #actionWhy = $state<string | null>(null);
+
+  /** Notice props for an apply or dismiss that did not land (packages/ui/notice.js). */
+  get actionNotice() {
+    return this.#actionTitle ? failureNotice(this.#actionTitle, this.#actionWhy) : null;
+  }
   /** True while a workspace-scope refetch is in flight. */
   loading = $state(false);
   /** Why the board could not be read, or null (#288). The page then shows the
@@ -229,7 +240,7 @@ export class InsightsBoardState {
     // In-force memories, strongest first — the "how we work here" shelf.
     const memories = this.#memories('settled')
       .map(toMemoryRowVm)
-      .sort((a, b) => b.strength - a.strength);
+      .sort((a, b) => b.strength.fraction - a.strength.fraction);
     const patterns = this.board.patterns
       .filter((p) => p.column === 'settled')
       .map(toPatternVm);
@@ -271,6 +282,8 @@ export class InsightsBoardState {
   async retry(api: SenseiApi): Promise<void> {
     this.removedIds.clear();
     this.actionError = null;
+    this.#actionTitle = null;
+    this.#actionWhy = null;
     this.loading = true;
     const read = await api.tryGetInsights(this.selectedWorkspaceId ?? undefined);
     // A failed read drops the previous scope's board, so it cannot pass as this one's.
@@ -287,22 +300,37 @@ export class InsightsBoardState {
    */
   async apply(api: SenseiApi, rec: RecCardVm): Promise<void> {
     this.actionError = null;
+    this.#actionTitle = null;
+    this.#actionWhy = null;
     this.#remove(rec.id);
     const res = await api.tryAcceptWorkspaceRecommendation(rec.workspaceId, rec.id);
     if (!res.ok) {
       this.#restore(rec.id);
       this.actionError = `Couldn't apply "${rec.title}": ${failureReason(res.error)}`;
+      this.#actionTitle = `Couldn't apply "${rec.title}"`;
+      this.#actionWhy = failureReason(res.error);
     }
   }
 
   /** Dismiss a recommendation. Same optimistic-then-verify shape as apply. */
   async dismiss(api: SenseiApi, rec: RecCardVm): Promise<void> {
     this.actionError = null;
+    this.#actionTitle = null;
+    this.#actionWhy = null;
     this.#remove(rec.id);
     const res = await api.tryRejectWorkspaceRecommendation(rec.workspaceId, rec.id);
     if (!res.ok) {
       this.#restore(rec.id);
       this.actionError = `Couldn't dismiss "${rec.title}": ${failureReason(res.error)}`;
+      this.#actionTitle = `Couldn't dismiss "${rec.title}"`;
+      this.#actionWhy = failureReason(res.error);
     }
   }
 }
+
+/** A triage column's colour: now is accent (it needs you), soon warning,
+ *  settled success. */
+export function columnToneClass(tone: 'now' | 'soon' | 'settled'): string {
+  return tone === 'now' ? 'text-accent' : tone === 'soon' ? 'text-warning' : 'text-success';
+}
+

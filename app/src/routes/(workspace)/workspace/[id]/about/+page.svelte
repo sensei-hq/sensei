@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { Notice } from '@sensei/ui';
     import { PageHeader, Screen, Kanji } from '$lib/components';
     import { Button, Select } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
@@ -6,6 +7,7 @@
     import { page } from '$app/state';
     import {
         BindingAction,
+        bindingLoadNotice,
         confirmedChip,
         inferredChip,
         resolveBinding,
@@ -79,8 +81,8 @@
     <div class="flex items-center gap-3 border border-paper-edge rounded-lg bg-paper-soft p-4">
         <Kanji char={b.kanji} size="xl" tone="accent" />
         <div class="flex-1 min-w-0">
-            <div class="font-mono text-xs text-ink-mute truncate">{b.tenantKey}</div>
-            <div class="font-mono text-xs text-ink-mute truncate mt-0.5">{b.dojoUrl}</div>
+            <div class="font-mono text-xs text-ink-soft truncate">{b.tenantKey}</div>
+            <div class="font-mono text-xs text-ink-soft truncate mt-0.5">{b.dojoUrl}</div>
         </div>
         {@render bindingChip(confirmedChip().bg, confirmedChip().text, confirmedChip().label, 'confirmed')}
     </div>
@@ -91,7 +93,7 @@
         <Kanji char={b.kanji} size="xl" tone="muted" />
         <div class="flex-1 min-w-0">
             <div class="text-sm text-ink truncate">matched org · {b.matchedSlug}</div>
-            <div class="font-mono text-xs text-ink-mute truncate mt-0.5">{b.tenantKey}</div>
+            <div class="font-mono text-xs text-ink-soft truncate mt-0.5">{b.tenantKey}</div>
         </div>
         {@render bindingChip(inferredChip().bg, inferredChip().text, inferredChip().label, 'inferred')}
         <Button
@@ -117,8 +119,8 @@
                 <h3 class="text-base m-0">Identity</h3>
                 <span
                     class="text-xs"
-                    class:text-ink-mute={form.saveStatus === 'idle'}
-                    class:text-ink-soft={form.saveStatus === 'saving'}
+                    class:text-ink-soft={form.saveStatus === 'idle'}
+                    class:text-ink-mute={form.saveStatus === 'saving'}
                     class:text-success={form.saveStatus === 'saved'}
                     class:text-warning={form.saveStatus === 'error'}
                     data-testid="metadata-save-status"
@@ -129,7 +131,7 @@
                 <div class="grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                     <div>
                         <div class="text-sm text-ink">Status</div>
-                        <div class="text-xs text-ink-mute mt-0.5">
+                        <div class="text-xs text-ink-soft mt-0.5">
                             Lifecycle stage — from discovery through to archived.
                         </div>
                     </div>
@@ -150,7 +152,7 @@
                 <div class="grid grid-cols-[1fr_auto] gap-6 items-center py-3">
                     <div>
                         <div class="text-sm text-ink">Client</div>
-                        <div class="text-xs text-ink-mute mt-0.5">
+                        <div class="text-xs text-ink-soft mt-0.5">
                             Who this work is for. Optional.
                         </div>
                     </div>
@@ -171,7 +173,7 @@
                 <div class="grid grid-cols-[1fr_auto] gap-6 items-start py-3">
                     <div>
                         <div class="text-sm text-ink">Goal</div>
-                        <div class="text-xs text-ink-mute mt-0.5">
+                        <div class="text-xs text-ink-soft mt-0.5">
                             What this workspace is for — its purpose in a line or two.
                         </div>
                     </div>
@@ -192,7 +194,7 @@
                 <div class="grid grid-cols-[1fr_auto] gap-6 items-start py-3">
                     <div>
                         <div class="text-sm text-ink">Description</div>
-                        <div class="text-xs text-ink-mute mt-0.5">
+                        <div class="text-xs text-ink-soft mt-0.5">
                             A fuller description of the workspace. Optional.
                         </div>
                     </div>
@@ -213,10 +215,10 @@
         </section>
 
         <section class="mt-5" data-testid="workspace-bindings">
-            <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
+            <h3 class="text-xs font-semibold text-ink-soft m-0 mb-2 uppercase tracking-wide">
                 Bindings
             </h3>
-            <p class="text-xs text-ink-mute leading-normal mb-3">
+            <p class="text-xs text-ink-soft leading-normal mb-3">
                 A default is inferred from each git remote and confirmed at first
                 scan — never silently.
             </p>
@@ -224,11 +226,11 @@
                 {@render confirmedRow(bindingView)}
             {:else if bindingView.state === 'inferred'}
                 {@render inferredRow(bindingView)}
-                {#if bindAction.error}
-                    <p class="text-xs text-danger m-0 mt-2" data-binding-error>{bindAction.error}</p>
+                {#if bindAction.notice}
+                    <div class="mt-2"><Notice size="inline" bare expanded {...bindAction.notice} data-binding-error /></div>
                 {/if}
             {:else if bindingView.state === 'error'}
-                <p class="text-xs text-danger m-0" data-binding-load-error>{bindingView.message}</p>
+                <Notice size="inline" bare expanded {...bindingLoadNotice(bindingView)!} data-binding-load-error />
             {:else}
                 <p class="text-sm text-ink-faint m-0">
                     no dōjō binding — this workspace's findings stay local.
@@ -237,11 +239,11 @@
         </section>
 
         <section class="mt-5">
-            <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
+            <h3 class="text-xs font-semibold text-ink-soft m-0 mb-2 uppercase tracking-wide">
                 Repos{data.reposError ? '' : ` (${data.repos.length})`}
             </h3>
-            {#if data.reposError}
-                <p class="text-xs text-danger m-0" data-repos-error>{data.reposError}</p>
+            {#if data.reposNotice}
+                <Notice size="inline" bare expanded {...data.reposNotice} data-repos-error />
             {/if}
             <ul class="list-none m-0 p-0">
                 {#each data.repos as repo (repo.id)}
@@ -255,7 +257,7 @@
 
         {#if p?.stack}
             <section class="mt-5">
-                <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
+                <h3 class="text-xs font-semibold text-ink-soft m-0 mb-2 uppercase tracking-wide">
                     Stack
                 </h3>
                 <div class="flex flex-wrap gap-1.5">

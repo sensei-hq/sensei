@@ -4,6 +4,7 @@
 // is, when it last ran, how it went (last_ok / last_error), when it runs next
 // and how long a pass takes (avg_ms), read from `GET /api/tasks/scheduled`.
 
+import { failureNotice } from '@sensei/ui';
 import type { ScheduledTask } from '$lib/types.js';
 import { relativeTime } from './activity-logs.svelte.js';
 import { failureReason, type ApiResult } from '$lib/api.js';
@@ -32,6 +33,13 @@ export function taskHealth(task: ScheduledTask): string {
 /** The worker's last error, or the em dash when none is recorded. */
 export function taskError(task: ScheduledTask): string {
   return task.last_error ?? EM_DASH;
+}
+
+/** Notice props for a failing worker, or `null` (packages/ui/notice.js). */
+export function taskFailureNotice(task: ScheduledTask) {
+  if (task.last_ok !== false) return null;
+  const n = failureNotice(`${task.name} is failing`, task.last_error);
+  return n && { ...n, code: task.name };
 }
 
 /** When the worker runs next, read forward: "in 2m", or "due now" once that
@@ -137,6 +145,11 @@ export class TaskLog {
   loading = $state(false);
   lines = $state<string[]>([]);
   error = $state<string | null>(null);
+
+  /** Notice props for a log that would not read. */
+  get notice() {
+    return failureNotice("Couldn't read this worker's log", this.error);
+  }
 
   constructor(private readonly load: () => Promise<ApiResult<{ lines: string[] }>>) {}
 

@@ -130,10 +130,7 @@ fn is_candidate_identifier(raw: &str) -> bool {
     // the graph is not drift. (A removed SCREAMING const is the rare recall
     // tradeoff; such consts that still exist resolve via the known-symbol set.)
     let is_screaming_snake = has_underscore && !token.bytes().any(|b| b.is_ascii_lowercase());
-    if is_screaming_snake {
-        return false;
-    }
-    true
+    !is_screaming_snake
 }
 
 /// Reverse of the drift-writer format — given a detail string like

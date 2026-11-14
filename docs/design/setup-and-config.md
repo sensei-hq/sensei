@@ -19,7 +19,7 @@ the user sees and does; this says how it works and where the code lives.
   tap. No input needed. Offline/proxy: honor `HTTPS_PROXY` or use the offline
   bundle.
 - Runs on every launch; passes straight through when all gates are green.
-- Mockup: [`bootstrap-splash.jsx`](../mockups/Sensei/lib/setup/bootstrap-splash.jsx).
+- Mockup: `bootstrap-splash.jsx`.
 
 ## Installation
 
@@ -38,7 +38,7 @@ the user sees and does; this says how it works and where the code lives.
 - Progress streams over SSE (`/api/scan/events`); the same channel carries
   assistant-part registration events.
 - The watcher keeps the graph current — incremental scan + reconcile.
-- Mockup: [`setup-wizard.jsx`](../mockups/Sensei/lib/setup/setup-wizard.jsx)
+- Mockup: `setup-wizard.jsx`
   (folder + scan stages).
 
 ## Dōjō auto-discover (not built)
@@ -55,9 +55,9 @@ the user sees and does; this says how it works and where the code lives.
 - Assignments are folded into Inference (`InferenceAssignmentsPanel`, a live
   role → model editor) — no separate screen. Providers hold cloud API keys,
   Keychain-backed.
-- Mockups: [`setup-wizard.jsx`](../mockups/Sensei/lib/setup/setup-wizard.jsx),
-  [`wiz-inference.jsx`](../mockups/Sensei/lib/setup/wiz-inference.jsx),
-  [`inference-settings.jsx`](../mockups/Sensei/lib/setup/inference-settings.jsx),
-  [`wiz-assignments.jsx`](../mockups/Sensei/lib/setup/wiz-assignments.jsx),
-  [`collective-settings.jsx`](../mockups/Sensei/lib/observatory/collective-settings.jsx).
+- Mockups: `setup-wizard.jsx`,
+  `wiz-inference.jsx`,
+  `inference-settings.jsx`,
+  `wiz-assignments.jsx`,
+  `collective-settings.jsx`.
 </content>

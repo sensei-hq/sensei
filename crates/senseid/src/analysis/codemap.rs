@@ -36,18 +36,116 @@ pub struct Module {
     pub label: String,
     /// The band it sits in: a package (Folders), a layer (Layers).
     pub group: String,
+    /// The package (repository member) the module belongs to.
+    pub package: String,
     pub files: i64,
     pub symbols: i64,
+    /// Its files by role, so tests and docs never read as code size.
+    pub roles: RoleCounts,
     /// Functions, and how many exceed cyclomatic 10 — `None` when none of the
     /// module's files was measured.
     pub complexity: Option<Complexity>,
 }
 
-/// A module's functions and how many are over cyclomatic 10 (local qlty).
+/// Files by role (see [`file_role`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct RoleCounts {
+    pub code: i64,
+    pub test: i64,
+    pub docs: i64,
+    pub config: i64,
+    pub generated: i64,
+}
+
+impl RoleCounts {
+    fn count(&mut self, role: Role) {
+        match role {
+            Role::Code => self.code += 1,
+            Role::Test => self.test += 1,
+            Role::Docs => self.docs += 1,
+            Role::Config => self.config += 1,
+            Role::Generated => self.generated += 1,
+        }
+    }
+
+    fn add(&mut self, other: RoleCounts) {
+        self.code += other.code;
+        self.test += other.test;
+        self.docs += other.docs;
+        self.config += other.config;
+        self.generated += other.generated;
+    }
+}
+
+/// Each module's files by role, from `(module, path)` pairs.
+pub fn role_counts(paths: &[(String, String)]) -> HashMap<String, RoleCounts> {
+    let mut out: HashMap<String, RoleCounts> = HashMap::new();
+    for (module, path) in paths {
+        out.entry(module.clone()).or_default().count(file_role(path));
+    }
+    out
+}
+
+/// The workspace's referenced libraries as L0 draws them — one block, never
+/// members (M17): how many, and the `top` most used by repositories. `rows` are
+/// [`crate::db::pg_store::PgStore::list_libraries_with_usage`]'s.
+pub fn libraries_summary(rows: &[serde_json::Value], top: usize) -> serde_json::Value {
+    let mut ranked: Vec<(&str, i64)> = rows
+        .iter()
+        .filter_map(|r| Some((r.get("name")?.as_str()?, r.get("repo_count")?.as_i64()?)))
+        .collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let names: Vec<&str> = ranked.iter().take(top).map(|(n, _)| *n).collect();
+    serde_json::json!({ "count": rows.len(), "top": names })
+}
+
+/// A module's functions and how many are over cyclomatic 10 (local qlty).
+/// Serialised with its tier, so the app reads the rule rather than re-deriving it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Complexity {
     pub functions: i64,
     pub complex: i64,
+}
+
+/// How a module's complexity reads — the one rule the Complexity lens, its
+/// takeaways and the architecture metrics (#156) all use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComplexityTier {
+    /// More than a fifth of its functions over cyclomatic 10: an outlier.
+    Danger,
+    /// More than a tenth.
+    Warning,
+    Neutral,
+}
+
+impl Complexity {
+    /// Its tier: over a fifth of its functions above cyclomatic 10 is an outlier,
+    /// over a tenth a warning; none when no function was measured.
+    pub fn tier(&self) -> Option<ComplexityTier> {
+        if self.functions <= 0 {
+            return None;
+        }
+        let share = self.complex as f64 / self.functions as f64;
+        Some(if share > 0.2 {
+            ComplexityTier::Danger
+        } else if share > 0.1 {
+            ComplexityTier::Warning
+        } else {
+            ComplexityTier::Neutral
+        })
+    }
+}
+
+impl serde::Serialize for Complexity {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("Complexity", 3)?;
+        st.serialize_field("functions", &self.functions)?;
+        st.serialize_field("complex", &self.complex)?;
+        st.serialize_field("tier", &self.tier())?;
+        st.end()
+    }
 }
 
 /// One edge between two modules, of one kind, with the count behind it.
@@ -64,8 +162,11 @@ pub struct Block {
     pub id: String,
     pub label: String,
     pub group: String,
+    /// The package its modules share; `None` for a fold spanning several.
+    pub package: Option<String>,
     pub files: i64,
     pub symbols: i64,
+    pub roles: RoleCounts,
     /// A hub's inbound weight, counted here rather than drawn.
     pub hub: bool,
     pub weight_in: i64,
@@ -105,6 +206,53 @@ pub struct Level0 {
 /// The fold block's id for a group.
 pub fn fold_id(group: &str) -> String {
     format!("fold:{group}")
+}
+
+/// The map narrowed to a focus (user, 2026-11-03): the focused modules, the
+/// modules one dependency away in either direction, and only the edges that
+/// touch a focused module.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Focused {
+    pub modules: Vec<Module>,
+    pub edges: Vec<ModuleEdge>,
+    /// The kept modules that are not focused, sorted.
+    pub neighbours: Vec<String>,
+}
+
+/// Narrow `modules` and `edges` to `members` and their direct neighbours. Run
+/// before [`level0`], so nothing in the neighbourhood is folded away. A focus
+/// that names no known module keeps nothing.
+pub fn focus_scope(
+    modules: &[Module],
+    edges: &[ModuleEdge],
+    members: &std::collections::HashSet<String>,
+) -> Focused {
+    let known: std::collections::HashSet<&str> = modules.iter().map(|m| m.id.as_str()).collect();
+    let touches = |e: &&ModuleEdge| {
+        (members.contains(&e.source) || members.contains(&e.target))
+            && known.contains(e.source.as_str())
+            && known.contains(e.target.as_str())
+    };
+    let kept_edges: Vec<ModuleEdge> = edges.iter().filter(touches).cloned().collect();
+    let mut neighbours: Vec<String> = kept_edges
+        .iter()
+        .flat_map(|e| [&e.source, &e.target])
+        .filter(|id| !members.contains(*id))
+        .cloned()
+        .collect();
+    neighbours.sort_unstable();
+    neighbours.dedup();
+    let kept_modules: Vec<Module> = modules
+        .iter()
+        .filter(|m| members.contains(&m.id) || neighbours.binary_search(&m.id).is_ok())
+        .cloned()
+        .collect();
+    Focused { modules: kept_modules, edges: kept_edges, neighbours }
+}
+
+/// The modules a Group-by segment holds: every module whose group is `segment`.
+pub fn segment_members(modules: &[Module], segment: &str) -> std::collections::HashSet<String> {
+    modules.iter().filter(|m| m.group == segment).map(|m| m.id.clone()).collect()
 }
 
 /// L0 from the module-level nodes and edges.
@@ -159,8 +307,10 @@ pub fn level0(modules: &[Module], edges: &[ModuleEdge], budget: usize) -> Level0
             label: if id == m.id { m.label.clone() } else { String::new() },
             id,
             group: m.group.clone(),
+            package: Some(m.package.clone()),
             files: 0,
             symbols: 0,
+            roles: RoleCounts::default(),
             hub: is_hub(&m.id),
             weight_in: 0,
             weight_out: 0,
@@ -169,6 +319,10 @@ pub fn level0(modules: &[Module], edges: &[ModuleEdge], budget: usize) -> Level0
         });
         block.files += m.files;
         block.symbols += m.symbols;
+        block.roles.add(m.roles);
+        if block.package.as_deref() != Some(m.package.as_str()) {
+            block.package = None;
+        }
         if let Some(c) = m.complexity {
             let sum = block.complexity.get_or_insert_with(Complexity::default);
             sum.functions += c.functions;
@@ -381,6 +535,241 @@ pub fn hidden_coupling(pairs: &[CoChange], edges: &[ModuleEdge], limit: usize) -
     out
 }
 
+/// One measured file, with the module it belongs to (local qlty).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasuredFile {
+    pub module: String,
+    /// Repository-relative path, as qlty reports it.
+    pub path: String,
+    pub functions: i64,
+    pub complex: i64,
+    pub max_cyclo: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeKind {
+    Module,
+    Folder,
+    File,
+}
+
+/// One row of the Complexity tree: a module, a folder in it, or a file.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComplexityNode {
+    pub id: String,
+    pub label: String,
+    pub kind: NodeKind,
+    pub functions: i64,
+    /// Functions over cyclomatic 10.
+    pub complex: i64,
+    /// The highest cyclomatic complexity of any function under this row.
+    pub max_cyclo: i64,
+    /// Files measured under this row.
+    pub files: i64,
+    /// This row's own tier — the rule `Complexity::tier` applies (#156).
+    pub tier: Option<ComplexityTier>,
+    pub children: Vec<ComplexityNode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComplexityTotal {
+    pub functions: i64,
+    pub complex: i64,
+    pub max_cyclo: i64,
+    pub files: i64,
+    /// The total's tier, by the same rule as every row's (#156).
+    pub tier: Option<ComplexityTier>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ComplexityTree {
+    pub total: ComplexityTotal,
+    pub modules: Vec<ComplexityNode>,
+}
+
+/// The Complexity lens (user, 2026-11-02): every measured file under its module
+/// and folders, each level carrying what is under it, most complex first. A
+/// module's own directory is its root; a folder holding only one folder reads as
+/// one row (`src/lib`).
+pub fn complexity_tree(files: &[MeasuredFile]) -> ComplexityTree {
+    let mut by_module: std::collections::BTreeMap<&str, Vec<&MeasuredFile>> = Default::default();
+    for f in files {
+        by_module.entry(f.module.as_str()).or_default().push(f);
+    }
+    let mut modules: Vec<ComplexityNode> = by_module
+        .into_iter()
+        .map(|(module, files)| {
+            let root = common_dir(files.iter().map(|f| f.path.as_str()));
+            let mut dir = Dir::default();
+            for f in &files {
+                let rel = f.path.strip_prefix(&root).unwrap_or(&f.path).trim_start_matches('/');
+                dir.insert(rel, f);
+            }
+            let mut node =
+                dir.into_node(module.to_string(), module.to_string(), NodeKind::Module, &root);
+            node.label = module.to_string();
+            node
+        })
+        .collect();
+    sort_nodes(&mut modules);
+    let mut total = modules.iter().fold(ComplexityTotal::default(), |t, m| ComplexityTotal {
+        functions: t.functions + m.functions,
+        complex: t.complex + m.complex,
+        max_cyclo: t.max_cyclo.max(m.max_cyclo),
+        files: t.files + m.files,
+        tier: None,
+    });
+    total.tier = Complexity { functions: total.functions, complex: total.complex }.tier();
+    ComplexityTree { total, modules }
+}
+
+/// The longest directory every path shares (`alpha` for `alpha/a.rs` and
+/// `alpha/tests/b.rs`); empty when they share none.
+fn common_dir<'a>(paths: impl Iterator<Item = &'a str>) -> String {
+    let mut common: Option<Vec<&str>> = None;
+    for p in paths {
+        let dirs: Vec<&str> = p.split('/').collect();
+        let dirs = &dirs[..dirs.len().saturating_sub(1)];
+        common = Some(match common {
+            None => dirs.to_vec(),
+            Some(c) => c.iter().zip(dirs).take_while(|(a, b)| a == b).map(|(a, _)| *a).collect(),
+        });
+    }
+    common.unwrap_or_default().join("/")
+}
+
+#[derive(Default)]
+struct Dir<'a> {
+    dirs: std::collections::BTreeMap<&'a str, Dir<'a>>,
+    files: Vec<&'a MeasuredFile>,
+}
+
+impl<'a> Dir<'a> {
+    fn insert(&mut self, rel: &'a str, f: &'a MeasuredFile) {
+        match rel.split_once('/') {
+            Some((head, rest)) => self.dirs.entry(head).or_default().insert(rest, f),
+            None => self.files.push(f),
+        }
+    }
+
+    /// This directory as a node: its folders (single-folder chains joined) and
+    /// files, summed, most complex first.
+    fn into_node(self, id: String, label: String, kind: NodeKind, path: &str) -> ComplexityNode {
+        let mut children: Vec<ComplexityNode> = self
+            .dirs
+            .into_iter()
+            .map(|(name, mut sub)| {
+                let mut label = name.to_string();
+                let mut path =
+                    if path.is_empty() { name.to_string() } else { format!("{path}/{name}") };
+                while sub.files.is_empty() && sub.dirs.len() == 1 {
+                    let (next, inner) = sub.dirs.pop_first().expect("one folder");
+                    label = format!("{label}/{next}");
+                    path = format!("{path}/{next}");
+                    sub = inner;
+                }
+                sub.into_node(path.clone(), label, NodeKind::Folder, &path)
+            })
+            .collect();
+        children.extend(self.files.into_iter().map(|f| ComplexityNode {
+            id: f.path.clone(),
+            label: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
+            kind: NodeKind::File,
+            functions: f.functions,
+            complex: f.complex,
+            max_cyclo: f.max_cyclo,
+            files: 1,
+            tier: Complexity { functions: f.functions, complex: f.complex }.tier(),
+            children: vec![],
+        }));
+        sort_nodes(&mut children);
+        let sum = |g: fn(&ComplexityNode) -> i64| children.iter().map(g).sum::<i64>();
+        let (functions, complex) = (sum(|c| c.functions), sum(|c| c.complex));
+        ComplexityNode {
+            id,
+            label,
+            kind,
+            functions,
+            complex,
+            tier: Complexity { functions, complex }.tier(),
+            max_cyclo: children.iter().map(|c| c.max_cyclo).max().unwrap_or(0),
+            files: sum(|c| c.files),
+            children,
+        }
+    }
+}
+
+/// Most complex functions first, then the larger, then by name — stable.
+fn sort_nodes(nodes: &mut [ComplexityNode]) {
+    nodes.sort_by(|a, b| {
+        b.complex.cmp(&a.complex).then(b.functions.cmp(&a.functions)).then(a.label.cmp(&b.label))
+    });
+}
+
+/// The dependency kinds the code map draws between modules — one list, read by
+/// the diagrams and by the architecture metrics (#156), so the two cannot drift.
+pub const CODEMAP_KINDS: [&str; 2] = ["calls", "imports"];
+/// A pair changed together at least this many times to count (M17).
+pub const COCHANGE_MIN: i64 = 5;
+/// A commit touching more modules than this is a sweep, not a coupling.
+pub const COCHANGE_MAX_MODULES: i64 = 20;
+
+/// The module dependencies the code map analyses — the lens's and the metric's one read.
+pub async fn module_dependencies(
+    pg: &crate::db::pg_store::PgStore,
+    workspace_id: &uuid::Uuid,
+) -> Result<Vec<crate::analysis::layering::Dep>, String> {
+    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
+    pg.dependency_graph(workspace_id, "module", &kinds).await
+}
+
+/// Every hidden pair at the code map's threshold — the metric's read. It takes
+/// no limit: the lens draws the strongest 40, the metric counts them all (review
+/// G7, L-3).
+pub async fn hidden_pairs_for_metric(
+    pg: &crate::db::pg_store::PgStore,
+    workspace_id: &uuid::Uuid,
+) -> Result<(Vec<Coupling>, usize, i64), String> {
+    hidden_pairs(pg, workspace_id, usize::MAX).await
+}
+
+/// Hidden coupling at the code map's threshold, the strongest `limit` of it:
+/// the pairs, how many pairs changed together at all, and the commits read.
+pub async fn hidden_pairs(
+    pg: &crate::db::pg_store::PgStore,
+    workspace_id: &uuid::Uuid,
+    limit: usize,
+) -> Result<(Vec<Coupling>, usize, i64), String> {
+    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
+    let ((pairs, commits), edges) = tokio::try_join!(
+        pg.codemap_cochange(workspace_id, COCHANGE_MAX_MODULES, COCHANGE_MIN),
+        pg.structure_edges(workspace_id, "module", &kinds),
+    )?;
+    let pairs: Vec<CoChange> = pairs
+        .into_iter()
+        .map(|(a, b, together, a_changes, b_changes)| CoChange {
+            a,
+            b,
+            together,
+            a_changes,
+            b_changes,
+        })
+        .collect();
+    let edges: Vec<ModuleEdge> = edges
+        .into_iter()
+        .map(|e| ModuleEdge {
+            source: e.source,
+            target: e.target,
+            kind: e.kind,
+            count: e.occurrences,
+        })
+        .collect();
+    Ok((hidden_coupling(&pairs, &edges, limit), pairs.len(), commits))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,10 +779,255 @@ mod tests {
             id: id.into(),
             label: id.into(),
             group: group.into(),
+            package: "pkg".into(),
             files: 1,
             symbols,
+            roles: RoleCounts { code: 1, ..Default::default() },
             complexity: None,
         }
+    }
+
+    fn measured(
+        module: &str,
+        path: &str,
+        functions: i64,
+        complex: i64,
+        max_cyclo: i64,
+    ) -> MeasuredFile {
+        MeasuredFile { module: module.into(), path: path.into(), functions, complex, max_cyclo }
+    }
+
+    /// The complexity rule lives here, once (#156): the app reads the tier the
+    /// daemon sends instead of re-deriving the thresholds, and the metrics count
+    /// the same outliers the lens shows.
+    /// Review G6: the Complexity lens's rows carry the same tier, so the lens's red
+    /// rows are the metric's outliers — one rule, read in two places.
+    #[test]
+    fn the_complexity_tree_carries_each_rows_tier() {
+        let t = complexity_tree(&[
+            measured("pkg/alpha", "alpha/a.rs", 4, 1, 14),
+            measured("pkg/beta", "beta/b.rs", 10, 1, 12),
+        ]);
+        let tier = |id: &str| {
+            let m = t.modules.iter().find(|m| m.id == id).expect("module row");
+            serde_json::to_value(m).unwrap()["tier"].clone()
+        };
+        assert_eq!(
+            (tier("pkg/alpha"), tier("pkg/beta")),
+            (serde_json::json!("danger"), serde_json::json!("neutral"))
+        );
+        // The workspace total carries its tier too — the lens does not re-derive it.
+        assert_eq!(
+            serde_json::to_value(t.total).unwrap()["tier"],
+            serde_json::json!("warning"),
+            "2 of 14 (14%): {:?}",
+            t.total
+        );
+        let file = serde_json::to_value(&t.modules[0].children[0]).unwrap();
+        assert!(file["tier"].is_string(), "every row carries one: {file}");
+        // Review r2 L5: a row's tier is its own — a module at 15% (warning) holds a
+        // file at 30% (danger) and one at 0% (neutral).
+        let g = complexity_tree(&[
+            measured("pkg/gamma", "gamma/c1.rs", 10, 3, 18),
+            measured("pkg/gamma", "gamma/c2.rs", 10, 0, 4),
+        ]);
+        let row = |v: serde_json::Value, id: &str| -> serde_json::Value {
+            fn find(v: &serde_json::Value, id: &str) -> Option<serde_json::Value> {
+                if v["id"] == id {
+                    return Some(v["tier"].clone());
+                }
+                v["children"].as_array()?.iter().find_map(|c| find(c, id))
+            }
+            find(&v, id).unwrap_or_else(|| panic!("no row {id}"))
+        };
+        let gamma = serde_json::to_value(&g.modules[0]).unwrap();
+        assert_eq!(
+            (
+                row(gamma.clone(), "pkg/gamma"),
+                row(gamma.clone(), "gamma/c1.rs"),
+                row(gamma, "gamma/c2.rs")
+            ),
+            (
+                serde_json::json!("warning"),
+                serde_json::json!("danger"),
+                serde_json::json!("neutral")
+            )
+        );
+    }
+
+    #[test]
+    fn a_module_complexity_carries_its_tier() {
+        let c = |functions, complex| Complexity { functions, complex };
+        assert_eq!(c(10, 3).tier(), Some(ComplexityTier::Danger));
+        assert_eq!(c(10, 2).tier(), Some(ComplexityTier::Warning), "20% is not over a fifth");
+        assert_eq!(c(10, 1).tier(), Some(ComplexityTier::Neutral), "10% is not over a tenth");
+        assert_eq!(c(0, 0).tier(), None, "nothing measured has no tier");
+        assert_eq!(
+            serde_json::to_value(c(4, 1)).unwrap(),
+            serde_json::json!({"functions": 4, "complex": 1, "tier": "danger"})
+        );
+    }
+
+    fn ids(modules: &[Module]) -> Vec<&str> {
+        let mut v: Vec<&str> = modules.iter().map(|m| m.id.as_str()).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// A focus (user, 2026-11-03) narrows the map to the focused modules and the
+    /// modules one dependency away — in either direction — before anything is
+    /// folded, so the neighbourhood is drawn whole. Two hops away is out.
+    #[test]
+    fn a_focus_keeps_the_module_and_its_direct_neighbours() {
+        let modules = vec![m("a", "L0", 1), m("b", "L1", 1), m("c", "L1", 1), m("d", "L2", 1)];
+        let edges = vec![e("a", "b", "calls", 3), e("c", "a", "calls", 2), e("b", "d", "calls", 5)];
+        let f = focus_scope(&modules, &edges, &["a".to_string()].into());
+        assert_eq!(ids(&f.modules), ["a", "b", "c"]);
+        assert_eq!(f.neighbours, ["b", "c"]);
+    }
+
+    /// Only the dependencies that touch a focused module are kept: two
+    /// neighbours' own traffic is the rest of the map, not the focus.
+    #[test]
+    fn a_focus_keeps_only_the_edges_that_touch_it() {
+        let modules = vec![m("a", "L0", 1), m("b", "L1", 1), m("c", "L1", 1)];
+        let edges = vec![
+            e("a", "b", "calls", 3),
+            e("a", "c", "calls", 1),
+            e("b", "c", "calls", 9),
+            e("a", "a", "calls", 4),
+        ];
+        let f = focus_scope(&modules, &edges, &["a".to_string()].into());
+        let kept: Vec<(&str, &str)> =
+            f.edges.iter().map(|e| (e.source.as_str(), e.target.as_str())).collect();
+        assert_eq!(kept, [("a", "b"), ("a", "c"), ("a", "a")]);
+    }
+
+    /// A segment is a Group-by group: every module in it is focused, and its
+    /// neighbours are the modules outside it that it depends on or is used by.
+    #[test]
+    fn a_segment_focuses_every_module_in_it() {
+        let modules = vec![m("a", "L1", 1), m("b", "L1", 1), m("c", "L2", 1), m("d", "L3", 1)];
+        let edges = vec![e("a", "b", "calls", 1), e("b", "c", "calls", 2)];
+        let members = segment_members(&modules, "L1");
+        assert_eq!(members, ["a".to_string(), "b".to_string()].into());
+        let f = focus_scope(&modules, &edges, &members);
+        assert_eq!(ids(&f.modules), ["a", "b", "c"]);
+        assert_eq!(f.neighbours, ["c"]);
+    }
+
+    /// A focus that names nothing in the workspace narrows to nothing — the
+    /// caller answers it as not found, never as an empty map.
+    #[test]
+    fn a_focus_on_no_known_module_keeps_nothing() {
+        let modules = vec![m("a", "L0", 1)];
+        let f = focus_scope(&modules, &[], &["zzz".to_string()].into());
+        assert!(f.modules.is_empty() && f.edges.is_empty() && f.neighbours.is_empty());
+    }
+
+    /// The Complexity lens is a tree (user, 2026-11-02): module → folder → file,
+    /// each level carrying its functions, how many are over cyclomatic 10, the
+    /// highest cyclomatic under it and how many files were measured.
+    #[test]
+    fn complexity_rolls_up_module_folder_file() {
+        let t = complexity_tree(&[
+            measured("pkg/alpha", "alpha/a.rs", 4, 1, 14),
+            measured("pkg/alpha", "alpha/tests/a_test.rs", 2, 0, 3),
+            measured("pkg/alpha", "alpha/tests/b_test.rs", 3, 2, 22),
+            measured("pkg/beta", "beta/b.rs", 1, 0, 2),
+        ]);
+        assert_eq!(
+            (t.total.functions, t.total.complex, t.total.max_cyclo, t.total.files),
+            (10, 3, 22, 4)
+        );
+        let alpha = &t.modules[0];
+        assert_eq!((alpha.id.as_str(), alpha.kind), ("pkg/alpha", NodeKind::Module));
+        assert_eq!((alpha.functions, alpha.complex, alpha.max_cyclo, alpha.files), (9, 3, 22, 3));
+        // The module's own directory is its root; under it, the tests folder and a.rs.
+        let labels: Vec<&str> = alpha.children.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, vec!["tests", "a.rs"], "most complex first");
+        let tests = &alpha.children[0];
+        assert_eq!((tests.kind, tests.complex, tests.files), (NodeKind::Folder, 2, 2));
+        assert_eq!(tests.children[0].id, "alpha/tests/b_test.rs");
+        assert_eq!(tests.children[0].kind, NodeKind::File);
+    }
+
+    #[test]
+    fn complexity_orders_modules_by_complex_functions_then_size() {
+        let t = complexity_tree(&[
+            measured("pkg/quiet", "quiet/q.rs", 50, 0, 4),
+            measured("pkg/busy", "busy/b.rs", 5, 3, 30),
+            measured("pkg/also", "also/a.rs", 9, 3, 12),
+        ]);
+        let ids: Vec<&str> = t.modules.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["pkg/also", "pkg/busy", "pkg/quiet"]);
+    }
+
+    /// A folder with one folder in it and no files of its own reads as one row
+    /// (`src/lib`), so a deep tree does not open on a staircase of single folders.
+    #[test]
+    fn complexity_collapses_single_folder_chains() {
+        let t = complexity_tree(&[
+            measured("pkg/m", "m/src/lib/deep/x.rs", 2, 1, 11),
+            measured("pkg/m", "m/src/lib/deep/y.rs", 2, 0, 5),
+            measured("pkg/m", "m/main.rs", 1, 0, 1),
+        ]);
+        let m = &t.modules[0];
+        let folder = m.children.iter().find(|c| c.kind == NodeKind::Folder).unwrap();
+        assert_eq!(folder.label, "src/lib/deep");
+        assert_eq!(folder.children.len(), 2);
+    }
+
+    #[test]
+    fn complexity_of_nothing_measured_is_an_empty_tree() {
+        let t = complexity_tree(&[]);
+        assert!(t.modules.is_empty());
+        assert_eq!((t.total.functions, t.total.files), (0, 0));
+    }
+
+    /// A module's files by role, so tests and docs never read as code size (M17).
+    #[test]
+    fn files_are_counted_by_role_per_module() {
+        let paths = [
+            ("pkg/a", "src/a/lib.rs"),
+            ("pkg/a", "src/a/tests/lib_test.rs"),
+            ("pkg/a", "src/a/README.md"),
+            ("pkg/b", "src/b/mod.rs"),
+        ]
+        .map(|(m, p)| (m.to_string(), p.to_string()));
+        let counts = role_counts(&paths);
+        assert_eq!(counts["pkg/a"], RoleCounts { code: 1, test: 1, docs: 1, ..Default::default() });
+        assert_eq!(counts["pkg/b"], RoleCounts { code: 1, ..Default::default() });
+    }
+
+    /// A block carries its module's package and roles; a fold sums its members'
+    /// roles, and keeps a package only when they share one.
+    #[test]
+    fn blocks_carry_package_and_roles_and_folds_sum_them() {
+        let mut mods: Vec<Module> = (0..3).map(|i| m(&format!("m{i}"), "g", 100 - i)).collect();
+        mods[1].package = "other".into();
+        mods[2].roles = RoleCounts { code: 2, test: 3, ..Default::default() };
+        let l0 = level0(&mods, &[], 2);
+        let kept = l0.blocks.iter().find(|b| b.id == "m0").unwrap();
+        assert_eq!((kept.package.as_deref(), kept.roles.code), (Some("pkg"), 1));
+        let fold = l0.blocks.iter().find(|b| b.id == fold_id("g")).unwrap();
+        assert_eq!(fold.roles, RoleCounts { code: 3, test: 3, ..Default::default() });
+        assert_eq!(fold.package, None, "members in two packages name none");
+    }
+
+    /// The referenced libraries are one block's worth: how many, and the most used.
+    #[test]
+    fn libraries_summarise_as_a_count_and_the_most_used() {
+        let rows = vec![
+            serde_json::json!({"name": "tokio", "repo_count": 3}),
+            serde_json::json!({"name": "serde", "repo_count": 5}),
+            serde_json::json!({"name": "axum", "repo_count": 1}),
+        ];
+        assert_eq!(
+            libraries_summary(&rows, 2),
+            serde_json::json!({"count": 3, "top": ["serde", "tokio"]})
+        );
+        assert_eq!(libraries_summary(&[], 2), serde_json::json!({"count": 0, "top": []}));
     }
     fn e(source: &str, target: &str, kind: &str, count: i64) -> ModuleEdge {
         ModuleEdge { source: source.into(), target: target.into(), kind: kind.into(), count }

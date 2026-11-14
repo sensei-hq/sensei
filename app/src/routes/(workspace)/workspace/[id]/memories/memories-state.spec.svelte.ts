@@ -355,3 +355,21 @@ describe('WorkspaceMemoriesState — generalise and widen', () => {
         expect(s.promoteError('m1')).toContain("isn't promotable yet");
     });
 });
+
+describe('WorkspaceMemoriesState.strengthOf', () => {
+    // Audit 2026-10-28, item 1: this screen read "300%" for a strength of 3.
+    it('reads on the 1–5 scale the daemon keeps', () => {
+        const state = new WorkspaceMemoriesState([mem('a', { strength: 3 })]);
+        expect(state.strengthOf(state.memories[0]).label).toBe('3.0 / 5');
+    });
+});
+
+
+describe('notices — through the shared Notice', () => {
+    it('each failure names what failed; the reason it holds is the detail', () => {
+        const s = new WorkspaceMemoriesState();
+        expect([s.batchNotice, s.decideNotice('b'), s.promoteNotice('a'), s.generaliseNotice('a')]).toEqual([null, null, null, null]);
+        s.batchError = 'boom';
+        expect(s.batchNotice).toEqual({ tone: 'fault', title: "Couldn't propose the batch", detail: 'boom', remedy: 'Retry. If it keeps failing, reload the page.' });
+    });
+});

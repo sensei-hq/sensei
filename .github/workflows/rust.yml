@@ -78,8 +78,21 @@ jobs:
       - name: DDL comments
         run: make check-ddl-comments
 
+      # D83: no new failure-mask shapes (a failed read turned into a plausible
+      # value). A static read of crates/, app/src, dojo/src, packages/ and
+      # database/ddl with its own self-test; same entry point as test-fast.
+      - name: No fabrication ratchet
+        run: make check-no-fabrication
+
+      - name: Doc links point at tracked files
+        run: make check-doc-links
+
       - name: Homebrew tokens in the docs
         run: make check-brew-tokens
+
+      # app and dojo are two installs; a spec they share must be the same in both.
+      - name: Shared JS dependency specs
+        run: make check-shared-js-specs
 
   test:
     runs-on: ubuntu-latest
@@ -141,7 +154,7 @@ jobs:
       # from an install. The tree had drifted four ways (v0.12.0 / v0.14.0 /
       # v0.15.0 / v0.17.0); see #197. One version, moved in one commit.
       - name: Install dbd
-        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.27.8 dbd-cli --locked
+        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.27.9 dbd-cli --locked
 
       # PROVISION FROM THE DDL TREE, not from a released bundle. A test database
       # built from a published snapshot ages out of the tree and then tests

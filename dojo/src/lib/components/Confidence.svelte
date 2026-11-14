@@ -19,5 +19,5 @@
 			style="width: {confidenceWidth(value)}; background: currentColor"
 		></div>
 	</div>
-	<span class="mono text-ink-soft text-xs">{confidencePct(value)}</span>
+	<span class="mono text-ink-mute text-xs">{confidencePct(value)}</span>
 </div>

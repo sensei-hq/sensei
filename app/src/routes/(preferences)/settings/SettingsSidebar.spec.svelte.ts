@@ -84,15 +84,3 @@ describe("SettingsSidebar glyphs", () => {
     expect(c.querySelector("[data-item-icon-literal]")).toBeNull();
   });
 });
-
-// The user (2026-10-27): the settings sidebar is styled unlike the main one. Both
-// are rokkit List with groups; the settings one carried its own row-padding
-// override. Same component, same density.
-describe('SettingsSidebar — like the main sidebar', () => {
-  it('renders the List with no density override of its own', () => {
-    const m = mountComponent(SettingsSidebar, { pathname: '/settings/general' });
-    const list = m.container.querySelector('[data-list]') as HTMLElement;
-    expect(list.className).not.toMatch(/py-2/);
-    m.destroy();
-  });
-});

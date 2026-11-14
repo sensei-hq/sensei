@@ -43,11 +43,11 @@
     class="flex items-center gap-5 px-16 py-3.5 border-t border-paper-edge bg-paper-soft shrink-0"
 >
     <div class="flex items-baseline gap-3">
-        <span class="text-xs tracking-wide text-ink-soft uppercase">
+        <span class="text-xs tracking-wide text-ink-mute uppercase">
             {String(currentIdx + 1).padStart(2, '0')}
-            <span class="text-ink-soft">/ {total}</span>
+            <span class="text-ink-mute">/ {total}</span>
         </span>
-        <span class="text-sm text-ink-mute">{stage.title}</span>
+        <span class="text-sm text-ink-soft">{stage.title}</span>
     </div>
 
     <div class="flex-1 flex gap-1 items-center">

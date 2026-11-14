@@ -11,149 +11,103 @@ function table(schema: string, name: string, columns = ['id']): SchemaTable {
   };
 }
 
-/** Two schemas joined by one key, a view reading across them, and a call to a
- *  built-in — the shapes the live payload has. */
+/** Two schemas joined by one key, a view reading across them, and an enum —
+ *  the shapes the live payload has. */
 function payload(over: Partial<SchemaPayload> = {}): SchemaPayload {
   return {
-    version: 2,
-    tables: [
-      table('app', 'customers'),
-      table('app', 'orders', ['id', 'customer_id', 'account_id']),
-      table('crm', 'accounts'),
-    ],
-    refs: [
-      { from: { s: 'app', t: 'orders', c: 'customer_id' }, to: { s: 'app', t: 'customers', c: 'id' }, action: 'cascade' },
-      { from: { s: 'app', t: 'orders', c: 'account_id' }, to: { s: 'crm', t: 'accounts', c: 'id' } },
-    ],
-    entities: [{ schema: 'report', name: 'order_totals', kind: 'view' }],
-    deps: [
-      { from: { s: 'report', n: 'order_totals' }, to: { s: 'app', n: 'orders' }, kind: 'reads' },
-      { from: { s: 'report', n: 'order_totals' }, to: { s: 'crm', n: 'accounts' }, kind: 'reads' },
-      { from: { s: 'report', n: 'order_totals' }, to: { s: '', n: 'count' }, kind: 'calls', unresolved: true },
-    ],
+    version: 3,
+    tables: [table('app', 'customers'), table('app', 'orders', ['id', 'customer_id']), table('crm', 'accounts')],
+    refs: [{ from: { s: 'app', t: 'orders', c: 'customer_id' }, to: { s: 'app', t: 'customers', c: 'id' } }],
+    entities: [{ schema: 'app', name: 'order_totals', kind: 'view' }],
+    deps: [{ from: { s: 'app', n: 'order_totals' }, to: { s: 'app', n: 'orders' }, kind: 'reads' }],
+    enums: [{ schema: 'app', name: 'order_status', values: ['pending', 'paid'] }],
     ...over,
   };
 }
 
-function okApi(data: SchemaPayload = payload()): SchemaApi {
-  return { tryGetWorkspaceSchema: async () => ({ ok: true, data }) };
-}
-
-function failApi(status: number, message: string): SchemaApi {
-  return { tryGetWorkspaceSchema: async () => ({ ok: false, error: { status, message } }) };
-}
-
-async function loaded(api: SchemaApi = okApi()) {
-  const s = new SchemaState(api, () => 'p1');
+const api = (res: Awaited<ReturnType<SchemaApi['tryGetWorkspaceSchema']>>): SchemaApi => ({
+  tryGetWorkspaceSchema: async () => res,
+});
+const loaded = async (p: SchemaPayload = payload()) => {
+  const s = new SchemaState(api({ ok: true, data: p }), () => 'w1');
   await s.load();
   return s;
-}
+};
 
+// Database · ER is dbd's viewer (user, 2026-11-02): the design's Overview,
+// Diagram and Entities, or one entity's page, with the sidebar on the right.
+// rokkit's views draw it; this state owns the read, the tab, the selection
+// and the diagram's display settings.
 describe('SchemaState', () => {
   it('starts in loading, before any request has settled', () => {
-    expect(new SchemaState(okApi(), () => 'p1').view).toBe('loading');
+    const s = new SchemaState(api({ ok: true, data: payload() }), () => 'w1');
+    expect(s.view).toBe('loading');
   });
 
-  // WRONG GATE: "no database here" when the daemon failed.
   it('a failed request is an error with the status, never the none state', async () => {
-    const s = await loaded(failApi(500, 'Internal Server Error'));
-    expect(s.view).toBe('error');
-    expect(s.failure).toContain('500');
-    const down = await loaded(failApi(0, 'connection refused'));
-    expect(down.failure).toContain('Could not reach the daemon');
-  });
-
-  it('nothing described is the none state, a finding in words', async () => {
-    const s = await loaded(okApi(payload({ tables: [], refs: [], entities: [], deps: [] })));
-    expect(s.view).toBe('none');
-  });
-
-  // Keys draws TABLES; a view has no keys and would turn the ER picture into a
-  // dependency picture.
-  it('the keys scope draws tables and their keys, never views', async () => {
-    const s = await loaded();
-    expect(s.view).toBe('graph');
-    expect(s.scope).toBe('er');
-    expect(s.graphInput.nodes.map((n) => (n as { id: string }).id)).toEqual([
-      'app.customers',
-      'app.orders',
-      'crm.accounts',
-    ]);
-    expect(s.graphInput.edges).toHaveLength(2);
-  });
-
-  it('the dependencies scope draws every object, and keeps an unresolved dep', async () => {
-    const s = await loaded();
-    s.setScope('dependencies');
-    const ids = s.graphInput.nodes.map((n) => (n as { id: string }).id);
-    expect(ids).toContain('report.order_totals');
-    expect(s.graphInput.edges).toHaveLength(3);
-    expect(s.coverage).toContain('1 dependency on a built-in or undescribed object, drawn dimmed');
-  });
-
-  it('offers each schema with its table count, after All', async () => {
-    const s = await loaded();
-    expect(s.schemaOptions).toEqual([
-      { value: null, label: 'All', tables: 3 },
-      { value: 'app', label: 'app', tables: 2 },
-      { value: 'crm', label: 'crm', tables: 1 },
-      { value: 'report', label: 'report', tables: 0 },
-    ]);
-  });
-
-  // WRONG GATE: a filtered picture with no count of what it cut.
-  it('a schema filter draws only its objects and COUNTS the links it cut', async () => {
-    const s = await loaded();
-    s.setSchema('app');
-    expect(s.graphInput.nodes.map((n) => (n as { id: string }).id)).toEqual([
-      'app.customers',
-      'app.orders',
-    ]);
-    expect(s.graphInput.edges).toHaveLength(1);
-    expect(s.cut).toBe(1);
-    expect(s.coverage).toContain('1 key leads out of the shown schema, not drawn');
-
-    s.setScope('dependencies');
-    s.setSchema('report');
-    // Both placed reads lead into hidden schemas; the built-in call is kept —
-    // its endpoint is no object in ANY schema, so nothing hid it.
-    expect(s.graphInput.edges).toHaveLength(1);
-    expect(s.cut).toBe(2);
-  });
-
-  it('All cuts nothing and says so by saying nothing', async () => {
-    const s = await loaded();
-    expect(s.cut).toBe(0);
-    expect(s.coverage.join(' ')).not.toContain('leads out');
-  });
-
-  it('a schema missing from a reloaded payload falls back to All', async () => {
-    let data = payload();
-    const s = new SchemaState({ tryGetWorkspaceSchema: async () => ({ ok: true, data }) }, () => 'p1');
+    const s = new SchemaState(api({ ok: false, error: { status: 500, message: 'Internal Server Error' } }), () => 'w1');
     await s.load();
-    s.setSchema('crm');
-    data = payload({ tables: [table('app', 'customers')], refs: [], deps: [] });
-    await s.load();
-    expect(s.schema).toBeNull();
-    expect(s.graphInput.nodes).toHaveLength(1);
+    expect([s.view, s.failure]).toEqual(['error', 'The daemon returned 500 Internal Server Error']);
   });
 
-  it('selecting a table exposes it for the entity panel; a stale selection clears', async () => {
+  it('nothing described is the none state; enums alone are something', async () => {
+    expect((await loaded(payload({ tables: [], refs: [], entities: [], deps: [], enums: [] }))).view).toBe('none');
+    expect((await loaded(payload({ tables: [], refs: [], entities: [], deps: [] }))).view).toBe('design');
+  });
+
+  it('opens on the Overview, and passes the payload to the views as the design model', async () => {
     const s = await loaded();
+    expect(s.tab).toBe('overview');
+    expect(s.model?.enums?.map((e) => e.name)).toEqual(['order_status']);
+    expect(s.model?.tables.length).toBe(3);
+  });
+
+  it('counts the design for the header — a stat per kind it has, with its icon — and notes its version', async () => {
+    const s = await loaded();
+    expect(s.stats?.map((t) => `${t.label} ${t.value}`)).toEqual(['Schemas 2', 'Tables 3', 'View 1', 'Enum 1', 'Reference 1']);
+    expect(s.stats?.every((t) => t.icon?.startsWith('i-glyph:') && t.tone === 'ink')).toBe(true);
+    expect(s.note).toBe('schema model v3');
+    expect((await loaded(payload({ version: undefined as never }))).note).toBeNull();
+  });
+
+  it('has no stats before the design is read, or when the read failed', async () => {
+    expect(new SchemaState(api({ ok: true, data: payload() }), () => 'w1').stats).toBeNull();
+    const failed = new SchemaState(api({ ok: false, error: { status: 500, message: 'x' } }), () => 'w1');
+    await failed.load();
+    expect(failed.stats).toBeNull();
+  });
+
+  it('a selection opens its page — a table, an object or an enum — and none goes back to the design', async () => {
+    const s = await loaded();
+    expect(s.page).toBeNull();
     s.select('app.orders');
-    expect(s.selectedTable?.columns.map((c) => c.name)).toEqual(['id', 'customer_id', 'account_id']);
-    s.setSchema('crm');
-    expect(s.selected).toBeNull();
+    expect(s.page).toBe('table');
+    s.select('app.order_totals');
+    expect(s.page).toBe('object');
+    s.select('app.order_status');
+    expect(s.page).toBe('enum');
+    s.select(null);
+    expect([s.selected, s.page]).toEqual([null, null]);
   });
 
-  // The first line describes the PICTURE: keys are not drawn under
-  // Dependencies, and views are not drawn under Keys.
-  it('counts what the picture in view shows', async () => {
+  // The canvas's own selection (user, 2026-11-06): a press centres a neighbourhood,
+  // and opening a page clears it — the page replaces the canvas, so a stale focal
+  // object would greet the reader on the way back.
+  it('the canvas centres on what it is given, and opening a page clears it', async () => {
     const s = await loaded();
-    expect(s.coverage[0]).toBe('3 tables · 2 keys');
-    s.setScope('dependencies');
-    expect(s.coverage[0]).toBe('4 objects · 3 dependencies');
-    s.setSchema('app');
-    expect(s.coverage[0]).toBe('2 objects · 0 dependencies');
+    expect(s.focus).toBeNull();
+    s.focusOn('app.orders');
+    expect(s.focus).toBe('app.orders');
+    s.select('app.customers');
+    expect(s.focus).toBeNull();
+    expect(s.page).toBe('table');
+  });
+
+  it('a selection the reloaded design no longer has clears, rather than opening on nothing', async () => {
+    const s = await loaded();
+    s.select('crm.accounts');
+    s.setApi(api({ ok: true, data: payload({ tables: [table('app', 'customers')] }) }));
+    await s.load();
+    expect([s.selected, s.page]).toEqual([null, null]);
   });
 });

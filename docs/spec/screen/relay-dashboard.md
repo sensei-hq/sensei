@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion)
 **Route:** Relay iOS app · dashboard (no web route — phone app)
-**Source mockup:** [`lib/relay/relay.jsx`](../../mockups/Sensei/lib/relay/relay.jsx) → `RelayDashboard`
+**Source mockup:** `lib/relay/relay.jsx` → `RelayDashboard`
 **Data:** greenfield — the coordinator publishes a filtered status stream through the relay. Proposed: `GET /api/relay/agents` (snapshot: `{ counts: {needs_you, running, done}, tasks: [...] }`) + a push/SSE `GET /api/relay/stream` for live deltas; each task = `{ id, title, machine, assistant, state, status, ago, stages[] }`. Status only — no code, no diffs, no file contents.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + relay transport not built_

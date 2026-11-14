@@ -3,10 +3,11 @@
 #
 # Usage:
 #   brew tap sensei-hq/tap
+#   brew trust sensei-hq/tap        # Homebrew 7+: once per machine
 #   brew install --cask sensei-hq/tap/senseihq
 
 cask "senseihq" do
-  version "0.21.1"
+  version "0.22.0"
 
   # Universal binary — runs natively on both Apple Silicon and Intel
   url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/Sensei_#{version}_universal.dmg"

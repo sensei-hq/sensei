@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ftrPct, ftrPctLabel, ftrReadLabel, FTR_NONE, FTR_UNAVAILABLE } from './ftr.js';
+import { ftrPct, ftrPctLabel, ftrReadLabel, FTR_NONE, FTR_UNAVAILABLE, FTR_GOOD, FTR_OK, ftrBand, ftrBandView, sessionFtrView, correctionsView } from './ftr.js';
 
 describe('ftrPct', () => {
   it('rounds a 0..1 rate to a whole-number percentage', () => {
@@ -39,3 +39,53 @@ describe('ftrReadLabel', () => {
     expect(FTR_UNAVAILABLE).toBe('unavailable');
   });
 });
+
+// Audit item 6 (2026-10-28): the same FTR was banded differently per screen —
+// cut-offs 0.8/0.6 here and 0.8/0.5 there, the middle band neutral on the
+// workspace dot and ACCENT (the "needs you" colour) in the sidebar, no data
+// grey or faint — and an unscored session drew a warning dot on Today.
+describe('ftrBandView — one banding for every screen', () => {
+  it('bands at 0.8 and 0.6', () => {
+    expect([FTR_GOOD, FTR_OK]).toEqual([0.8, 0.6]);
+    expect([0.85, 0.8, 0.7, 0.6, 0.59, null].map((r) => ftrBand(r))).toEqual(['good', 'good', 'ok', 'ok', 'low', 'none']);
+  });
+
+  it('gives each band one colour and one label', () => {
+    expect(ftrBandView(0.9)).toEqual({ band: 'good', dot: 'bg-success', text: 'text-success', label: 'healthy' });
+    expect(ftrBandView(0.7)).toEqual({ band: 'ok', dot: 'bg-ink-soft', text: 'text-ink-soft', label: 'ok' });
+    expect(ftrBandView(0.3)).toEqual({ band: 'low', dot: 'bg-warning', text: 'text-warning', label: 'needs attention' });
+    expect(ftrBandView(null)).toEqual({ band: 'none', dot: 'bg-ink-faint', text: 'text-ink-faint', label: 'no ftr data' });
+  });
+});
+
+describe('sessionFtrView — one session, whichever shape its FTR comes in', () => {
+  it('first try is success, rework a warning', () => {
+    for (const first of [true, 1]) {
+      expect(sessionFtrView(first)).toEqual({ firstTry: true, tone: 'success', dot: 'bg-success', text: 'text-success', label: 'first try' });
+    }
+    for (const rework of [false, 0.5, 0]) {
+      expect(sessionFtrView(rework)).toEqual({ firstTry: false, tone: 'warn', dot: 'bg-warning', text: 'text-warning', label: 'rework' });
+    }
+  });
+
+  it('an unscored session is faint, never a warning — absence is not a red signal', () => {
+    expect(sessionFtrView(null)).toEqual({ firstTry: null, tone: 'none', dot: 'bg-ink-faint', text: 'text-ink-faint', label: '—' });
+    expect(sessionFtrView(undefined).firstTry).toBeNull();
+  });
+});
+
+// Audit item 7 (2026-10-28): one count, four phrasings — "first-try right",
+// "1 corrections", "3× rework", "no corrections". Whether a session was
+// first-try is the FTR's (sessionFtrView); this says how many corrections.
+describe('correctionsView', () => {
+  it('counts corrections in words, singular and plural', () => {
+    expect(correctionsView(0)).toEqual({ label: 'no corrections', text: 'text-success' });
+    expect(correctionsView(1)).toEqual({ label: '1 correction', text: 'text-warning' });
+    expect(correctionsView(3)).toEqual({ label: '3 corrections', text: 'text-warning' });
+  });
+
+  it('a count not reported is a dash, not zero', () => {
+    expect(correctionsView(null)).toEqual({ label: '—', text: 'text-ink-mute' });
+  });
+});
+

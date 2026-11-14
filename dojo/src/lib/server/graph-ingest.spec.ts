@@ -132,6 +132,23 @@ describe('graphHashes', () => {
 		expect(out.files['f2499.ts']).toBe('h2499');
 	});
 
+	it('pages the hashes in path order — an unordered OFFSET can drop or repeat files past 1,000', async () => {
+		// One branch's paths are unique, so path is the total order (WP4 F1).
+		const orders: string[] = [];
+		const chain: Record<string, unknown> = {};
+		chain.select = () => chain;
+		chain.in = () => chain;
+		chain.order = (column: string) => {
+			orders.push(column);
+			return chain;
+		};
+		chain.range = () => Promise.resolve({ data: [], error: null });
+		chain.then = (resolve: (v: unknown) => unknown) =>
+			Promise.resolve(resolve({ data: [MINE], error: null }));
+		await graphHashes({ rpc: () => chain } as never, 'github.com/acme/api', 'main');
+		expect(orders).toEqual(['path']);
+	});
+
 	it('refuses as the write does: unknown 404, not permitted 403, empty branch 400', async () => {
 		expect(await refusal(graphHashes(fakeDojoDb(tables([])) as never, 'github.com/acme/api', 'main'))).toBe(404);
 		expect(

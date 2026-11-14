@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection } from '$lib/components/kit';
 	import type { KitHealth } from '$lib/components/kit/types';
 	import { signalToneClass, alertToneClass, barMax, barPct } from '$lib/health-view';
 
@@ -19,7 +21,7 @@
 		orgName: string;
 		health: KitHealth;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 
 	const max = $derived(barMax(health.contribVsApprove));
@@ -36,7 +38,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the health rollup" {error} />
+			<Notice size="panel" {...dojoLoadNotice("the health rollup", error)} data-load-error />
 		{:else}
 			<!-- Signal cards — two-up on phone, four-up on desktop. -->
 			<div class="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -44,7 +46,7 @@
 					<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
 						<div class="mb-2 flex items-center gap-2">
 							<KanjiToken char={s.kanji} size="base" toneClass={signalToneClass(s.tone)} />
-							<span class="text-ink-mute text-xs">{s.label}</span>
+							<span class="text-ink-soft text-xs">{s.label}</span>
 						</div>
 						<StatBadge n={s.n} label="" sub={s.sub} toneClass={signalToneClass(s.tone)} />
 					</div>
@@ -55,14 +57,14 @@
 				<!-- Contributions vs approvals — bars scaled to the tallest week. -->
 				<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
 					<div class="mb-3 flex items-center gap-2">
-						<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em"
+						<span class="text-ink-soft text-xs font-semibold uppercase" style="letter-spacing: 0.18em"
 							>Contributions vs approvals</span
 						>
 						<span class="flex-1"></span>
-						<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+						<Chip toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 							>contrib</Chip
 						>
-						<Chip toneClass="text-success" softClass="bg-success-soft" edgeClass="border-success-soft"
+						<Chip toneClass="text-on-success-soft" softClass="bg-success-soft" edgeClass="border-success-soft"
 							>approved</Chip
 						>
 					</div>

@@ -2,7 +2,7 @@
 
 **Segment:** 04 · Project window — solution variant
 **Route:** `/solution/[id]/dashboard`
-**Source mockup:** [`lib/observatory/solution-track.jsx`](../../mockups/Sensei/lib/observatory/solution-track.jsx) → `SolutionDashboard` (aggregate strip + per-repo cards)
+**Source mockup:** `lib/observatory/solution-track.jsx` → `SolutionDashboard` (aggregate strip + per-repo cards)
 **Source design:** `docs/archive/ideas/24-desktop-observatory.md` (Solution scope model)
 **App file:** `app/src/routes/solution/[id]/dashboard/+page.svelte`
 

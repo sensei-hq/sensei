@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
     SECTIONS,
+    buildWorkspaceNav,
+    workspaceActiveHref,
     isSectionActive,
     healthRows,
-    ftrBand,
     ftrDelta,
     ftrSparkTone,
+    ftrHeadline,
 } from './workspace-sidebar-view.js';
+import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 
 describe('workspace-sidebar-view', () => {
     describe('isSectionActive', () => {
@@ -21,6 +24,37 @@ describe('workspace-sidebar-view', () => {
         });
         it('scopes to the workspace id', () => {
             expect(isSectionActive('/workspace/other/overview', 'abc', 'overview')).toBe(false);
+        });
+    });
+
+    describe('the Diagrams subsection', () => {
+        it('lists each diagram under its own heading, with its hint', () => {
+            const [sections, diagrams] = buildWorkspaceNav('w');
+            expect(sections.children.some((c) => c.text === 'Diagrams')).toBe(false);
+            expect(diagrams.text).toBe('Diagrams');
+            expect(diagrams.children.map((c) => c.href)).toEqual(
+                ['structure', 'wheel', 'zones', 'matrix', 'cycles', 'coupling', 'complexity', 'schema'].map(
+                    (id) => `/workspace/w/diagrams/${id}`,
+                ),
+            );
+            expect(diagrams.children[1]).toMatchObject({
+                kanji: '輪',
+                icon: 'i-solar-refresh-circle-bold-duotone',
+                text: 'Wheel',
+                subtext: 'which groups lean on which',
+            });
+        });
+        it('repeats no mark anywhere in the sidebar, kanji or icon (M16)', () => {
+            const entries = buildWorkspaceNav('w').flatMap((g) => g.children);
+            for (const mark of ['kanji', 'icon'] as const) {
+                const seen = entries.map((e) => e[mark]);
+                expect(seen.every(Boolean), mark).toBe(true);
+                expect(new Set(seen).size, mark).toBe(seen.length);
+            }
+        });
+        it('marks the diagram in view as current', () => {
+            expect(workspaceActiveHref('/workspace/w/diagrams/zones', 'w')).toBe('/workspace/w/diagrams/zones');
+            expect(workspaceActiveHref('/workspace/w/sessions', 'w')).toBe('/workspace/w/sessions');
         });
     });
 
@@ -41,20 +75,40 @@ describe('workspace-sidebar-view', () => {
     });
 
     describe('SECTIONS', () => {
-        it('leads with intake then overview and includes about', () => {
-            expect(SECTIONS[0].id).toBe('intake');
+        it('includes overview and about', () => {
             expect(SECTIONS.some((s) => s.id === 'overview')).toBe(true);
             expect(SECTIONS.some((s) => s.id === 'about')).toBe(true);
+        });
+        // D90 (relay slice 1 item 4): Relay replaces Intake in the workspace window —
+        // the same first place, mark 継 (to pass on) instead of 門 (the gate). Phase B
+        // rewrites the Intake test above to this one.
+        it('leads with Relay (継) where Intake was, and Intake is gone', () => {
+            expect(SECTIONS[0]).toEqual({ id: 'relay', kanji: '継', label: 'Relay' });
+            expect(SECTIONS.some((s) => s.id === 'intake')).toBe(false);
+            const [sections] = buildWorkspaceNav('w');
+            expect(sections.children[0]).toMatchObject({
+                kanji: '継',
+                icon: KANJI_ICONS['継'],
+                text: 'Relay',
+                href: '/workspace/w/relay',
+            });
+            expect(workspaceActiveHref('/workspace/w/relay/t-1', 'w')).toBe('/workspace/w/relay');
         });
         it('exposes a Metrics section right after Overview', () => {
             const ids = SECTIONS.map((s) => s.id);
             expect(ids).toContain('metrics');
             expect(ids.indexOf('metrics')).toBe(ids.indexOf('overview') + 1);
         });
-        it('places Tickets (札) then Integrations (繋) between Impact and About', () => {
+        it('places Tickets (札), Delivery Metrics (納) then Integrations (繋) between Impact and About', () => {
             const ids = SECTIONS.map((s) => s.id);
             expect(ids.indexOf('tickets')).toBe(ids.indexOf('impact') + 1);
-            expect(ids.indexOf('integrations')).toBe(ids.indexOf('tickets') + 1);
+            expect(ids.indexOf('delivery')).toBe(ids.indexOf('tickets') + 1);
+            expect(ids.indexOf('integrations')).toBe(ids.indexOf('delivery') + 1);
+            expect(SECTIONS.find((s) => s.id === 'delivery')).toEqual({
+                id: 'delivery',
+                kanji: '納',
+                label: 'Delivery Metrics',
+            });
             expect(ids.indexOf('about')).toBe(ids.indexOf('integrations') + 1);
             expect(SECTIONS.find((s) => s.id === 'tickets')).toEqual({
                 id: 'tickets',
@@ -71,15 +125,6 @@ describe('workspace-sidebar-view', () => {
             const ids = SECTIONS.map((s) => s.id);
             expect(new Set(ids).size).toBe(ids.length);
             expect(SECTIONS.every((s) => s.kanji.length >= 1)).toBe(true);
-        });
-    });
-
-    describe('ftrBand', () => {
-        it('bands FTR by threshold, and null → ink-faint (no fabricated band)', () => {
-            expect(ftrBand(null)).toBe('ink-faint');
-            expect(ftrBand(0.85)).toBe('success');
-            expect(ftrBand(0.7)).toBe('accent');
-            expect(ftrBand(0.4)).toBe('warning');
         });
     });
 
@@ -100,5 +145,16 @@ describe('workspace-sidebar-view', () => {
             expect(ftrSparkTone(0.6, 0.6)).toBe('neutral');
             expect(ftrSparkTone(0.6, null)).toBe('neutral');
         });
+    });
+});
+
+// Audit item 6 (2026-10-28): the sidebar bands FTR as every screen does (lib/ftr);
+// its headline is ink, warning only when low — no accent middle band.
+describe('ftrHeadline', () => {
+    it('is the shared band; the value is ink unless the rate is low', () => {
+        expect(ftrHeadline(0.85)).toMatchObject({ dot: 'bg-success', valueClass: 'text-ink' });
+        expect(ftrHeadline(0.7)).toMatchObject({ dot: 'bg-ink-soft', valueClass: 'text-ink' });
+        expect(ftrHeadline(0.4)).toMatchObject({ dot: 'bg-warning', valueClass: 'text-warning' });
+        expect(ftrHeadline(null)).toMatchObject({ dot: 'bg-ink-faint', band: 'none' });
     });
 });

@@ -1221,3 +1221,395 @@ async fn calls_under_a_servers_own_key_count_on_its_health_row() {
         .collect();
     assert_eq!(mine, vec![(key.clone(), 2)], "one row for the server, with both calls");
 }
+
+// ── Workspace hotspots ─────────────────────────────────────────────
+
+/// The workspace window's Hotspots read: recent Edit/Write/MultiEdit calls per
+/// file, re-edits within a session counted as corrections; an edit older than the
+/// 30-day window, another tool and another event type are not counted. Pins the
+/// behaviour while the view's time filter is rewritten to use an index (a
+/// `to_timestamp(ts)` filter scanned all 543k events on every request).
+#[tokio::test]
+async fn workspace_hotspots_count_recent_file_edits_and_reedits() {
+    let s = pg_store().await;
+    let suffix = format!("hotspots_{}", uuid::Uuid::new_v4());
+    let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let day_ms = 86_400_000_i64;
+    let mut sessions = Vec::new();
+    for n in 0..2 {
+        let csid = format!("{suffix}-s{n}");
+        s.record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+        sessions.push(csid);
+    }
+    let edit = |file: &str| serde_json::json!({ "tool_input": { "file_path": file } });
+    let events: Vec<(&str, &str, &str, i64, serde_json::Value)> = vec![
+        (&sessions[0], "PostToolUse", "Edit", now_ms - day_ms, edit("src/a.rs")),
+        (&sessions[0], "PostToolUse", "Edit", now_ms - 2 * day_ms, edit("src/a.rs")),
+        (&sessions[1], "PostToolUse", "Write", now_ms - 3 * day_ms, edit("src/a.rs")),
+        (&sessions[1], "PostToolUse", "Edit", now_ms - 40 * day_ms, edit("src/old.rs")),
+        (&sessions[1], "PostToolUse", "Read", now_ms - day_ms, edit("src/read.rs")),
+        (&sessions[1], "PreToolUse", "Edit", now_ms - day_ms, edit("src/pre.rs")),
+    ];
+    for (sid, event_type, tool, ts, payload) in &events {
+        sqlx_core::query::query(
+            "INSERT INTO activity.assistant_events (session_id, event_type, tool_name, ts, payload)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(sid)
+        .bind(event_type)
+        .bind(tool)
+        .bind(ts)
+        .bind(payload)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    let got = s.get_hotspots(&pid, 30).await;
+
+    sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = ANY($1)")
+        .bind(&sessions)
+        .execute(s.pool())
+        .await
+        .ok();
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE workspace_id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .ok();
+    s.delete_workspace(&pid).await.ok();
+
+    let rows = got.unwrap();
+    let files: Vec<(&str, i64, i64)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r["file_path"].as_str().unwrap(),
+                r["edit_count"].as_i64().unwrap(),
+                r["correction_count"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(files, vec![("src/a.rs", 3, 1)], "{rows:?}");
+}
+
+// ── Raw transcript backup tests ──────────────────────────────────────
+
+/// One backup row read back whole: (sha256, raw_bytes, content_gzip, last_seen_at).
+async fn raw_row(
+    s: &PgStore,
+    source: &str,
+    path: &str,
+) -> (String, i64, Vec<u8>, chrono::DateTime<chrono::Utc>) {
+    sqlx_core::query_as::query_as(
+        "SELECT sha256, raw_bytes, content_gzip, last_seen_at
+           FROM activity.transcript_raw WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(path)
+    .fetch_one(s.pool())
+    .await
+    .unwrap()
+}
+
+fn gunzip(bytes: &[u8]) -> Vec<u8> {
+    let mut d = flate2::read::GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut d, &mut out).unwrap();
+    out
+}
+
+/// Unchanged bytes must not rewrite the stored blob — a re-read (mtime bump,
+/// metadata backfill) would otherwise churn megabytes of bytea + WAL every
+/// ingest. The sighting still advances, so a live file never expires.
+#[tokio::test]
+async fn transcript_raw_upsert_skips_the_rewrite_when_bytes_are_unchanged() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let (source, path, sid) = ("_test_raw", format!("/tmp/{uniq}.jsonl"), uniq.clone());
+    let bytes = serde_json::to_vec(&serde_json::json!({"t": "x".repeat(2000)})).unwrap();
+
+    assert!(s.upsert_transcript_raw(source, &path, &sid, &bytes).await.unwrap());
+    let (sha1, raw1, gz1, _) = raw_row(&s, source, &path).await;
+    assert_eq!(raw1, bytes.len() as i64, "raw size recorded");
+    assert_eq!(gunzip(&gz1), bytes, "stored blob gunzips to the file's bytes");
+    // Backdate the sighting so the second upsert must visibly advance it.
+    sqlx_core::query::query(
+        "UPDATE activity.transcript_raw SET last_seen_at = now() - interval '1 day'
+          WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(&path)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    assert!(!s.upsert_transcript_raw(source, &path, &sid, &bytes).await.unwrap());
+    let (sha2, _, gz2, seen2) = raw_row(&s, source, &path).await;
+    assert_eq!((sha1, gz1), (sha2, gz2), "same bytes: sha + blob untouched");
+    assert!(
+        seen2 > chrono::Utc::now() - chrono::Duration::hours(23),
+        "same bytes: sighting still advanced to now ({seen2})"
+    );
+
+    sqlx_core::query::query(
+        "DELETE FROM activity.transcript_raw WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(&path)
+    .execute(s.pool())
+    .await
+    .ok();
+}
+
+/// Changed bytes rewrite the blob + sha (the recovery case: the file moved on
+/// and the backup must follow it).
+#[tokio::test]
+async fn transcript_raw_upsert_rewrites_when_bytes_change() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let (source, path, sid) = ("_test_raw", format!("/tmp/{uniq}.jsonl"), uniq.clone());
+    let before = br#"{"v":1,"pad":"xxxxxxxxxx"}"#.to_vec();
+    let after = br#"{"v":2,"pad":"yyyyyyyyyyyyyyyyyyyy"}"#.to_vec();
+
+    assert!(s.upsert_transcript_raw(source, &path, &sid, &before).await.unwrap());
+    let (sha1, _, _, _) = raw_row(&s, source, &path).await;
+    assert!(s.upsert_transcript_raw(source, &path, &sid, &after).await.unwrap());
+    let (sha2, raw2, gz2, _) = raw_row(&s, source, &path).await;
+
+    assert_ne!(sha1, sha2, "sha follows the bytes");
+    assert_eq!(raw2, after.len() as i64);
+    assert_eq!(gunzip(&gz2), after, "blob follows the bytes");
+
+    sqlx_core::query::query(
+        "DELETE FROM activity.transcript_raw WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(&path)
+    .execute(s.pool())
+    .await
+    .ok();
+}
+
+/// Retention runs off the sighting, not the capture: a row last seen past the
+/// window goes (its file rotated away), a recently-seen row stays.
+#[tokio::test]
+async fn prune_transcript_raw_deletes_only_rows_past_retention() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let source = "_test_raw";
+    let (old_path, new_path) = (format!("/tmp/{uniq}-old.jsonl"), format!("/tmp/{uniq}-new.jsonl"));
+    let bytes = b"{}".to_vec();
+    s.upsert_transcript_raw(source, &old_path, &uniq, &bytes).await.unwrap();
+    s.upsert_transcript_raw(source, &new_path, &uniq, &bytes).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE activity.transcript_raw SET last_seen_at = now() - interval '100 days'
+          WHERE source = $1 AND file_path = $2",
+    )
+    .bind(source)
+    .bind(&old_path)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(s.prune_transcript_raw(90).await.unwrap(), 1);
+
+    let left: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM activity.transcript_raw WHERE source = $1 AND file_path = ANY($2)",
+    )
+    .bind(source)
+    .bind(vec![old_path.clone(), new_path.clone()])
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(left.0, 1, "old row pruned, fresh row kept");
+    let fresh_kept: (bool,) = sqlx_core::query_as::query_as(
+        "SELECT EXISTS(SELECT 1 FROM activity.transcript_raw WHERE source = $1 AND file_path = $2)",
+    )
+    .bind(source)
+    .bind(&new_path)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert!(fresh_kept.0);
+
+    sqlx_core::query::query(
+        "DELETE FROM activity.transcript_raw WHERE source = $1 AND file_path = ANY($2)",
+    )
+    .bind(source)
+    .bind(vec![old_path, new_path])
+    .execute(s.pool())
+    .await
+    .ok();
+}
+
+// ── Transcript export: full rows for lossy rebuild ────────────────
+
+async fn seed_export_turns(s: &PgStore, sess: &str) {
+    let mk = |idx: i32, user: &str, asst: &str| crate::transcript::TranscriptTurn {
+        turn_index: idx,
+        user_text: Some(user.into()),
+        assistant_text: asst.into(),
+        started_at: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + idx as i64),
+        attrs: serde_json::json!({ "uuid": format!("u{idx}"), "cwd": "/r" }),
+        ..Default::default()
+    };
+    let mut t1 = mk(1, "do it", "done\ndouble");
+    t1.facts.tokens_in = Some(100);
+    t1.facts.stop_reason = Some("end_turn".into());
+    s.upsert_transcript_turns(
+        &crate::db::pg_store::TranscriptSource {
+            source: "claude_code",
+            session_id: sess,
+            family: "claude",
+            provider: None,
+            model: Some("claude-opus-4-8"),
+        },
+        &[t1, mk(2, "again", "ok")],
+    )
+    .await
+    .unwrap();
+}
+
+async fn clear_export_turns(s: &PgStore, sess: &str) {
+    sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+        .bind(sess)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+#[tokio::test]
+async fn export_bundle_returns_full_turns_with_attrs_facts_and_model() {
+    let s = pg_store().await;
+    let sess = format!("_test-export-{}", uuid::Uuid::new_v4());
+    seed_export_turns(&s, &sess).await;
+
+    let got = s.get_transcript_export(&sess).await.unwrap();
+    clear_export_turns(&s, &sess).await;
+
+    let b = got.expect("seeded session exports");
+    assert_eq!(b.source, "claude_code");
+    assert_eq!(b.model.as_deref(), Some("claude-opus-4-8"));
+    assert_eq!(b.turns.len(), 2);
+    assert_eq!(b.turns[0].attrs["uuid"], "u1");
+    assert_eq!(b.turns[0].facts.tokens_in, Some(100));
+    assert_eq!(b.turns[0].facts.stop_reason.as_deref(), Some("end_turn"));
+    assert_eq!(b.turns[1].turn_index, 2);
+}
+
+#[tokio::test]
+async fn export_bundle_is_none_without_kept_turns() {
+    let s = pg_store().await;
+    let sess = format!("_test-export-empty-{}", uuid::Uuid::new_v4());
+
+    assert!(s.get_transcript_export(&sess).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn missing_lists_gone_paths_with_turns_not_present_or_keyed() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let gone = format!("/nonexistent/sensei-test-{uniq}.jsonl");
+    let sess_gone = format!("_test-missing-gone-{uniq}");
+    let sess_here = format!("_test-missing-here-{uniq}");
+    // Present: this repo's own manifest — exists on every machine running the suite.
+    let here = format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
+    for (sess, path) in [(&sess_gone, gone.as_str()), (&sess_here, here.as_str())] {
+        seed_export_turns(&s, sess).await;
+        s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: "claude_code",
+            file_path: path,
+            session_id: Some(sess),
+            mtime_ns: 1,
+            turns: 2,
+        })
+        .await
+        .unwrap();
+    }
+    // A zed thread id is a key, not a path — never "missing".
+    let sess_zed = format!("_test-missing-zed-{uniq}");
+    seed_export_turns(&s, &sess_zed).await;
+    s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+        source: "zed",
+        file_path: "0272abd7-abf8-4586-be6c-926ad8f2b30f",
+        session_id: Some(&sess_zed),
+        mtime_ns: 1,
+        turns: 2,
+    })
+    .await
+    .unwrap();
+
+    let missing = s.missing_transcript_files().await.unwrap();
+    for sess in [&sess_gone, &sess_here, &sess_zed] {
+        clear_export_turns(&s, sess).await;
+        sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE session_id = $1")
+            .bind(sess)
+            .execute(s.pool())
+            .await
+            .ok();
+    }
+
+    let ids: Vec<&str> = missing.iter().map(|m| m.session_id.as_str()).collect();
+    assert!(ids.contains(&sess_gone.as_str()), "gone path listed: {ids:?}");
+    assert!(!ids.contains(&sess_here.as_str()), "present path not listed: {ids:?}");
+    assert!(!ids.contains(&sess_zed.as_str()), "thread keys are not paths: {ids:?}");
+    let row = missing.iter().find(|m| m.session_id == sess_gone).unwrap();
+    assert_eq!(row.turns, 2);
+    assert_eq!(row.file_path, gone);
+}
+
+#[tokio::test]
+async fn file_state_distinguishes_missing_present_and_unknown() {
+    use crate::db::pg_store::transcript::TranscriptFileState;
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let gone = format!("/nonexistent/sensei-test-{uniq}.jsonl");
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here.jsonl");
+    std::fs::write(&here, "{}\n").unwrap();
+    for (sess, path) in [
+        (format!("_test-fs-gone-{uniq}"), gone.as_str()),
+        (format!("_test-fs-here-{uniq}"), here.to_str().unwrap()),
+    ] {
+        s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: "claude_code",
+            file_path: path,
+            session_id: Some(&sess),
+            mtime_ns: 1,
+            turns: 1,
+        })
+        .await
+        .unwrap();
+    }
+
+    assert!(matches!(
+        s.transcript_file_state(&format!("_test-fs-gone-{uniq}")).await.unwrap(),
+        TranscriptFileState::Missing { .. }
+    ));
+    assert!(matches!(
+        s.transcript_file_state(&format!("_test-fs-here-{uniq}")).await.unwrap(),
+        TranscriptFileState::Present { .. }
+    ));
+    assert!(matches!(
+        s.transcript_file_state(&format!("_test-fs-nobody-{uniq}")).await.unwrap(),
+        TranscriptFileState::Unknown
+    ));
+
+    for sess in [format!("_test-fs-gone-{uniq}"), format!("_test-fs-here-{uniq}")] {
+        sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE session_id = $1")
+            .bind(&sess)
+            .execute(s.pool())
+            .await
+            .ok();
+    }
+}

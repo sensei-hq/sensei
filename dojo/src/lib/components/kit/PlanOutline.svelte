@@ -56,7 +56,7 @@
 							<span class="flex flex-wrap items-center gap-2">
 								<span
 									class="text-sm {t.state === 'pending' || t.state === 'skipped'
-										? 'text-ink-mute'
+										? 'text-ink-soft'
 										: 'text-ink'}">{t.title}</span
 								>
 								{#if t.is_gate}<Chip

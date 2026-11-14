@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import { Screen, Notice, EmptyState } from '@sensei/ui';
+	import type { MicrosoftNotice } from '$lib/azure-view';
 	import { Button } from '@rokkit/ui';
-	import { SectionHead, ListSection, MyDojoRow, EmptyState, AzureConnect } from '$lib/components/kit';
+	import { SectionHead, ListSection, MyDojoRow, AzureConnect } from '$lib/components/kit';
 	import type { AzureConnectState } from '$lib/azure-connect-state.svelte';
 	import type { KitDojo } from '$lib/components/kit/types';
 	import { groupDojos } from '$lib/personal-view';
@@ -36,7 +37,7 @@
 		azure?: AzureConnectState;
 		/** Why the Microsoft account could not be linked (#308 R5c) — said only
 		 *  when it could not; nothing was recorded and no dōjō joined from it. */
-		microsoftNotice?: string | null;
+		microsoftNotice?: MicrosoftNotice | null;
 	} = $props();
 
 	const groups = $derived(groupDojos(dojos));
@@ -62,7 +63,7 @@
 			>
 				{#snippet right()}
 					<div class="flex items-center gap-3">
-						{#if syncMessage}<span class="text-ink-mute text-xs">{syncMessage}</span>{/if}
+						{#if syncMessage}<span class="text-ink-soft text-xs">{syncMessage}</span>{/if}
 						{#if onSyncGithub}
 							<Button style="outline" size="sm" onclick={onSyncGithub} disabled={syncing}>
 								{syncing ? 'Syncing…' : 'Sync from GitHub'}
@@ -75,9 +76,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if microsoftNotice}
-			<div role="alert" class="border-paper-edge bg-paper-soft text-danger rounded-lg border p-4 text-sm">
-				{microsoftNotice}
-			</div>
+			<Notice size="panel" {...microsoftNotice} />
 		{/if}
 		{#if groups.length}
 			{#each groups as group (group.kind)}

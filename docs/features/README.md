@@ -22,7 +22,7 @@ Who each feature serves is in [`../prd/03-personas.md`](../prd/03-personas.md).
 - [Project](04-project.md) — the per-project window (actions · tasks · intake)
 - [Governance](05-governance.md) — the shared team/org control plane (dōjō)
 - [Relay](06-relay.md) — remote processing (remote plan · execute · status · HITL)
-- [Pricing](07-pricing.md) — the pricing strategy (free · paid org · sponsors)
+- [Pricing](07-pricing.md) — the pricing strategy (public free · private on a subscription · sponsors — D46)
 
 ## 2 · The map — understand the work
 - Code + activity graph (files · functions · components · hooks · docs) [x]
@@ -52,7 +52,7 @@ Who each feature serves is in [`../prd/03-personas.md`](../prd/03-personas.md).
 - Front door / intake — read the chunk, recommend a way of working [x]
 - Playbook catalog (vibe · mockup-first · spec-driven · gsd · change-flow · debug-flow) [x]
 - In-the-moment guidance — push context / rules / patterns / mindsets into the assistant's path [x]
-- Playbook → outcome learning [x](dev)
+- Playbook → outcome learning x
 
 ## 6 · Planning & delivery
 - Planner — idea/specs → features → phases → value releases (confirm once, then run) ❌

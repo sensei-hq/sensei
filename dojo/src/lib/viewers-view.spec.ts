@@ -6,14 +6,24 @@ describe('viewers view', () => {
 	it('maps the wire rows', () => {
 		expect(
 			toViewerViews([
-				{ principal_id: 'v1', display_name: 'Ana', email: 'a@x.co', joined_at: 't', workspaces: [{ id: 'p', name: 'P' }] }
+				{ principal_id: 'v1', display_name: 'Ana', handle: null, email: 'a@x.co', joined_at: 't', workspaces: [{ id: 'p', name: 'P' }] }
 			])
-		).toEqual([{ principalId: 'v1', name: 'Ana', email: 'a@x.co', workspaces: [{ id: 'p', name: 'P' }] }]);
+		).toEqual([{ principalId: 'v1', name: 'Ana', handle: null, email: 'a@x.co', workspaces: [{ id: 'p', name: 'P' }] }]);
 	});
 
-	it('labels a viewer by name, else email, else a short id — never an invented name', () => {
-		expect(personLabel({ principalId: 'abcdef123456', name: 'Ana', email: 'a@x.co' })).toBe('Ana');
-		expect(personLabel({ principalId: 'abcdef123456', name: null, email: 'a@x.co' })).toBe('a@x.co');
-		expect(personLabel({ principalId: 'abcdef123456', name: null, email: null })).toBe('abcdef12');
+	it('labels a viewer by name, else email, else honest words — never an invented name', () => {
+		expect(personLabel({ principalId: 'abcdef123456', name: 'Ana', handle: null, email: 'a@x.co' })).toBe('Ana');
+		expect(personLabel({ principalId: 'abcdef123456', name: null, handle: null, email: 'a@x.co' })).toBe('a@x.co');
+		expect(personLabel({ principalId: 'abcdef123456', name: null, handle: null, email: null })).toBe('Name not shared yet');
+	});
+	it('L4 member-names — an unnamed person reads as words, never an id fragment', () => {
+		expect(personLabel({ principalId: 'abcdef123456', name: null, handle: null, email: null })).toBe('Name not shared yet');
+	});
+	it('L4 forge-handle — the handle shows when the name is missing', () => {
+		expect(personLabel({ principalId: 'abcdef123456', name: null, handle: 'octocat', email: null })).toBe('octocat');
+	});
+	it('L4 forge-handle — the handle loses to a name and beats an email', () => {
+		expect(personLabel({ principalId: 'abcdef123456', name: 'Ana', handle: 'octocat', email: 'a@x.co' })).toBe('Ana');
+		expect(personLabel({ principalId: 'abcdef123456', name: null, handle: 'octocat', email: 'a@x.co' })).toBe('octocat');
 	});
 });

@@ -545,30 +545,20 @@ export interface KitScopeOwner {
 
 /** A plan tier card on the billing screen (dojo2-data `billing.tiers[]`). */
 export interface KitBillingTier {
-	/** free · team · ent. */
+	/** free · pro. */
 	id: string;
-	/** Tier glyph (無 · 組 · 企). */
+	/** Tier glyph (無 · 組). */
 	kanji: string;
-	/** The tier name (e.g. "Free" · "Team" · "Enterprise"). */
+	/** The tier name (e.g. "Free" · "Pro"). */
 	name: string;
-	/** The headline price (e.g. "Free" · "Per seat" · "Contract"). */
+	/** The headline price (e.g. "Free" · "To be announced"). */
 	price: string;
-	/** The price qualifier (e.g. "/ mo · active contributor"). */
+	/** The price qualifier (e.g. "per seat on private repositories"). */
 	sub: string;
 	/** The tier's feature lines. */
 	lines: string[];
 	/** The viewer's current tier (accent border · no CTA). */
 	current?: boolean;
-	/** The enterprise tier renders on a dark ink field. */
-	dark?: boolean;
-}
-
-/** A relay free-vs-paid row on the billing screen (dojo2-data `billing.relayRows[]`). */
-export interface KitBillingRelayRow {
-	/** The capability line. */
-	label: string;
-	/** Free for individuals (true) or paid where shared (false). */
-	free: boolean;
 }
 
 /** An invoice row on the billing screen (dojo2-data `billing.invoices[]`). */
@@ -584,11 +574,8 @@ export interface KitBillingInvoice {
 /** Plan & billing state for an org (dojo2-data `billing`). Free where public or
  *  personal; seats bill per active contributor. */
 export interface KitBilling {
-	/** The current plan label (e.g. "Team"); null with no billing account. */
+	/** The current plan label ("Free" · "Pro"); null when nothing was loaded or the plan is unknown. */
 	plan: string | null;
-	/** The monthly price per active contributor; null until a price is set
-	 *  (no payment provider is wired, D-BILLING). */
-	perSeat: number | null;
 	/** Billable active contributors; null when nothing was loaded. */
 	seatsActive: number | null;
 	/** Read-only members (always free); null when not counted. */
@@ -596,8 +583,37 @@ export interface KitBilling {
 	/** The next renewal date (e.g. "Aug 1"); null without a billing period. */
 	renews: string | null;
 	tiers: KitBillingTier[];
-	relayRows: KitBillingRelayRow[];
 	invoices: KitBillingInvoice[];
+	/** What state the account is in and the next step — attached, a trial,
+	 *  past due, lapsed, or a plan sensei does not know; `null` when there is
+	 *  nothing to say (Free, or nothing loaded). */
+	problem: KitBillingProblem | null;
+	/** The current plan card's tag: "Current plan", "Trial" or "Past due";
+	 *  `null` when no plan is known (unknown key, nothing loaded). */
+	tag: 'Current plan' | 'Trial' | 'Past due' | null;
+	/** The plan as the header names it ("Free" · "Pro" · "Plan unknown");
+	 *  `null` when nothing was loaded. */
+	badge: string | null;
+	/** Whether the plan cards are drawn: never for an unknown key or nothing loaded. */
+	showPlans: boolean;
+	/** "Who is counted": each billable seat's label and its workspaces with roles. */
+	seats: KitBillingSeat[];
+}
+
+/** The account's state and its next step (mockup r3). `code` is the
+ *  all_my_repositories term it corresponds to, or the state's own name. */
+export interface KitBillingProblem {
+	tone: 'normal' | 'refusal' | 'fault';
+	title: string;
+	detail: string;
+	remedy: string;
+	code: string;
+}
+
+/** One counted seat: the person's label (personLabel) and "ws (role), …". */
+export interface KitBillingSeat {
+	name: string;
+	workspaces: string;
 }
 
 /** An identity mapping — how a directory/source maps to members + roles

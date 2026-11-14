@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toolVerdict } from './mcp.svelte.js';
+import { toolVerdict, toolHealthView, toolUsageTotals, toolSourceView } from './mcp.svelte.js';
 
 // Stub the appstate module so importing the mcp store doesn't drag in
 // the whole Tauri appstate.svelte pipeline.
@@ -299,4 +299,52 @@ describe('replay and server tools', () => {
         await mcp.loadServerTools('srv-1');
         expect([mcp.serverToolManifests['srv-1']?.tool_count, mcp.serverToolErrors['srv-1']]).toEqual([1, undefined]);
     });
+});
+
+// Audit item 8 (2026-10-28): the per-tool error rate turned red at its own
+// inline >0.1 beside the verdict chip's >0.1 — two copies of one rule — and the
+// workspace screen turned red at ANY error. One view, one threshold.
+describe('toolHealthView', () => {
+  it('decides the verdict, its colour and the error rate from one threshold', () => {
+    expect(toolHealthView(100, 0)).toEqual({ verdict: 'healthy', verdictClass: 'text-success', errorRate: '', errorClass: '' });
+    expect(toolHealthView(100, 5)).toEqual({ verdict: 'ok', verdictClass: 'text-ink-mute', errorRate: '(5%)', errorClass: '' });
+    expect(toolHealthView(100, 11)).toEqual({ verdict: 'warn', verdictClass: 'text-warning', errorRate: '(11%)', errorClass: 'text-danger' });
+    expect(toolHealthView(0, 0)).toEqual({ verdict: 'unused', verdictClass: 'text-ink-soft', errorRate: '', errorClass: '' });
+  });
+
+  it('turns the error count red exactly when the verdict warns', () => {
+    for (const [calls, errors] of [[10, 1], [10, 2], [3, 1], [1000, 100], [1000, 101]]) {
+      const v = toolHealthView(calls, errors);
+      expect(v.errorClass === 'text-danger', `${errors}/${calls}`).toBe(v.verdict === 'warn');
+    }
+  });
+});
+
+describe('toolUsageTotals', () => {
+  // The drill-in's "total calls" sat one click from the grid's "total tool
+  // calls" — different populations (sensei's own tools, all time, vs every
+  // source over 14 days) under the same words.
+  it('totals sensei\'s own tools and says which population it is', () => {
+    const t = toolUsageTotals([
+      { call_count: 90, error_count: 9 },
+      { call_count: 10, error_count: 0 }
+    ] as never);
+    expect(t).toEqual({ calls: 100, errors: 9, errorRate: '9.0% rate', errorClass: 'text-warning', tools: 2, scope: 'sensei tools · all time' });
+    expect(toolUsageTotals([]).errorRate).toBe('—');
+  });
+});
+
+describe('toolSourceView', () => {
+  // The coverage card decided its own state inline, with a local <70% rule.
+  it('a probed source shows its invoked share, warning under the coverage floor', () => {
+    const src = { source_type: 'mcp', tools_registered: 10, tools_invoked_14d: 6, share_invoked: 0.6 };
+    expect(toolSourceView(src as never)).toEqual({ probed: true, registered: 10, pct: 60, pctLabel: '60%', pctClass: 'text-warning', kanji: '接' });
+    expect(toolSourceView({ ...src, share_invoked: null } as never)).toMatchObject({ probed: true, pct: null, pctLabel: '—' });
+    expect(toolSourceView({ ...src, share_invoked: 0.7 } as never).pctClass).toBe('text-ink');
+  });
+
+  it('an unprobed source draws no share — never a fabricated 0%', () => {
+    const v = toolSourceView({ source_type: 'builtin', tools_registered: null, tools_invoked_14d: 3, share_invoked: null } as never);
+    expect(v).toEqual({ probed: false, registered: null, pct: null, pctLabel: '—', pctClass: '', kanji: '器' });
+  });
 });

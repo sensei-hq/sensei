@@ -7,6 +7,7 @@
 // the three stat blocks, the multi-repo chips, and the recent-session rows.
 // No component carries logic — it all lives here so it can be unit-tested in
 // isolation.
+import { failureNotice } from '@sensei/ui';
 import type {
   WorkspaceOverviewHeader,
   WorkspaceOverviewTopRec,
@@ -15,8 +16,15 @@ import type {
   WorkspaceOverview,
   PatternEntry,
 } from '$lib/types.js';
-import { ftrPct } from '$lib/ftr.js';
+import { correctionsView, ftrPct } from '$lib/ftr.js';
+import { compactDuration, durationMinutes } from '$lib/sessions-digest';
 import { failureReason, readOutcome, type ApiResult, type RecommendationPreview } from '$lib/api.js';
+
+/** A session's duration (the shared format), or null so the row drops the part. */
+function sessionDurationLabel(startedAt: string, completedAt: string | null): string | null {
+  const mins = durationMinutes(startedAt, completedAt);
+  return mins == null ? null : compactDuration(mins);
+}
 
 // ── Header FTR chip ─────────────────────────────────────────────────────────
 
@@ -144,7 +152,7 @@ export function statBlocks(stats: WorkspaceOverviewStats): StatBlock[] {
 export interface SessionRow {
   id: string;
   title: string;
-  /** "{shortId} · {duration} · {corrections|first-try right}". */
+  /** "{shortId} · {duration} · {corrections}" — the shared corrections words. */
   meta: string;
   /** Relative time, e.g. "2h" / "3d". */
   time: string;
@@ -165,30 +173,6 @@ function shortId(id: string): string {
  *  back to a generic word rather than render an empty middle column. */
 function sessionTitle(title: string): string {
   return title.trim() || 'session';
-}
-
-/** "3 corrections" vs "first-try right" — matches the mockup's phrasing. */
-function correctionsPhrase(corrections: number): string {
-  return corrections > 0 ? `${corrections} corrections` : 'first-try right';
-}
-
-/** Elapsed wall-clock between start and completion, formatted m / h m / d h.
- *  Null when the session has no completion or the timestamps don't parse. */
-export function sessionDuration(startedAt: string, completedAt: string | null): string | null {
-  if (!completedAt) return null;
-  const start = Date.parse(startedAt);
-  const end = Date.parse(completedAt);
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return null;
-  const mins = Math.round((end - start) / 60_000);
-  if (mins < 60) return `${mins}m`;
-  const hoursTotal = Math.floor(mins / 60);
-  if (hoursTotal < 24) {
-    const m = mins % 60;
-    return m === 0 ? `${hoursTotal}h` : `${hoursTotal}h ${m}m`;
-  }
-  const d = Math.floor(hoursTotal / 24);
-  const h = hoursTotal % 24;
-  return h === 0 ? `${d}d` : `${d}d ${h}h`;
 }
 
 /** Terse relative-time label from an ISO timestamp — m / h / d / w / mo / y.
@@ -214,7 +198,7 @@ export function relativeTime(iso: string | null, now: number = Date.now()): stri
  *  chip (null passes straight through so the row renders no chip). */
 export function sessionRows(sessions: WorkspaceOverviewSession[], now: number = Date.now()): SessionRow[] {
   return sessions.map((s) => {
-    const parts = [shortId(s.id), sessionDuration(s.startedAt, s.completedAt), correctionsPhrase(s.corrections)]
+    const parts = [shortId(s.id), sessionDurationLabel(s.startedAt, s.completedAt), correctionsView(s.corrections).label]
       .filter((p): p is string => Boolean(p));
     return {
       id: s.id,
@@ -222,7 +206,7 @@ export function sessionRows(sessions: WorkspaceOverviewSession[], now: number = 
       meta: parts.join(' · '),
       time: relativeTime(s.completedAt ?? s.startedAt, now),
       ftr: s.ftr,
-      timeToneClass: s.ftr ? 'text-success' : 'text-ink-mute',
+      timeToneClass: s.ftr ? 'text-success' : 'text-ink-soft',
       role: s.role,
     };
   });
@@ -303,8 +287,10 @@ export function overviewPageData(
     overviewError: o.error,
     hotspots: h.data?.hotspots ?? null,
     hotspotsError: h.error,
+    hotspotsNotice: failureNotice("Couldn't read this week's hotspots", h.error),
     patterns: p.data,
     patternsError: p.error,
+    patternsNotice: failureNotice("Couldn't read the patterns in use", p.error),
   };
 }
 
@@ -359,4 +345,42 @@ export async function decideRecommendation(
     );
   }
   return settle(await api.tryAcceptWorkspaceRecommendation(workspaceId, recId));
+}
+
+/**
+ * The top recommendation's accept / reject, as state (moved out of +page.svelte so
+ * the page only renders). Guards double presses with `deciding`; reloads only when
+ * the decision landed (#288: a failure used to reload as if it had).
+ */
+export class RecommendationDecision {
+  deciding = $state(false);
+  /** Why the last decision did not land. */
+  error = $state<string | null>(null);
+  #api: DecideApi;
+  #reload: () => Promise<void>;
+  #confirm: (message: string) => boolean;
+
+  constructor(api: DecideApi, reload: () => Promise<void>, confirmWrite: (message: string) => boolean) {
+    this.#api = api;
+    this.#reload = reload;
+    this.#confirm = confirmWrite;
+  }
+
+  /** Notice props for a decision that did not land (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice("Couldn't record that decision", this.error);
+  }
+
+  async decide(workspaceId: string, recId: string, action: 'accept' | 'reject'): Promise<void> {
+    if (this.deciding) return;
+    this.deciding = true;
+    this.error = null;
+    try {
+      const result = await decideRecommendation(this.#api, workspaceId, recId, action, this.#confirm);
+      if (result.error) this.error = result.error;
+      else if (result.done) await this.#reload();
+    } finally {
+      this.deciding = false;
+    }
+  }
 }

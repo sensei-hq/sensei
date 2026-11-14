@@ -59,7 +59,7 @@ use std::sync::Arc;
 
 use crate::api::handlers::auth::{AuthError, live_access_token};
 use crate::db::pg_store::PgStore;
-use crate::db::pg_store::sync::SyncMark;
+use crate::db::pg_store::sync::{RepositoryVerdict, RepositoryVerdictState, SyncMark};
 use crate::dojo::memberships::NewConnection;
 use crate::dojo_client::dojo_auth;
 use crate::dojo_client::settings::dojo_url;
@@ -169,7 +169,18 @@ const PLAN_ENTITY: &str = "dojo_sync_plan";
 /// list could not be read). A persona that individually fails is logged and
 /// skipped: one expired session must not stall the others, which is the failure
 /// D1 exists to prevent.
-pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
+pub async fn tick(
+    pg: Arc<PgStore>,
+    trackers: Arc<crate::tracker::runtime::TrackerRuntime>,
+) -> Result<(), String> {
+    // Once: backfill props.authored_at onto per-commit user rows pushed before
+    // the key existed, so the next pushes carry it. A failure retries on the
+    // next tick; it never fails the pass.
+    match pg.backfill_push_authored_at_once().await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(n, "dojo_sync: backfilled push authored_at once"),
+        Err(e) => tracing::warn!(error = %e, "dojo_sync: authored_at backfill failed"),
+    }
     let personas = pg.signed_in_personas().await?;
     if personas.is_empty() {
         tracing::debug!("dojo_sync: no signed-in personas");
@@ -209,9 +220,16 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     let plans: Vec<(String, user_plane::SyncPlan)> =
         planned.iter().map(|(who, _, p)| (who.clone(), p.plan.clone())).collect();
     let mut exclusive = exclusive_repos(&plans);
+    // Each board's facts are the same for every persona: built once, under its
+    // tracker's lock (tracker-delivery-metrics D3).
+    let boards = if planned.is_empty() {
+        Ok(super::dojo_delivery::Boards::default())
+    } else {
+        super::dojo_delivery::build_boards(&pg, &trackers.locks, chrono::Utc::now()).await
+    };
     for (persona, token, p) in &planned {
         let mine = exclusive.remove(persona).unwrap_or_default();
-        if let Err(e) = push_planned(&pg, persona, token, &plane, p, &mine).await {
+        if let Err(e) = push_planned(&pg, persona, token, &plane, p, &mine, &boards).await {
             tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
             failures.push(format!("{persona}: {e}"));
         }
@@ -249,6 +267,12 @@ fn token_failure(e: AuthError) -> String {
         }
         AuthError::Unreachable(d) => d,
         AuthError::CredentialUnreadable(d) => format!("stored session unreadable: {d}"),
+        AuthError::MintedElsewhere { minted, current } => {
+            format!("session minted elsewhere, sign in again: {minted} vs {current}")
+        }
+        AuthError::Unattributed { current } => {
+            format!("legacy session, sign in again: {current}")
+        }
     }
 }
 
@@ -537,6 +561,84 @@ async fn plan_persona(
         plan
     };
 
+    // THE VERDICT (G1): every repository the dōjō answered about gets one row
+    // under `repository` — synced, skipped with why, or partial where the
+    // workspace filing failed. Read AFTER the recapture rebind above, because
+    // a denial's reason changes across it; written as one batched upsert, so
+    // the whole offer set costs one statement, not one round trip per row.
+    //
+    // Three things are deliberately NOT written. A deliberate refusal is
+    // `skipped`, never `error`: only one of those is a problem, and the other
+    // would cry wolf about every private repository. A mapped repository the
+    // plan mentions in neither `allowed` nor `denied` gets no row from the
+    // mapped branch — a silent plan is not a verdict, and writing one would
+    // fabricate a refusal. And an unmapped answer for a repository the mapped
+    // branch already decided is dropped: one batch holding two entries for one
+    // row makes Postgres reject the whole pass, and every pass after while
+    // the dōjō answers like that — stopping metrics and graphs too. The
+    // mapped branch decides first, so a denial or a sync from the fresher
+    // plan wins over the registration's stale half.
+    let denied_by_key: std::collections::HashMap<&str, &str> =
+        plan.denied.iter().map(|d| (d.repo_key.as_str(), d.reason.as_str())).collect();
+    let allowed: std::collections::HashSet<&str> =
+        plan.allowed.iter().map(|a| a.repo_key.as_str()).collect();
+    let mut verdicts: Vec<RepositoryVerdict> =
+        Vec::with_capacity(registered.mapped.len() + registered.unmapped.len());
+    let mut decided: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for m in &registered.mapped {
+        let key = m.repo_key.as_str();
+        if decided.contains(key) {
+            continue;
+        }
+        let verdict = if let Some(reason) = denied_by_key.get(key) {
+            Some(RepositoryVerdict {
+                repo_key: &m.repo_key,
+                state: RepositoryVerdictState::Skipped,
+                detail: Some(format!("denied:{reason}")),
+            })
+        } else if let Some(error) = &m.workspace_error {
+            Some(RepositoryVerdict {
+                repo_key: &m.repo_key,
+                state: RepositoryVerdictState::Partial,
+                detail: Some(error.clone()),
+            })
+        } else if allowed.contains(key) {
+            Some(RepositoryVerdict {
+                repo_key: &m.repo_key,
+                state: RepositoryVerdictState::Synced,
+                detail: None,
+            })
+        } else {
+            None
+        };
+        if let Some(v) = verdict {
+            decided.insert(key);
+            verdicts.push(v);
+        }
+    }
+    for u in &registered.unmapped {
+        let key = u.repo_key.as_str();
+        if decided.contains(key) {
+            continue;
+        }
+        // The plan is fresher than the registration: a repository denied but
+        // never mapped keeps the denial, not the registration's reason.
+        match denied_by_key.get(key) {
+            Some(reason) => verdicts.push(RepositoryVerdict {
+                repo_key: &u.repo_key,
+                state: RepositoryVerdictState::Skipped,
+                detail: Some(format!("denied:{reason}")),
+            }),
+            None => verdicts.push(RepositoryVerdict {
+                repo_key: &u.repo_key,
+                state: RepositoryVerdictState::Skipped,
+                detail: Some(format!("unmapped:{}", u.reason)),
+            }),
+        }
+        decided.insert(key);
+    }
+    pg.mark_repository_verdicts(persona, &verdicts).await?;
+
     pg.mark_synced(&mark, None).await?;
 
     // Record what every consuming tenant has switched off, for the metric tasks
@@ -569,11 +671,25 @@ async fn push_planned(
     plane: &dyn UserPlane,
     planned: &Planned,
     exclusive: &[String],
+    boards: &Result<super::dojo_delivery::Boards, String>,
 ) -> Result<(), String> {
     let pushed = push_allowed(pg, persona, token, plane, &planned.plan, exclusive).await?;
     // After the metrics: a graph push is larger and slower, and must not hold
     // the metrics back. Each checkout records its own outcome (#225).
     let graph_batches = push_graphs(pg, persona, token, plane, &planned.plan).await?;
+    // Then the tracker boards; each records its own outcome (#352). A board read that
+    // failed is this persona's failure too, never "no boards".
+    let boards = boards.as_ref().map_err(|e| format!("boards not read: {e}"))?;
+    let boards_sent = super::dojo_delivery::push_delivery(
+        pg,
+        persona,
+        token,
+        plane,
+        &planned.plan,
+        exclusive,
+        boards,
+    )
+    .await?;
     tracing::info!(
         persona,
         allowed = planned.plan.allowed.len(),
@@ -582,6 +698,8 @@ async fn push_planned(
         unmapped = planned.unmapped,
         pushed,
         graph_batches,
+        boards_sent,
+        dojo_url = %plane.dojo_url(),
         "dojo_sync: cycle complete"
     );
     Ok(())
@@ -764,7 +882,13 @@ async fn sync_persona(
     let exclusive = exclusive_repos(&[(persona.to_string(), planned.plan.clone())])
         .remove(persona)
         .unwrap_or_default();
-    push_planned(pg, persona, token, plane, &planned, &exclusive).await
+    let boards = super::dojo_delivery::build_boards(
+        pg,
+        &crate::tracker::sync::TrackerLocks::default(),
+        chrono::Utc::now(),
+    )
+    .await;
+    push_planned(pg, persona, token, plane, &planned, &exclusive, &boards).await
 }
 
 /// For each persona, the repositories in its plan that no other signed-in
@@ -813,6 +937,75 @@ fn drop_colliding(
     let (kept, held): (Vec<_>, Vec<_>) =
         rows.into_iter().partition(|m| m.scope != "user" || seen.get(&key(m)) == Some(&1));
     (kept, held.len())
+}
+
+/// A pushed row's full identity for stored-echo matching: every field the
+/// dōjō echoes, as pushed. `computed_on` stays a string so a skewed echo
+/// fails matching, never decoding.
+fn echo_key(
+    m: &crate::db::pg_store::sync::PushableMetric,
+) -> (String, String, String, String, String, Option<String>) {
+    (
+        m.repo_key.clone(),
+        m.metric.clone(),
+        m.scope.clone(),
+        m.computed_on.to_string(),
+        m.grain.clone(),
+        m.commit_sha.clone(),
+    )
+}
+
+/// The pushed rows the dōjō confirmed stored, by full-row-key match — minus
+/// refused rows (rejected wins over confirmed, even when also echoed).
+/// H2/F5. Pure.
+fn confirmed_ids(
+    pushable: &[crate::db::pg_store::sync::PushableMetric],
+    stored: &[user_plane::StoredMetricKey],
+    refused: &std::collections::HashSet<(&str, &str)>,
+) -> Vec<uuid::Uuid> {
+    let echoed: std::collections::HashSet<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+    )> = stored
+        .iter()
+        .map(|s| {
+            (
+                s.repo_key.clone(),
+                s.metric.clone(),
+                s.scope.clone(),
+                s.computed_on.clone(),
+                s.grain.clone(),
+                s.commit_sha.clone(),
+            )
+        })
+        .collect();
+    pushable
+        .iter()
+        .filter(|m| {
+            !refused.contains(&(m.repo_key.as_str(), m.metric.as_str()))
+                && echoed.contains(&echo_key(m))
+        })
+        .map(|m| m.id)
+        .collect()
+}
+
+/// A pushed row's shortfall-tracker identity: the streak is per ROW, because
+/// one (repo, metric) pair holds rows at different dates.
+fn shortfall_key(
+    m: &crate::db::pg_store::sync::PushableMetric,
+) -> crate::db::pg_store::sync::ShortfallKey {
+    crate::db::pg_store::sync::ShortfallKey {
+        repo_key: m.repo_key.clone(),
+        metric: m.metric.clone(),
+        scope: m.scope.clone(),
+        computed_on: m.computed_on,
+        grain: m.grain.clone(),
+        commit_sha: m.commit_sha.clone(),
+    }
 }
 
 /// Push the metric rows the plan allows, and mark exactly those as shared.
@@ -931,23 +1124,109 @@ async fn push_allowed(
         );
     }
 
-    // Mark every row the dōjō did NOT refuse — the COMPLEMENT of `rejected`.
+    // Mark exactly what the dōjō confirmed (H2/F5) — or, from a dōjō too old
+    // to confirm, the counted complement (F8), or nothing at all (F7).
     //
-    // This used to require an all-or-nothing batch, on the reasoning that "the
-    // response reports a count, not which rows". That was wrong: `rejected[]`
-    // carries `(repo_key, metric)`, which identifies exactly what to exclude. The
-    // consequence was a livelock — one permanently-refused row (an `unknown_metric`
-    // from version skew, say) meant NO row in the 500-row window was ever marked,
-    // so the identical batch was re-sent every cadence forever and the queue never
-    // drained.
+    // `rejected[]` carries `(repo_key, metric)` — enough to exclude, never
+    // enough to mark by. The old rule marked the complement unconditionally,
+    // which marked rows the dōjō never stored whenever the count fell short;
+    // the complement now marks only when the count corroborates it.
     let refused: std::collections::HashSet<(&str, &str)> =
         result.rejected.iter().map(|r| (r.repo_key.as_str(), r.metric.as_str())).collect();
-    let ids: Vec<uuid::Uuid> = pushable
-        .iter()
-        .filter(|m| !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())))
-        .map(|m| m.id)
-        .collect();
-    pg.mark_metric_rows_shared(&ids).await?;
+    // Repositories with pushed rows still outstanding after this answer, and
+    // why — the dashboard verdict. Fed by both paths below.
+    let mut outstanding: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let marked: Vec<uuid::Uuid> = match &result.stored {
+        Some(echoed) => {
+            let ids = confirmed_ids(&pushable, echoed, &refused);
+            let marked_set: std::collections::HashSet<uuid::Uuid> = ids.iter().copied().collect();
+            // Shortfalls and cleans, per pushed row. Computed here, recorded
+            // after the mark lands, so a failed mark never resets a streak.
+            // Refused rows are answered: neither streak nor silence.
+            let mut cleans = vec![];
+            let mut shorts: Vec<&crate::db::pg_store::sync::PushableMetric> = vec![];
+            for m in &pushable {
+                if marked_set.contains(&m.id) {
+                    cleans.push(shortfall_key(m));
+                } else if !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())) {
+                    shorts.push(m);
+                }
+            }
+            pg.mark_metric_rows_shared(&ids).await?;
+            for k in &cleans {
+                pg.record_clean(k);
+            }
+            let mut loud_ids = vec![];
+            let mut unconfirmed: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for m in &shorts {
+                let n = pg.record_shortfall(&shortfall_key(m));
+                *unconfirmed.entry(m.repo_key.as_str()).or_default() += 1;
+                if n >= crate::db::pg_store::sync::ShortfallTracker::LOUD_AFTER {
+                    tracing::error!(
+                        persona,
+                        repo_key = m.repo_key,
+                        metric = m.metric,
+                        computed_on = m.computed_on.to_string(),
+                        streak = n,
+                        "dojo_sync: stored confirmation missing — the row waits its backoff"
+                    );
+                    loud_ids.push(m.id);
+                }
+            }
+            pg.set_metric_backoff(&loud_ids).await?;
+            for (repo, n) in unconfirmed {
+                outstanding
+                    .insert(repo, format!("stored confirmation missing for {n} pushed row(s)"));
+            }
+            ids
+        }
+        None => {
+            let complement: Vec<&crate::db::pg_store::sync::PushableMetric> = pushable
+                .iter()
+                .filter(|m| !refused.contains(&(m.repo_key.as_str(), m.metric.as_str())))
+                .collect();
+            // F7: the count must corroborate the complement. Accepted == the
+            // unrefused rows means the dōjō stored exactly those; anything
+            // else is unaccounted, and unaccounted rows stay queued.
+            if result.accepted as usize == complement.len() {
+                let ids: Vec<uuid::Uuid> = complement.iter().map(|m| m.id).collect();
+                pg.mark_metric_rows_shared(&ids).await?;
+                if !ids.is_empty() {
+                    // F8: old dōjōs keep working, but say so — once per push
+                    // (one `push_allowed` call, i.e. per persona per cycle),
+                    // naming the dōjō — until the complement goes away
+                    // (backlog: remove when every supported dōjō returns
+                    // stored).
+                    tracing::warn!(
+                        persona,
+                        dojo_url = %plane.dojo_url(),
+                        marked = ids.len(),
+                        "dojo_sync: dōjō did not confirm per-row storage — marked unconfirmed rows by complement (legacy)"
+                    );
+                }
+                ids
+            } else {
+                for m in &complement {
+                    outstanding.insert(
+                        m.repo_key.as_str(),
+                        format!(
+                            "legacy answer unaccounted (accepted {} of {}) — marking nothing",
+                            result.accepted,
+                            complement.len()
+                        ),
+                    );
+                }
+                tracing::warn!(
+                    persona,
+                    accepted = result.accepted,
+                    unrefused = complement.len(),
+                    "dojo_sync: legacy count does not account for the pushed rows — marking nothing"
+                );
+                vec![]
+            }
+        }
+    };
 
     // A refusal belongs to the REPOSITORY whose row was refused. The batch is per
     // persona and spans many repositories, so marking them all `skipped` with a
@@ -964,17 +1243,24 @@ async fn push_allowed(
             .push(format!("{}: {}", r.metric, r.reason));
     }
     for key in &repos {
-        match refusals.get(*key) {
-            // Nothing of this repository's was refused, whatever happened to the
-            // rest of the batch.
-            None => pg.mark_synced(&push_mark(key, persona), None).await?,
+        // A refusal belongs to its repository (see above); an outstanding
+        // cause joins it rather than replacing it, so a repository with a
+        // refused row AND an unconfirmed one names both.
+        let refusal_why: Option<String> = refusals
+            .get(*key)
+            .map(|reasons| reasons.iter().take(5).cloned().collect::<Vec<_>>().join("; "));
+        match (refusal_why, outstanding.remove(*key)) {
+            // Nothing of this repository's was refused or left outstanding,
+            // whatever happened to the rest of the batch.
+            (None, None) => pg.mark_synced(&push_mark(key, persona), None).await?,
             // `skipped`, not `error`: the dōjō answered, and a refusal is a
             // decision rather than a fault. Both mean "not synced", but only one
             // is a problem, and a dashboard that cannot tell them apart cries
             // wolf or stays silent.
-            Some(reasons) => {
-                let why = reasons.iter().take(5).cloned().collect::<Vec<_>>().join("; ");
-                pg.mark_sync_skipped(&push_mark(key, persona), &why).await?
+            (Some(r), None) => pg.mark_sync_skipped(&push_mark(key, persona), &r).await?,
+            (None, Some(o)) => pg.mark_sync_skipped(&push_mark(key, persona), &o).await?,
+            (Some(r), Some(o)) => {
+                pg.mark_sync_skipped(&push_mark(key, persona), &format!("{r}; {o}")).await?
             }
         }
     }
@@ -983,10 +1269,8 @@ async fn push_allowed(
             persona,
             accepted = result.accepted,
             refused = result.rejected.len(),
-            // This used to read "nothing marked shared, the batch retries next
-            // cycle", which had been false since the complement fix above: the
-            // rows that were NOT refused are marked, which is the whole point.
-            "dojo_sync: partial acceptance — the refused rows stay queued, the rest are marked shared"
+            marked = marked.len(),
+            "dojo_sync: partial acceptance — refused rows stay queued"
         );
     }
     Ok(result.accepted)
@@ -997,12 +1281,13 @@ async fn push_allowed(
 /// No interval argument and no config key: `run_scheduled` reads the cadence
 /// from `sensei.schedules` (name `dojo_sync`) on every poll, so changing it is a
 /// PATCH rather than a restart.
-pub fn spawn(pg: Arc<PgStore>) {
+pub fn spawn(pg: Arc<PgStore>, trackers: Arc<crate::tracker::runtime::TrackerRuntime>) {
     tokio::spawn(async move {
         let store = pg.clone();
         crate::tasks::ticker::run_scheduled(pg, "dojo_sync", move || {
             let pg = store.clone();
-            async move { tick(pg).await }
+            let trackers = trackers.clone();
+            async move { tick(pg, trackers).await }
         })
         .await;
     });
@@ -1215,7 +1500,7 @@ mod tests {
     use crate::dojo_client::user_plane::{
         ActivationOutcome, DeniedRepo, GraphHashes, GraphPush, GraphPushResult, IngestResult,
         MappedRepo, MetricPush, MyMembership, ProvisionOutcome, RegisterResult, RejectedMetric,
-        SyncPlan, UnmappedRepo, VisibilityCounts,
+        StoredMetricKey, SyncPlan, UnmappedRepo, VisibilityCounts,
     };
     use std::sync::Mutex;
 
@@ -1226,9 +1511,29 @@ mod tests {
     /// still passed.
     #[derive(Default)]
     struct StubPlane {
+        /// Every withdrawal asked: (board_key, tenant_id, source).
+        withdrawn: Mutex<Vec<(String, uuid::Uuid, uuid::Uuid)>>,
+        /// What a withdrawal answers; `None` removes it.
+        withdrawal: Option<Result<(), user_plane::DeliveryError>>,
+        /// Every board body the daemon sent to `POST /v1/you/delivery`, parsed.
+        delivered: Mutex<Vec<serde_json::Value>>,
+        /// What the board push answers; `None` accepts every board.
+        delivery: Option<Result<user_plane::DeliveryOutcome, user_plane::DeliveryError>>,
+        /// Per-board answers by `board_key`, ahead of `delivery`.
+        delivery_for: std::collections::HashMap<
+            String,
+            Result<user_plane::DeliveryOutcome, user_plane::DeliveryError>,
+        >,
+        /// When set, each push looks for the tracker's mark row at the moment of sending.
+        mark_probe: Option<(PgStore, uuid::Uuid)>,
+        /// Whether that mark row existed at each send.
+        marks_at_send: Mutex<Vec<bool>>,
         register: Option<RegisterResult>,
         plan: Option<SyncPlan>,
         push: Option<Result<IngestResult, String>>,
+        /// The URL this double answers for — what `dojo_url()` reports (the (a)
+        /// log test pins the value end to end). Set per test; meaningless default.
+        url: String,
         /// Every `repo_key` the daemon DISCLOSED — the offer set, as it reached the
         /// wire. Recorded because B1 is invisible from the outcome: a cycle that
         /// never asks looks exactly like a cycle the dōjō answered "nothing".
@@ -1298,6 +1603,9 @@ mod tests {
         ) -> Result<ActivationOutcome, String> {
             unreachable!("dojo_sync does not write metric activation")
         }
+        fn dojo_url(&self) -> &str {
+            &self.url
+        }
         async fn my_memberships(&self, _t: &str) -> Result<Vec<MyMembership>, String> {
             *self.membership_calls.lock().unwrap() += 1;
             self.memberships.clone().unwrap_or(Ok(vec![]))
@@ -1350,6 +1658,42 @@ mod tests {
                 }),
             }
         }
+        async fn push_delivery(
+            &self,
+            _t: &str,
+            body: &[u8],
+        ) -> Result<user_plane::DeliveryOutcome, user_plane::DeliveryError> {
+            let parsed: serde_json::Value = serde_json::from_slice(body).unwrap();
+            if let Some((pg, tracker)) = &self.mark_probe {
+                let (n,): (i64,) = sqlx_core::query_as::query_as(
+                    "SELECT count(*) FROM sensei.tracker_push_marks WHERE tracker_id = $1",
+                )
+                .bind(tracker)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+                self.marks_at_send.lock().unwrap().push(n > 0);
+            }
+            let key = parsed["board_key"].as_str().unwrap_or_default().to_string();
+            self.delivered.lock().unwrap().push(parsed);
+            self.delivery_for
+                .get(&key)
+                .cloned()
+                .or_else(|| self.delivery.clone())
+                .unwrap_or(Ok(user_plane::DeliveryOutcome { facts: "accepted".into() }))
+        }
+
+        async fn withdraw_delivery(
+            &self,
+            _t: &str,
+            board_key: &str,
+            tenant_id: uuid::Uuid,
+            source: uuid::Uuid,
+        ) -> Result<(), user_plane::DeliveryError> {
+            self.withdrawn.lock().unwrap().push((board_key.to_string(), tenant_id, source));
+            self.withdrawal.clone().unwrap_or(Ok(()))
+        }
+
         async fn push_metrics(
             &self,
             _t: &str,
@@ -1360,9 +1704,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .extend(m.iter().map(|x| (x.repo_key.to_string(), x.metric.to_string())));
-            self.push
-                .clone()
-                .unwrap_or(Ok(IngestResult { accepted: m.len() as u32, rejected: vec![] }))
+            self.push.clone().unwrap_or(Ok(IngestResult {
+                accepted: m.len() as u32,
+                rejected: vec![],
+                stored: None,
+            }))
         }
         async fn graph_hashes(
             &self,
@@ -1640,6 +1986,75 @@ mod tests {
         n.0
     }
 
+    /// Rows still queued: never marked, or recomputed since the mark. A
+    /// re-pushed row that is never confirmed stays pending WITHOUT being
+    /// un-marked — marks stand, staleness re-queues.
+    async fn pending_count(pg: &PgStore, repo_key: &str) -> i64 {
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+              WHERE r.repo_key = $1 AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at)",
+        )
+        .bind(repo_key)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        n.0
+    }
+
+    /// Whether the row for one date is marked — the per-row verdict a
+    /// same-(repo, metric) sibling needs.
+    async fn shared_on(pg: &PgStore, repo_key: &str, computed_on: chrono::NaiveDate) -> bool {
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+              WHERE r.repo_key = $1 AND rm.computed_on = $2 AND rm.shared_at IS NOT NULL",
+        )
+        .bind(repo_key)
+        .bind(computed_on)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        n.0 > 0
+    }
+
+    /// A second row for the seed's (repo, metric) at another date — same
+    /// identity except `computed_on`, so a stored match on (repo, metric)
+    /// alone cannot tell them apart.
+    async fn seed_sibling_row(
+        pg: &PgStore,
+        repo_key: &str,
+        metric_key: &str,
+        computed_on: chrono::NaiveDate,
+    ) {
+        let rid: (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.repositories WHERE repo_key = $1")
+                .bind(repo_key)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        let mid: (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.metrics WHERE key = $1")
+                .bind(metric_key)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        pg.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid.0,
+            repository_id: &rid.0,
+            scope: "repo",
+            identity: None,
+            commit_sha: None,
+            computed_on,
+            grain: "daily",
+            value: 2.0,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+
     async fn push_state(pg: &PgStore, repo_key: &str) -> Option<(String, Option<String>)> {
         sqlx_core::query_as::query_as(
             "SELECT state, last_error FROM sensei.sync_state \
@@ -1657,6 +2072,17 @@ mod tests {
               WHERE entity = 'dojo_sync_plan' AND entity_key = $1 AND direction = 'pull'",
         )
         .bind(slot)
+        .fetch_optional(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    async fn repository_state(pg: &PgStore, repo_key: &str) -> Option<(String, Option<String>)> {
+        sqlx_core::query_as::query_as(
+            "SELECT state, last_error FROM sensei.sync_state \
+              WHERE entity = 'repository' AND entity_key = $1 AND direction = 'push'",
+        )
+        .bind(repo_key)
         .fetch_optional(pg.pool())
         .await
         .unwrap()
@@ -1841,6 +2267,7 @@ mod tests {
                     metric: metric_key.clone(),
                     reason: "unknown_metric".into(),
                 }],
+                stored: None,
             })),
             ..Default::default()
         };
@@ -1882,6 +2309,7 @@ mod tests {
                     metric: metric_a.clone(),
                     reason: "unknown_metric".into(),
                 }],
+                stored: None,
             })),
             ..Default::default()
         };
@@ -1902,6 +2330,759 @@ mod tests {
         let (state_b, why_b) = b.expect("the accepted repository is recorded too");
         assert_eq!(state_b, "synced", "a repository nothing was refused for is not skipped");
         assert_eq!(why_b, None, "and it is not annotated with another repository's refusal");
+    }
+
+    /// Capture everything `f` logs (lib-test twin of main.rs's helper). Tests
+    /// that assert on logs run a current-thread runtime INSIDE the capture: a
+    /// multi-threaded runtime would hop threads and escape the thread-local
+    /// subscriber.
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Capture;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    fn captured_logs(f: impl FnOnce()) -> String {
+        use tracing_subscriber::layer::SubscriberExt as _;
+        let cap = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(cap.clone()).with_ansi(false));
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = cap.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        String::from_utf8(bytes).expect("utf8 logs")
+    }
+
+    /// Lines logged AT ERROR carrying `msg`. "Loud" is the error level, not a
+    /// substring anywhere — an `info!` with the same words must not pass.
+    fn error_lines_with<'l>(logs: &'l str, msg: &str) -> Vec<&'l str> {
+        logs.lines().filter(|l| l.contains(" ERROR ") && l.contains(msg)).collect()
+    }
+
+    /// The bearer the log tests sync with: distinctive, so an assertion that
+    /// it never appears in captured logs proves the token is never logged.
+    const SECRET_TOK: &str = "tok-SECRET-ztest";
+
+    fn current_thread_rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+    }
+
+    // (a): every cycle complete names the dōjō it pushed to.
+    #[test]
+    fn cycle_complete_names_the_dojo_it_pushed_to() {
+        let logs = captured_logs(|| {
+            current_thread_rt().block_on(async {
+                let pg = PgStore::connect_test().await.unwrap();
+                let (pid, key, _) = seed(&pg).await;
+                let plane = StubPlane {
+                    url: "http://stub.invalid".into(),
+                    plan: Some(SyncPlan {
+                        allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                        denied: vec![],
+                    }),
+                    push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
+                crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            })
+        });
+        assert!(logs.contains("dojo_sync: cycle complete"), "no complete line; logs:\n{logs}");
+        assert!(
+            logs.contains("dojo_url=http://stub.invalid"),
+            "complete line names no dōjō; logs:\n{logs}"
+        );
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+    }
+
+    // (c): 0 accepted with a non-empty batch and no rejections marks nothing.
+    #[tokio::test]
+    async fn zero_accepted_with_an_empty_rejection_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 0, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 0, "0 accepted must mark nothing, not the complement");
+    }
+
+    #[test]
+    fn zero_accepted_warns_that_it_marked_nothing() {
+        let logs = captured_logs(|| {
+            current_thread_rt().block_on(async {
+                let pg = PgStore::connect_test().await.unwrap();
+                let (pid, key, _) = seed(&pg).await;
+                let plane = StubPlane {
+                    plan: Some(SyncPlan {
+                        allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                        denied: vec![],
+                    }),
+                    push: Some(Ok(IngestResult { accepted: 0, rejected: vec![], stored: None })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
+                crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            })
+        });
+        // T2: level and phrase on ONE line — a WARN anywhere plus the phrase
+        // on an INFO line must not pass.
+        assert!(
+            logs.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
+            "0 accepted must warn, on one line; logs:\n{logs}"
+        );
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+    }
+
+    // H2: with per-row confirmation, only stored rows are marked.
+    #[tokio::test]
+    async fn only_stored_rows_are_marked_when_the_dojo_confirms_per_row() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, metric_a) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 2,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    // The seed's fixed row identity (seed_at): repo scope,
+                    // 2026-08-27, daily, no commit.
+                    repo_key: key_a.clone(),
+                    metric: metric_a.clone(),
+                    scope: "repo".into(),
+                    computed_on: "2026-08-27".into(),
+                    grain: "daily".into(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 1, "the confirmed row is marked");
+        assert_eq!(shared_b, 0, "the unconfirmed row stays queued");
+    }
+
+    // H2/F5: the stored match is the FULL row key. Two rows of one
+    // (repo, metric) on different dates, only the first echoed: a match on
+    // (repo, metric) alone marks both.
+    #[tokio::test]
+    async fn only_the_echoed_row_is_marked_when_a_metric_has_two_dates() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, metric) = seed(&pg).await;
+        let seed_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let other_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        seed_sibling_row(&pg, &key, &metric, other_day).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 2,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".to_string(),
+                    computed_on: "2026-08-27".to_string(),
+                    grain: "daily".to_string(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let first = shared_on(&pg, &key, seed_day).await;
+        let second = shared_on(&pg, &key, other_day).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert!(first, "the echoed row is marked");
+        assert!(!second, "the unconfirmed date stays queued");
+    }
+
+    // H2: a row neither confirmed nor rejected is quiet twice, then loud —
+    // while staying queued throughout. The verdict is honest from cycle 1
+    // (skipped: rows outstanding); only the error waits for N.
+    #[test]
+    fn a_row_neither_confirmed_nor_rejected_is_loud_after_three_cycles() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let shortfall_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        let mut first_verdict = None;
+        for i in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &shortfall_plane()).await.unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+            if i == 0 {
+                first_verdict = rt.block_on(async { push_state(&pg, &key).await });
+            }
+        }
+        let (shared, state) = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            let st = push_state(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            (s, st)
+        });
+        assert_eq!(shared, 0, "unconfirmed rows stay queued");
+        assert_eq!(loud, vec![false, false, true], "quiet twice, then loud");
+        let (st1, why1) = first_verdict.expect("a verdict is recorded from cycle 1");
+        assert_eq!(st1, "skipped", "the dashboard is honest while the log stays quiet");
+        assert!(why1.unwrap_or_default().contains("stored confirmation"));
+        let (st, why) = state.expect("a verdict is recorded");
+        assert_eq!(st, "skipped");
+        assert!(
+            why.unwrap_or_default().contains("stored confirmation"),
+            "the verdict must carry the cause"
+        );
+    }
+
+    // H2: a confirming cycle resets the shortfall count (consecutive means
+    // consecutive).
+    #[test]
+    fn a_confirming_cycle_resets_the_shortfall_count() {
+        let rt = current_thread_rt();
+        let (pg, pid, key, metric) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, metric) = seed(&pg).await;
+            (pg, pid, key, metric)
+        });
+        let plan_for = || {
+            Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            })
+        };
+        let short_plane = || StubPlane {
+            plan: plan_for(),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        // Cycles 1-2: shortfall.
+        for _ in 0..2 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        }
+        // Cycle 3: clean — the row is confirmed and marked.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                let plane = StubPlane {
+                    plan: plan_for(),
+                    push: Some(Ok(IngestResult {
+                        accepted: 1,
+                        rejected: vec![],
+                        stored: Some(vec![StoredMetricKey {
+                            repo_key: key.clone(),
+                            metric: metric.clone(),
+                            scope: "repo".into(),
+                            computed_on: "2026-08-27".into(),
+                            grain: "daily".into(),
+                            commit_sha: None,
+                        }]),
+                    })),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
+                // Recompute re-queues the same (repo, metric): the mark is
+                // older than the row again.
+                sqlx_core::query::query(
+                    "UPDATE sensei.repository_metrics rm SET modified_at = now() \
+                       FROM sensei.repositories r \
+                      WHERE r.id = rm.repository_id AND r.repo_key = $1",
+                )
+                .bind(&key)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            })
+        });
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        // Cycles 4-6: shortfall again — the count restarted.
+        for _ in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        }
+        let (shared, pending) = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            let p = pending_count(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            (s, p)
+        });
+        assert_eq!(shared, 1, "cycle 3's mark stands — marks are never un-made");
+        assert_eq!(pending, 1, "the recomputed row is queued again, never confirmed");
+        assert_eq!(
+            loud,
+            vec![false, false, false, false, false, true],
+            "reset, then loud at 3 again"
+        );
+    }
+
+    // H2: a cycle that pushes nothing for a key keeps its count (nothing was
+    // tried, nothing was learned) — only a pushed-clean cycle resets.
+    #[test]
+    fn a_cycle_that_pushes_nothing_keeps_the_shortfall_count() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let short_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        for _ in 0..2 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        }
+        // Gap cycle: the plan allows nothing, so nothing is pushed.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                let plane = StubPlane {
+                    plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+                    ..Default::default()
+                };
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane).await.unwrap();
+            })
+        });
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        // Third shortfall: loud, because the gap did not reset.
+        let logs = captured_logs(|| {
+            rt.block_on(async {
+                sync_persona(&pg, "ztest-slot", SECRET_TOK, &short_plane()).await.unwrap();
+            })
+        });
+        loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+        let shared = rt.block_on(async {
+            let s = shared_count(&pg, &key).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            s
+        });
+        assert_eq!(shared, 0, "unconfirmed rows stay queued");
+        assert_eq!(loud, vec![false, false, false, true], "the gap keeps the count");
+    }
+
+    // L1: the streak is keyed per ROW at the call site, not just in the
+    // tracker — one date confirmed every cycle must not clear another date's
+    // streak through `push_allowed`. (Kills the computed_on-constant mutant
+    // in `shortfall_key`: with a pair key the shared streak never passes 1.)
+    #[test]
+    fn a_confirmed_date_does_not_clear_another_dates_streak_through_push() {
+        let rt = current_thread_rt();
+        let (pg, pid, key, metric) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, metric) = seed(&pg).await;
+            (pg, pid, key, metric)
+        });
+        let seed_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let other_day = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        rt.block_on(seed_sibling_row(&pg, &key, &metric, other_day));
+        // Every cycle confirms the seed date and never the other one.
+        let confirming_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 1,
+                rejected: vec![],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".to_string(),
+                    computed_on: "2026-08-27".to_string(),
+                    grain: "daily".to_string(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        let mut loud = vec![];
+        for _ in 0..3 {
+            let logs = captured_logs(|| {
+                rt.block_on(async {
+                    sync_persona(&pg, "ztest-slot", SECRET_TOK, &confirming_plane()).await.unwrap();
+                    // Recompute the confirmed date so it is offered — and
+                    // confirmed — again next cycle.
+                    sqlx_core::query::query(
+                        "UPDATE sensei.repository_metrics rm SET modified_at = now() \
+                          WHERE rm.repository_id = (SELECT id FROM sensei.repositories \
+                                                     WHERE repo_key = $1) \
+                            AND rm.computed_on = date '2026-08-27'",
+                    )
+                    .bind(&key)
+                    .execute(pg.pool())
+                    .await
+                    .unwrap();
+                })
+            });
+            loud.push(!error_lines_with(&logs, "stored confirmation missing").is_empty());
+            assert!(!logs.contains("SECRET"), "the Bearer [REDACTED] never reach the logs");
+        }
+        let (confirmed, unconfirmed) = rt.block_on(async {
+            let c = shared_on(&pg, &key, seed_day).await;
+            let u = shared_on(&pg, &key, other_day).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+            (c, u)
+        });
+        assert_eq!(
+            loud,
+            vec![false, false, true],
+            "the never-confirmed date goes loud at 3 while the other confirms"
+        );
+        assert!(confirmed, "the echoed date is marked");
+        assert!(!unconfirmed, "the never-confirmed date stays queued");
+    }
+
+    // H2/F4: a loud row waits its backoff, then is re-offered. Three
+    // shortfall cycles go loud; the fourth offers nothing for it; once the
+    // backoff has elapsed it is pushed again. (The backoff length is the
+    // implementation's — the test only pins wait-then-reoffer, moving the
+    // clock with SQL rather than waiting real hours.)
+    #[test]
+    fn a_loud_row_waits_its_backoff_then_is_re_offered() {
+        let rt = current_thread_rt();
+        let (pg, pid, key) = rt.block_on(async {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (pid, key, _) = seed(&pg).await;
+            (pg, pid, key)
+        });
+        let short_plane = || StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: Some(vec![]) })),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &short_plane())).unwrap();
+        }
+        // Still queued — never confirmed, never marked. (Pre-implementation
+        // this is where the test fails: the complement marks it in cycle 1,
+        // which is exactly the bug the backoff builds on.)
+        let pending = rt.block_on(pending_count(&pg, &key));
+        assert_eq!(pending, 1, "the unconfirmed row stays queued through the loud cycles");
+        // Fourth cycle: the loud row waits.
+        let waiting = short_plane();
+        rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &waiting)).unwrap();
+        let waited = waiting.pushed_rows.lock().unwrap().clone();
+        // The backoff elapses: the row is offered again.
+        rt.block_on(async {
+            sqlx_core::query::query(
+                "UPDATE sensei.repository_metrics rm SET next_attempt_at = now() - interval '1 minute'
+                  FROM sensei.repositories r
+                 WHERE r.id = rm.repository_id AND r.repo_key = $1",
+            )
+            .bind(&key)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        });
+        let reoffered = short_plane();
+        rt.block_on(sync_persona(&pg, "ztest-slot", "tok", &reoffered)).unwrap();
+        let offered_again = reoffered.pushed_rows.lock().unwrap().clone();
+        rt.block_on(async {
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        });
+        assert!(waited.is_empty(), "the loud row waits its backoff, offered: {waited:?}");
+        assert_eq!(offered_again.len(), 1, "elapsed backoff re-offers the row");
+        assert_eq!(offered_again[0].0, key);
+    }
+
+    // H2 version gate: a dōjō that predates per-row confirmation keeps the
+    // complement marks. Green before and after — it pins that phase B must
+    // not break old dōjōs.
+    #[tokio::test]
+    async fn a_dojo_without_stored_keeps_complement_marks() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 1, "legacy shape still marks the complement");
+    }
+
+    // H2 edge: rejected wins over confirmed (a row in both lists stays queued).
+    // Green before and after — it pins the new path's priority.
+    #[tokio::test]
+    async fn a_rejected_row_is_not_marked_even_when_also_confirmed() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, metric) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 1,
+                rejected: vec![RejectedMetric {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    reason: "unknown_metric".into(),
+                }],
+                stored: Some(vec![StoredMetricKey {
+                    repo_key: key.clone(),
+                    metric: metric.clone(),
+                    scope: "repo".into(),
+                    computed_on: "2026-08-27".into(),
+                    grain: "daily".into(),
+                    commit_sha: None,
+                }]),
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared = shared_count(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert_eq!(shared, 0, "rejected wins");
+    }
+
+    // F7: a legacy shape that rejects SOME rows names the rows it kept but
+    // cannot say which of the rest fell short — so it marks nothing at all.
+    #[tokio::test]
+    async fn a_partially_rejected_legacy_push_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, metric_a) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult {
+                accepted: 0,
+                rejected: vec![RejectedMetric {
+                    repo_key: key_a.clone(),
+                    metric: metric_a.clone(),
+                    reason: "unknown_metric".into(),
+                }],
+                stored: None,
+            })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 0, "the rejected row stays queued");
+        assert_eq!(shared_b, 0, "the unaccounted row stays queued too");
+    }
+
+    // F7: accepted < pushed - rejected is a SILENT shortfall on a legacy
+    // shape — the count admits a row fell short without saying which.
+    #[tokio::test]
+    async fn a_count_shortfall_on_a_legacy_push_marks_nothing() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid_a, key_a, _) = seed(&pg).await;
+        let (pid_b, key_b, _) = seed(&pg).await;
+        let plane = StubPlane {
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 1, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        sync_persona(&pg, "ztest-slot", "tok", &plane).await.unwrap();
+        let shared_a = shared_count(&pg, &key_a).await;
+        let shared_b = shared_count(&pg, &key_b).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        assert_eq!(shared_a, 0, "a silent shortfall marks nothing");
+        assert_eq!(shared_b, 0, "a silent shortfall marks nothing");
+    }
+
+    // F7: both mark-nothing legacy shapes say so loudly.
+    #[test]
+    fn legacy_mark_nothing_shapes_warn() {
+        enum Shape {
+            PartialRejected,
+            CountShortfall,
+        }
+        fn run_shape(rt: &tokio::runtime::Runtime, pg: &PgStore, shape: Shape) -> String {
+            let (pid_a, key_a, metric_a) = rt.block_on(seed(pg));
+            let (pid_b, key_b, _) = rt.block_on(seed(pg));
+            let push = match shape {
+                Shape::PartialRejected => IngestResult {
+                    accepted: 0,
+                    rejected: vec![RejectedMetric {
+                        repo_key: key_a.clone(),
+                        metric: metric_a.clone(),
+                        reason: "unknown_metric".into(),
+                    }],
+                    stored: None,
+                },
+                Shape::CountShortfall => {
+                    IngestResult { accepted: 1, rejected: vec![], stored: None }
+                }
+            };
+            let plane = StubPlane {
+                plan: Some(SyncPlan {
+                    allowed: vec![
+                        mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                        mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                    ],
+                    denied: vec![],
+                }),
+                push: Some(Ok(push)),
+                ..Default::default()
+            };
+            let logs = captured_logs(|| {
+                rt.block_on(sync_persona(pg, "ztest-slot", SECRET_TOK, &plane)).unwrap();
+            });
+            rt.block_on(async {
+                crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid_a, None, &[]).await;
+                crate::tasks::test_support::cleanup_metrics_fixture(pg, &pid_b, None, &[]).await;
+            });
+            assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
+            logs
+        }
+
+        let rt = current_thread_rt();
+        let pg = rt.block_on(PgStore::connect_test()).unwrap();
+        // T2: level and phrase on ONE line — a WARN anywhere plus the phrase
+        // on an INFO line must not pass.
+        let partial = run_shape(&rt, &pg, Shape::PartialRejected);
+        assert!(
+            partial.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
+            "partial-rejected legacy must warn; logs:\n{partial}"
+        );
+        let shortfall = run_shape(&rt, &pg, Shape::CountShortfall);
+        assert!(
+            shortfall.lines().any(|l| l.contains(" WARN ") && l.contains("marking nothing")),
+            "count shortfall must warn; logs:\n{shortfall}"
+        );
+    }
+
+    // F8: the stored:None complement keeps old dōjōs working, but says so —
+    // once per cycle (not per row), naming the dōjō — until the complement
+    // goes away (backlog: remove when every supported dōjō returns stored).
+    #[test]
+    fn stored_none_complement_marks_but_warns_once_naming_the_dojo() {
+        let rt = current_thread_rt();
+        let pg = rt.block_on(PgStore::connect_test()).unwrap();
+        let (pid_a, key_a, _) = rt.block_on(seed(&pg));
+        let (pid_b, key_b, _) = rt.block_on(seed(&pg));
+        let plane = StubPlane {
+            url: "http://stub.invalid".into(),
+            plan: Some(SyncPlan {
+                allowed: vec![
+                    mapped(&key_a, &uuid::Uuid::new_v4().to_string()),
+                    mapped(&key_b, &uuid::Uuid::new_v4().to_string()),
+                ],
+                denied: vec![],
+            }),
+            push: Some(Ok(IngestResult { accepted: 2, rejected: vec![], stored: None })),
+            ..Default::default()
+        };
+        let logs = captured_logs(|| {
+            rt.block_on(sync_persona(&pg, "ztest-slot", SECRET_TOK, &plane)).unwrap();
+        });
+        let (shared_a, shared_b) = rt
+            .block_on(async { (shared_count(&pg, &key_a).await, shared_count(&pg, &key_b).await) });
+        rt.block_on(async {
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_a, None, &[]).await;
+            crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid_b, None, &[]).await;
+        });
+        assert_eq!(shared_a, 1, "the legacy complement still marks");
+        assert_eq!(shared_b, 1, "the legacy complement still marks");
+        let warns: Vec<_> = logs
+            .lines()
+            .filter(|l| {
+                l.contains(" WARN ")
+                    && l.contains("unconfirmed")
+                    && l.contains("dojo_url=http://stub.invalid")
+            })
+            .collect();
+        assert_eq!(warns.len(), 1, "one complement warn per cycle, naming the dōjō; logs:\n{logs}");
+        assert!(!logs.contains("SECRET"), "the bearer must never reach the logs");
     }
 
     #[tokio::test]
@@ -2145,6 +3326,248 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unmapped_repository_is_recorded_skipped_with_its_reason() {
+        // G1: an unmapped repository used to be only logged, so neither the
+        // database nor the status screen held a row for it. The verdict is now
+        // recorded: skipped, with the dōjō's reason namespaced under `unmapped:`.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let plane = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![],
+                unmapped: vec![UnmappedRepo {
+                    repo_key: key.clone(),
+                    reason: "no_connection".into(),
+                }],
+            }),
+            plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        let (state, why) = verdict.expect("the unmapped repository has a verdict row");
+        assert_eq!(state, "skipped");
+        assert_eq!(why.as_deref(), Some("unmapped:no_connection"));
+    }
+
+    #[tokio::test]
+    async fn a_denied_repository_is_recorded_skipped_with_the_dojo_reason() {
+        // A refusal is not a failure: it is recorded `skipped`, never `error`,
+        // carrying the dōjō's reason verbatim under `denied:`.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let plane = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![mapped(&key, &uuid::Uuid::new_v4().to_string())],
+                unmapped: vec![],
+            }),
+            plan: Some(SyncPlan {
+                allowed: vec![],
+                denied: vec![DeniedRepo {
+                    repo_key: key.clone(),
+                    tenant: "organization/ztest".into(),
+                    reason: "not_subscribed".into(),
+                }],
+            }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        let (state, why) = verdict.expect("the denied repository has a verdict row");
+        assert_eq!(state, "skipped");
+        assert_eq!(why.as_deref(), Some("denied:not_subscribed"));
+    }
+
+    #[tokio::test]
+    async fn an_allowed_repository_is_recorded_synced() {
+        // The positive verdict: a repository the plan allows reads `synced`
+        // with no annotation.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let plane = StubPlane {
+            register: Some(RegisterResult { mapped: vec![mapped(&key, &tid)], unmapped: vec![] }),
+            plan: Some(SyncPlan { allowed: vec![mapped(&key, &tid)], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        let (state, why) = verdict.expect("the allowed repository has a verdict row");
+        assert_eq!(state, "synced");
+        assert_eq!(why, None);
+    }
+
+    #[tokio::test]
+    async fn a_failed_workspace_filing_is_partial_and_names_the_error() {
+        // Filing under the workspace failed though the registration stood
+        // (#299): the verdict is `partial`, naming the dōjō's error — not
+        // `synced`, which would claim the workspace filing happened.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let mut registered = mapped(&key, &tid);
+        registered.workspace_error = Some("workspace 'ztest' not found".into());
+        let plane = StubPlane {
+            register: Some(RegisterResult { mapped: vec![registered], unmapped: vec![] }),
+            plan: Some(SyncPlan { allowed: vec![mapped(&key, &tid)], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(out.is_ok(), "{out:?}");
+        let (state, why) = verdict.expect("the misfiled repository has a verdict row");
+        assert_eq!(state, "partial");
+        assert!(
+            why.unwrap_or_default().contains("workspace 'ztest' not found"),
+            "the verdict names the filing error"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repository_that_later_maps_flips_from_skipped_to_synced() {
+        // The verdict row is overwritten, never appended: connecting the forge
+        // org turns yesterday's `skipped` into today's `synced`, clearing the
+        // stale reason with it.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let before = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![],
+                unmapped: vec![UnmappedRepo {
+                    repo_key: key.clone(),
+                    reason: "no_connection".into(),
+                }],
+            }),
+            plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+            ..Default::default()
+        };
+        let after = StubPlane {
+            register: Some(RegisterResult { mapped: vec![mapped(&key, &tid)], unmapped: vec![] }),
+            plan: Some(SyncPlan { allowed: vec![mapped(&key, &tid)], denied: vec![] }),
+            ..Default::default()
+        };
+
+        let first = sync_persona(&pg, "ztest-slot", "tok", &before).await;
+        let was = repository_state(&pg, &key).await;
+        let second = sync_persona(&pg, "ztest-slot", "tok", &after).await;
+        let now = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(first.is_ok(), "{first:?}");
+        assert_eq!(
+            was.as_ref().map(|(s, _)| s.as_str()),
+            Some("skipped"),
+            "the unmapped pass records skipped"
+        );
+        assert!(second.is_ok(), "{second:?}");
+        let (state, why) = now.expect("the mapped pass overwrites the row");
+        assert_eq!(state, "synced");
+        assert_eq!(why, None, "and the stale reason is cleared with it");
+    }
+
+    #[tokio::test]
+    async fn a_repository_in_both_registration_answers_gets_one_verdict() {
+        // The planner's own comment allows a repository to appear in
+        // both registration answers; one statement must then still write ONE row.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let plane = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![mapped(&key, &tid)],
+                unmapped: vec![UnmappedRepo {
+                    repo_key: key.clone(),
+                    reason: "no_connection".into(),
+                }],
+            }),
+            plan: Some(SyncPlan {
+                allowed: vec![],
+                denied: vec![DeniedRepo {
+                    repo_key: key.clone(),
+                    tenant: "organization/ztest".into(),
+                    reason: "not_subscribed".into(),
+                }],
+            }),
+            ..Default::default()
+        };
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        let verdict = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert!(out.is_ok(), "{out:?}");
+        assert_eq!(
+            verdict,
+            Some(("skipped".to_string(), Some("denied:not_subscribed".to_string())))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repository_twice_in_the_unmapped_answer_gets_one_verdict() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let twice = UnmappedRepo { repo_key: key.clone(), reason: "no_connection".into() };
+        let plane = StubPlane {
+            register: Some(RegisterResult {
+                mapped: vec![],
+                unmapped: vec![
+                    twice.clone(),
+                    UnmappedRepo { repo_key: key.clone(), reason: "unknown_host".into() },
+                ],
+            }),
+            plan: Some(SyncPlan { allowed: vec![], denied: vec![] }),
+            ..Default::default()
+        };
+        let out = sync_persona(&pg, "ztest-slot", "tok", &plane).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+        assert!(out.is_ok(), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_plan_fetch_leaves_repository_rows_untouched() {
+        // A plan that could not be fetched is no verdict on any repository: the
+        // rows from the last good pass stand rather than being overwritten with
+        // a failure that says nothing about them.
+        let pg = PgStore::connect_test().await.unwrap();
+        let (pid, key, _m) = seed(&pg).await;
+        let tid = uuid::Uuid::new_v4().to_string();
+        let good = StubPlane {
+            register: Some(RegisterResult { mapped: vec![mapped(&key, &tid)], unmapped: vec![] }),
+            plan: Some(SyncPlan { allowed: vec![mapped(&key, &tid)], denied: vec![] }),
+            ..Default::default()
+        };
+        let bad = StubPlane {
+            plan_err: Some("HTTP 500: the dōjō is down".into()),
+            ..Default::default()
+        };
+
+        let first = sync_persona(&pg, "ztest-slot", "tok", &good).await;
+        assert!(first.is_ok(), "{first:?}");
+        let before = repository_state(&pg, &key).await;
+        let second = sync_persona(&pg, "ztest-slot", "tok", &bad).await;
+        let after = repository_state(&pg, &key).await;
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, None, &[]).await;
+
+        assert!(second.is_err(), "a failed plan fetch fails the pass");
+        assert_eq!(before, Some(("synced".to_string(), None)));
+        assert_eq!(after, before, "and the repository row is untouched by it");
+    }
+
+    #[tokio::test]
     async fn a_pass_with_no_signed_in_personas_is_a_no_op_not_an_error() {
         // The state of a fresh install. It must not log an error every cadence,
         // or the daemon cries wolf until the user signs in.
@@ -2167,7 +3590,7 @@ mod tests {
         // error for an EMPTY persona set.
         let pg = Arc::new(PgStore::connect_test().await.unwrap());
         let personas = pg.signed_in_personas().await.expect("persona read works");
-        let out = tick(pg).await;
+        let out = tick(pg, Arc::new(crate::tracker::runtime::TrackerRuntime::default())).await;
         if personas.is_empty() {
             assert!(out.is_ok(), "an empty install must be a no-op, got {out:?}");
         } else {
@@ -2760,6 +4183,1032 @@ mod tests {
             .await
             .unwrap();
             assert!(labels.iter().any(|l| l == GRAPH_ENTITY), "{GRAPH_ENTITY} not in {labels:?}");
+        }
+    }
+
+    /// Tracker boards travel with the cycle (tracker-delivery-metrics D3, gates 6–10a; #352).
+    mod delivery {
+        use super::*;
+        use crate::db::pg_store::delivery::PartKey;
+        use crate::dojo_client::user_plane::DeliveryError;
+        use crate::tasks::dojo_delivery::{Boards, FailedBoard, build_boards, push_delivery};
+        use crate::tracker::sync::TrackerLocks;
+
+        const SLOT: &str = "ztest-delivery-slot";
+
+        /// The S5 board (sprints 100–102, 99 removed; tickets A–D, E removed, B in 100
+        /// and 101) connected in a workspace with one shareable repository, and a
+        /// signed-in persona. Answers (tracker, workspace, repo_key).
+        async fn fixture(pg: &PgStore) -> (uuid::Uuid, uuid::Uuid, String) {
+            let (ws, key, _metric) = seed(pg).await;
+            let t = crate::sdlc::sprint_replay::store_tests::seeded(pg).await;
+            for sql in [
+                "UPDATE sensei.trackers SET workspace_id = $2, last_success_at = now(),
+                        history_at = '2026-10-02Z', params = '{\"board_name\": \"AUTH Scrum\"}' WHERE id = $1",
+                "INSERT INTO sensei.sprints (tracker_id, external_id, seq, name, state, removed_at)
+                 VALUES ($1, '99', 99, 'S99', 'closed', now())",
+                "INSERT INTO sensei.tracker_tasks (tracker_id, external_id, key, summary, removed_at)
+                 VALUES ($1, '5', 'E', 'gone', now())",
+            ] {
+                sqlx_core::query::query(sql).bind(t).bind(ws).execute(pg.pool()).await.unwrap_or_else(|e| panic!("{sql}: {e}"));
+            }
+            sqlx_core::query::query(
+                "INSERT INTO sensei.personas (label, session_slot, verified_at) VALUES ('ztest-delivery', $1, now())",
+            )
+            .bind(SLOT)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            (t, ws, key)
+        }
+
+        fn plan(allowed: Vec<MappedRepo>) -> SyncPlan {
+            SyncPlan { allowed, denied: vec![] }
+        }
+
+        async fn boards(pg: &PgStore) -> Boards {
+            build_boards(pg, &TrackerLocks::default(), chrono::Utc::now()).await.unwrap()
+        }
+
+        /// A second board in its own workspace with its own repository (the persona exists).
+        async fn second_board(pg: &PgStore) -> (uuid::Uuid, String) {
+            let (ws, key, _metric) = seed(pg).await;
+            let t = crate::sdlc::sprint_replay::store_tests::seeded(pg).await;
+            sqlx_core::query::query(
+                "UPDATE sensei.trackers SET workspace_id = $2, last_success_at = now(),
+                        params = '{\"board_name\": \"Web Scrum\"}' WHERE id = $1",
+            )
+            .bind(t)
+            .bind(ws)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            (t, key)
+        }
+
+        async fn key_of(pg: &PgStore, t: uuid::Uuid) -> String {
+            let (base_url,): (String,) =
+                sqlx_core::query_as::query_as("SELECT base_url FROM sensei.trackers WHERE id = $1")
+                    .bind(t)
+                    .fetch_one(pg.pool())
+                    .await
+                    .unwrap();
+            crate::dojo::delivery::board_key("jira", &base_url, "42")
+        }
+
+        async fn state_of(pg: &PgStore, key: &str) -> Option<(String, Option<String>)> {
+            pg.sync_state_rows()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|r| r.entity == "tracker_board" && r.entity_key == key)
+                .map(|r| (r.state, r.last_error))
+        }
+
+        async fn board_state(pg: &PgStore) -> Option<(String, Option<String>)> {
+            pg.sync_state_rows()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|r| r.entity == "tracker_board")
+                .map(|r| (r.state, r.last_error))
+        }
+
+        async fn exec(pg: &PgStore, sql: &str, t: uuid::Uuid) {
+            sqlx_core::query::query(sql)
+                .bind(t)
+                .execute(pg.pool())
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+
+        #[tokio::test]
+        async fn a_board_whose_workspace_is_not_shared_sends_nothing() {
+            let pg = PgStore::connect_test().await.unwrap();
+            fixture(&pg).await;
+            let plane = StubPlane::default();
+            let other =
+                plan(vec![mapped("github.com/ztest/elsewhere", &uuid::Uuid::new_v4().to_string())]);
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &other, &[], &boards(&pg).await)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert!(plane.delivered.lock().unwrap().is_empty());
+            let (state, why) = board_state(&pg).await.expect("the skip is recorded");
+            assert_eq!(state, "skipped");
+            assert_eq!(why.as_deref(), Some("tracker_not_shared"));
+        }
+
+        #[tokio::test]
+        async fn a_workspace_whose_repositories_sit_in_two_tenants_sends_nothing() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (_t, ws, key) = fixture(&pg).await;
+            let uniq = uuid::Uuid::new_v4();
+            let second = crate::tasks::test_support::seed_bare_repository(&pg, &ws, &uniq).await;
+            let (key2,): (String,) = sqlx_core::query_as::query_as(
+                "SELECT repo_key FROM sensei.repositories WHERE id = $1",
+            )
+            .bind(second)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            let plane = StubPlane::default();
+            let split = plan(vec![
+                mapped(&key, &uuid::Uuid::new_v4().to_string()),
+                mapped(&key2, &uuid::Uuid::new_v4().to_string()),
+            ]);
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &split, &[], &boards(&pg).await)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert!(plane.delivered.lock().unwrap().is_empty());
+            assert_eq!(
+                board_state(&pg).await.unwrap().1.as_deref(),
+                Some("tracker_workspace_ambiguous")
+            );
+        }
+
+        #[tokio::test]
+        async fn the_body_carries_the_board_as_d3_says_and_no_url() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let (base_url,): (String,) =
+                sqlx_core::query_as::query_as("SELECT base_url FROM sensei.trackers WHERE id = $1")
+                    .bind(t)
+                    .fetch_one(pg.pool())
+                    .await
+                    .unwrap();
+            let tenant = uuid::Uuid::new_v4().to_string();
+            let plane = StubPlane::default();
+            assert_eq!(
+                push_delivery(
+                    &pg,
+                    SLOT,
+                    "tok",
+                    &plane,
+                    &plan(vec![mapped(&key, &tenant)]),
+                    &[],
+                    &boards(&pg).await
+                )
+                .await
+                .unwrap(),
+                1
+            );
+            let body = plane.delivered.lock().unwrap()[0].clone();
+            assert_eq!(
+                body["board_key"],
+                serde_json::json!(crate::dojo::delivery::board_key("jira", &base_url, "42"))
+            );
+            assert_eq!(body["tenant_id"], serde_json::json!(tenant));
+            assert_eq!(body["repo_keys"], serde_json::json!([key]));
+            assert_eq!(body["board_name"], serde_json::json!("AUTH Scrum"));
+            let text = body.to_string();
+            let host = base_url.trim_start_matches("https://");
+            assert!(!text.contains(host), "the tracker's address never travels");
+            for word in ["hourly_rate", "minutes_per_point", "dev@example.com"] {
+                assert!(!text.contains(word), "{word} travelled");
+            }
+            let tickets = body["facts"]["tickets"].as_array().unwrap();
+            let keys: Vec<&str> = tickets.iter().map(|x| x["key"].as_str().unwrap()).collect();
+            assert_eq!(keys, ["A", "B", "C", "D"], "the removed ticket does not travel");
+            let b = tickets.iter().find(|x| x["key"] == "B").unwrap();
+            assert_eq!(b["sprints"], serde_json::json!(["100", "101"]));
+            let sprints = body["facts"]["sprints"].as_array().unwrap();
+            let gone = sprints.iter().find(|x| x["external_id"] == "99").unwrap();
+            assert_eq!(
+                (gone["removed"].clone(), gone["sdlc"].clone()),
+                (serde_json::json!(true), serde_json::Value::Null)
+            );
+            assert!(
+                sprints.iter().find(|x| x["external_id"] == "100").unwrap()["sdlc"].is_object()
+            );
+            assert_eq!(board_state(&pg).await.unwrap().0, "synced");
+        }
+
+        #[tokio::test]
+        async fn an_unchanged_board_is_not_sent_again_until_its_mark_expires() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            let plane = StubPlane::default();
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1
+            );
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                0,
+                "nothing changed"
+            );
+            // A history run that read nothing new moves history_at only.
+            exec(&pg, "UPDATE sensei.trackers SET history_at = now() WHERE id = $1", t).await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                0,
+                "history_at is not hashed"
+            );
+            exec(&pg, "UPDATE sensei.tracker_push_marks SET pushed_at = now() - interval '7 hours' WHERE tracker_id = $1", t).await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1,
+                "a mark older than 6 h re-sends"
+            );
+            assert_eq!(plane.delivered.lock().unwrap().len(), 2);
+        }
+
+        #[tokio::test]
+        async fn a_board_without_history_sends_its_sync_age_and_jira_sends_none() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            let plane = StubPlane::default();
+            // As Jira (the fixture's kind): no age travels (A5).
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1
+            );
+            assert_eq!(
+                plane.delivered.lock().unwrap()[0]["facts"]["synced_age_s"],
+                serde_json::Value::Null
+            );
+            // As GitLab, synced 90 s ago: the age travels.
+            exec(
+                &pg,
+                "UPDATE sensei.trackers SET kind = 'gitlab', last_success_at = now() - interval '90 seconds' WHERE id = $1",
+                t,
+            )
+            .await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1,
+                "another kind is another board"
+            );
+            let age = plane.delivered.lock().unwrap()[1]["facts"]["synced_age_s"].as_i64().unwrap();
+            assert!((90..=95).contains(&age), "{age}");
+            // A sync that changed nothing moves only last_success_at: nothing is re-sent.
+            exec(&pg, "UPDATE sensei.trackers SET last_success_at = now() WHERE id = $1", t).await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                0,
+                "the sync age is not hashed"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_board_whose_sync_reads_null_after_listing_is_not_built() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, _key) = fixture(&pg).await;
+            exec(&pg, "UPDATE sensei.trackers SET kind = 'gitlab' WHERE id = $1", t).await;
+            let listed: Vec<_> =
+                pg.delivery_trackers().await.unwrap().into_iter().filter(|d| d.id == t).collect();
+            assert_eq!(listed.len(), 1);
+            // Reconnected between the list and the build (A5, Data invariants).
+            exec(&pg, "UPDATE sensei.trackers SET last_success_at = NULL WHERE id = $1", t).await;
+            let built =
+                crate::tasks::dojo_delivery::build_one(&pg, &listed[0], chrono::Utc::now()).await;
+            assert!(matches!(built, Ok(None)), "{built:?}");
+        }
+
+        #[tokio::test]
+        async fn a_refused_board_waits_for_a_change_and_is_recorded() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            let refusing = StubPlane {
+                delivery: Some(Err(DeliveryError::Refused {
+                    status: 400,
+                    body: "bad shape".into(),
+                })),
+                ..Default::default()
+            };
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &boards(&pg).await)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert_eq!(refusing.delivered.lock().unwrap().len(), 1);
+            let (state, why) = board_state(&pg).await.unwrap();
+            assert_eq!(state, "error");
+            assert!(why.unwrap().contains("bad shape"));
+            push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &boards(&pg).await).await.unwrap();
+            assert_eq!(
+                refusing.delivered.lock().unwrap().len(),
+                1,
+                "the refused hash is not re-sent within the hour"
+            );
+            exec(&pg, "UPDATE sensei.tracker_tasks SET summary = 'renamed' WHERE tracker_id = $1 AND key = 'A'", t).await;
+            push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &boards(&pg).await).await.unwrap();
+            assert_eq!(refusing.delivered.lock().unwrap().len(), 2, "a changed board goes at once");
+        }
+
+        #[tokio::test]
+        async fn a_409_is_recorded_as_ambiguous_and_a_lost_answer_leaves_the_attempt() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let p = plan(vec![mapped(&key, &tenant.to_string())]);
+            let ambiguous = StubPlane {
+                delivery: Some(Err(DeliveryError::Refused {
+                    status: 409,
+                    body: "workspace_ambiguous".into(),
+                })),
+                ..Default::default()
+            };
+            push_delivery(&pg, SLOT, "tok", &ambiguous, &p, &[], &boards(&pg).await).await.unwrap();
+            assert!(
+                board_state(&pg)
+                    .await
+                    .unwrap()
+                    .1
+                    .unwrap()
+                    .starts_with("tracker_workspace_ambiguous")
+            );
+
+            exec(&pg, "DELETE FROM sensei.tracker_push_marks WHERE tracker_id = $1", t).await;
+            let lost = StubPlane {
+                delivery: Some(Err(DeliveryError::Failed("timed out".into()))),
+                ..Default::default()
+            };
+            push_delivery(&pg, SLOT, "tok", &lost, &p, &[], &boards(&pg).await).await.unwrap();
+            let persona = pg.persona_id_for_slot(SLOT).await.unwrap().unwrap();
+            let mark = pg
+                .push_mark(&PartKey {
+                    tracker_id: t,
+                    persona_id: persona,
+                    tenant_id: tenant,
+                    part: "facts",
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                mark,
+                Some(crate::dojo::delivery::MarkState::default()),
+                "attempted before sending, nothing acknowledged"
+            );
+            push_delivery(&pg, SLOT, "tok", &lost, &p, &[], &boards(&pg).await).await.unwrap();
+            assert_eq!(
+                lost.delivered.lock().unwrap().len(),
+                2,
+                "a lost answer is tried again next tick"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_board_whose_tracker_is_busy_is_not_built() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, _key) = fixture(&pg).await;
+            let locks = TrackerLocks::default();
+            let guard = locks.try_lock(t).unwrap();
+            assert!(
+                build_boards(&pg, &locks, chrono::Utc::now())
+                    .await
+                    .unwrap()
+                    .built
+                    .iter()
+                    .all(|b| b.tracker_id != t)
+            );
+            drop(guard);
+            assert!(
+                build_boards(&pg, &locks, chrono::Utc::now())
+                    .await
+                    .unwrap()
+                    .built
+                    .iter()
+                    .any(|b| b.tracker_id == t)
+            );
+        }
+
+        #[tokio::test]
+        async fn the_cycle_delivers_the_board_after_metrics_and_graphs() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (_t, _ws, key) = fixture(&pg).await;
+            let plane = StubPlane {
+                plan: Some(plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())])),
+                ..Default::default()
+            };
+            sync_persona(&pg, SLOT, "tok", &plane).await.unwrap();
+            assert_eq!(plane.delivered.lock().unwrap().len(), 1);
+        }
+
+        #[tokio::test]
+        async fn a_refused_board_never_stops_or_marks_the_other() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t1, _ws, key1) = fixture(&pg).await;
+            let (t2, key2) = second_board(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let p =
+                plan(vec![mapped(&key1, &tenant.to_string()), mapped(&key2, &tenant.to_string())]);
+            let mut delivery_for = std::collections::HashMap::new();
+            delivery_for.insert(
+                key_of(&pg, t1).await,
+                Err(DeliveryError::Refused { status: 400, body: "bad".into() }),
+            );
+            let plane = StubPlane { delivery_for, ..Default::default() };
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1
+            );
+            let persona = pg.persona_id_for_slot(SLOT).await.unwrap().unwrap();
+            let refused = pg
+                .push_mark(&PartKey {
+                    tracker_id: t1,
+                    persona_id: persona,
+                    tenant_id: tenant,
+                    part: "facts",
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(refused.hash, None, "a refused hash is never acknowledged");
+            assert!(refused.failed_hash.is_some());
+            let other = pg
+                .push_mark(&PartKey {
+                    tracker_id: t2,
+                    persona_id: persona,
+                    tenant_id: tenant,
+                    part: "facts",
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(other.hash.is_some(), "the other board is pushed and marked");
+        }
+
+        #[tokio::test]
+        async fn a_board_that_fails_is_recorded_and_the_next_is_still_sent() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t1, _ws, key1) = fixture(&pg).await;
+            let (_t2, key2) = second_board(&pg).await;
+            // Board 1's plan tenant is not a uuid: its push fails before any mark.
+            let p = plan(vec![
+                mapped(&key1, "not-a-uuid"),
+                mapped(&key2, &uuid::Uuid::new_v4().to_string()),
+            ]);
+            let plane = StubPlane::default();
+            let out = push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await;
+            assert!(out.is_err(), "a board's fault reaches the tick");
+            assert_eq!(plane.delivered.lock().unwrap().len(), 1, "the other board is still sent");
+            let (state, why) =
+                state_of(&pg, &key_of(&pg, t1).await).await.expect("the failure is recorded");
+            assert_eq!(state, "error");
+            assert!(why.unwrap().contains("not-a-uuid"));
+        }
+
+        #[tokio::test]
+        async fn a_board_that_could_not_be_built_is_recorded() {
+            let pg = PgStore::connect_test().await.unwrap();
+            fixture(&pg).await;
+            let failed = Boards {
+                built: vec![],
+                failed: vec![FailedBoard {
+                    board_key: "k".repeat(64),
+                    error: "sprint 7 has no figures".into(),
+                }],
+            };
+            let out =
+                push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &plan(vec![]), &[], &failed)
+                    .await;
+            assert!(out.is_err());
+            let (state, why) = state_of(&pg, &"k".repeat(64)).await.unwrap();
+            assert_eq!(
+                (state.as_str(), why.as_deref()),
+                ("error", Some("sprint 7 has no figures"))
+            );
+        }
+
+        #[tokio::test]
+        async fn the_mark_exists_before_the_board_is_sent() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let plane = StubPlane { mark_probe: Some((pg.clone(), t)), ..Default::default() };
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap();
+            assert_eq!(*plane.marks_at_send.lock().unwrap(), [true]);
+        }
+
+        #[tokio::test]
+        async fn the_push_sends_only_the_boards_it_is_handed() {
+            // Facts are built once per tick, before the persona loop: the push never builds.
+            let pg = PgStore::connect_test().await.unwrap();
+            let (_t, _ws, key) = fixture(&pg).await;
+            let plane = StubPlane::default();
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &Boards::default()).await.unwrap(),
+                0
+            );
+            assert!(plane.delivered.lock().unwrap().is_empty());
+        }
+
+        #[tokio::test]
+        async fn a_renamed_board_is_sent_again_at_once() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            let plane = StubPlane::default();
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1
+            );
+            exec(
+                &pg,
+                "UPDATE sensei.trackers SET params = '{\"board_name\": \"Renamed\"}' WHERE id = $1",
+                t,
+            )
+            .await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1
+            );
+        }
+
+        async fn persona_of(pg: &PgStore) -> uuid::Uuid {
+            sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+                "SELECT id FROM sensei.personas WHERE session_slot = $1",
+            )
+            .bind(SLOT)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+            .0
+        }
+
+        /// Every queued withdrawal of this persona, due or backing off: (board_key, tenant).
+        async fn queued(pg: &PgStore, persona: uuid::Uuid) -> Vec<(String, uuid::Uuid)> {
+            sqlx_core::query_as::query_as(
+                "SELECT board_key, tenant_id FROM sensei.delivery_withdrawals WHERE persona_id = $1 ORDER BY queued_at",
+            )
+            .bind(persona)
+            .fetch_all(pg.pool())
+            .await
+            .unwrap()
+        }
+
+        /// Gate 11 (B13): deleting a pushed tracker queues one withdrawal in the same
+        /// transaction, and the next pass sends it, signed as this install.
+        #[tokio::test]
+        async fn deleting_a_pushed_tracker_queues_one_withdrawal_and_the_next_pass_sends_it() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let p = plan(vec![mapped(&key, &tenant.to_string())]);
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &boards(&pg).await)
+                .await
+                .unwrap();
+            let board = key_of(&pg, t).await;
+            let persona = persona_of(&pg).await;
+            assert!(
+                queued(&pg, persona).await.is_empty(),
+                "nothing queued while the board is shared"
+            );
+
+            assert!(pg.delete_tracker(ws, t).await.unwrap());
+            assert_eq!(
+                queued(&pg, persona).await,
+                [(board.clone(), tenant)],
+                "one, though two parts were marked"
+            );
+
+            let plane = StubPlane::default();
+            push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &Boards::default()).await.unwrap();
+            assert_eq!(*plane.withdrawn.lock().unwrap(), [(board, tenant, persona)]);
+            assert!(queued(&pg, persona).await.is_empty(), "a landed withdrawal leaves the queue");
+            let withdrawn = plane.withdrawn.lock().unwrap()[0].0.clone();
+            let (state, _) = state_of(&pg, &withdrawn).await.unwrap();
+            assert_eq!(state, "synced", "a withdrawn board does not stay in error");
+            push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &Boards::default()).await.unwrap();
+            assert_eq!(plane.withdrawn.lock().unwrap().len(), 1, "sent once");
+        }
+
+        #[tokio::test]
+        async fn a_withdrawal_that_fails_stays_queued_with_why_and_goes_next_pass() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let p = plan(vec![mapped(&key, &tenant.to_string())]);
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &boards(&pg).await)
+                .await
+                .unwrap();
+            let board = key_of(&pg, t).await;
+            let persona = persona_of(&pg).await;
+            pg.delete_tracker(ws, t).await.unwrap();
+            let down = StubPlane {
+                withdrawal: Some(Err(DeliveryError::Failed("unreachable".into()))),
+                ..Default::default()
+            };
+            let out = push_delivery(&pg, SLOT, "tok", &down, &p, &[], &Boards::default()).await;
+            assert!(out.is_err(), "a withdrawal not sent is the tick's failure");
+            let (error,): (Option<String>,) = sqlx_core::query_as::query_as(
+                "SELECT error FROM sensei.delivery_withdrawals WHERE board_key = $1 AND persona_id = $2",
+            )
+            .bind(&board)
+            .bind(persona)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert!(error.unwrap().contains("unreachable"));
+            let (state, _) = state_of(&pg, &board).await.expect("recorded in the sync state");
+            assert_eq!(state, "error");
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &Boards::default())
+                .await
+                .unwrap();
+            assert!(queued(&pg, persona).await.is_empty());
+        }
+
+        /// A workspace removed (pruned or deleted) takes its trackers by cascade: the
+        /// trigger still queues their withdrawals.
+        #[tokio::test]
+        async fn a_workspace_removed_with_its_tracker_queues_the_withdrawal() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            push_delivery(
+                &pg,
+                SLOT,
+                "tok",
+                &StubPlane::default(),
+                &plan(vec![mapped(&key, &tenant.to_string())]),
+                &[],
+                &boards(&pg).await,
+            )
+            .await
+            .unwrap();
+            let board = key_of(&pg, t).await;
+            exec(&pg, "DELETE FROM sensei.workspaces WHERE id = $1", ws).await;
+            assert_eq!(queued(&pg, persona_of(&pg).await).await, [(board, tenant)]);
+        }
+
+        /// A refused withdrawal waits an hour, and meanwhile fails no tick.
+        #[tokio::test]
+        async fn a_refused_withdrawal_backs_off_and_does_not_fail_every_tick() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let p = plan(vec![mapped(&key, &tenant.to_string())]);
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &boards(&pg).await)
+                .await
+                .unwrap();
+            pg.delete_tracker(ws, t).await.unwrap();
+            let refusing = StubPlane {
+                withdrawal: Some(Err(DeliveryError::Refused { status: 403, body: "no".into() })),
+                ..Default::default()
+            };
+            assert!(
+                push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &Boards::default())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &refusing, &p, &[], &Boards::default())
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                refusing.withdrawn.lock().unwrap().len(),
+                1,
+                "not tried again within the hour"
+            );
+            assert_eq!(queued(&pg, persona_of(&pg).await).await.len(), 1, "still queued");
+            exec(&pg, "UPDATE sensei.delivery_withdrawals SET refused_at = now() - interval '61 minutes' WHERE persona_id = (SELECT id FROM sensei.personas WHERE session_slot = 'ztest-delivery-slot') AND $1 IS NOT NULL", t).await;
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &p, &[], &Boards::default())
+                .await
+                .unwrap();
+            assert!(
+                queued(&pg, persona_of(&pg).await).await.is_empty(),
+                "tried again after the hour"
+            );
+        }
+
+        /// A board pushed and acknowledged again clears a withdrawal still queued for
+        /// it, so the withdrawal can never later remove the fresh push.
+        #[tokio::test]
+        async fn a_board_pushed_again_clears_its_queued_withdrawal() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            let shared = plan(vec![mapped(&key, &tenant.to_string())]);
+            let mut built = boards(&pg).await;
+            built.built.retain(|b| b.tracker_id == t);
+            built.failed.clear();
+            push_delivery(&pg, SLOT, "tok", &StubPlane::default(), &shared, &[], &built)
+                .await
+                .unwrap();
+            // Unshared: a withdrawal is queued; shared again while it keeps failing.
+            push_delivery(
+                &pg,
+                SLOT,
+                "tok",
+                &StubPlane {
+                    withdrawal: Some(Err(DeliveryError::Failed("down".into()))),
+                    ..Default::default()
+                },
+                &plan(vec![]),
+                &[],
+                &built,
+            )
+            .await
+            .ok();
+            assert_eq!(queued(&pg, persona_of(&pg).await).await.len(), 1);
+            let flaky = StubPlane {
+                withdrawal: Some(Err(DeliveryError::Failed("down".into()))),
+                ..Default::default()
+            };
+            let out = push_delivery(&pg, SLOT, "tok", &flaky, &shared, &[], &built).await;
+            assert!(out.is_err(), "the failed withdrawal is still this tick's fault");
+            assert_eq!(flaky.delivered.lock().unwrap().len(), 1, "the board is pushed");
+            assert!(
+                queued(&pg, persona_of(&pg).await).await.is_empty(),
+                "and its acknowledged push clears the withdrawal"
+            );
+        }
+
+        /// Gate 11: a pushed board whose workspace loses its shared repository is
+        /// withdrawn, and its marks go so it is queued once.
+        #[tokio::test]
+        async fn a_pushed_board_that_is_no_longer_shared_is_withdrawn() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let tenant = uuid::Uuid::new_v4();
+            push_delivery(
+                &pg,
+                SLOT,
+                "tok",
+                &StubPlane::default(),
+                &plan(vec![mapped(&key, &tenant.to_string())]),
+                &[],
+                &boards(&pg).await,
+            )
+            .await
+            .unwrap();
+            let board = key_of(&pg, t).await;
+            let persona = persona_of(&pg).await;
+            let mut built = boards(&pg).await;
+            built.built.retain(|b| b.tracker_id == t);
+            built.failed.clear();
+            let plane = StubPlane::default();
+            push_delivery(&pg, SLOT, "tok", &plane, &plan(vec![]), &[], &built).await.unwrap();
+            assert_eq!(queued(&pg, persona).await, [(board.clone(), tenant)]);
+            let (marks,): (i64,) = sqlx_core::query_as::query_as(
+                "SELECT count(*) FROM sensei.tracker_push_marks WHERE tracker_id = $1",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(marks, 0);
+            push_delivery(&pg, SLOT, "tok", &plane, &plan(vec![]), &[], &built).await.unwrap();
+            assert_eq!(
+                *plane.withdrawn.lock().unwrap(),
+                [(board, tenant, persona)],
+                "sent once, next pass"
+            );
+            assert!(plane.delivered.lock().unwrap().is_empty());
+        }
+
+        /// The `repo_key` of a repository folder's repository.
+        async fn repo_key_of(pg: &PgStore, folder: uuid::Uuid) -> String {
+            sqlx_core::query_as::query_as::<_, (String,)>(
+                "SELECT r.repo_key FROM sensei.folders f JOIN sensei.repositories r ON r.id = f.repository_id WHERE f.id = $1",
+            )
+            .bind(folder)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+            .0
+        }
+
+        /// Gate 9 (#240, A2): only a session from a repository this persona alone
+        /// elected reaches effort; one from a shared repository, or from one with no
+        /// key, is held back and counted.
+        #[tokio::test]
+        async fn effort_comes_only_from_provable_sessions_and_the_rest_is_held_back() {
+            use crate::tracker::sync::{SYNC_DEADLINE, sync_tracker};
+            use crate::tracker::test_support::{FakeBoard, repo_in, session_with};
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws) = crate::tracker::connect::tests::connected_tracker(&pg).await;
+            let (mine, shared, keyless) =
+                (repo_in(&pg, ws).await, repo_in(&pg, ws).await, repo_in(&pg, ws).await);
+            let (mine_key, shared_key) =
+                (repo_key_of(&pg, mine).await, repo_key_of(&pg, shared).await);
+            exec(
+                &pg,
+                "UPDATE sensei.repositories SET repo_key = NULL
+                        WHERE id = (SELECT repository_id FROM sensei.folders WHERE id = $1)",
+                keyless,
+            )
+            .await;
+            for folder in [mine, shared, keyless] {
+                session_with(&pg, Some(folder), &["fix/AUTH-2-x"], &[]).await;
+            }
+            sync_tracker(
+                &pg,
+                &TrackerLocks::default(),
+                t,
+                &crate::tracker::jira::JiraAdapter,
+                &FakeBoard::standard(),
+                SYNC_DEADLINE,
+            )
+            .await
+            .unwrap();
+            let board = crate::tasks::dojo_delivery::BuiltBoard {
+                tracker_id: t,
+                workspace_id: ws,
+                kind: "jira".into(),
+                board_name: "AUTH".into(),
+                board_key: "k".repeat(64),
+                facts: serde_json::json!({}),
+                hash: "h".into(),
+                tickets: 0,
+            };
+            let exclusive = std::collections::HashSet::from([mine_key.clone()]);
+            let e = crate::tasks::dojo_delivery::build_effort(
+                &pg,
+                &board,
+                &exclusive,
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(e.held_back_sessions, 2, "the shared and the keyless session");
+            let tickets = e.json["tickets"].as_array().unwrap();
+            assert_eq!(tickets.len(), 1);
+            assert_eq!(tickets[0]["key"], "AUTH-2");
+            assert_eq!(tickets[0]["values"]["sessions"], 1);
+            assert_eq!(tickets[0]["repo_keys"], serde_json::json!([mine_key]));
+            assert_eq!(e.json["project"]["values"]["sessions"], 1);
+            assert!(!e.json.to_string().contains(&shared_key));
+
+            // Nothing provable: no row at all, never a row of zeros.
+            let none = crate::tasks::dojo_delivery::build_effort(
+                &pg,
+                &board,
+                &Default::default(),
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                none.json,
+                serde_json::json!({ "project": null, "sprints": [], "tickets": [] })
+            );
+            assert_eq!(none.held_back_sessions, 3);
+        }
+
+        /// Gates 9 and 8 through the real push (#240): the persona's exclusive
+        /// repository alone feeds the ticket, sprint and project rows of the body
+        /// sent; a shared repository's key never travels; an unknown is null, not 0;
+        /// a refusal marks the effort part's hash as well as the facts'.
+        #[tokio::test]
+        async fn the_push_sends_effort_from_the_exclusive_repository_only_and_marks_both_parts() {
+            use crate::tracker::sync::{SYNC_DEADLINE, sync_tracker};
+            use crate::tracker::test_support::{FakeBoard, repo_in, session_with};
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, ws) = crate::tracker::connect::tests::connected_tracker(&pg).await;
+            let (mine, shared) = (repo_in(&pg, ws).await, repo_in(&pg, ws).await);
+            let (mine_key, shared_key) =
+                (repo_key_of(&pg, mine).await, repo_key_of(&pg, shared).await);
+            // AUTH-2 sits in the active sprint 101: both sessions fall in its window.
+            for folder in [mine, shared] {
+                session_with(&pg, Some(folder), &["fix/AUTH-2-x"], &[]).await;
+            }
+            sync_tracker(
+                &pg,
+                &TrackerLocks::default(),
+                t,
+                &crate::tracker::jira::JiraAdapter,
+                &FakeBoard::standard(),
+                SYNC_DEADLINE,
+            )
+            .await
+            .unwrap();
+            sqlx_core::query::query(
+                "INSERT INTO sensei.personas (label, session_slot, verified_at) VALUES ('ztest-delivery', $1, now())
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(SLOT)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            let mut built = boards(&pg).await;
+            built.built.retain(|b| b.tracker_id == t);
+            built.failed.clear();
+            assert_eq!(built.built.len(), 1, "the synced sprint board is built");
+            let tenant = uuid::Uuid::new_v4().to_string();
+            let p = plan(vec![mapped(&mine_key, &tenant), mapped(&shared_key, &tenant)]);
+
+            let plane = StubPlane::default();
+            assert_eq!(
+                push_delivery(
+                    &pg,
+                    SLOT,
+                    "tok",
+                    &plane,
+                    &p,
+                    std::slice::from_ref(&mine_key),
+                    &built
+                )
+                .await
+                .unwrap(),
+                1
+            );
+            let body = plane.delivered.lock().unwrap()[0].clone();
+            let effort = &body["effort"];
+            let tickets = effort["tickets"].as_array().unwrap();
+            assert_eq!(tickets.len(), 1);
+            assert_eq!(
+                (tickets[0]["key"].as_str(), tickets[0]["values"]["sessions"].as_i64()),
+                (Some("AUTH-2"), Some(1))
+            );
+            assert_eq!(tickets[0]["repo_keys"], serde_json::json!([mine_key]));
+            let sprints = effort["sprints"].as_array().unwrap();
+            assert_eq!(sprints.len(), 1, "{effort}");
+            assert_eq!(sprints[0]["external_id"], "101");
+            assert_eq!(sprints[0]["values"]["sessions"], 1);
+            assert_eq!(sprints[0]["repo_keys"], serde_json::json!([mine_key]));
+            assert_eq!(effort["project"]["values"]["tokens"], serde_json::Value::Null);
+            assert_eq!(effort["project"]["reasons"]["tokens"], "no_usage");
+            assert!(
+                !body["effort"].to_string().contains(&shared_key),
+                "a shared repository's session travelled"
+            );
+
+            // A refusal marks both parts' hashes; neither goes again within the hour.
+            exec(&pg, "DELETE FROM sensei.tracker_push_marks WHERE tracker_id = $1", t).await;
+            let refusing = StubPlane {
+                delivery: Some(Err(DeliveryError::Refused { status: 400, body: "bad".into() })),
+                ..Default::default()
+            };
+            push_delivery(&pg, SLOT, "tok", &refusing, &p, std::slice::from_ref(&mine_key), &built)
+                .await
+                .unwrap();
+            let (refused,): (Vec<String>,) = sqlx_core::query_as::query_as(
+                "SELECT array_agg(part ORDER BY part) FROM sensei.tracker_push_marks
+                  WHERE tracker_id = $1 AND failed_hash IS NOT NULL AND hash IS NULL",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(refused, ["effort", "facts"]);
+            push_delivery(&pg, SLOT, "tok", &refusing, &p, std::slice::from_ref(&mine_key), &built)
+                .await
+                .unwrap();
+            assert_eq!(
+                refusing.delivered.lock().unwrap().len(),
+                1,
+                "a refused body waits for a change"
+            );
+        }
+
+        #[tokio::test]
+        async fn the_body_carries_the_persona_effort_and_a_changed_effort_alone_is_sent() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (t, _ws, key) = fixture(&pg).await;
+            let plane = StubPlane::default();
+            let p = plan(vec![mapped(&key, &uuid::Uuid::new_v4().to_string())]);
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1
+            );
+            let body = plane.delivered.lock().unwrap()[0].clone();
+            assert_eq!(body["effort"]["tickets"], serde_json::json!([]));
+            assert_eq!(body["effort"]["project"], serde_json::Value::Null);
+            let (persona,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "SELECT id FROM sensei.personas WHERE session_slot = $1",
+            )
+            .bind(SLOT)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(
+                body["effort"]["source"],
+                serde_json::json!(persona.to_string()),
+                "the install that pushed"
+            );
+            let (parts,): (Vec<String>,) = sqlx_core::query_as::query_as(
+                "SELECT array_agg(part ORDER BY part) FROM sensei.tracker_push_marks WHERE tracker_id = $1 AND hash IS NOT NULL",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(parts, ["effort", "facts"], "each part is acknowledged under its own mark");
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                0
+            );
+            exec(&pg, "UPDATE sensei.tracker_push_marks SET hash = 'before' WHERE tracker_id = $1 AND part = 'effort'", t).await;
+            assert_eq!(
+                push_delivery(&pg, SLOT, "tok", &plane, &p, &[], &boards(&pg).await).await.unwrap(),
+                1,
+                "the effort part alone was due: the board goes again"
+            );
         }
     }
 }

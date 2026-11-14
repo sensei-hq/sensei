@@ -13,6 +13,7 @@ pub mod claude;
 pub mod consent;
 pub mod copilot_cli;
 pub mod cursor;
+pub mod export;
 pub mod opencode;
 pub mod vscode;
 pub mod zed;
@@ -48,12 +49,29 @@ pub(crate) const INJECTED_MARKERS: &[&str] = &[
     "## Security Guidance",
 ];
 
-/// The human prompt text of a `user` record, or `None` if it's a tool result,
-/// a meta/injected message, or empty.
-pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
-    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
-        return None;
+/// Origins Claude Code labels a turn it started itself with (`turnOrigin`): a loop or
+/// cron tick, an agent's hand-back, a background task's notification, a continuation.
+/// Each starts an assistant turn that spends tokens (user, 2026-10-29).
+pub(crate) const AUTOMATED_ORIGINS: &[&str] =
+    &["scheduled", "task_notification", "peer", "auto_continuation"];
+
+/// The turn a `user` record starts — its origin and prompt text — or `None` when it
+/// starts none (a tool result, an injected skill body or notice, an empty prompt). A
+/// record labelled with an automated `turnOrigin` starts one with that origin; anything
+/// else is a turn only when it is a human prompt, as before origins were labelled.
+pub(crate) fn turn_start(v: &serde_json::Value) -> Option<(String, String)> {
+    if let Some(origin) = v.get("turnOrigin").and_then(|o| o.as_str())
+        && AUTOMATED_ORIGINS.contains(&origin)
+    {
+        let text = record_text(v).map(|t| t.trim().to_string()).unwrap_or_default();
+        return Some((origin.to_string(), text));
     }
+    human_prompt_text(v).map(|t| ("human".to_string(), t))
+}
+
+/// The text a `user` record carries — the string content, or its `text` blocks joined —
+/// or `None` for a tool result or a record without content.
+fn record_text(v: &serde_json::Value) -> Option<String> {
     let content = v.get("message").and_then(|m| m.get("content"))?;
     let text = match content {
         serde_json::Value::String(s) => s.clone(),
@@ -77,11 +95,42 @@ pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
         }
         _ => return None,
     };
+    Some(text)
+}
+
+/// The human prompt text of a `user` record, or `None` if it's a tool result,
+/// a meta/injected message, or empty.
+pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
+    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
+        return None;
+    }
+    let text = record_text(v)?;
     let trimmed = text.trim();
+    if let Some(command) = slash_command(trimmed) {
+        return Some(command);
+    }
     if trimmed.is_empty() || is_injected_noise(trimmed) {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+/// A slash command the person typed, as `/name args`: Claude Code records it as
+/// `<command-name>` and `<command-args>` tags, in either order alongside
+/// `<command-message>`. `None` when the text names no command.
+fn slash_command(text: &str) -> Option<String> {
+    let tag = |name: &str| {
+        let (open, close) = (format!("<{name}>"), format!("</{name}>"));
+        let start = text.find(&open)? + open.len();
+        let len = text[start..].find(&close)?;
+        Some(text[start..start + len].trim())
+    };
+    let name = tag("command-name").filter(|n| !n.is_empty())?;
+    let slash = if name.starts_with('/') { "" } else { "/" };
+    Some(match tag("command-args").filter(|a| !a.is_empty()) {
+        Some(args) => format!("{slash}{name} {args}"),
+        None => format!("{slash}{name}"),
+    })
 }
 
 /// Check whether a prompt string is injected noise (not a genuine human turn).
@@ -139,15 +188,13 @@ pub(crate) fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
     {
         return;
     }
-    let add = |slot: &mut Option<i64>, n: Option<i64>| {
-        if let Some(n) = n {
-            *slot = Some(slot.unwrap_or(0) + n);
-        }
-    };
-    add(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.cache_read, u.get("cache_read_input_tokens").and_then(|x| x.as_i64()));
-    add(&mut facts.cache_write, u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()));
+    add_reported(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
+    add_reported(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
+    add_reported(&mut facts.cache_read, u.get("cache_read_input_tokens").and_then(|x| x.as_i64()));
+    add_reported(
+        &mut facts.cache_write,
+        u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()),
+    );
 }
 
 /// Strip bulky prose/content from a record, keep metadata verbatim.
@@ -181,6 +228,10 @@ pub(crate) fn turn_attrs(v: &serde_json::Value, drop_keys: &[&str]) -> serde_jso
 #[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptTurn {
     pub turn_index: i32,
+    /// Who started the turn: `human`, or an automated origin (see [`AUTOMATED_ORIGINS`]).
+    pub origin: String,
+    /// The transcript's `promptId` — the hook's `prompt_id` for the same prompt.
+    pub prompt_id: Option<String>,
     pub user_text: Option<String>,
     pub assistant_text: String,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -204,6 +255,8 @@ impl Default for TranscriptTurn {
     fn default() -> Self {
         Self {
             turn_index: 0,
+            origin: "human".to_string(),
+            prompt_id: None,
             user_text: None,
             assistant_text: String::new(),
             started_at: None,
@@ -399,6 +452,21 @@ pub trait TranscriptAdapter: Send + Sync {
     }
 }
 
+/// Add a reported count to a total that stays unknown until something reports
+/// one (D83): `None` plus nothing is still `None`, never a measured-looking 0.
+/// The one accumulator every transcript adapter uses.
+pub(crate) fn add_reported<T: Copy + std::ops::Add<Output = T>>(
+    slot: &mut Option<T>,
+    n: Option<T>,
+) {
+    if let Some(n) = n {
+        *slot = Some(match *slot {
+            Some(total) => total + n,
+            None => n,
+        });
+    }
+}
+
 #[cfg(test)]
 #[derive(Debug, Default, PartialEq)]
 pub struct BackfillReport {
@@ -539,6 +607,13 @@ async fn ingest_one(
     // more, so the scope gate below can ignore it and record the skip.
     let has_row = pg.session_exists(&session_id).await?;
     if prose_fresh && !needs_synth && !needs_meta && has_row {
+        // The file is live (its stamp read) and in scope (its session has a
+        // row): advance its backup's sighting so retention never expires a
+        // present file. No content re-read — fresh means bytes unchanged.
+        // Best-effort, like every backup write: it must never fail the ingest.
+        if let Err(e) = pg.touch_transcript_raw(adapter.source(), key).await {
+            tracing::warn!(error = %e, source = adapter.source(), file = key, "transcript_raw: touch failed");
+        }
         return Ok(IngestOutcome::skipped());
     }
     // Adapter owns the read + its own oversize/format guards (returns None to skip).
@@ -595,6 +670,18 @@ async fn ingest_one(
             turns: turns as i32,
         })
         .await?;
+    }
+    // 1b. raw backup: the file's bytes as read, gzipped + keyed by sha, so a
+    // rotated file stays recoverable for the retention window. Re-reads via
+    // `load_content` — the parse above may have streamed without keeping the
+    // bytes — so units too large to hold whole simply get no backup.
+    // Best-effort: a backup failure warns and the ingest continues; the next
+    // tick retries.
+    if let Some(content) = adapter.load_content(key)
+        && let Err(e) =
+            pg.upsert_transcript_raw(adapter.source(), key, &session_id, content.as_bytes()).await
+    {
+        tracing::warn!(error = %e, source = adapter.source(), file = key, "transcript_raw: backup failed");
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
@@ -850,14 +937,18 @@ pub async fn backfill(
         tracing::error!(error = %e, "transcript backfill: consent unreadable; reading no transcripts");
         std::collections::HashSet::new()
     });
-    // Once: re-read Claude transcripts ingested before each response was counted
-    // once (session-api-cost C6). A failure retries on the next backfill.
-    match pg.reset_claude_watermarks_once().await {
-        Ok(true) => {
-            tracing::info!("transcript backfill: re-reading Claude transcripts once (messages_v1)")
+    // Once per rule change: re-read the transcripts ingested under the old rule.
+    // A failure retries on the next backfill.
+    for &(done, sources, why) in WATERMARK_RESETS {
+        match pg.reset_watermarks_once(done, sources).await {
+            Ok(true) => {
+                tracing::info!(done, why, "transcript backfill: re-reading transcripts once")
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, done, "transcript backfill: watermark reset failed")
+            }
         }
-        Ok(false) => {}
-        Err(e) => tracing::warn!(error = %e, "transcript backfill: messages_v1 reset failed"),
     }
     let (files_seen, enqueued) = dispatch(queue, parent, since, &consented).await;
     let sessions_repaired = repair_sessions(pg).await;
@@ -923,6 +1014,26 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
     }
     repaired
 }
+
+/// The rule changes that re-read transcripts once: (config key set when done,
+/// sources re-read, why).
+const WATERMARK_RESETS: &[(&str, &[&str], &str)] = &[
+    (
+        "transcripts.messages_v1",
+        &["claude_code"],
+        "each response counted once (session-api-cost C6)",
+    ),
+    (
+        "transcripts.slash_prompts_v1",
+        &["claude_code", "cursor"],
+        "a slash command is a prompt (decisions 2026-10-28)",
+    ),
+    (
+        "transcripts.turn_origins_v1",
+        &["claude_code"],
+        "an automated prompt is a turn, labelled with its origin (user, 2026-10-29)",
+    ),
+];
 
 /// Scan all adapters and enqueue one `IngestCapture` task per
 /// transcript. Returns `(files_seen, enqueued)`. Each per-file task does the
@@ -1013,6 +1124,19 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Claude Code transcripts read before automated prompts were turns are read once
+    /// more, so their scheduled, peer and task-notification turns — and tokens — land.
+    #[test]
+    fn claude_transcripts_are_re_read_once_for_automated_turns() {
+        assert!(
+            WATERMARK_RESETS
+                .iter()
+                .any(|&(done, sources, _)| done == "transcripts.turn_origins_v1"
+                    && sources == ["claude_code"]),
+            "no once-only re-read for turn origins"
+        );
+    }
 
     /// #280: a backfill's repair pass brings existing sessions to their turn sums.
     /// A fully-ingested transcript is skipped as fresh, so without this pass a
@@ -1129,6 +1253,91 @@ mod tests {
         );
 
         consent::set(ctx.pg(), "claude_code", false).await.unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The live-file guarantee: a present file's raw backup must never expire
+    /// while the file is there. The first ingest captures the bytes; the second
+    /// ingest skips as fresh — and that skip still advances the backup's
+    /// sighting, without re-reading content (fresh ⇒ bytes unchanged).
+    ///
+    /// Mutation that must break this: drop the touch on the fresh-skip path.
+    #[tokio::test]
+    async fn a_fresh_skip_advances_the_raw_backup_sighting() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let dir = std::env::temp_dir().join(format!("sensei-rawtouch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sid = format!("_test-rawtouch-{}", uuid::Uuid::new_v4());
+        let file = dir.join(format!("{sid}.jsonl"));
+        std::fs::write(&file, SAMPLE).unwrap();
+        let key = file.to_string_lossy().to_string();
+        sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ($1)")
+            .bind(&sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        // One hook-captured event: the session needs no synthesis, so the
+        // second ingest reaches the fresh-skip path instead of the content one.
+        sqlx_core::query::query(
+            "INSERT INTO activity.assistant_events (session_id, event_type, ts) VALUES ($1, 'prompt', 0)",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let adapter = claude::ClaudeAdapter::new(dir.clone());
+        let backed_up = || async {
+            let (n,): (i64,) = sqlx_core::query_as::query_as(
+                "SELECT count(*) FROM activity.transcript_raw WHERE source = 'claude_code' AND file_path = $1",
+            )
+            .bind(&key)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            n
+        };
+
+        let first = ingest_one(&pg, &adapter, &key).await.unwrap();
+        assert!(!first.skipped && first.turns > 0, "first ingest captures turns");
+        assert_eq!(backed_up().await, 1, "first ingest captures the raw bytes");
+        sqlx_core::query::query(
+            "UPDATE activity.transcript_raw SET last_seen_at = now() - interval '10 days'
+              WHERE source = 'claude_code' AND file_path = $1",
+        )
+        .bind(&key)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let second = ingest_one(&pg, &adapter, &key).await.unwrap();
+        assert!(second.skipped, "unchanged file skips as fresh");
+        let (seen,): (chrono::DateTime<chrono::Utc>,) = sqlx_core::query_as::query_as(
+            "SELECT last_seen_at FROM activity.transcript_raw
+                  WHERE source = 'claude_code' AND file_path = $1",
+        )
+        .bind(&key)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(
+            seen > chrono::Utc::now() - chrono::Duration::days(9),
+            "the fresh skip advanced the sighting ({seen})"
+        );
+
+        for sql in [
+            "DELETE FROM activity.transcript_turns WHERE session_id = $1",
+            "DELETE FROM activity.assistant_events WHERE session_id = $1",
+            "DELETE FROM activity.sessions WHERE client_session_id = $1",
+        ] {
+            sqlx_core::query::query(sql).bind(&sid).execute(pg.pool()).await.ok();
+        }
+        sqlx_core::query::query(
+            "DELETE FROM activity.transcript_raw WHERE source = 'claude_code' AND file_path = $1",
+        )
+        .bind(&key)
+        .execute(pg.pool())
+        .await
+        .ok();
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -334,6 +334,7 @@ pub struct SchemaRow {
     pub columns: Vec<SchemaColumn>,
     pub indexes: Vec<SchemaIndex>,
     pub refs: Vec<SchemaRefRow>,
+    pub enum_values: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -357,6 +358,7 @@ impl SchemaRow {
             columns,
             indexes,
             refs,
+            enum_values,
         } = fact;
         Self {
             fqn: fqn.as_str().to_string(),
@@ -377,6 +379,7 @@ impl SchemaRow {
                     on_delete: r.on_delete,
                 })
                 .collect(),
+            enum_values: enum_values.clone(),
         }
     }
 
@@ -397,6 +400,7 @@ impl SchemaRow {
             columns,
             indexes,
             refs,
+            enum_values,
         } = stored;
         let label = |what: &str, value: &str| format!("{fqn}: unknown {what} label {value:?}");
         let refs = refs
@@ -427,6 +431,7 @@ impl SchemaRow {
             columns,
             indexes,
             refs,
+            enum_values,
         })
     }
 }
@@ -2618,6 +2623,7 @@ public class ShopContext : DbContext {
                 ],
                 indexes: vec![],
                 refs: vec![],
+                enum_values: Vec::new(),
             },
             SchemaFact {
                 fqn: orders,
@@ -2646,6 +2652,7 @@ public class ShopContext : DbContext {
                     to_column: "id".into(),
                     on_delete: Some(FkAction::Cascade),
                 }],
+                enum_values: Vec::new(),
             },
         ];
         facts

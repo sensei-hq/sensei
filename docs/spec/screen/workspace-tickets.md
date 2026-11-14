@@ -8,9 +8,10 @@
 - `app/src/routes/(workspace)/workspace/[id]/tickets/+page.svelte`
 - `tickets-state.svelte.ts` (state, words, actions) and `TicketsScreen.svelte` (template)
 - the sidebar entry `{ id: 'tickets', kanji: '札', label: 'Tickets' }` in
-  `workspace-sidebar-view.ts` `SECTIONS`, after `impact` and before `integrations`
+  `workspace-sidebar-view.ts` `SECTIONS`, after `impact` and before `delivery` (Delivery Metrics)
 - `app/src/lib/api.ts` wrappers: `tryListTrackers`, `tryListSprints`, `tryListTrackerTasks`,
-  `tryGetBacklog`, `tryListBacklogTasks`, `tryGetTrackerTask`, `tryListUnlinkedSessions`
+  `tryGetBacklog`, `tryListBacklogTasks`, `tryGetTrackerTask`, `tryListUnlinkedSessions`,
+  `tryGetReasonCodes` (SDLC figures, below)
 
 **Daemon contract:** [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md)
 R7 (usage), R8 (per board: `GET …/trackers/{tracker}/sprints`, `…/tasks[?sprint=|?backlog=true]`,
@@ -34,6 +35,35 @@ This section overrides the single-board text below (spec `docs/spec/tracker-leve
   no sprint board connected." with the link to Integrations. **Any lane's read failing** (its sprints
   or its backlog) is the daemon-error state; a lane is never silently missing.
 
+## SDLC figures (spec `docs/spec/daemon/tracker-sdlc-metrics.md` S6, S8; 2026-10-31)
+
+The daemon puts `sdlc` on each ticket and sprint and `sdlc_project` on each board. Every
+`null` figure carries a reason code in `sdlc.reasons`. The screen shows the code's
+`summary` from `GET /api/reason-codes/sdlc_metrics`, read with the boards in `load()`.
+**A failed vocabulary read is the daemon-error state**, so a bare code is never shown. A
+code the vocabulary lacks is a vocabulary fault and shows "Reason not recognised", never "—"
+or the code. "—" is only for a null with no reason at all.
+
+- **Ticket detail → "SDLC"** (`data-section="sdlc"`), after the Time line, in four rows
+  (`data-sdlc-row=cost|defects|timing|rework`). Each figure is a label and a value
+  (`data-sdlc=<key>`), or the reason's summary when the value is null:
+  - **Cost:** AI token cost (`ai_token_cost`), cost per prompt cycle, effort cost; `$1.50`.
+  - **Defects:** compile, test, review, escaped task. With `runs_unknown > 0`, all four show
+    "≥ n", because they are lower bounds (S6). An unknown run can hide a build or test
+    failure, an escaped task defect needs one, and review defects include escapes. The row
+    then ends with "n runs with unknown outcome".
+  - **Timing:** execution time and lead time (hours as `compactDuration`); on hold (minutes,
+    with "×n" holds); on-hold ratio (`33%`).
+  - **Rework:** rework time, rework cycles, post-review rework (`12%`).
+- **No lane header row.** Each sprint's and board's own figures moved to Delivery Metrics
+  (`docs/spec/daemon/tracker-delivery-metrics.md` D2, B3, 2026-11-04); a lane shows no
+  `[data-sdlc-lane]`.
+- **A link opens one ticket:** `/workspace/[id]/tickets?board=<tracker id>&ticket=<key>` opens
+  that ticket after load, from its board's lane (else the first lane); Back names that lane. An
+  unknown key shows the ticket error. Delivery Metrics' ticket rows link here.
+- Percents round to a whole number and points to one decimal. A real `0` shows as `0%`,
+  `0 pts` or `0`; it is never confused with a null.
+
 ## Purpose
 
 The day-to-day view of the project's tracker: **which sprint, which tickets, and how
@@ -42,15 +72,18 @@ tickets by key (R6). Connecting the board is the Integrations screen's job; this
 only reads.
 
 **Eyebrow:** `札 · TICKETS`. **Header:** the board name (`board_name`, else
-`board #<board_ref>`). **Sub-line:** "Active AI time and tokens per sprint and ticket,
-from AI sessions whose branch or prompt names the ticket. Read from Jira; nothing is
-changed there."
+`board #<board_ref>`). **Sub-line:** "Active AI time and tokens per ticket and sprint,
+from AI sessions whose branch or prompt names the ticket. Read from the connected
+tracker. On Jira tickets assigned to you, sensei writes these numbers back, as set on
+Integrations." (Superseded 2026-10-26 by tracker-metrics-writeback W-UI, and 2026-11-07
+by `tracker-gitlab.md`, which made the copy kind-neutral; the screen itself still calls
+no write route.)
 
 ## States
 
 **Loading.** "Reading tickets…".
 
-**Not connected** (`GET …/sprints` → 404 `not_connected`): "This workspace has no tracker
+**Not connected** (`GET …/sprints` → 404 `not_connected`): "This workspace has no sprint board
 connected." and a link **Connect one in Integrations** → `/workspace/[id]/integrations`.
 Never shown for a failed read.
 
@@ -71,7 +104,8 @@ message (same words as the Integrations screen's table; one shared mapping) and 
      sessions, **active AI time**, fresh tokens; **Not linked** is a button when > 0 and
      opens those sessions, each linking to the replay. Without a window, one line:
      `not_started` → "Not started. Usage counts from the sprint's start."; `no_dates` →
-     "Jira has no dates for this sprint, so its sessions can't be placed in it." Never zeros.
+     "The tracker has no dates for this sprint, so its sessions can't be placed in it." (an
+     undated GitLab milestone reads this too). Never zeros.
    - the Backlog: "N tickets in no sprint", then one part — **Linked to backlog
      tickets** — all-time (the backlog has no window), each session once.
 3. **Ticket table** (`GET …/tracker-tasks`, `?sprint=<id>`, or `?backlog=true`): ticket
@@ -105,7 +139,7 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 
 ## Done gate
 
-1. Sidebar shows **Tickets** (札) between Impact and Integrations; the route renders.
+1. Sidebar shows **Tickets** (札) between Impact and Delivery Metrics; the route renders.
 2. A connected project lists every ticket first, each naming its sprint (or Backlog);
    the sprint filter offers All tickets, each sprint and Backlog, searchable by typing;
    choosing one loads its tickets and its usage strip; the AI-only switch narrows the list.
@@ -122,6 +156,20 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 8. A ticket row shows its cycle time; its detail shows Claude / you adding up to the
    active AI time, the session time, and the cycle time with its first and last dates.
    A ticket whose sessions have no hook events shows "—" for each, never `0m`.
+9. **SDLC.**
+   - A ticket's detail shows the four SDLC rows. A null figure shows its reason's summary
+     (e.g. `no_sessions` → its summary text), never `0`, a bare code or "null".
+   - With `runs_unknown = 2`, each of the four defect counts shows "≥ n" (`compile_defects = 1`
+     shows "≥ 1") and the row says "2 runs with unknown outcome". With `runs_unknown = 0`,
+     there is no "≥" and no note.
+   - No lane shows an SDLC row (moved to Delivery Metrics).
+   - On a GitLab or GitHub board, a ticket's estimate shows the summary of
+     `unsupported_by_tracker` ("Not available from this tracker"), never `history_pending`
+     or `not_synced` (`tracker-gitlab.md` §G8, `tracker-github.md` §H6).
+   - `?board=t-1&ticket=AUTH-2` opens AUTH-2 with "Back to …"; an unknown key shows the
+     ticket error.
+   - The reason vocabulary failing to load is the daemon-error state with Retry.
+   - Tests: state spec and component spec.
 
 ## Wrong gate
 
@@ -130,10 +178,13 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 - A sprint total computed by adding its tickets.
 - "hours" or "time spent" without "active AI time".
 - A cycle time computed by adding session times, or session time by adding active times.
-- Any assignee, author or other person attribute shown.
-- Any request that changes Jira, or any write route called from this screen.
+- Any assignee, author or other person attribute shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
+- Any request that changes the tracker, or any write route called from this screen.
+- "Jira" named for a GitLab or GitHub board's sprints or tickets.
+- An SDLC figure shown as `0`, `0%` or "—" when the daemon gave a reason. A reason shown
+  as its raw code. A defect count without "≥" while runs are unknown. A sprint or board SDLC row on this screen.
 
 ## Related
 
-- Connection: [`project-integrations.md`](project-integrations.md)
+- Connection: [`project-integrations.md`](workspace-integrations.md)
 - Daemon: [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md)

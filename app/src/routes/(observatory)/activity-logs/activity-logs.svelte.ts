@@ -8,8 +8,22 @@
 // Everything here is pure and unit-tested except `ActivityLogsView`, the tiny
 // mutable surface the search box and row toggles bind to.
 
+import { failureNotice } from '@sensei/ui';
 import type { LogRow, LogLevel, ScheduledTask } from '$lib/types.js';
 import { failureReason, type ApiResult } from '$lib/api.js';
+
+/** The two reads this screen makes, as the page needs them — structural, so the
+ *  loader and the notices' Retry can share one read without the whole api. */
+export interface LogsApi {
+  tryGetLogs: (q: {
+    level?: string;
+    source?: string;
+    module?: string;
+    since?: string;
+    limit?: number;
+  }) => Promise<ApiResult<LogRow[]>>;
+  tryGetScheduledTasks: () => Promise<ApiResult<{ tasks: ScheduledTask[] }>>;
+}
 
 /** Known severity levels, most→least severe last for the picker order. */
 export const LEVELS: LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'];
@@ -82,17 +96,17 @@ export function buildLogsQuery(filters: LogFilters): string {
 export function levelTone(level: string): { text: string; bg: string } {
   switch (level) {
     case 'error':
-      return { text: 'text-error', bg: 'bg-error-soft' };
+      return { text: 'text-on-error-soft', bg: 'bg-error-soft' };
     case 'warn':
-      return { text: 'text-warning', bg: 'bg-warning-soft' };
+      return { text: 'text-on-warning-soft', bg: 'bg-warning-soft' };
     case 'info':
-      return { text: 'text-info', bg: 'bg-info-soft' };
+      return { text: 'text-on-info-soft', bg: 'bg-info-soft' };
     case 'debug':
-      return { text: 'text-ink-soft', bg: 'bg-paper-mute' };
+      return { text: 'text-ink-mute', bg: 'bg-paper-mute' };
     case 'trace':
       return { text: 'text-ink-faint', bg: 'bg-paper-mute' };
     default:
-      return { text: 'text-ink-mute', bg: 'bg-paper-mute' };
+      return { text: 'text-ink-soft', bg: 'bg-paper-mute' };
   }
 }
 
@@ -184,10 +198,10 @@ export function distinctModules(rows: LogRow[], active: string): string[] {
   return [...set].sort();
 }
 
-/** Client-only view state: the search box + which row's payload is expanded.
- *  All server filters live in the URL, not here. */
+/** Client-only view state: which row's payload is expanded. The search is the
+ *  shell's own field (D87, contract §6), so it lives in the shell's filter;
+ *  the server filters live in the URL. */
 export class ActivityLogsView {
-  search = $state('');
   expandedId = $state<string | null>(null);
 
   toggle(id: string): void {
@@ -199,20 +213,130 @@ export class ActivityLogsView {
   }
 }
 
-/** The Logs page's data from its two reads. A failed read carries its error —
- *  "could not read" — instead of an empty list that reads as "there is none". */
+/** The log read, from the filters the URL carries. The loader (`+page.ts`) and
+ *  the log notice's Retry both call this, so the filters→query mapping exists
+ *  once: a Retry asks for exactly what the loader asked for. */
+export function readLogs(api: Pick<LogsApi, 'tryGetLogs'>, filters: LogFilters) {
+  return api.tryGetLogs({
+    level: filters.level || undefined,
+    source: filters.source || undefined,
+    module: filters.module || undefined,
+    since: filters.since,
+    limit: filters.limit,
+  });
+}
+
+/** The background-worker registry (#96) — the loader's second read, and the
+ *  tasks notice's Retry, which re-reads only this (not the log). */
+export function readTasks(api: Pick<LogsApi, 'tryGetScheduledTasks'>) {
+  return api.tryGetScheduledTasks();
+}
+
+/** What one log read decides, and only that: a failed read carries its error —
+ *  "could not read" — instead of an empty list that reads as "there is none".
+ *  The Retry writes this half back over the page's data. */
+export function rowsPageData(rows: ApiResult<LogRow[]>, filters: LogFilters) {
+  const logRows = rows.ok ? rows.data : [];
+  const why = rows.ok ? null : failureReason(rows.error);
+  return {
+    // Rendered through the shared Notice (packages/ui/notice.js).
+    rowsNotice: failureNotice("Couldn't read the log", why),
+    rows: logRows,
+    rowsError: rows.ok ? null : `Could not read the log: ${why}`,
+    filters,
+    capped: logRows.length >= filters.limit,
+  };
+}
+
+/** The tasks half, for the loader and for the tasks notice's own Retry. */
+export function tasksPageData(scheduled: ApiResult<{ tasks: ScheduledTask[] }>) {
+  const why = scheduled.ok ? null : failureReason(scheduled.error);
+  return {
+    tasksNotice: failureNotice("Couldn't read the background tasks", why),
+    tasks: scheduled.ok ? scheduled.data.tasks : [],
+    tasksError: scheduled.ok ? null : `Could not read the background tasks: ${why}`,
+  };
+}
+
+/** The Logs page's data from its two reads. */
 export function logsPageData(
   rows: ApiResult<LogRow[]>,
   scheduled: ApiResult<{ tasks: ScheduledTask[] }>,
   filters: LogFilters,
 ) {
-  const logRows = rows.ok ? rows.data : [];
-  return {
-    rows: logRows,
-    rowsError: rows.ok ? null : `Could not read the log: ${failureReason(rows.error)}`,
-    filters,
-    capped: logRows.length >= filters.limit,
-    tasks: scheduled.ok ? scheduled.data.tasks : [],
-    tasksError: scheduled.ok ? null : `Could not read the background tasks: ${failureReason(scheduled.error)}`,
-  };
+  return { ...rowsPageData(rows, filters), ...tasksPageData(scheduled) };
+}
+
+/** What the page draws: each half as its own read decided it. */
+export type LogsPageData = ReturnType<typeof logsPageData>;
+
+/** The screen's mutable state, as `ExtensionsState` keeps settings' own: what
+ *  the loader answered, and what a notice's Retry re-read since. The two reads
+ *  are independent halves — each Retry writes back only its own, so a failed
+ *  log re-read cannot take the workers away with it (or the reverse).
+ *
+ *  A navigation replaces the whole thing, and it is the last word: the filters
+ *  live in the URL, so a Retry that was still reading when the reader navigated
+ *  is reading under filters they have left. `setData` bumps a generation and
+ *  each Retry throws its own answer away if the generation moved while it was
+ *  out — otherwise the old rows would land under the new filters' labels. */
+export class LogsScreen {
+  shown = $state<LogsPageData>({
+    rows: [],
+    rowsNotice: null,
+    rowsError: null,
+    filters: DEFAULT_FILTERS,
+    capped: false,
+    tasks: [],
+    tasksNotice: null,
+    tasksError: null,
+  });
+  /** A read is in flight, so a second press joins it rather than starting
+   *  another. A guard, not decoration. */
+  readingLogs = $state(false);
+  readingTasks = $state(false);
+  /** Bumped by every navigation; a read captured an older one is stale. Not
+   *  `$state`: nothing draws it, it only decides who may write. */
+  #gen = 0;
+
+  constructor(data: LogsPageData) {
+    this.setData(data);
+  }
+
+  /** The loader's answer — a navigation wins over whatever a Retry has in
+   *  flight, not only over one that already landed. */
+  setData(data: LogsPageData): void {
+    this.#gen += 1;
+    this.shown = data;
+  }
+
+  /** Re-read the log through the loader's own read, with the filters the reader
+   *  chose; only the log half of what is shown changes. */
+  async retryLogs(api: Pick<LogsApi, 'tryGetLogs'>): Promise<void> {
+    if (this.readingLogs) return;
+    this.readingLogs = true;
+    const gen = this.#gen;
+    try {
+      const rows = await readLogs(api, this.shown.filters);
+      if (gen !== this.#gen) return;
+      this.shown = { ...this.shown, ...rowsPageData(rows, this.shown.filters) };
+    } finally {
+      this.readingLogs = false;
+    }
+  }
+
+  /** Re-read the worker registry only: the rows the reader is looking at, and
+   *  which row they expanded, stay exactly as they are. */
+  async retryTasks(api: Pick<LogsApi, 'tryGetScheduledTasks'>): Promise<void> {
+    if (this.readingTasks) return;
+    this.readingTasks = true;
+    const gen = this.#gen;
+    try {
+      const tasks = await readTasks(api);
+      if (gen !== this.#gen) return;
+      this.shown = { ...this.shown, ...tasksPageData(tasks) };
+    } finally {
+      this.readingTasks = false;
+    }
+  }
 }

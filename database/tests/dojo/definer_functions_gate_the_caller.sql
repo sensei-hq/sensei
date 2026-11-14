@@ -63,15 +63,16 @@ declare
       'add_team_member','administers_repository','administers_team','administers_workspace',
       'attach_run_to_workspace','can_read_repository','can_read_repository_metric','can_read_workspace',
       'clear_repository_role_override','create_team','current_principal_id','delete_team',
-      'file_graph_slices','file_metric_rows','file_repository_workspace','grant_workspace_viewer',
+      'file_delivery','file_delivery_facts','file_graph_slices','file_metric_rows','file_repository_workspace','grant_workspace_viewer',
       'grant_workspace_viewer_to_team','graph_file_hashes','is_dojo_viewer','is_member',
       'is_workspace_viewer','leads_team_member','my_adopted_pack_slugs','my_graph_branches',
-      'my_repositories','owns_membership','peer_run_status','register_repository',
+      'my_repositories','org_repositories','owns_membership','peer_run_status','register_repository',
       'remove_dojo_viewer','remove_team_member','rename_team','repo_role_at_least',
       'revoke_workspace_viewer','set_graph_branch','set_metric_activation','set_pack_adoption',
       'set_repository_election','set_repository_role_override','team_metric_totals',
       'team_tenant_member','tenant_live_session_count','tenant_pack_rules','tenant_role_at_least',
-      'tenant_shared_rules','workspace_in_my_dojo_or_none'];
+      'tenant_shared_rules','workspace_activity','workspace_delivery_boards','workspace_delivery_sprints',
+      'workspace_delivery_tickets','withdraw_delivery','workspace_in_my_dojo_or_none','workspace_metric_series'];
     unlisted text;
     gone text;
 begin
@@ -89,6 +90,18 @@ begin
     if gone is not null then raise exception 'listed but no longer defined: %', gone; end if;
 end
 $$;
+
+insert into dojo.delivery_boards (id, tenant_id, workspace_id, board_key, kind, name, reported_by, pending_tickets) values
+  ('f2000000-0000-4000-8000-0000000000a1', 'b0000000-0000-4000-8000-0000000000a1', 'c0000000-0000-4000-8000-0000000000a1',
+   repeat('a1', 32), 'jira', 'B', 'a0000000-0000-4000-8000-0000000000a1', 0);
+insert into dojo.delivery_sprints (board_id, external_id, seq, name, state, removed) values
+  ('f2000000-0000-4000-8000-0000000000a1', '1', 1, 'S', 'active', false);
+insert into dojo.delivery_tickets (board_id, key, title, sprints) values
+  ('f2000000-0000-4000-8000-0000000000a1', 'A-1', 'alice''s ticket', '{1}');
+insert into dojo.delivery_effort (board_id, item_kind, item_ref, principal_id, source, repository_ids, "values", reasons) values
+  ('f2000000-0000-4000-8000-0000000000a1', 'ticket', 'A-1', 'a0000000-0000-4000-8000-0000000000a1',
+   '5a000000-0000-4000-8000-0000000000a1',
+   '{90000000-0000-4000-8000-0000000000a1}', '{"sessions": 1, "worked_ms": 60000}', '{}');
 
 -- ── A fingerprint of every dojo table, as the owner ───────────────────────
 create temp table definer_snap (phase text, tbl text, h text);
@@ -129,6 +142,9 @@ declare
     carol constant text := '''a0000000-0000-4000-8000-0000000000c1''::uuid';
     mid constant text := '''e0000000-0000-4000-8000-0000000000a1''::uuid';
     rkey constant text := '''github.com/ztest-definer/r''';
+    board constant text := '''f2000000-0000-4000-8000-0000000000a1''::uuid';
+    facts constant text := format('''{"board_key":"%s","kind":"jira","board_name":"bob was here","facts":{"pending_tickets":0,"history_at":"2099-01-01T00:00:00Z","sprints":[],"tickets":[]}}''::jsonb',
+                                  repeat('a1', 32));
     metric_key constant text := quote_literal(current_setting('definer_test.metric_key'));
     rows constant text := format('''[{"repository_id":"90000000-0000-4000-8000-0000000000a1","metric_id":"%s","computed_on":"2026-01-02","value":9}]''::jsonb',
                                  current_setting('definer_test.metric_id'));
@@ -167,10 +183,16 @@ begin
         'dojo.my_adopted_pack_slugs()',
         'dojo.my_graph_branches()',
         'dojo.my_repositories()',
+        format('dojo.org_repositories(%s)', t),
         format('dojo.peer_run_status(%s)', t),
         format('dojo.team_metric_totals(%s, array[%s], ''2000-01-01'')', t, metric_key),
         format('dojo.tenant_pack_rules(%s, null)', t),
-        format('dojo.tenant_shared_rules(%s, 0)', t)] loop
+        format('dojo.tenant_shared_rules(%s, 0)', t),
+        format('dojo.workspace_activity(array[%s])', w),
+        format('dojo.workspace_metric_series(%s, ''2000-01-01'')', w),
+        format('dojo.workspace_delivery_boards(%s)', w),
+        format('dojo.workspace_delivery_sprints(%s, %s, 100, 0)', w, board),
+        format('dojo.workspace_delivery_tickets(%s, %s, null, false, 100, 0)', w, board)] loop
         begin
             execute format('select count(*) from %s', call) into n;
             if n > 0 then insert into definer_leaks values (call, n || ' row(s)'); end if;
@@ -195,6 +217,11 @@ begin
         format('dojo.create_team(%s, ''bob''''s'')', t),
         format('dojo.delete_team(%s)', tm),
         format('dojo.file_graph_slices(%s, ''{}''::jsonb, ''[]''::jsonb, ''{}''::jsonb)', r),
+        format('dojo.file_delivery_facts(%s, array[%s], %s)', t, rkey, facts),
+        -- alice's board and install: bob removes nothing of hers
+        format('dojo.withdraw_delivery(%s, %L, %L)', t, repeat('a1', 32), '5a000000-0000-4000-8000-0000000000a1'),
+        format('dojo.file_delivery(%s, array[%s], %s, %s)', t, rkey, facts,
+               '''{"source":"5a000000-0000-4000-8000-000000000001","project":null,"sprints":[],"tickets":[]}''::jsonb'),
         format('dojo.file_metric_rows(%s)', rows),
         format('dojo.file_repository_workspace(%s, ''bobs'', ''bobs'')', r),
         format('dojo.grant_workspace_viewer(%s, %s)', w, bob),
@@ -237,6 +264,7 @@ declare
     tm constant text := '''d0000000-0000-4000-8000-0000000000a1''::uuid';
     alice constant text := '''a0000000-0000-4000-8000-0000000000a1''::uuid';
     mid constant text := '''e0000000-0000-4000-8000-0000000000a1''::uuid';
+    board constant text := '''f2000000-0000-4000-8000-0000000000a1''::uuid';
 begin
     for who in select * from (values
         ('a1000000-0000-4000-8000-0000000000a1', array[
@@ -248,10 +276,18 @@ begin
             format('dojo.repo_role_at_least(%s, ''contributor'')', r), format('dojo.team_tenant_member(%s)', tm),
             format('dojo.tenant_role_at_least(%s, ''contributor'')', t),
             format('dojo.workspace_in_my_dojo_or_none(%s)', w)],
-         array[format('dojo.peer_run_status(%s)', t), 'dojo.my_repositories()']),
+         array[format('dojo.peer_run_status(%s)', t), 'dojo.my_repositories()',
+            format('dojo.org_repositories(%s)', t),
+            format('dojo.workspace_activity(array[%s])', w),
+            format('dojo.workspace_metric_series(%s, ''2000-01-01'')', w),
+            format('dojo.workspace_delivery_boards(%s)', w),
+            format('dojo.workspace_delivery_sprints(%s, %s, 100, 0)', w, board),
+            format('dojo.workspace_delivery_tickets(%s, %s, null, false, 100, 0)', w, board)]),
         ('a1000000-0000-4000-8000-0000000000c1', array[
             format('dojo.is_dojo_viewer(%s)', t), format('dojo.is_workspace_viewer(%s)', w)],
-         array[]::text[])) as v(sub, yes, rows) loop
+         array[format('dojo.workspace_activity(array[%s])', w),
+            format('dojo.workspace_metric_series(%s, ''2000-01-01'')', w),
+            format('dojo.workspace_delivery_boards(%s)', w)])) as v(sub, yes, rows) loop
         perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', who.sub), true);
         foreach call in array who.yes loop
             execute 'select ' || call into b;

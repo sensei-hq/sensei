@@ -1,7 +1,7 @@
 //! Provider-neutral linking inputs (spec R5 step 3): which keys can link, and to
 //! which task. Matching text against them is the adapter's `match_links`.
 
-use crate::tracker::{KnownTask, TaskRow};
+use crate::tracker::{KnownTask, Link, LinkSource, SessionText, TaskRow};
 
 /// One stored key alias of a task, with what the tie-break needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +57,74 @@ pub fn known_tasks(stored: &[StoredAlias], snapshot: &[TaskRow]) -> Vec<KnownTas
         .collect()
 }
 
+/// Pure: the session's links, from the `(task external id, alias as found)` pairs
+/// `tasks_in` reports for each branch and each prompt, one pair per occurrence
+/// (spec R6). A branch counts once per task; a prompt counts every occurrence. A
+/// link's `matched_key` is its most-found alias, preferring the task's current key,
+/// then the lowest. Shared by every adapter's `match_links`; finding keys is theirs.
+pub fn tally_links<'a>(
+    session: &SessionText,
+    known: &'a [KnownTask],
+    tasks_in: impl Fn(&str, LinkSource) -> Vec<(&'a str, String)>,
+) -> Vec<Link> {
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    // (task, source) → alias → mentions.
+    let mut tally: BTreeMap<(&str, LinkSource), BTreeMap<String, u32>> = BTreeMap::new();
+    let mut branch_hits: HashMap<&str, u32> = HashMap::new();
+    let branches: BTreeSet<&str> = session.branches.iter().map(String::as_str).collect();
+    for branch in branches {
+        // A branch counts once per task, and once per alias it carries.
+        let found: BTreeSet<(&str, String)> =
+            tasks_in(branch, LinkSource::Branch).into_iter().collect();
+        let tasks: BTreeSet<&str> = found.iter().map(|(t, _)| *t).collect();
+        for t in tasks {
+            *branch_hits.entry(t).or_default() += 1;
+        }
+        for (t, k) in found {
+            *tally.entry((t, LinkSource::Branch)).or_default().entry(k).or_default() += 1;
+        }
+    }
+    for prompt in &session.prompts {
+        for (t, k) in tasks_in(prompt, LinkSource::Prompt) {
+            *tally.entry((t, LinkSource::Prompt)).or_default().entry(k).or_default() += 1;
+        }
+    }
+    let current: HashMap<&str, &str> = known
+        .iter()
+        .filter(|k| k.current)
+        .map(|k| (k.external_id.as_str(), k.key.as_str()))
+        .collect();
+
+    tally
+        .into_iter()
+        .map(|((task, source), aliases)| {
+            let cur = current.get(task).copied();
+            let (matched_key, _) = aliases
+                .iter()
+                .max_by(|(ka, na), (kb, nb)| {
+                    na.cmp(nb)
+                        .then_with(|| (Some(ka.as_str()) == cur).cmp(&(Some(kb.as_str()) == cur)))
+                        .then_with(|| kb.cmp(ka))
+                })
+                .expect("a tallied task has an alias");
+            let mentions = match source {
+                LinkSource::Branch => branch_hits.get(task).copied().unwrap_or(0),
+                LinkSource::Prompt => aliases.values().sum(),
+                // The tally above holds branch and prompt hits only: a fetch link
+                // is written by `get_ticket`, never found by key matching.
+                LinkSource::Fetch => unreachable!("key matching never tallies a fetch link"),
+            };
+            Link {
+                session_id: session.session_id,
+                task_external_id: task.to_string(),
+                source,
+                matched_key: matched_key.clone(),
+                mentions,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +149,8 @@ mod tests {
             summary: None,
             issue_type: None,
             status: None,
+            assignee: None,
+            ..Default::default()
         }
     }
 

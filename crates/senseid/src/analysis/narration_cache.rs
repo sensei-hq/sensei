@@ -294,50 +294,8 @@ pub fn facts_hash(kind: InsightKind, facts: &serde_json::Value) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(kind.as_str().as_bytes());
-    hasher.update(canonical_json(facts).as_bytes());
+    hasher.update(crate::canonical_json::canonical_json(facts).as_bytes());
     hex::encode(hasher.finalize())
-}
-
-/// Serialize a JSON value with object keys sorted recursively (arrays keep
-/// order). Explicit rather than relying on serde_json's default `BTreeMap`
-/// Value, so the hash stays stable even if a workspace crate flips on the
-/// `serde_json/preserve_order` feature via feature unification.
-fn canonical_json(v: &serde_json::Value) -> String {
-    let mut out = String::new();
-    write_canonical(v, &mut out);
-    out
-}
-
-fn write_canonical(v: &serde_json::Value, out: &mut String) {
-    use serde_json::Value;
-    match v {
-        Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            out.push('{');
-            for (i, k) in keys.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push_str(&serde_json::to_string(k).unwrap_or_default());
-                out.push(':');
-                write_canonical(&map[*k], out);
-            }
-            out.push('}');
-        }
-        Value::Array(arr) => {
-            out.push('[');
-            for (i, e) in arr.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write_canonical(e, out);
-            }
-            out.push(']');
-        }
-        // Scalars: serde_json's own rendering is already canonical.
-        other => out.push_str(&serde_json::to_string(other).unwrap_or_default()),
-    }
 }
 
 /// Build the `(system, user)` prompt pair for one card. System is the voice
@@ -619,6 +577,24 @@ pub async fn read_cached_copy(
         .get_narration_cache(kind.as_str(), &h)
         .await
         .map(|(title, detail)| InsightCopy { title, detail })
+}
+
+/// [`read_cached_copy`] for many facts in one statement: the copy for each, in
+/// the order asked, `None` where the cache has none.
+pub async fn read_cached_copies(
+    store: &PgStore,
+    asks: &[(InsightKind, &serde_json::Value)],
+) -> Vec<Option<InsightCopy>> {
+    let hashes: Vec<String> = asks.iter().map(|(k, f)| facts_hash(*k, f)).collect();
+    let keys: Vec<(&str, &str)> =
+        asks.iter().zip(&hashes).map(|((k, _), h)| (k.as_str(), h.as_str())).collect();
+    let hits = store.get_narration_cache_many(&keys).await;
+    keys.iter()
+        .map(|(k, h)| {
+            hits.get(&(k.to_string(), h.to_string()))
+                .map(|(title, detail)| InsightCopy { title: title.clone(), detail: detail.clone() })
+        })
+        .collect()
 }
 
 /// In-flight dedup set: a burst of identical cache-misses fires only ONE

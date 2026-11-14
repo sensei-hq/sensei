@@ -1,0 +1,68 @@
+{
+  "body": {
+    "data": {
+      "node": {
+        "closed": false,
+        "fields": {
+          "nodes": [
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2SingleSelectField"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false
+          }
+        },
+        "id": "PVT_3",
+        "number": 3,
+        "owner": {
+          "__typename": "Organization",
+          "login": "acme"
+        },
+        "title": "Project 3",
+        "url": "https://github.com/orgs/acme/projects/3"
+      }
+    }
+  },
+  "operation": "Board",
+  "status": 200,
+  "variables": {
+    "id": "PVT_3"
+  }
+}

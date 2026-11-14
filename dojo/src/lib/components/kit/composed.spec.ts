@@ -2,8 +2,6 @@ import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import ChipHarness from './Chip.harness.svelte';
 import BtnHarness from './Btn.harness.svelte';
-import BannerHarness from './Banner.harness.svelte';
-import EmptyStateHarness from './EmptyState.harness.svelte';
 import SectionHeadHarness from './SectionHead.harness.svelte';
 import ListSectionHarness from './ListSection.harness.svelte';
 
@@ -39,50 +37,6 @@ describe('kit composed primitives render', () => {
 	it('Btn ghost variant uses the paper surface', () => {
 		const { getByText } = render(BtnHarness, { label: 'Deny', variant: 'ghost' });
 		expect(getByText('Deny').closest('button')?.className).toContain('bg-paper');
-	});
-
-	it('Banner renders title + body and carries the tone fill', () => {
-		const { getByText } = render(BannerHarness, {
-			title: 'Two client rungs resolve here',
-			body: 'nothing routes you away',
-			tone: 'accent',
-			kanji: '争'
-		});
-		expect(getByText('Two client rungs resolve here')).toBeTruthy();
-		const body = getByText('nothing routes you away');
-		// The fill sits on the banner root; walk up to it and assert the accent tint.
-		expect(body.closest('div.rounded-lg')?.className).toContain('bg-accent-soft');
-	});
-
-	it('EmptyState shows the default voice copy when no title is given', () => {
-		const { getByText } = render(EmptyStateHarness, {});
-		expect(getByText('Still listening.')).toBeTruthy();
-	});
-
-	it('EmptyState shows a custom title + body', () => {
-		const { getByText } = render(EmptyStateHarness, {
-			title: 'Nothing needs you.',
-			body: 'sensei surfaces only what it can’t decide alone.'
-		});
-		expect(getByText('Nothing needs you.')).toBeTruthy();
-		expect(getByText('sensei surfaces only what it can’t decide alone.')).toBeTruthy();
-	});
-
-	it('EmptyState centers a bordered card (kanji + title + description panel)', () => {
-		const { getByText } = render(EmptyStateHarness, {
-			title: 'Nothing needs you.',
-			body: 'a calm second sentence.'
-		});
-		// the title sits inside a small bordered, rounded, paper-soft card…
-		const card = getByText('Nothing needs you.').closest('div.rounded-lg');
-		expect(card?.className).toContain('border');
-		expect(card?.className).toContain('border-paper-edge');
-		expect(card?.className).toContain('bg-paper-soft');
-		expect(card?.className).toContain('max-w-sm');
-		// …and the card is centered in the available space by its outer wrapper.
-		const outer = card?.parentElement;
-		expect(outer?.className).toContain('items-center');
-		expect(outer?.className).toContain('justify-center');
 	});
 
 	it('SectionHead shows eyebrow, title and count', () => {

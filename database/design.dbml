@@ -195,6 +195,15 @@ Enum "sensei"."goal_outcome" {
   "unclear"
 }
 
+Enum "sensei"."hold_reason" {
+  "build_failure"
+  "test_failure"
+  "permission_wait"
+  "interrupted"
+  "session_ended"
+  "unknown"
+}
+
 Enum "sensei"."impact_verdict" {
   "pending"
   "success"
@@ -227,6 +236,8 @@ Enum "sensei"."library_ecosystem" {
   "composer"
   "swiftpm"
   "docs"
+  "cmake"
+  "dbd"
 }
 
 Enum "sensei"."library_kind" {
@@ -526,6 +537,7 @@ Enum "sensei"."schema_object_kind" {
   "materialized_view"
   "function"
   "procedure"
+  "enum"
 }
 
 Enum "sensei"."schema_source" {
@@ -541,6 +553,13 @@ Enum "sensei"."schema_source" {
   "active_record"
   "gorm"
   "other"
+}
+
+Enum "sensei"."sdd_framework" {
+  "openspec"
+  "spec_kit"
+  "kiro"
+  "bmad"
 }
 
 Enum "sensei"."service_kind" {
@@ -566,6 +585,24 @@ Enum "sensei"."session_outcome" {
   "blocked"
   "partial"
   "abandoned"
+}
+
+Enum "sensei"."session_signal_kind" {
+  "slice"
+  "prompt"
+  "code_edit"
+  "build_ok"
+  "build_fail"
+  "test_ok"
+  "test_fail"
+  "run_unknown"
+  "unclassified_fail"
+  "unmatched_call"
+  "pr_created"
+  "pushed"
+  "task_tick"
+  "review"
+  "review_fix"
 }
 
 Enum "sensei"."snapshot_kind" {
@@ -632,6 +669,7 @@ Enum "sensei"."sync_entity" {
   "dojo_sync_plan"
   "repository_graph"
   "forge_mirror"
+  "tracker_board"
 }
 
 Enum "sensei"."task_execution_kind" {
@@ -709,6 +747,12 @@ Enum "sensei"."tool_usage" {
   "ignored"
 }
 
+Enum "sensei"."tracked_change_field" {
+  "sprint"
+  "status"
+  "estimate"
+}
+
 Enum "sensei"."tracker_error" {
   "unauthorized"
   "forbidden"
@@ -727,12 +771,66 @@ Enum "sensei"."tracker_error" {
 
 Enum "sensei"."tracker_kind" {
   "jira"
+  "gitlab"
+  "github"
 }
 
 Enum "sensei"."tracker_level" {
   "epic"
   "sprint"
   "task"
+}
+
+Enum "sensei"."tracker_metric" {
+  "sessions"
+  "active_hours"
+  "claude_hours"
+  "user_hours"
+  "wall_hours"
+  "cycle_hours"
+  "tokens_fresh"
+  "cache_read"
+  "cache_write"
+  "tokens_out"
+  "tokens_reasoning"
+  "metered_cost"
+  "api_cost"
+  "compile_defects"
+  "test_defects"
+  "review_fixes"
+  "escaped_task_defects"
+  "review_defects"
+  "total_defects"
+  "build_runs"
+  "rework_cycles"
+  "prompts"
+  "testing_efficiency"
+  "review_efficiency"
+  "build_failure_rate"
+  "on_hold_ratio"
+  "post_review_rework_ratio"
+  "mean_build_recovery_minutes"
+  "on_hold_minutes"
+  "rework_minutes"
+  "worked_minutes"
+  "execution_hours"
+  "lead_hours"
+  "cost_per_prompt_cycle"
+}
+
+Enum "sensei"."tracker_owner_state" {
+  "unknown"
+  "not_a_person"
+}
+
+Enum "sensei"."tracker_writeback_status" {
+  "ok"
+  "forbidden"
+  "field_invalid"
+  "comment_removed"
+  "not_found"
+  "rate_limited"
+  "error"
 }
 
 Enum "sensei"."watch_status" {
@@ -956,6 +1054,8 @@ Table "activity"."transcript_turns" {
   "git_branch" text
   "effort" text
   "service_tier" text
+  "origin" text [not null, default: 'human']
+  "prompt_id" text
 
   indexes {
     (source, session_id, turn_index) [unique, note: 'unique constraint']
@@ -1192,6 +1292,41 @@ contribute loop: destination (none|global|dojo|both), cadence (manual|daily|week
 per-category share toggles (jsonb), and the default attribution mode. When no row
 exists the API returns conservative defaults (destination none, manual, attribution
 anonymous).'''
+}
+
+Table "sensei"."command_markers" {
+  "toolchain" text [pk, not null, note: 'The toolchain that prints it (matches sensei.command_patterns.toolchain).']
+  "category" text [pk, not null, note: 'What the marker reports on: build, typecheck, test or e2e.']
+  "kind" text [pk, not null, note: 'fail / ok: a literal substring. fail_re / ok_re: a regex, for markers that need a count (svelte-check found N errors).']
+  "marker" text [pk, not null, note: 'The substring or regex searched for in the command\'s output.']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'Import guard: a re-seed only overwrites a row when the datafile is at least as new.']
+
+  checks {
+    `category IN ('build', 'typecheck', 'test', 'e2e')`
+    `kind IN ('fail', 'ok', 'fail_re', 'ok_re')`
+    `marker <> ''`
+  }
+
+  Note: '''Output markers of builds and tests (spec tracker-sdlc-metrics S3). Seeded from
+database/import/staging/command_markers.jsonl by staging.import_command_markers.'''
+}
+
+Table "sensei"."command_patterns" {
+  "toolchain" text [pk, not null, note: 'What runs the command (cargo, vitest, make, ...); the key its output markers are owned by (sensei.command_markers).']
+  "pattern" text [pk, not null, note: 'Regex anchored at the start of a stage, after prefix stripping. Its first capture group, when present, is the script or target name a NULL category is derived from.']
+  "category" text [note: 'build, typecheck, test, e2e, or none (a known command that is not a run). NULL: categorise() of the captured name, whole (or, for a wrapper, the repository\'s folder-command category).']
+  "wrapper" boolean [not null, default: false, note: 'The stage runs a named script or target whose toolchain is unknown (bun run <name>, make <target>), so it may claim the output markers of the toolchains in owns, in its category.']
+  "compiles" boolean [not null, default: false, note: 'The stage compiles before it runs (cargo test, cargo clippy), so it also owns its toolchain\'s build-fail markers.']
+  "owns" text[] [note: 'For a wrapper: the toolchains whose output markers it may claim (an npm script runs vitest, never cargo). NULL: any (make, just).']
+  "priority" int [not null, default: 0, note: 'Higher is tried first, so a specific row (make test-template -> none) beats a general one (make <target>).']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'Import guard: a re-seed only overwrites a row when the datafile is at least as new.']
+
+  checks {
+    `category IN ('build', 'typecheck', 'test', 'e2e', 'none')`
+  }
+
+  Note: '''Build/test command catalogue (spec tracker-sdlc-metrics S3). Seeded from
+database/import/staging/command_patterns.jsonl by staging.import_command_patterns.'''
 }
 
 Table "sensei"."config" {
@@ -1477,6 +1612,7 @@ Table "sensei"."personas" {
   "is_self" boolean [not null, default: true, note: 'FALSE when this persona is another contributor, not the local user — so their commits are never counted as "mine".\n\nFALSE for a contributor who is NOT the local user. `contributor@example.com` above may well be someone else; folding it into the user\'s own numbers would be a fabricated attribution, so an unrecognised email gets its own persona with is_self = false rather than a guess.']
   "principal_id" uuid [note: 'The dōjō login this persona pushes under (dojo.principals.id). Plain uuid — the referent is in another database. NULL until linked.\n\nThe dōjō login this persona pushes under. Plain uuid, no FK: the referent lives in another database, exactly as `sensei.repositories.tenant_id` does. NULL until the user links this persona (Phase 6).']
   "session_slot" text [note: 'The Keychain slot holding this persona\'s dōjō session (session.rs::account_for formats refresh_token.<slot>). NOT the label: a successful sign-in rewrites label to the verified GitHub login, so signing in as "default" yields a row labelled "sensei-hq-org" whose session is still at refresh_token.default. Looking the session up by label finds nothing and silently skips the persona. NULL = never signed in from this machine.\n\nThe KEYCHAIN SLOT this persona\'s dōjō session is stored under, as chosen by whoever started the sign-in (`/api/auth/signin?persona=X`).\n\nDistinct from `label`, and that distinction is the whole reason the column exists. `label` is a DISPLAY name that a successful sign-in REWRITES to the verified GitHub login — a user who signs in as `default` ends up with a row labelled `sensei-hq-org`. An unattended task that looked up the session by `label` would read `refresh_token.sensei-hq-org`, find nothing, and skip the persona while reporting the cycle successful. Observed, not theorised.']
+  "is_chosen_default" boolean [not null, default: false, note: 'Chosen in sensei as the default identity (Make default; user, 2026-10-27). At most one. When none is chosen, the default is the identity owning the global git email (#296).']
   "forge_token_state" sensei.forge_token_state [not null, default: 'unknown', note: 'What we believe about this persona\'s FORGE (GitHub) token — a different credential from the dōjō session, with a different lifetime. The session refreshes on every use; the GitHub token expires on a measured ~8h cycle. `unknown` is the default and a REAL state: a persona nothing has asked GitHub about has no standing, and defaulting to `active` would claim a credential never tested.']
   "forge_token_expires_at" timestamptz [note: 'When the forge token stops working, as the forge states it. NULL = not yet known, never "does not expire" — GoTrue\'s exchange does not report the provider\'s deadline, so it can only come from GitHub\'s `github-authentication-token-expiration` response header.\n\nWhen the token stops working, as the FORGE states it. Null when no expiry has ever been learned — GoTrue\'s exchange does not report the provider\'s deadline, so it can only come from GitHub\'s own `github-authentication-token-expiration` response header. Null therefore means "not yet known", never "does not expire".']
   "forge_token_checked_at" timestamptz [note: 'When anything was last learned about the forge token. Deliberately NOT stamped when a probe could not reach the forge: recording a check that told us nothing would make a stale belief look fresh.']
@@ -1488,6 +1624,7 @@ Table "sensei"."personas" {
     github_user_id [unique, name: 'personas_github_user_unique', note: 'where: github_user_id IS NOT NULL']
     principal_id [unique, name: 'personas_principal_unique', note: 'where: principal_id IS NOT NULL']
     session_slot [unique, name: 'personas_session_slot_unique', note: 'where: session_slot IS NOT NULL']
+    `(true)` [unique, name: 'personas_one_chosen_default', note: 'where: is_chosen_default']
   }
 
   Note: '''A working identity kept separate from the user's others — business vs personal
@@ -1675,6 +1812,7 @@ Table "sensei"."sync_state" {
   "attempted_at" timestamptz
   "synced_at" timestamptz
   "updated_at" timestamptz [not null, default: `now()`]
+  "persona" text [note: 'The identity (its Keychain session slot) whose sync last wrote this row. NULL on a row no sync has written since the column was added; the next pass fills it.']
 
   indexes {
     (entity, direction) [name: 'sync_state_pending_idx', note: 'where: state <> \'synced\'']
@@ -1855,6 +1993,25 @@ Table "staging"."benchmark_reports" {
   Note: 'Staging buffer for sensei.benchmark_reports.'
 }
 
+Table "staging"."command_markers" {
+  "toolchain" text
+  "category" text
+  "kind" text
+  "marker" text
+  "modified_at" timestamptz
+}
+
+Table "staging"."command_patterns" {
+  "toolchain" text
+  "pattern" text
+  "category" text
+  "wrapper" boolean
+  "compiles" boolean
+  "owns" text[]
+  "priority" int
+  "modified_at" timestamptz
+}
+
 Table "staging"."fallback_chain_models" {
   "chain_name" text
   "router_name" text
@@ -1935,6 +2092,17 @@ Table "staging"."memories" {
 import. Enum columns are text here (cast during import). Loaded from
 import/staging/memories.jsonl (produced by export.memories) via dbd import, then
 CALL staging.import_memories() to move into sensei.memories.'''
+}
+
+Table "staging"."metric_gating" {
+  "metric_key" text [note: 'The catalogue key (sensei.metrics.key). An unknown or missing key fails the import.']
+  "eligible" boolean [note: 'Whether the metric may be a target.']
+  "delta_scoped" boolean [note: 'true: what a change introduced; false: an absolute reading.']
+  "min_coverage" numeric [note: 'The share of the measured scope a reading must cover to count.']
+  "note" text [note: 'Why the metric is or is not eligible.']
+  "modified_at" timestamptz [note: 'The row\'s edit time; a live row newer than this is not overwritten.']
+
+  Note: 'Staging rows for sensei.metric_gating, one per catalogue key (import/staging/metric_gating.jsonl).'
 }
 
 Table "staging"."metrics" {
@@ -2155,12 +2323,14 @@ Table "activity"."assistant_events" {
 
   indexes {
     (session_id, created_at) [name: 'assistant_events_session_id_idx', note: 'order: asc, desc']
+    (session_id, id) [name: 'assistant_events_session_id_id_idx']
     (event_type, created_at) [name: 'assistant_events_event_type_idx', note: 'order: asc, desc']
     created_at [name: 'assistant_events_created_at_idx', note: 'order: desc']
     (family, created_at) [name: 'assistant_events_family_idx', note: 'order: asc, desc']
     id [name: 'assistant_events_unenriched_idx', note: 'where: enriched_at IS NULL']
     (repository_id, created_at) [name: 'assistant_events_repository_id_idx', note: 'where: repository_id IS NOT NULL\norder: asc, desc']
     (session_id, tool_use_id, id) [name: 'assistant_events_tool_use_idx', note: 'where: tool_use_id IS NOT NULL']
+    (session_id, ts) [name: 'assistant_events_file_edits_idx', note: 'where: event_type = \'PostToolUse\' AND tool_name IN (\'Edit\', \'Write\', \'MultiEdit\')\norder: asc, desc']
   }
 
   Note: '''Raw assistant event log — one row per hook/event invocation, from any
@@ -2262,6 +2432,23 @@ Table "inference"."reasoning_traces" {
 - exchanges: [{model, role:"proposer"|"challenger"|"synthesizer", content, tokens}]
 - consensus: {conclusion, confidence, disagreements:[]}
 - action_proposed: the recommendation generated, if any'''
+}
+
+Table "sensei"."code_duplicates" {
+  "repository_id" uuid [pk, not null, note: 'The repository measured.']
+  "hash" text [pk, not null, note: 'qlty\'s structural hash: the copies of one piece of code share it.']
+  "identical" boolean [not null, note: 'True when the copies are identical; false when qlty found them similar.']
+  "mass" real [not null, note: 'qlty\'s mass — the size of the duplicated syntax; groups are ranked by it.']
+  "lines" int [not null, note: 'Lines in the longest copy.']
+  "copies" jsonb [not null, note: 'Every copy: [{path, start, end}], repository-relative paths, inclusive lines.']
+  "measured_sha" text [not null, note: 'The HEAD commit measured; a scan re-measures only when HEAD moved.']
+  "measured_at" timestamptz [not null, default: `now()`, note: 'When it was measured.']
+
+  Note: '''Code that local `qlty smells` finds more than once in a repository (user, 2026-10-27:
+duplicates come from the scan that already finds them, not a similarity search run per
+question). One row per group of copies. Measured at the repository's HEAD in a temporary
+worktree against the pinned qlty ruler, with the Complexity lens' measurement; replaced
+whole per repository, so every row of a repository carries the same `measured_sha`.'''
 }
 
 Table "sensei"."commits" {
@@ -2379,7 +2566,7 @@ Table "sensei"."folders" {
   "root_id" uuid [not null, note: 'Foreign key to folders_to_watch — which watched root this folder was discovered under.']
   "parent_id" uuid [note: 'Self-referencing FK for folder hierarchy. Null means direct child of the watch root.']
   "repository_id" uuid [note: 'FK to sensei.repositories — the global repository this folder belongs to.\n\nSET ON EVERY FOLDER, inherited from its repo anchor at WRITE time by\nupsert_subfolder_kind / upsert_folder. `kind` (git/standalone/subtree) is what\nmarks which folder IS the anchor.\n\nSUPERSEDES I16 (2026-10-01, see docs/decisions.md D-REPO-ANCHOR), which set this\nonly on the anchor and had subfolders resolve via repo_anchor_for. That is a\nset-returning FUNCTION, and a predicate cannot be pushed into a function scan —\n`WHERE workspace = $1` seq-scanned all 13,715 folders with 13,715 function calls to\nanswer a 45-row question, and four of eight views migrated onto it regressed\ncatastrophically (one ~450x). Resolving the anchor once per folder WRITTEN\ninstead of per row READ makes every read a Bitmap Index Scan on\nfolders_repository_id_idx.\n\nNULL only while the scanner has not yet resolved the owning repository.\nON DELETE SET NULL.']
-  "workspace_root_id" uuid [note: 'WHICH workspace declares this module as a member — not whether one does.\n\n- Membership is a RELATIONSHIP, so it is stored as one. `kind` says what a\n  folder IS; this says who claims it. Naming the workspace rather than a bare\n  yes/no makes "the members of this workspace" a single indexed lookup.\n- DERIVED from the declaring manifest\'s member list (package.json\n  `workspaces`, Cargo.toml `[workspace] members`), matched on the repo-relative\n  PATH — never on the directory name or its position in the tree. Asserting\n  membership no manifest states is the R4 fabrication.\n- Refreshed on every scan, so a folder that leaves the member list stops\n  reading as a member.\n- NULL means nothing declares it. A real and common state, not "unknown":\n  `marketplace/`, `app/`, `dojo/` and `website/` here are all genuine build\n  units that no workspace lists.\n- KNOWN GAP, named rather than silent: only the REPO ROOT\'s manifest is read\n  today, so a nested workspace root is not detected and its members resolve as\n  undeclared.']
+  "workspace_root_id" uuid [note: 'WHICH workspace declares this module as a member — not whether one does.\n\n- Membership is a RELATIONSHIP, so it is stored as one. `kind` says what a\n  folder IS; this says who claims it. Naming the workspace rather than a bare\n  yes/no makes "the members of this workspace" a single indexed lookup.\n- DERIVED from the declaring manifest\'s member list (package.json\n  `workspaces`, Cargo.toml `[workspace] members`), matched on the repo-relative\n  PATH — never on the directory name or its position in the tree. Asserting\n  membership no manifest states is the R4 fabrication.\n- Refreshed on every scan, so a folder that leaves the member list stops\n  reading as a member.\n- NULL means nothing declares it. A real and common state, not "unknown":\n  `marketplace/`, `app/` and `dojo/` here are all genuine build\n  units that no workspace lists.\n- KNOWN GAP, named rather than silent: only the REPO ROOT\'s manifest is read\n  today, so a nested workspace root is not detected and its members resolve as\n  undeclared.']
   "kind" sensei.folder_kind [not null, default: 'git', note: 'What this folder IS: git (repository), module (a manifest-bearing build unit inside a repo — a crate, an npm package, a Go module), subtree (nested git repo), standalone (non-git, no git siblings — written only by v1 scan paths, retiring with them), folder (an ordinary directory inside a repo, no manifest).\n\nIt does NOT say who claims the folder. Whether a workspace declares a module is a relationship and lives in workspace_root_id. `workspace_member` and `package` were once two values here; merged, because that split flips for several folders the moment a `workspaces` array is added — nothing about the directory changes — and a kind that moves under an unrelated edit describes the wrong thing.']
   "status" sensei.folder_status [not null, default: 'discovered', note: 'Indexing lifecycle: discovered → queued → indexing → indexed, or failed. Or archived, when the directory is gone but its history is worth keeping.\n\nThere is no "not indexed" state. A folders row exists only for a repo root or a manifest-bearing directory, and every one of those is indexed; a directory we do not index has no row at all.']
   "role" sensei.folder_role [note: 'Workspace role assigned during setup: backend, frontend, library, docs, infra. Null until assigned.']
@@ -2608,6 +2795,21 @@ default and needs no seeding. Rewritten whole on each successful plan pull;
 ruling: staleness costs a cycle of compute, never consent.'''
 }
 
+Table "sensei"."metric_gating" {
+  "metric_id" uuid [pk, not null, note: 'The catalogue metric (sensei.metrics.id) this row gates.']
+  "eligible" boolean [not null, note: 'Whether the metric may be a target. Session-behaviour metrics (FTR, rework, throughput, …) are insights, never targets.']
+  "delta_scoped" boolean [not null, note: 'true: the reading is what a change introduced; false: an absolute reading of the repository, which a target can ratchet.']
+  "min_coverage" numeric [not null, note: 'The share of the measured scope a reading must cover to count (0 < x <= 1): 0.5 for coverage (guarded files seen), 1.0 for graph-derived readings (the index complete).']
+  "note" text [not null, note: 'Why the metric is or is not eligible, in one sentence.']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'When the row last changed; the import only overwrites a row with a staging row at least this new.']
+
+  checks {
+    `min_coverage > 0 AND min_coverage <= 1`
+  }
+
+  Note: 'Target eligibility per catalogue metric (TG1). A metric with no row is not eligible. A neutral metric (no direction) is never eligible; staging.import_metric_gating refuses to make one so.'
+}
+
 Table "sensei"."metric_watermarks" {
   "repository_id" uuid [pk, not null, note: 'The repository this watermark tracks (FK sensei.repositories, ON DELETE CASCADE).']
   "metric_group" text [pk, not null, note: 'The compute group (registry task_name + cadence, e.g. \'session_outcomes\', \'churn\') this cursor is for. Free text — groups are code-defined.']
@@ -2788,22 +2990,49 @@ Table "sensei"."trackers" {
   "kind" sensei.tracker_kind [not null, note: 'Which adapter speaks to this tracker (crate::tracker::adapter_for_kind).']
   "level" sensei.tracker_level [not null, default: 'sprint', note: 'What the board serves in the workspace (D40): epic (portfolio), sprint (a team board, one Sprints lane), task (linked from changes). Rows from before levels are sprint trackers.']
   "base_url" text [not null, note: 'Adapter-normalised origin, exactly "https://" + lowercase host, no port/path/slash (crate::tracker::http::normalize_base_url). Part of the board identity.']
-  "account" text [not null, note: 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email). Keyring account of secret_service.']
-  "external_scope" text [not null, note: 'The provider scope shown to users (Jira: the board\'s project key, or the board name for a multi-project board).']
-  "board_ref" text [not null, note: 'The board, in the adapter\'s canonical form (Jira: decimal board id, no leading zeros) so one board cannot be connected twice under two spellings.']
-  "params" jsonb [not null, default: '{}', note: 'Adapter-specific extras (e.g. board_name). Never secrets.']
-  "secret_service" text [not null, note: 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.']
+  "account" text [not null, note: 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email; GitLab and GitHub: the token\'s username or login). Keyring account of secret_service.']
+  "external_scope" text [not null, note: 'The provider scope shown to users (Jira: the board\'s project key, or the board name for a multi-project board; GitLab: the board\'s full path at connect; GitHub: <owner>/<project number>).']
+  "board_ref" text [not null, note: 'The board, in the adapter\'s canonical form (Jira: decimal board id, no leading zeros; GitLab: project:<id> or group:<id>; GitHub: project:<node id>) so one board cannot be connected twice under two spellings.']
+  "params" jsonb [not null, default: '{}', note: 'Adapter-specific extras (e.g. board_name; GitLab: full_path, version, sprint_source, sprint_source_changed_at; GitHub: owner, owner_kind, number, url, iteration_field). Never secrets.']
+  "secret_service" text [not null, note: 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url) and params.credential_scope (GitHub: the project owner; none for Jira and GitLab): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.']
   "last_attempt_at" timestamptz [note: 'When a sync last started (written before the fetch, outside any transaction).']
   "last_success_at" timestamptz [note: 'When a sync last committed in full. NULL = never (status pending), also reset by a re-connect.']
   "last_error" sensei.tracker_error [note: 'Failure code of the last sync or connect; NULL after a success. Never a raw message.']
   "discovered_through" timestamptz [not null, default: `now()`, note: 'R11 watermark: transcript turns ingested up to here have been checked for ticket keys the tracker does not have yet. Starts at connect time; the first full sync covers what came before.']
+  "owner_ref" text [note: 'The token owner\'s id at the provider (Jira: accountId of /myself, a person only). Compared with each ticket\'s assignee to set tracker_tasks.assigned_to_me; never an assignee\'s id. NULL until known (owner_state says why). Spec tracker-metrics-writeback W1.']
+  "owner_state" sensei.tracker_owner_state [note: 'Why owner_ref is NULL: unknown (asked again each sync) or not_a_person (an app token; never asked again until a re-connect). NULL when owner_ref is set, or for a tracker not yet asked.']
+  "owner_error" sensei.tracker_error [note: 'Failure code of the last owner lookup (W1 backfill); NULL after a successful one. Kept apart from last_error: the read sync never fails because of the lookup.']
+  "writeback_enabled" boolean [not null, default: false, note: 'Whether sensei writes usage and SDLC metrics back to tickets assigned to the token owner (spec tracker-metrics-writeback W8). Off by default: a workspace opts in (D50, 2026-11-03, amending D3); existing boards keep their setting.']
+  "writeback_error" sensei.tracker_error [note: 'Why the last write-back pass could not run or ended early (W2): token_missing / credential_store, db, rate_limited, transport. NULL after a pass that ran. Written only by the pass; never last_error.']
+  "estimation_field" text [note: 'The board\'s story-point field id (customfield_N), learned by the history task from the board configuration; NULL when the board estimates by count or not at all (spec tracker-sdlc-metrics S4, A6).']
+  "points_field" text [note: 'The estimation field the last sync read points under (its id, or none when it cleared them). Points are trusted only when it matches estimation_field (spec tracker-sdlc-metrics S4, A6); NULL until a sync asked.']
+  "sprint_field" text [note: 'The id of the site\'s Sprint custom field (schema.custom gh-sprint), learned by the history task; changelog sprint items are matched by it (spec tracker-sdlc-metrics S4, A6). NULL when the site has none.']
+  "history_error" sensei.tracker_error [note: 'Why the last history run stopped early (S4); NULL when it completed or ran out of time cleanly. Never touches last_error.']
+  "history_at" timestamptz [note: 'When the history task last ran.']
+  "terms_at" timestamptz [note: 'When the history task last read the board\'s terms (estimation field, Sprint field, statuses). NULL until a run read them: until then estimation_field means nothing and synced points are kept (spec tracker-sdlc-metrics S4, A6).']
   "created_at" timestamptz [not null, default: `now()`, note: 'When the connection was first made.']
 
   indexes {
     (kind, base_url, board_ref) [unique, note: 'unique constraint']
   }
 
-  Note: 'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.'
+  Note: 'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Mirror source for sensei.sprints / sensei.tracker_tasks; writes back usage and SDLC metrics only, to tickets assigned to the token owner (spec tracker-metrics-writeback). The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.'
+}
+
+Table "sensei"."workspace_metric_settings" {
+  "workspace_id" uuid [pk, not null, note: 'The workspace these settings apply to.']
+  "hourly_rate" numeric [note: 'Blended cost of an hour of work, for effort and rework cost. NULL: those costs are null with reason no_rate. The upper bound also rejects NaN, which Postgres orders above every number.']
+  "minutes_per_point" numeric [note: 'Active minutes a story point is expected to take, for expected time and time variance. NULL: those are null with reason no_calibration.']
+  "idle_threshold_minutes" int [not null, default: 15, note: 'A gap between hook events longer than this ends a work slice (spec S2) and counts as a hold. Changing it re-derives the workspace\'s sessions.']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'When the settings last changed.']
+
+  checks {
+    `hourly_rate > 0 AND hourly_rate <= 10000`
+    `minutes_per_point > 0 AND minutes_per_point <= 10080`
+    `idle_threshold_minutes BETWEEN 1 AND 240`
+  }
+
+  Note: 'SDLC metric settings per workspace (spec tracker-sdlc-metrics S1). No row = defaults (no rate, no calibration, 15-minute idle gap). Never per person, and never written to a tracker.'
 }
 
 Table "activity"."run_events" {
@@ -2850,6 +3079,7 @@ Table "activity"."sessions" {
   "duration" interval [note: 'Gap-aware active work time (excludes idle gaps > threshold). The full\nwall-clock span is started_at..completed_at; per-turn/segment detail lives in\nactivity.turns.']
   "claude_time" interval
   "user_time" interval
+  "active_by_hour" jsonb
   "module" text [note: 'Primary code module touched. For per-module FTR.']
   "summary" text [note: 'Brief summary of what happened in this session. Populated at checkpoint time by the assistant.']
   "provider" text [note: 'Inference provider that ran this session (e.g. anthropic, openai, copilot_chat, ollama). Captured from the transcript at synthesis (#75); NULL for live hook-captured sessions whose model the hook stream doesn\'t carry. Powers effectiveness-by-model.']
@@ -2862,6 +3092,8 @@ Table "activity"."sessions" {
   "backfilled" boolean [not null, default: false]
   "meta_synced_at" timestamptz [note: 'When the transcript backfill last attempted to capture this session\'s\ninference model + token usage from the source transcript. Set once the attempt\nruns (whether or not the source carried the values), so a session whose source has\nno tokens (e.g. a Zed thread) is not re-read on every backfill cycle. NULL ⇒ never\nattempted ⇒ eligible for the one-time metadata backfill.']
   "process_analyzed_at" timestamptz [note: 'When the LLM process-quality analyzer last scored this session (spec\n2026-08-20). Gates the daily incremental pass: NULL ⇒ never scored ⇒ eligible;\nset to now() after a successful pass. Cleared when a transcript re-ingest bumps\nthe session so its judgments are recomputed. props.process holds the judgments;\nactivity.session_process_evidence holds the cited turns.']
+  "sdd_framework" sensei.sdd_framework [note: 'The third-party SDD framework the session worked in (sdlc::framework, blueprint 2026-11-10-ticket-sdd-framework): from what it did, else from its repo\'s marker directories. NULL = none found, or the probe failed (see sdd_framework_source). Derived by the session-signals pass; a value is never replaced by none (B12).']
+  "sdd_framework_source" text [note: 'How sdd_framework was found: behavioural (what the session did), static (the one framework whose markers its repo holds), static_ambiguous (markers of two or more; never pinned onto a ticket), or probe_failed (the marker probe errored or timed out; sdd_framework is NULL). NULL with sdd_framework NULL = nothing found.']
 
   indexes {
     (folder_id, started_at) [name: 'sessions_folder_id_idx', note: 'order: asc, desc']
@@ -2869,6 +3101,11 @@ Table "activity"."sessions" {
     (repo_folder_id, started_at) [name: 'sessions_repo_folder_id_idx', note: 'where: repo_folder_id IS NOT NULL\norder: asc, desc']
     ftr [name: 'sessions_ftr_idx', note: 'where: ftr IS NOT NULL']
     client_session_id [unique, name: 'sessions_client_session_id_uniq', note: 'where: client_session_id IS NOT NULL']
+  }
+
+  checks {
+    `sdd_framework_source IN ('behavioural', 'static', 'static_ambiguous', 'probe_failed')`
+    `(sdd_framework IS NULL) = (sdd_framework_source IS NULL OR sdd_framework_source = 'probe_failed')`
   }
 
   Note: '''AI coding sessions captured by hooks.
@@ -3023,6 +3260,7 @@ Table "inference"."recommendations" {
   "acted_at" timestamptz [note: 'Timestamp when the user accepted — the point-in-time marker for before/after FTR comparison.']
   "measured_at" timestamptz [note: 'Timestamp when verdict was last computed.']
   "materialized_ref" jsonb [note: 'What accepting this recommendation PRODUCED (spec 2026-08-20 insight-acceptance-\nmaterialization): {kind, ...ref, scope, enforcement}. For a rule-class accept →\n{kind:"rule", memory_id, namespace_id, scope, enforcement}; later phases add\n{kind:"skill"|"agent", file_path} and {kind:"pack_rule", pack_rule_id}. NULL when\nthe accept was a plain status flip (no artifact materialized). The provenance the\neffect-measurement + un-apply read.']
+  "snoozed_until" timestamptz [note: 'While in the future, the pending recommendation is hidden from the pending read and is never the focal pick (metric detail · action items "Snooze"). It stays pending; it is shown again once this passes. A re-snooze replaces it. NULL when never snoozed.']
 
   indexes {
     (workspace_id, status) [name: 'recommendations_workspace_id_idx']
@@ -3258,6 +3496,7 @@ Table "sensei"."files" {
   "skip_reason" sensei.scan_skip_reason [note: 'Null when the file was indexed. Non-null records why it was examined but deliberately not indexed (unsupported format, binary content, invalid UTF-8, parse error, excluded by config). Recording the fingerprint alongside the reason is what stops a skipped file from being re-enqueued on every reconcile; because the skip is keyed to the fingerprint, fixing the file re-triggers indexing automatically.']
   "skip_detail" text [note: 'The parser\'s VERBATIM error with file, line and column, when the grammar produced one (R10.9). skip_reason is the code; this is the text. An agent handed "x.rs:142: expected `}`" can fix the file; one handed "parse_error" can only shrug. Null when there is no detail to record.']
   "parsed_at" timestamptz [note: 'When a parse outcome was last recorded for this file. NULL means the walk created the row and no parse has run yet — the "discovered" state. Together with skip_reason this yields the full file lifecycle: (null, null) discovered; (set, null) parsed; (set, non-null) unparseable or skipped per the reason. It exists because those first two are otherwise indistinguishable, which would make a stalled parse task look identical to a file that parsed and legitimately declared nothing.']
+  "tags" text[] [not null, default: '{}', note: 'Framework roles, sorted: the kinds of the symbols it holds (hook, component) and its role by path (route, middleware). Written by the scan; read through file_tags.']
   "indexed_at" timestamptz [not null, default: `now()`, note: 'Timestamp when this file was last examined (indexed, or skipped with a reason).']
   "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
@@ -3616,7 +3855,7 @@ Table "sensei"."sprints" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`]
   "tracker_id" uuid [not null, note: 'The board this sprint belongs to.']
   "external_id" text [not null, note: 'The provider\'s sprint id, as text.']
-  "seq" bigint [not null, note: 'Adapter-supplied creation order (Jira: the numeric sprint id). The tie-break for a ticket\'s current sprint; never compare external_id text.']
+  "seq" bigint [not null, note: 'Adapter-supplied ordering key (Jira, GitLab: the numeric sprint id; GitHub: the iteration\'s start date in days since 1970-01-01). The tie-break for a ticket\'s current sprint; never compare external_id text.']
   "name" text [not null, note: 'Sprint name as the provider shows it.']
   "state" text [not null, note: 'Common lifecycle state: future, active or closed (adapters map theirs onto these).']
   "start_at" timestamptz [note: 'Planned or actual start; NULL for a future sprint without dates.']
@@ -3630,7 +3869,7 @@ Table "sensei"."sprints" {
     (tracker_id, external_id) [unique, note: 'unique constraint']
   }
 
-  Note: 'Sprints of a tracker board, mirrored read-only from the provider. A sprint missing from a full sync gets removed_at (never deleted), so history and links survive.'
+  Note: 'Sprints of a tracker board, mirrored from the provider and never written back (spec tracker-metrics-writeback writes usage and SDLC metrics to tickets only). A sprint missing from a full sync gets removed_at (never deleted), so history and links survive.'
 }
 
 Table "sensei"."stances" {
@@ -3653,6 +3892,52 @@ asking), sharing (what surfaces to the dōjō), review (approvers before a rule
 adopts). Governs HOW work runs, complementing the rules (WHAT). User-scoped +
 daemon-local (D-STANCE-SCOPE); per-namespace with a NULL-namespace default;
 most-specific rung wins on the sensei.scopes ladder.'''
+}
+
+Table "sensei"."tracker_fields" {
+  "tracker_id" uuid [not null, note: 'The board the field belongs to.']
+  "metric" sensei.tracker_metric [note: 'The metric written into the field; NULL once the field is no longer mapped (retired).']
+  "field_ref" text [not null, note: 'The tracker\'s field id (Jira: customfield_<n>).']
+  "retired_at" timestamptz [note: 'When the field stopped being mapped: a ticket last written before it gets null in the field. NULL while mapped.']
+
+  indexes {
+    (tracker_id, metric) [unique, note: 'unique constraint']
+    (tracker_id, field_ref) [unique, note: 'unique constraint']
+  }
+
+  Note: 'A tracker\'s custom fields for usage and SDLC write-back. A row with a metric is mapped: that metric is written into the field. A row without one is retired: sensei wrote the field before, so it clears it on each ticket\'s next write. Replaced by PUT …/trackers/{tracker}/fields.'
+}
+
+Table "sensei"."tracker_push_marks" {
+  "tracker_id" uuid [pk, not null]
+  "persona_id" uuid [pk, not null, note: 'The signed-in persona whose session pushed; a persona\'s marks go with it.']
+  "tenant_id" uuid [pk, not null, note: 'The dōjō tenant (dojo.tenants.id) the part went to; a re-filed workspace in another tenant starts afresh.']
+  "part" text [pk, not null, note: 'facts (the board\'s one-copy part) or effort (this person\'s).']
+  "attempted_at" timestamptz [not null, default: `now()`, note: 'When a push of this part was last attempted, written before sending.']
+  "hash" text [note: 'sha256 of the canonical JSON of the part last acknowledged (accepted or stale); NULL until one is.']
+  "pushed_at" timestamptz [note: 'When the dōjō last acknowledged the part.']
+  "failed_hash" text [note: 'The hash of the part the dōjō last refused (4xx); not re-sent within the hour.']
+  "failed_at" timestamptz [note: 'When the dōjō last refused the part.']
+  "error" text [note: 'The dōjō\'s refusal, as it answered.']
+
+  checks {
+    `part IN ('facts', 'effort')`
+  }
+
+  Note: 'The re-push watermark of a tracker board\'s delivery part, per persona and dōjō tenant. Written BEFORE a push (attempted_at), so a push the dōjō committed but whose answer was lost still leaves a row a withdrawal can find; acknowledged (hash, pushed_at) on accepted or stale; a refusal records failed_hash, failed_at and error. A part is sent when its hash differs or its mark is older than 6 hours, unless that very hash was refused within the hour.'
+}
+
+Table "sensei"."tracker_statuses" {
+  "tracker_id" uuid [pk, not null, note: 'The tracker.']
+  "status_id" text [pk, not null, note: 'The provider\'s status id, as the changelog records it.']
+  "name" text [not null, note: 'The status name.']
+  "category" text [not null, note: 'statusCategory.key: new, indeterminate, done (or undefined).']
+
+  checks {
+    `category IN ('new', 'indeterminate', 'done', 'undefined')`
+  }
+
+  Note: 'Statuses of a tracker and their category, replaced by each history run (spec tracker-sdlc-metrics S4).'
 }
 
 Table "sensei"."tracker_unknown_keys" {
@@ -3687,6 +3972,35 @@ key. Insertion is non-fatal on the context-delivery hot path: a failure to log
 must never block context delivery.
 v1 logs with session_id NULL (per-memory COUNT needs no session join);
 per-session correlation is a deferred follow-up.'''
+}
+
+Table "activity"."session_signal_marks" {
+  "session_id" uuid [pk, not null, note: 'The session.']
+  "through_event_id" bigint [not null, note: 'Highest assistant_events.id read; 0 for a session with no events.']
+  "event_count" int [not null, note: 'Events read. A lower id committed after a higher one raises the count, not the max.']
+  "catalogue_hash" text [not null, note: 'The build/test command catalogue the signals were derived with.']
+  "error" text [note: 'NULL when derived. Otherwise why derivation failed; the session then has no signals and is not retried until its inputs change.']
+  "derived_at" timestamptz [not null, default: `now()`, note: 'When the mark was written.']
+  "derive_version" int [not null, default: 0, note: 'The derivation code version (sdlc::signals::DERIVE_VERSION) that wrote the mark, success or failure. A mark below the current version is derived again, after every session stale by its events or catalogue. 0 = written before versions existed.']
+
+  Note: 'Derivation watermark per session (spec tracker-sdlc-metrics S2). A session is derived again when its events\' max(id) or count, the catalogue hash, or the derivation version differ from the mark.'
+}
+
+Table "activity"."session_signals" {
+  "session_id" uuid [pk, not null, note: 'The session.']
+  "seq" int [pk, not null, note: 'Order within the session, by event time then event id.']
+  "kind" sensei.session_signal_kind [not null, note: 'What happened (sensei.session_signal_kind).']
+  "at" timestamptz [not null, note: 'When: the hook event\'s own time (assistant_events.ts), never its insert time.']
+  "until" timestamptz [note: 'slice only: its last event\'s time.']
+  "category" text [note: 'Run signals and unmatched calls: build, typecheck, test or e2e.']
+  "reason" sensei.hold_reason [note: 'slice only: why it ended.']
+  "ref" text [note: 'review: the reviewer. review_fix: the path token the review named. task_tick: the task.']
+
+  checks {
+    `category IN ('build', 'typecheck', 'test', 'e2e')`
+  }
+
+  Note: 'Derived SDLC signals per session (spec tracker-sdlc-metrics S2). Replaced whole per session by the derive_session_signals pass.'
 }
 
 Table "activity"."snapshots" {
@@ -3748,6 +4062,7 @@ Table "activity"."turns" {
   "is_correction" boolean [not null, default: false, note: 'True if this turn\'s prompt corrected the previous turn (FTR detractor).']
   "triage_signal" text [note: 'Which correction heuristic matched (revert/correction/actually/...). Null if not a correction.']
   "tool_calls" int [not null, default: 0, note: 'Number of tool invocations (PostToolUse) in the turn.']
+  "origin" text [note: 'Who started the turn — human, or an automated prompt (scheduled, peer, task_notification, auto_continuation) — from the transcript turn with the same prompt id. Null when no transcript turn matched.']
 
   indexes {
     (session_id, turn_number) [unique, note: 'unique constraint']
@@ -4144,20 +4459,39 @@ Table "sensei"."tracker_tasks" {
   "tracker_id" uuid [not null, note: 'The board this ticket belongs to.']
   "external_id" text [not null, note: 'The provider\'s immutable issue id.']
   "key" text [not null, note: 'The provider\'s display key (Jira: AUTH-420, stored upper-case). Overwritten when the issue is renamed or moved.']
-  "scope" text [note: 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL). NULL for Jira.']
-  "summary" text [note: 'Issue title. Client-confidential: never leaves the machine.']
+  "scope" text [note: 'What the key is relative to, when it is not globally unique (GitLab: normalize_repo_key of the project URL; GitHub: of the issue\'s repository URL). NULL for Jira.']
+  "summary" text [note: 'Issue title. Travels to the dōjō of a workspace whose repositories the person shares, as the only ticket free text (tracker-delivery-metrics B9, B12, 2026-11-04); never anywhere else.']
   "issue_type" text [note: 'Provider issue type, raw (Story, Bug, Task, ...). Not mapped in v1.']
   "status" text [note: 'Provider workflow status, raw.']
   "current_sprint_id" uuid [note: 'The sprint the ticket is in now: among non-removed sprints listing it, active > future > closed (crate::tracker::sprint::pick_current_sprint). NULL = backlog.']
   "removed_at" timestamptz [note: 'When a full sync stopped seeing it. Set once.']
   "last_seen_at" timestamptz [not null, default: `now()`, note: 'When a sync last saw it.']
+  "assigned_to_me" boolean [note: 'Whether the ticket\'s assignee is the tracker\'s owner (trackers.owner_ref), set on every upsert; false when unassigned or someone else\'s, NULL while the owner is unknown. The assignee itself is compared, never stored. Spec tracker-metrics-writeback W1.']
+  "writeback_hash" text [note: 'SHA-256 of what write-back last wrote (the comment lines, or the mapped field values), so an unchanged ticket sends nothing (W4). NULL until a write lands.']
+  "writeback_comment_ref" text [note: 'The provider id of the comment sensei writes this ticket\'s usage into (W5). Kept with comment_removed; cleared by a re-connect or by switching write-back back on.']
+  "writeback_status" sensei.tracker_writeback_status [note: 'The last write-back outcome (W9); NULL when never attempted.']
+  "writeback_at" timestamptz [note: 'When a write-back last landed on this ticket.']
+  "writeback_tried_at" timestamptz [note: 'When write-back last tried this ticket, landed or not: the pass order (oldest first, never-tried first), so a ticket that keeps failing never starves the others (W2).']
+  "issue_created_at" timestamptz [note: 'When the issue was created in the tracker (spec tracker-sdlc-metrics S4); the start of lead time.']
+  "issue_updated_at" timestamptz [note: 'When the tracker last changed the issue; history is re-read when this passes history_through.']
+  "points" numeric [note: 'Story points: the board\'s estimation field (trackers.estimation_field), NULL when unset or not a number. Kept as it was while the field is unknown.']
+  "status_category" text [note: 'The status\'s category (new, indeterminate, done), from the tracker\'s status.statusCategory.key.']
+  "history_through" timestamptz [note: 'The issue_updated_at the changelog was last read through (S4); NULL until first read.']
+  "sdd_framework" sensei.sdd_framework [note: 'The third-party SDD framework the ticket was worked in: the first one detected on an eligible linked session (behavioural or static, an R1 candidate), then frozen. Pinned by pin_ticket_frameworks (blueprint 2026-11-10-ticket-sdd-framework B1, B13-B17). Follows its provenance session only while that session is still running (B14). NULL = none detected yet.']
+  "sdd_framework_session_id" uuid [note: 'The session sdd_framework was pinned from (provenance). NULL beside a value when that session was deleted; the value is kept.']
+  "sdd_framework_at" timestamptz [note: 'When sdd_framework was pinned (or last followed its running provenance session, B14). Set exactly when sdd_framework is.']
 
   indexes {
     (tracker_id, external_id) [unique, note: 'unique constraint']
     (tracker_id, key) [name: 'tracker_tasks_tracker_id_key_idx']
   }
 
-  Note: 'Tickets (issues) of a tracker board, mirrored read-only. Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee or other person data, by design.'
+  checks {
+    `status_category IN ('new', 'indeterminate', 'done', 'undefined')`
+    `(sdd_framework IS NULL) = (sdd_framework_at IS NULL)`
+  }
+
+  Note: 'Tickets (issues) of a tracker board, mirrored from the tracker; usage and SDLC metrics are written back to the token owner\'s (spec tracker-metrics-writeback). Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).'
 }
 
 Table "inference"."drift_items" {
@@ -4266,6 +4600,7 @@ Table "sensei"."schema_entities" {
   "naming" sensei.schema_naming [not null]
   "note" text
   "note_md" text
+  "enum_values" text[] [not null, default: '{}', note: 'An enum\'s values, in declaration order; empty for every other kind.']
   "modified_at" timestamptz [not null, default: `now()`]
 
   Note: '''One database object — a table, view, materialized view, function or procedure —
@@ -4302,6 +4637,17 @@ Table "sensei"."session_task_links" {
   }
 
   Note: 'A session linked to a tracker ticket because its branch or prompts carry one of the ticket\'s keys (current or former). Recomputed on every sync of the ticket\'s tracker (a full relink in the sync\'s apply transaction). Only keys the board actually has can link.'
+}
+
+Table "sensei"."tracker_task_changes" {
+  "task_id" uuid [pk, not null, note: 'The ticket.']
+  "change_id" text [pk, not null, note: 'The tracker\'s changelog history id.']
+  "field" sensei.tracked_change_field [pk, not null, note: 'What changed.']
+  "at" timestamptz [not null, note: 'When it changed (the history\'s created time).']
+  "from_value" text [note: 'The raw value before: sprint ids comma-separated, a status id, or points as text.']
+  "to_value" text [note: 'The raw value after.']
+
+  Note: 'Tracker changelog entries per ticket for sprint, status and estimate (spec tracker-sdlc-metrics S4). Insert-only; read by the sprint replay.'
 }
 
 Table "sensei"."tracker_task_keys" {
@@ -4392,6 +4738,7 @@ Ref: "activity"."assistant_events"."repository_id" > "sensei"."repositories"."id
 Ref: "activity"."runs"."workspace_id" > "sensei"."workspaces"."id" [delete: set null]
 Ref: "gateway"."models"."provider_id" > "gateway"."providers"."id" [delete: cascade]
 Ref: "inference"."reasoning_traces"."workspace_id" > "sensei"."workspaces"."id" [delete: set null]
+Ref: "sensei"."code_duplicates"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."commits"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."dojo_membership_personas"."membership_id" > "sensei"."dojo_memberships"."id" [delete: cascade]
 Ref: "sensei"."dojo_membership_personas"."persona_id" > "sensei"."personas"."id" [delete: cascade]
@@ -4409,6 +4756,7 @@ Ref: "sensei"."library_versions"."library_id" > "sensei"."libraries"."id" [delet
 Ref: "sensei"."mcp_servers"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
 Ref: "sensei"."memory_share_batches"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
 Ref: "sensei"."metric_deactivations"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
+Ref: "sensei"."metric_gating"."metric_id" > "sensei"."metrics"."id" [delete: cascade]
 Ref: "sensei"."metric_watermarks"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."namespaces"."scope_key" > "sensei"."scopes"."key"
 Ref: "sensei"."persona_emails"."persona_id" > "sensei"."personas"."id" [delete: cascade]
@@ -4421,6 +4769,7 @@ Ref: "sensei"."repository_metrics"."persona_id" > "sensei"."personas"."id" [dele
 Ref: "sensei"."service_workspaces"."service_id" > "sensei"."services"."id" [delete: cascade]
 Ref: "sensei"."service_workspaces"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
 Ref: "sensei"."trackers"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
+Ref: "sensei"."workspace_metric_settings"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
 Ref: "activity"."run_events"."run_id" > "activity"."runs"."id" [delete: cascade]
 Ref: "activity"."sessions"."folder_id" > "sensei"."folders"."id" [delete: set null]
 Ref: "activity"."sessions"."repo_folder_id" > "sensei"."folders"."id" [delete: set null]
@@ -4461,10 +4810,16 @@ Ref: "sensei"."rule_check_runs"."folder_id" > "sensei"."folders"."id" [delete: c
 Ref: "sensei"."rule_packs"."owner_namespace_id" > "sensei"."namespaces"."id" [delete: cascade]
 Ref: "sensei"."sprints"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."stances"."namespace_id" > "sensei"."namespaces"."id" [delete: cascade]
+Ref: "sensei"."tracker_fields"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
+Ref: "sensei"."tracker_push_marks"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
+Ref: "sensei"."tracker_push_marks"."persona_id" > "sensei"."personas"."id" [delete: cascade]
+Ref: "sensei"."tracker_statuses"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."tracker_unknown_keys"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "activity"."memory_loads"."session_id" > "activity"."sessions"."id" [delete: set null]
 Ref: "activity"."memory_loads"."workspace_id" > "sensei"."workspaces"."id" [delete: set null]
 Ref: "activity"."memory_loads"."memory_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "activity"."session_signal_marks"."session_id" > "activity"."sessions"."id" [delete: cascade]
+Ref: "activity"."session_signals"."session_id" > "activity"."sessions"."id" [delete: cascade]
 Ref: "activity"."snapshots"."session_id" > "activity"."sessions"."id" [delete: cascade]
 Ref: "activity"."snapshots"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "activity"."task_sessions"."session_id" > "activity"."sessions"."id" [delete: set null]
@@ -4511,6 +4866,7 @@ Ref: "sensei"."edges"."target_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."schema_entities"."node_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."session_task_links"."session_id" > "activity"."sessions"."id" [delete: cascade]
 Ref: "sensei"."session_task_links"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
+Ref: "sensei"."tracker_task_changes"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_keys"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_sprints"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_sprints"."sprint_id" > "sensei"."sprints"."id" [delete: cascade]
@@ -4518,3 +4874,4 @@ Ref: "sensei"."schema_columns"."node_id" > "sensei"."schema_entities"."node_id" 
 Ref: "sensei"."schema_indexes"."node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]
 Ref: "sensei"."schema_refs"."from_node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]
 Ref: "sensei"."schema_refs"."to_node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]
+Ref: "sensei"."tracker_tasks"."sdd_framework_session_id" > "activity"."sessions"."id" [delete: set null]

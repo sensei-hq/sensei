@@ -3,11 +3,12 @@
  * Only `sensei:port` and `sensei:setup-complete` stay in localStorage.
  * The health gate (`sensei:health` in sessionStorage) is owned by HealthState.
  */
-import { senseiApi } from './api.js';
+import type { PanelState } from '@rokkit/app';
+import { failureReason, senseiApi } from './api.js';
 import { hasTauri } from './bootstrap.js';
 import { healthState } from './health-state.svelte.js';
 import { wizardState } from './wizard-state.svelte.js';
-import { STORAGE_KEYS } from './storage-keys.js';
+import { browserStorage, STORAGE_KEYS } from './storage-keys.js';
 
 // Daemon port. Hardcoded — there is one daemon, one port, one source of
 // truth. The previous indirection (a vite-define + a localStorage override)
@@ -15,18 +16,90 @@ import { STORAGE_KEYS } from './storage-keys.js';
 // any callsite that actually needed runtime variability.
 const DEFAULT_PORT = 7744;
 
+/** The one config entry that remembers every screen's panels (D87 §4). */
+export const VIEWS_KEY = 'ui.views';
+
+const PANEL_IDS = ['info', 'stats', 'filters', 'side'] as const;
+type PanelId = (typeof PANEL_IDS)[number];
+
+function isPanelId(key: string): key is PanelId {
+  return (PANEL_IDS as readonly string[]).includes(key);
+}
+
+/** The diagrams' old per-band localStorage keys, and the panel each one became. */
+const LEGACY_VIEW_KEYS: ReadonlyArray<readonly [string, PanelId]> = [
+  [STORAGE_KEYS.diagramsAbout, 'info'],
+  [STORAGE_KEYS.diagramsStats, 'stats'],
+  [STORAGE_KEYS.diagramsControls, 'filters'],
+  [STORAGE_KEYS.diagramsSide, 'side'],
+];
+
+/**
+ * `ui.views` → the stored panels, one entry per view id, plus what could not be
+ * read. An entry holds the four panel ids, boolean, and nothing else; anything
+ * else is dropped and said, while the rest of the map is kept. A value that is
+ * not JSON is never read as an empty map silently: the error comes back with
+ * it, so the shell can say why a view opened all open.
+ */
+function readViews(raw: string | undefined): { views: Record<string, PanelState>; error: string | null } {
+  if (raw === undefined) return { views: {}, error: null };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return { views: {}, error: `ui.views could not be read: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { views: {}, error: 'ui.views could not be read: it is not a map of views' };
+  }
+  const views: Record<string, PanelState> = {};
+  let invalid = false;
+  for (const [viewId, entry] of Object.entries(parsed as Record<string, unknown>)) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      invalid = true;
+      continue;
+    }
+    const panels: PanelState = {};
+    for (const [key, value] of Object.entries(entry as Record<string, unknown>)) {
+      if (!isPanelId(key) || typeof value !== 'boolean') {
+        invalid = true;
+        continue;
+      }
+      panels[key] = value;
+    }
+    views[viewId] = panels;
+  }
+  return {
+    views,
+    error: invalid ? 'ui.views could not be read: entries that are not panel states were dropped' : null,
+  };
+}
+
 export class AppState {
   /** Daemon port. Build-time constant — see DEFAULT_PORT above for why
    *  this is not a runtime $state and not read from localStorage. */
   readonly port = DEFAULT_PORT;
   config = $state<Record<string, string>>({});
   loaded = $state(false);
+  /** Why the last config read failed, or null. The config keeps its last good value. */
+  configError = $state<string | null>(null);
+  #retry: ReturnType<typeof setTimeout> | null = null;
 
   /** Cached workspace count for the observatory rail badge. Workspaces change
    *  rarely, so this is fetched once (on layout mount via loadWorkspaceCount)
    *  and reused — the rail reads this rather than re-fetching on every
    *  render. `null` until loaded → the badge stays hidden. */
   workspaceCount = $state<number | null>(null);
+
+  /** Every view's remembered panels, read once from `ui.views` and kept whole —
+   *  a save writes the entire map back, so this cache must never be written
+   *  from before the daemon's map has been read. */
+  #views = $state<Record<string, PanelState>>({});
+  /** Whether a config read has succeeded at least once, so `#views` is the
+   *  daemon's map rather than an empty cache. The whole-map write needs it. */
+  #viewsRead = false;
+  /** Why the views could not be read, or a save could not be kept, or null. */
+  viewsError = $state<string | null>(null);
 
   /** Called with the keys of each config write the daemon stored, so the other
    *  windows (each holds its own copy) can re-read it. Set by the root layout. */
@@ -102,6 +175,70 @@ export class AppState {
     this.onConfigSaved?.(Object.keys(map));
   }
 
+  // ── View panels (D87 §4) ─────────────────────────────────────────────
+  // One entry, `ui.views`, holds every screen's remembered bands. A view with
+  // no entry is a first visit: everything open. The shell stores through here.
+
+  /** The panels stored for a view; a first visit is `{}` — every band open. */
+  viewPanels(viewId: string): PanelState {
+    return this.#views[viewId] ?? {};
+  }
+
+  /** Keep one view's panels, writing the whole map so the other views survive.
+   *  Refused before the daemon's map has been read, throws when the daemon
+   *  refuses, and the cache then still holds what was really stored. */
+  async setViewPanels(viewId: string, next: PanelState): Promise<void> {
+    if (!this.#viewsRead) {
+      throw new Error("The views haven't been read yet: refusing to overwrite them.");
+    }
+    const whole = { ...this.#views, [viewId]: next };
+    try {
+      await this.setConfigs({ [VIEWS_KEY]: JSON.stringify(whole) });
+    } catch (e) {
+      this.viewsError = e instanceof Error ? e.message : String(e);
+      throw e;
+    }
+    this.#views = whole;
+    this.viewsError = null;
+  }
+
+  /**
+   * One-time: the diagrams' four localStorage toggles become `ui.views`, in
+   * every diagram view id given (the old toggles were shared by all of them),
+   * then the keys are deleted. A view that already has an entry is never
+   * overwritten. Nothing to write is still a finished migration: once the keys
+   * are read they are deleted, or they would be read on every start. A refused
+   * write keeps them, so the next start migrates again.
+   */
+  async migrateLegacyViews(viewIds: string[]): Promise<void> {
+    if (!this.#viewsRead) {
+      throw new Error("The views haven't been read yet: refusing to migrate them.");
+    }
+    const storage = browserStorage();
+    if (!storage) return;
+    const present = LEGACY_VIEW_KEYS.filter(([key]) => storage.getItem(key) !== null);
+    if (present.length === 0) return;
+    const migrated: PanelState = {};
+    for (const [key, panel] of present) migrated[panel] = storage.getItem(key) !== 'closed';
+    const whole: Record<string, PanelState> = { ...this.#views };
+    let wrote = false;
+    for (const viewId of viewIds) {
+      if (viewId in whole) continue;
+      whole[viewId] = migrated;
+      wrote = true;
+    }
+    if (wrote) {
+      try {
+        await this.setConfigs({ [VIEWS_KEY]: JSON.stringify(whole) });
+      } catch (e) {
+        this.viewsError = e instanceof Error ? e.message : String(e);
+        throw e;
+      }
+      this.#views = whole;
+    }
+    for (const [key] of present) storage.removeItem(key);
+  }
+
   // ── Facade passthroughs ──────────────────────────────────────────────
   // Encapsulate cross-global status so consumers can read app status from
   // one object rather than importing health/wizard/scan singletons
@@ -165,17 +302,26 @@ export class AppState {
     const api = senseiApi(this.port);
     const result = await api.tryGetConfig();
     if (!result.ok) {
-      // Daemon unreachable — fall back to empty defaults. Don't throw,
-      // don't redirect — the boot gate (routes/+layout.ts) is the single source of truth for
-      // routing decisions; if health isn't ok it'll bounce to /health,
-      // where the resolver chain handles the actual repair.
-      console.warn('[appState] load() falling back to defaults — daemon-config fetch failed', result.error);
-      this.config = {};
+      // Daemon unreachable — a restart refuses reads for a few seconds. The
+      // config keeps its last good value (never {} — that reset every
+      // preference in the window), the error is said, and the read is retried
+      // once shortly after. Routing stays the boot gate's (routes/+layout.ts):
+      // if health isn't ok it bounces to /health.
+      this.configError = failureReason(result.error);
       this.loaded = true;
+      this.#retry ??= setTimeout(() => {
+        this.#retry = null;
+        void this.load();
+      }, 2_000);
       return;
     }
 
+    this.configError = null;
     this.config = result.data;
+    const views = readViews(result.data[VIEWS_KEY]);
+    this.#views = views.views;
+    this.viewsError = views.error;
+    this.#viewsRead = true;
     // `setup_complete` ↔ localStorage reconciliation lives in
     // wizardState.hydrate() now (single owner). appState just caches the
     // config map; the boot gate reads `setupComplete` through the facade.

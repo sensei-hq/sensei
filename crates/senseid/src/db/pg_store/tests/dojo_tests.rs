@@ -801,6 +801,283 @@ async fn a_pulled_row_is_never_pushed_back() {
     assert_eq!(after_n, 0, "a dojo-computed row is NOT pushed back");
 }
 
+// H2/F4: the window skips rows whose backoff has not elapsed. The stuck row
+// sorts FIRST (the window orders by computed_on DESC; both fixtures share a
+// date, so the stuck one is moved a day up — a uuid tiebreak would flake)
+// with a limit of one: without the skip the window returns it and the due
+// row behind it never comes out.
+#[tokio::test]
+async fn a_row_in_backoff_does_not_hold_the_push_window() {
+    let s = pg_store().await;
+    let stuck_uniq = uuid::Uuid::new_v4();
+    let (stuck_pid, stuck_rid) = seed_sync_fixture(&s, &stuck_uniq).await;
+    let fresh_uniq = uuid::Uuid::new_v4();
+    let (fresh_pid, _) = seed_sync_fixture(&s, &fresh_uniq).await;
+    let stuck_key = format!("test/bare-{stuck_uniq}");
+    let fresh_key = format!("test/bare-{fresh_uniq}");
+
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics \
+            SET next_attempt_at = now() + interval '1 hour', \
+                computed_on = date '2020-05-02' \
+          WHERE repository_id = $1",
+    )
+    .bind(stuck_rid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let rows = s.unpushed_metric_rows(&["user"], &[&stuck_key, &fresh_key], 1).await.unwrap();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &stuck_pid, None, &[]).await;
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &fresh_pid, None, &[]).await;
+
+    assert_eq!(rows.len(), 1, "the window still offers one row");
+    assert_eq!(rows[0].repo_key, fresh_key, "the due row, not the stuck one");
+}
+
+/// T3: a fresh mark clears the backoff. Without the clear, a row that is
+/// marked and then recomputed waits out a stale backoff, up to 1 h.
+#[tokio::test]
+async fn a_fresh_mark_clears_the_backoff() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "SELECT id FROM sensei.repository_metrics WHERE repository_id = $1",
+    )
+    .bind(rid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics SET next_attempt_at = now() + interval '1 hour' WHERE id = $1",
+    )
+    .bind(id)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let n = s.mark_metric_rows_shared(&[id]).await.unwrap();
+    let (backoff,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+        "SELECT next_attempt_at FROM sensei.repository_metrics WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+    assert_eq!(n, 1);
+    assert!(backoff.is_none(), "a fresh mark clears the backoff, got {backoff:?}");
+}
+
+#[tokio::test]
+async fn a_pushed_commit_row_carries_its_authored_time_and_an_unknown_sha_does_not() {
+    // F4 phase B: per-commit rows carry props.authored_at from sensei.commits
+    // (the instant the dōjō's latest-per-person order reads); an unknown sha
+    // is sent without the key, never with an invented time.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let mid = seed_metric(&s, &format!("_test:sync:{uniq}:authored"), "ComputeFtr", 0, None).await;
+    let known = format!("known-{uniq}");
+    let unknown = format!("unknown-{uniq}");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.commits(repository_id, sha, authored_at) VALUES ($1, $2, '2026-10-06T14:00:00Z')",
+    )
+    .bind(rid)
+    .bind(&known)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    for (sha, day) in [(known.as_str(), 6), (unknown.as_str(), 7)] {
+        s.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: Some(sha),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 10, day).unwrap(),
+            grain: "daily",
+            value: 0.5,
+            props: &serde_json::json!({"denominator": 2}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+
+    let rows =
+        s.unpushed_metric_rows(&["user"], &[&format!("test/bare-{uniq}")], 100).await.unwrap();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    let by_sha = |sha: &str| rows.iter().find(|r| r.commit_sha.as_deref() == Some(sha)).unwrap();
+    assert_eq!(
+        by_sha(&known).props.get("authored_at"),
+        Some(&serde_json::json!("2026-10-06T14:00:00+00:00")),
+        "a known sha carries its commit's authored time"
+    );
+    assert!(
+        by_sha(&unknown).props.get("authored_at").is_none(),
+        "an unknown sha is sent without the key, never with an invented time"
+    );
+}
+
+#[tokio::test]
+async fn user_rows_ship_authored_at_through_the_persona_push_query() {
+    // F4/M3: user rows ship through unpushed_user_metric_rows (the persona
+    // path, dojo_sync.rs), not the repo query above — the authored_at join
+    // must hold there too. Same both-ways assertion: known sha carries it,
+    // unknown sha does not.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
+    let persona = s.upsert_persona(&format!("_test:pushable:{uniq}"), true).await.unwrap();
+    let claimed = format!("me-{uniq}@x.test");
+    s.link_persona_email(&persona, &claimed, "claimed").await.unwrap();
+    let mid =
+        seed_metric(&s, &format!("_test:sync:{uniq}:authored-user"), "ComputeFtr", 0, None).await;
+    let known = format!("known-user-{uniq}");
+    let unknown = format!("unknown-user-{uniq}");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.commits(repository_id, sha, authored_at) VALUES ($1, $2, '2026-10-06T14:00:00Z')",
+    )
+    .bind(rid)
+    .bind(&known)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    for sha in [&known, &unknown] {
+        s.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: Some(claimed.as_str()),
+            commit_sha: Some(sha.as_str()),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(),
+            grain: "daily",
+            value: 0.5,
+            props: &serde_json::json!({"denominator": 2}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+
+    let rows = s.unpushed_user_metric_rows(&persona, &[&key], &[], 100).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(persona)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    // The fixture's no-identity row is held (exclusive list empty); only the
+    // two claimed-identity rows ship.
+    assert_eq!(rows.len(), 2, "both claimed rows ship, the no-identity row is held");
+    let by_sha = |sha: &str| rows.iter().find(|r| r.commit_sha.as_deref() == Some(sha)).unwrap();
+    assert_eq!(
+        by_sha(&known).props.get("authored_at"),
+        Some(&serde_json::json!("2026-10-06T14:00:00+00:00")),
+        "a known sha carries its commit's authored time on the persona path"
+    );
+    assert!(
+        by_sha(&unknown).props.get("authored_at").is_none(),
+        "an unknown sha is sent without the key on the persona path"
+    );
+}
+
+#[tokio::test]
+async fn backfill_push_authored_at_runs_once_and_requeues_keyless_commit_rows() {
+    // F4/L1: per-commit user rows pushed before authored_at existed gain the
+    // key from sensei.commits and are re-queued (shared_at cleared) so the
+    // next tick re-pushes them through the existing upsert. Unknown shas and
+    // commit-less rows are untouched. A second run changes nothing.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
+    let mid = seed_metric(&s, &format!("_test:sync:{uniq}:backfill"), "ComputeFtr", 0, None).await;
+    let known = format!("known-bf-{uniq}");
+    let unknown = format!("unknown-bf-{uniq}");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.commits(repository_id, sha, authored_at) VALUES ($1, $2, '2026-10-06T14:00:00Z')",
+    )
+    .bind(rid)
+    .bind(&known)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    for sha in [&known, &unknown] {
+        s.upsert_workspace_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: Some(sha.as_str()),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(),
+            grain: "daily",
+            value: 0.5,
+            props: &serde_json::json!({"denominator": 2}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+    // As pushed before the key existed: shared, keyless.
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics SET shared_at = now() WHERE repository_id = $1",
+    )
+    .bind(rid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let first = s.backfill_push_authored_at_once().await.unwrap();
+
+    let state = || async {
+        let rows: Vec<(Option<String>, bool, bool)> = sqlx_core::query_as::query_as(
+            "SELECT commit_sha, props ? 'authored_at', shared_at IS NULL \
+               FROM sensei.repository_metrics WHERE repository_id = $1",
+        )
+        .bind(rid)
+        .fetch_all(s.pool())
+        .await
+        .unwrap();
+        rows
+    };
+    let after_first = state().await;
+    let second = s.backfill_push_authored_at_once().await.unwrap();
+    let after_second = state().await;
+    let requeued = s.unpushed_metric_rows(&["user"], &[&key], 100).await.unwrap();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    assert_eq!(first, 1, "one known-sha row backfilled and re-queued");
+    let known_row =
+        after_first.iter().find(|(sha, _, _)| sha.as_deref() == Some(known.as_str())).unwrap();
+    assert_eq!(
+        *known_row,
+        (Some(known.clone()), true, true),
+        "known sha gains the key and is re-queued"
+    );
+    assert!(
+        after_first.iter().all(|(sha, keyed, queued)| {
+            sha.as_deref() == Some(known.as_str()) || (!keyed && !queued)
+        }),
+        "unknown-sha and commit-less rows untouched: {after_first:?}"
+    );
+    assert_eq!(second, 0, "a second run changes nothing");
+    assert_eq!(after_first, after_second, "a second run changes nothing");
+    // Re-queued means pushable again through the real read.
+    assert!(
+        requeued.iter().any(|r| r.commit_sha.as_deref() == Some(known.as_str())),
+        "the backfilled row is queued for push with its key"
+    );
+}
+
 #[tokio::test]
 async fn a_locally_private_repository_is_queued_only_when_the_plan_names_it() {
     // Was `a_private_repository_is_skipped_not_queued`, which asserted that the
@@ -1028,6 +1305,48 @@ async fn sync_state_rows_rank_partial_between_pending_and_skipped() {
         .unwrap();
 
     assert_eq!(order, vec!["pending", "partial", "skipped"]);
+}
+
+/// A skipped repository row carries its remedy, resolved from
+/// `sensei.reason_codes` (domain `repository_sharing`) — the screen renders
+/// it rather than keeping its own copy of the text. A reason that names no
+/// code resolves to nothing and shows verbatim.
+#[tokio::test]
+async fn sync_state_rows_resolve_a_skipped_repository_remedy() {
+    let s = pg_store().await;
+    let tag = uuid::Uuid::new_v4();
+    let denied = format!("github.com/test/remedy-denied-{tag}");
+    let unmapped = format!("github.com/test/remedy-unmapped-{tag}");
+    let uncoded = format!("github.com/test/remedy-uncoded-{tag}");
+    fn mark(k: &str) -> crate::db::pg_store::sync::SyncMark<'_> {
+        crate::db::pg_store::sync::SyncMark {
+            entity: "repository",
+            key: k,
+            direction: "push",
+            persona: "p",
+        }
+    }
+    s.mark_sync_skipped(&mark(&denied), "denied:not_subscribed").await.unwrap();
+    s.mark_sync_skipped(&mark(&unmapped), "unmapped:no_connection").await.unwrap();
+    s.mark_sync_skipped(&mark(&uncoded), "unmapped:made_up_for_this_test").await.unwrap();
+
+    let rows = s.sync_state_rows().await.unwrap();
+    let find = |key: &str| rows.iter().find(|r| r.entity_key == key).and_then(|r| r.remedy.clone());
+    let denied_remedy = find(&denied);
+    let unmapped_remedy = find(&unmapped);
+    let uncoded_remedy = find(&uncoded);
+    sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = ANY($1)")
+        .bind(&[denied, unmapped, uncoded])
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(denied_remedy.as_deref(), Some("Ask an admin to subscribe"));
+    assert_eq!(
+        unmapped_remedy.as_deref(),
+        Some("Connect this organisation in Dōjō › Integrations")
+    );
+    assert_eq!(uncoded_remedy, None, "an uncoded reason shows verbatim, not blanked");
 }
 
 #[tokio::test]

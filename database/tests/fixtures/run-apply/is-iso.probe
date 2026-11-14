@@ -1,0 +1,11 @@
+-- Calls the real is_iso_instant.ddl: its plpgsql body holds whole-line begin
+-- and end, so this pins "the guard lets real DDL through" (F2).
+do $$
+begin
+    if not dojo.is_iso_instant('2026-01-01T00:00:00Z') then
+        raise exception 'is-iso-probe: rejected a valid instant';
+    end if;
+    if dojo.is_iso_instant('not-a-time') then
+        raise exception 'is-iso-probe: accepted garbage';
+    end if;
+end $$;

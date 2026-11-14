@@ -15,10 +15,12 @@ e2e suite (known reds from T-3 block green-main claims), and the release
 automation. The job is **no change reaches main without tests, lint, fmt, and
 e2e**. The user feels this as *main is always shippable — I trust the gate.*
 
-> **Status honesty.** The pre-commit suite (leak check + `make test-fast`) and
-> Rust/app unit tests run on every PR and are **green** (198 bootstrap tests +
-> 1,781 app tests). The e2e suite has **known reds (T-3)** that block
-> green-main claims. The release automation (bump, publish, tag) is designed
+> **Status honesty** (checked 2026-11-03). The pre-commit suite (leak check +
+> `make test-fast`) is real and green, and **Rust** tests run on every PR
+> (`.github/workflows/rust.yml`, active). The **app and dōjō unit tests do not**:
+> their only workflow, `coverage.yml`, is `disabled_manually` on GitHub, so no PR
+> gates on them (they pass locally — 2,664 app tests, `bun run test:unit`). The e2e
+> suite has **known reds (T-3)** that block green-main claims. The release automation (bump, publish, tag) is designed
 > but not fully automated. The `.github/` workflows + `.qlty/` config exist.
 > **The 9-step chain (fmt → clippy → SQL layer → grant targets → DDL comments
 > → brew tokens → dbd pins → JSON wire → deploy/upgrade) runs in CI
@@ -60,12 +62,12 @@ e2e**. The user feels this as *main is always shippable — I trust the gate.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Pre-commit status | all hooks passed | `✅ fmt · ✅ clippy · ✅ sql-layer · ✅ unit-tests` |
-| E2E status | passing / known-red / flaky | `T-3 known red · 47/51 passing` |
-| Release status | drafted / published / failed | `v0.12.0 · published` |
-| Qlty score | code quality grade | `A-` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Pre-commit status | all hooks passed | `✅ fmt · ✅ clippy · ✅ sql-layer · ✅ unit-tests` | fix the failing hook before committing |
+| E2E status | passing / known-red / flaky | `T-3 known red · 47/51 passing` | fix the regression, or the flaky test |
+| Release status | drafted / published / failed | `v0.12.0 · published` | failed → fix the release job and run it again |
+| Qlty score | code quality grade | `A-` | fix the files pulling the grade down |
 
 ## Done gate
 
@@ -107,8 +109,8 @@ npx playwright test  # e2e
 
 - [T-3](../../../../roadmap/06-gaps.md) — e2e known reds block green-main
   claims (P1).
-- [D-12](../../../../roadmap/06-gaps.md) — dependency drift: `@rokkit/*`,
-  `@kavach/*` held back by lockfiles (P3).
+- ~~D-12~~ — **closed 2026-11-03** by `eefc6c119`: every `@kavach/*` at 1.3.2, so
+  `@rokkit/*` resolves once at 1.14.0 (#191).
 - [D-13](../../../../roadmap/06-gaps.md) — 28 medium OSV advisories
   (transitive; none code-fixable) (P3).
 

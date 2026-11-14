@@ -354,3 +354,139 @@ async fn a_generated_column_this_release_adds_is_generated_for_the_rows_already_
         "computed for the rows already there; a non-number is NULL"
     );
 }
+
+/// A design of an enum, a table with a column of it, and a view over the
+/// table, in `dir` — the miniature of the live shape behind #397 (owned views
+/// over tables a later tree alters, rows holding enum values a later tree
+/// drops). v2 drops the enum value AND the column; v3 keeps the enum but
+/// breaks the reconcile another way (a default calling a missing function).
+fn red397_design(dir: &Path, version: u8) {
+    let ddl = dir.join("ddl");
+    std::fs::create_dir_all(ddl.join("enum/red397")).unwrap();
+    std::fs::create_dir_all(ddl.join("table/red397")).unwrap();
+    std::fs::create_dir_all(ddl.join("view/red397")).unwrap();
+    std::fs::create_dir_all(ddl.join("table/sensei")).unwrap();
+    std::fs::write(
+        dir.join("design.yaml"),
+        "project:\n  name: red397\nsource:\n  dialect: postgresql\nschemas:\n  - red397\n  - sensei\n",
+    )
+    .unwrap();
+    let values = if version == 2 { "'a'" } else { "'a', 'b'" };
+    std::fs::write(
+        ddl.join("enum/red397/e.ddl"),
+        format!("set search_path to red397;\n\ncreate type e as enum ({values});\n"),
+    )
+    .unwrap();
+    let extra = match version {
+        1 => ",\n  dropme text",
+        3 => ",\n  broken text not null default red397_nope()",
+        _ => "",
+    };
+    std::fs::write(
+        ddl.join("table/red397/t.ddl"),
+        format!(
+            "set search_path to red397;\n\ncreate table if not exists t (\n  id serial primary key,\n  e red397.e not null{extra}\n);\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        ddl.join("view/red397/v.ddl"),
+        "set search_path to red397;\n\ncreate or replace view red397.v as select id, e from red397.t;\n",
+    )
+    .unwrap();
+    // The version-gate record lives in sensei.config in production; the
+    // fixture carries the same table so the gate test records for real.
+    std::fs::write(
+        ddl.join("table/sensei/config.ddl"),
+        "set search_path to sensei;\n\ncreate table if not exists config (\n  key text primary key,\n  value text not null\n);\n",
+    )
+    .unwrap();
+}
+
+/// #397: the upgrade flow deployed the release tag tree onto a live database
+/// whose schema had moved ahead of it — the preview came back destructive, the
+/// views over the altered tables came down, and the reconcile then died (live
+/// rows held an enum value the tag tree drops) before the re-apply could
+/// restore them. A deploy that cannot run refuses BEFORE it drops anything.
+#[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
+async fn a_deploy_whose_reconcile_cannot_run_refuses_before_dropping_anything() {
+    let db = Scratch::new("precheck");
+    let backups = tempfile::tempdir().unwrap();
+    let (v1, v2) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    red397_design(v1.path(), 1);
+    red397_design(v2.path(), 2);
+    sensei_bootstrap::database::deploy_to(&db.url(), v1.path(), backups.path())
+        .await
+        .expect("v1 deploys");
+    psql(&db.0, "insert into red397.t (e) values ('b')");
+
+    let err = sensei_bootstrap::database::deploy_to(&db.url(), v2.path(), backups.path())
+        .await
+        .expect_err("v2 cannot run while a row holds 'b'");
+    assert!(err.contains("refusing to deploy"), "aborts before dropping: {err}");
+    assert_eq!(
+        psql(&db.0, "select count(*) from pg_views where schemaname = 'red397' and viewname = 'v'"),
+        "1",
+        "the view is never dropped on a refused deploy"
+    );
+    assert_eq!(psql(&db.0, "select count(*) from red397.t"), "1", "rows untouched");
+}
+
+/// #397, second half: when a later phase still fails after the drop, the
+/// deploy recreates the views it dropped and says so in the error.
+#[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
+async fn a_failed_deploy_restores_the_views_it_dropped() {
+    let db = Scratch::new("restore");
+    let backups = tempfile::tempdir().unwrap();
+    let (v1, v3) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    red397_design(v1.path(), 1);
+    red397_design(v3.path(), 3);
+    sensei_bootstrap::database::deploy_to(&db.url(), v1.path(), backups.path())
+        .await
+        .expect("v1 deploys");
+
+    let err = sensei_bootstrap::database::deploy_to(&db.url(), v3.path(), backups.path())
+        .await
+        .expect_err("v3's broken default fails the deploy");
+    assert!(err.contains("view restore"), "error reports the restore outcome: {err}");
+    assert_eq!(
+        psql(&db.0, "select count(*) from pg_views where schemaname = 'red397' and viewname = 'v'"),
+        "1",
+        "dropped views come back even though the deploy failed"
+    );
+}
+
+/// #397, third half: a deploy at the recorded version is a no-op (the
+/// self-perpetuating trigger), and a successful deploy records its version.
+#[test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
+fn a_deploy_at_the_recorded_version_skips_without_reading_its_source() {
+    let db = Scratch::new("gate");
+    let backups = tempfile::tempdir().unwrap();
+    let tree = tempfile::tempdir().unwrap();
+    red397_design(tree.path(), 1);
+
+    sensei_bootstrap::database::deploy_with_source(
+        &db.0,
+        "9.9.397",
+        &tree.path().display().to_string(),
+        backups.path(),
+    )
+    .expect("the first deploy records the version");
+    assert_eq!(
+        psql(&db.0, "select value from sensei.config where key = 'schema_deployed_version'"),
+        "9.9.397"
+    );
+
+    // Corrupt the source: a gated second deploy never reads it.
+    std::fs::remove_file(tree.path().join("design.yaml")).unwrap();
+    sensei_bootstrap::database::deploy_with_source(
+        &db.0,
+        "9.9.397",
+        &tree.path().display().to_string(),
+        backups.path(),
+    )
+    .expect("the second deploy at the same version skips");
+}

@@ -42,8 +42,13 @@ pub async fn connect(
     params: ConnectParams,
 ) -> Result<Connected, ConnectError> {
     let kind = adapter.kind().as_str();
+    let validated = adapter.validate(transport, &params).await.map_err(ConnectError::Validate)?;
+    // The provider's identity for the board and the token, where it has one (§G1):
+    // the owner check, the tombstone, the keyring and the row all use these.
+    let board_ref = validated.board_ref.clone().unwrap_or_else(|| params.board_ref.clone());
+    let account = validated.account.clone().unwrap_or_else(|| params.account.clone());
     let owner = pg
-        .tracker_board_owner(kind, &params.base_url, &params.board_ref)
+        .tracker_board_owner(kind, &params.base_url, &board_ref)
         .await
         .map_err(ConnectError::Db)?;
     if let Some(owner) = owner.filter(|o| o.workspace_id != workspace_id) {
@@ -52,19 +57,18 @@ pub async fn connect(
             workspace_name: owner.workspace_name,
         });
     }
-    let validated = adapter.validate(transport, &params).await.map_err(ConnectError::Validate)?;
 
     // 1. Record the new secret before it exists, so no crash can orphan it.
     let service = format!("{}{kind}.{}", store.namespace(), uuid::Uuid::new_v4());
     let grace =
         chrono::Duration::from_std(PENDING_GRACE).unwrap_or_else(|_| chrono::Duration::minutes(10));
-    pg.write_pending_tombstone(&service, &params.account, chrono::Utc::now() + grace)
+    pg.write_pending_tombstone(&service, &account, chrono::Utc::now() + grace)
         .await
         .map_err(ConnectError::Db)?;
 
     // 2. Write it, outside any transaction, bounded.
-    let (svc, account, token) = (service.clone(), params.account.clone(), params.token.clone());
-    bounded(store.clone(), KEYRING_TIMEOUT, move |s| s.set(&svc, &account, &token))
+    let (svc, acct, token) = (service.clone(), account.clone(), params.token.clone());
+    bounded(store.clone(), KEYRING_TIMEOUT, move |s| s.set(&svc, &acct, &token))
         .await
         .map_err(|_| ConnectError::CredentialStore)?;
 
@@ -74,17 +78,22 @@ pub async fn connect(
         kind: kind.to_string(),
         level: level.as_str().to_string(),
         base_url: params.base_url.clone(),
-        account: params.account.clone(),
+        account,
         external_scope: validated.external_scope,
-        board_ref: params.board_ref.clone(),
-        params: serde_json::json!({ "board_name": validated.board_name }),
+        board_ref: board_ref.clone(),
+        params: {
+            let mut p = validated.params;
+            p.insert("board_name".into(), serde_json::json!(validated.board_name));
+            serde_json::Value::Object(p)
+        },
         secret_service: service,
+        owner: validated.owner,
     };
     let (tracker_id, created, rekeyed) = match pg.connect_tracker(&row).await {
         Ok(ok) => ok,
         Err(ConnectDbError::BoardTaken) => {
             let owner = pg
-                .tracker_board_owner(kind, &params.base_url, &params.board_ref)
+                .tracker_board_owner(kind, &params.base_url, &board_ref)
                 .await
                 .map_err(ConnectError::Db)?
                 .ok_or_else(|| ConnectError::Db("board taken, owner not found".into()))?;
@@ -214,6 +223,7 @@ pub(crate) mod tests {
             account: "dev@example.com".into(),
             token: ApiToken("SENTINEL-TOKEN-XYZ".into()),
             project_key: None,
+            sprint_field: None,
         }
     }
     fn site() -> String {
@@ -343,6 +353,91 @@ pub(crate) mod tests {
             p2,
             TrackerLevel::Sprint,
             params(&s, "42"),
+        )
+        .await;
+        assert!(
+            matches!(r, Err(ConnectError::BoardAlreadyConnected { workspace_id, .. }) if workspace_id == p1),
+            "{r:?}"
+        );
+        assert!(store.entries.lock().unwrap().is_empty(), "nothing stored for a refused connect");
+    }
+
+    /// A GitLab-shaped validate: the board's numeric id and the token's username
+    /// replace what the connect body typed (§G1).
+    fn validating_to(
+        board_ref: &str,
+        account: &str,
+    ) -> &'static crate::tracker::test_support::FakeAdapter {
+        crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
+            scopes: [String::new(), String::new()],
+            validated: Some(crate::tracker::Validated {
+                external_scope: "acme/platform".into(),
+                board_name: "Platform".into(),
+                owner: crate::tracker::OwnerLookup::Unknown,
+                account: Some(account.into()),
+                board_ref: Some(board_ref.into()),
+                params: serde_json::from_value(serde_json::json!({"full_path": "acme/platform"}))
+                    .unwrap(),
+            }),
+            ..crate::tracker::test_support::FakeAdapter::gitlab_like()
+        })
+    }
+
+    #[tokio::test]
+    async fn the_validated_board_ref_and_account_replace_the_typed_ones() {
+        let pg = PgStore::test_store().await;
+        let p = workspace(&pg).await;
+        let store = Arc::new(MemoryStore::default());
+        let c = connect(
+            &pg,
+            store.clone(),
+            validating_to("project:123", "alice"),
+            &FakeBoard::empty(),
+            p,
+            TrackerLevel::Sprint,
+            params(&site(), "acme/platform"),
+        )
+        .await
+        .unwrap();
+        let row = pg.tracker_by_id(c.tracker_id).await.unwrap().unwrap();
+        assert_eq!((row.board_ref.as_str(), row.account.as_str()), ("project:123", "alice"));
+        assert_eq!(
+            row.params,
+            serde_json::json!({"board_name": "Platform", "full_path": "acme/platform"})
+        );
+        let stored = store.entries.lock().unwrap();
+        assert!(
+            stored.keys().any(|(_, account)| account == "alice"),
+            "the keyring entry is under the validated account"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_board_under_two_typed_paths_is_one_board() {
+        // D4: a rename must not let the same board connect twice.
+        let pg = PgStore::test_store().await;
+        let (p1, p2) = (workspace(&pg).await, workspace(&pg).await);
+        let s = site();
+        connect(
+            &pg,
+            Arc::new(MemoryStore::default()),
+            validating_to("project:123", "alice"),
+            &FakeBoard::empty(),
+            p1,
+            TrackerLevel::Sprint,
+            params(&s, "acme/platform"),
+        )
+        .await
+        .unwrap();
+        let store = Arc::new(MemoryStore::default());
+        let r = connect(
+            &pg,
+            store.clone(),
+            validating_to("project:123", "alice"),
+            &FakeBoard::empty(),
+            p2,
+            TrackerLevel::Sprint,
+            params(&s, "acme/core"),
         )
         .await;
         assert!(
@@ -682,6 +777,180 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_connect_stores_who_the_token_belongs_to() {
+        use crate::tracker::test_support::owner_of;
+        let pg = PgStore::test_store().await;
+        for (myself, want) in [
+            (
+                serde_json::json!({"accountId": "A1", "accountType": "atlassian"}),
+                (Some("A1"), None),
+            ),
+            (serde_json::json!({"accountType": "app"}), (None, Some("not_a_person"))),
+            (serde_json::json!({}), (None, Some("unknown"))),
+        ] {
+            let p = workspace(&pg).await;
+            let c = connect(
+                &pg,
+                Arc::new(MemoryStore::default()),
+                &JiraAdapter,
+                &FakeBoard::standard().with_myself(myself.clone()),
+                p,
+                TrackerLevel::Sprint,
+                params(&site(), "42"),
+            )
+            .await
+            .unwrap();
+            let (owner, state, error) = owner_of(&pg, c.tracker_id).await;
+            assert_eq!(
+                (owner.as_deref(), state.as_deref(), error),
+                (want.0, want.1, None),
+                "{myself}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_connect_resets_the_owner_of_every_board_it_rekeys() {
+        use crate::tracker::sync::{SYNC_DEADLINE, TrackerLocks, sync_tracker};
+        use crate::tracker::test_support::{assigned, owner_of};
+        let pg = PgStore::test_store().await;
+        let p = workspace(&pg).await;
+        let store = Arc::new(MemoryStore::default());
+        let s = site();
+        let first = FakeBoard::standard().with_assignees([Some("A1"), None, None]);
+        let a = connect(
+            &pg,
+            store.clone(),
+            &JiraAdapter,
+            &first,
+            p,
+            TrackerLevel::Sprint,
+            params(&s, "42"),
+        )
+        .await
+        .unwrap()
+        .tracker_id;
+        sync_tracker(&pg, &TrackerLocks::default(), a, &JiraAdapter, &first, SYNC_DEADLINE)
+            .await
+            .unwrap();
+        assert_eq!(assigned(&pg, a).await[0].1, Some(true));
+
+        // A new board on the same site, connected with another person's token.
+        let other = with_board_43()
+            .with_myself(serde_json::json!({"accountId": "B1", "accountType": "atlassian"}));
+        let b = connect(
+            &pg,
+            store.clone(),
+            &JiraAdapter,
+            &other,
+            p,
+            TrackerLevel::Epic,
+            params(&s, "43"),
+        )
+        .await
+        .unwrap()
+        .tracker_id;
+        assert_eq!(owner_of(&pg, b).await.0.as_deref(), Some("B1"));
+        assert_eq!(
+            owner_of(&pg, a).await,
+            (None, None, None),
+            "the sibling's next sync looks B1 up"
+        );
+        assert!(
+            assigned(&pg, a).await.iter().all(|(_, m)| m.is_none()),
+            "A1's tickets aren't B1's"
+        );
+
+        // Re-connecting the first board with B1's token: its own tickets are reset too.
+        sync_tracker(&pg, &TrackerLocks::default(), a, &JiraAdapter, &first, SYNC_DEADLINE)
+            .await
+            .unwrap();
+        let again = FakeBoard::standard()
+            .with_myself(serde_json::json!({"accountId": "B1", "accountType": "atlassian"}));
+        connect(&pg, store, &JiraAdapter, &again, p, TrackerLevel::Sprint, params(&s, "42"))
+            .await
+            .unwrap();
+        assert_eq!(owner_of(&pg, a).await.0.as_deref(), Some("B1"));
+        assert!(assigned(&pg, a).await.iter().all(|(_, m)| m.is_none()));
+    }
+
+    #[tokio::test]
+    async fn a_connect_resets_what_the_old_token_wrote_on_every_board_it_rekeys() {
+        let pg = PgStore::test_store().await;
+        let p = workspace(&pg).await;
+        let store = Arc::new(MemoryStore::default());
+        let s = site();
+        let board = FakeBoard::standard().with_assignees([Some("A1"), None, None]);
+        let a = connect(
+            &pg,
+            store.clone(),
+            &JiraAdapter,
+            &board,
+            p,
+            TrackerLevel::Sprint,
+            params(&s, "42"),
+        )
+        .await
+        .unwrap()
+        .tracker_id;
+        crate::tracker::sync::sync_tracker(
+            &pg,
+            &crate::tracker::sync::TrackerLocks::default(),
+            a,
+            &JiraAdapter,
+            &board,
+            crate::tracker::sync::SYNC_DEADLINE,
+        )
+        .await
+        .unwrap();
+        let wrote = |pg: PgStore| async move {
+            for q in [
+                "UPDATE sensei.tracker_tasks SET writeback_comment_ref = '555', writeback_hash = 'h',
+                        writeback_status = 'forbidden', writeback_at = now() WHERE tracker_id = $1",
+                "UPDATE sensei.trackers SET writeback_error = 'db' WHERE id = $1",
+            ] {
+                sqlx_core::query::query(q).bind(a).execute(pg.pool()).await.unwrap();
+            }
+        };
+        let left = |pg: PgStore| async move {
+            sqlx_core::query_as::query_as::<_, (i64, Option<String>)>(
+                "SELECT (SELECT count(*) FROM sensei.tracker_tasks WHERE tracker_id = $1
+                          AND (writeback_comment_ref IS NOT NULL OR writeback_hash IS NOT NULL
+                               OR writeback_status IS NOT NULL)),
+                        (SELECT writeback_error::text FROM sensei.trackers WHERE id = $1)",
+            )
+            .bind(a)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+        };
+        // A new sibling board on the site re-keys `a`.
+        wrote(pg.clone()).await;
+        connect(
+            &pg,
+            store.clone(),
+            &JiraAdapter,
+            &with_board_43(),
+            p,
+            TrackerLevel::Epic,
+            params(&s, "43"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            left(pg.clone()).await,
+            (0, None),
+            "a sibling's old writes are not the new owner's"
+        );
+        // Re-connecting `a` itself.
+        wrote(pg.clone()).await;
+        connect(&pg, store, &JiraAdapter, &board, p, TrackerLevel::Sprint, params(&s, "42"))
+            .await
+            .unwrap();
+        assert_eq!(left(pg.clone()).await, (0, None));
+    }
+
+    #[tokio::test]
     async fn a_drain_racing_the_last_disconnect_still_deletes_the_secret() {
         let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
@@ -757,6 +1026,7 @@ pub(crate) mod tests {
             board_ref: "42".into(),
             params: serde_json::json!({}),
             secret_service: format!("com.sensei.tracker.jira.{}", uuid::Uuid::new_v4()),
+            owner: crate::tracker::OwnerLookup::Unknown,
         };
         // No pending tombstone was written (or a drain removed it).
         assert_eq!(

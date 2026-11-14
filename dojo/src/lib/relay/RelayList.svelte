@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, EmptyState, Banner, Btn } from '$lib/components/kit';
+	import { SectionHead } from '$lib/components/kit';
+	import { Screen, Notice, EmptyState } from '@sensei/ui';
 	import { invalidateAll } from '$app/navigation';
 	import { Toggle } from '@rokkit/ui';
 	import RelayCard from './RelayCard.svelte';
+	import RelayNotifyToggle from '$lib/components/RelayNotifyToggle.svelte';
+	import type { RelayNotify } from './relay-notify.svelte';
 	import { relayInboxState } from './relay-inbox-state.svelte';
 	import type { RelayFilter } from './types';
 	import * as m from '$lib/paraglide/messages';
@@ -14,6 +16,9 @@
 	// The filter tabs are the rokkit Toggle (segmented radiogroup) — the design
 	// system's own control, not a hand-rolled tab strip.
 	const st = relayInboxState;
+
+	// "Notify me" sits in the header, beside what needs you (user, 2026-10-28).
+	let { notify, tenantKeys = [] }: { notify?: RelayNotify; tenantKeys?: string[] } = $props();
 
 	const FILTERS = [
 		{ label: m.filter_needs(), value: 'needs' },
@@ -30,9 +35,12 @@
 		<div class="px-5 pb-4 pt-6">
 			<SectionHead eyebrow={m.inbox_eyebrow()} title={m.inbox_title()} count={st.sessions.length}>
 				{#snippet right()}
-					{#if st.needsCount > 0}
-						<span class="mono text-accent text-xs">{m.inbox_needs_badge({ count: st.needsCount })}</span>
-					{/if}
+					<span class="flex items-center gap-3">
+						{#if st.needsCount > 0}
+							<span class="mono text-accent text-xs">{m.inbox_needs_badge({ count: st.needsCount })}</span>
+						{/if}
+						{#if notify}<RelayNotifyToggle {notify} {tenantKeys} />{/if}
+					</span>
 				{/snippet}
 			</SectionHead>
 			<div class="mt-4">
@@ -53,24 +61,18 @@
 					<div class="bg-paper-mute h-16 animate-pulse rounded-lg"></div>
 				{/each}
 			</div>
-		{:else if st.status === 'error'}
+		{:else if st.errorNotice}
 			<div data-inbox-error>
-				<EmptyState kanji="断" title={m.inbox_error_title()}>
-					{st.error}
-					<div class="mt-3"><Btn onclick={() => invalidateAll()}>{m.inbox_retry()}</Btn></div>
-				</EmptyState>
+				<Notice
+					size="panel"
+					{...st.errorNotice}
+					primary={{ label: m.inbox_retry(), name: 'retry', onclick: () => invalidateAll() }}
+				/>
 			</div>
 		{:else}
-			{#if st.unreachable.length || st.plansMissing}
+			{#if st.partialNotice}
 				<div class="mb-3" data-inbox-partial>
-					<Banner tone="warning" kanji="欠" title={m.inbox_partial_title()}>
-						{#if st.unreachable.length}
-							<p>{m.inbox_partial_unreachable({ names: st.unreachable.join(', ') })}</p>
-						{/if}
-						{#if st.plansMissing}
-							<p>{m.inbox_partial_plans({ count: st.plansMissing })}</p>
-						{/if}
-					</Banner>
+					<Notice size="inline" expanded {...st.partialNotice} />
 				</div>
 			{/if}
 			{#if !st.sessions.length}

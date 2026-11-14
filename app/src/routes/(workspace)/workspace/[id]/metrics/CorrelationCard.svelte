@@ -71,7 +71,7 @@
         <div class="flex flex-col gap-1">
             <div class="flex items-center gap-3">
                 <MetricSparkline series={paired.a.points} tone="neutral" width={240} height={40} />
-                <span class="text-xs text-ink-mute truncate">{nameOf(correlation.a)}</span>
+                <span class="text-xs text-ink-soft truncate">{nameOf(correlation.a)}</span>
             </div>
             <div class="flex items-center gap-3">
                 <MetricSparkline
@@ -80,7 +80,7 @@
                     width={240}
                     height={40}
                 />
-                <span class="text-xs text-ink-mute truncate">{nameOf(correlation.b)}</span>
+                <span class="text-xs text-ink-soft truncate">{nameOf(correlation.b)}</span>
             </div>
             <p class="text-xs text-ink-faint m-0 mt-1">
                 Both normalised to their own range over {paired.slots} shared days — the shapes are
@@ -91,10 +91,10 @@
         <!-- Honest-empty: the coefficient came from the daemon over the full
              history, but this screen only holds the recent window. Saying so beats
              drawing a line from one point. -->
-        <p data-component="correlation-no-chart" class="text-xs text-ink-mute m-0">
+        <p data-component="correlation-no-chart" class="text-xs text-ink-soft m-0">
             Not enough overlapping days in this window to plot the pair.
         </p>
     {/if}
 
-    <p class="text-xs text-ink-soft m-0 leading-relaxed">{summary}</p>
+    <p class="text-xs text-ink-mute m-0 leading-relaxed">{summary}</p>
 </section>

@@ -252,6 +252,6 @@ Each has a test under `database/tests/dojo/`. (`create_dojo` was dropped in R1,
 
 ## Related
 
-- #236 (this work), #249 (relay owner-only), #252 (peer status), jerrythomas/kavach#51
+- #236 (this work), #249 (relay owner-only), #252 (peer status), sensei-hq/kavach#51
 - `database/policies/dojo/*.sql`, `database/ddl/function/dojo/*.ddl` — today's policies and helpers
 - Findings from the 2026-10-12 inventory are tracked as private security advisories on this repository, not here.

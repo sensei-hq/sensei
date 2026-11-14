@@ -11,7 +11,7 @@ Styling detail — the tokens, the type scale, spacing, and component classes �
 repeated here. It lives in the canonical sources:
 
 - [`../architecture/frontend-svelte-guidelines.md`](../architecture/frontend-svelte-guidelines.md) — the enforced in-app rules.
-- [`../mockups/Sensei/CLAUDE.md`](../mockups/Sensei/CLAUDE.md) — the same system for claude.ai artifacts (the `.zs` no-rokkit drop-in) plus the pre-delivery self-check.
+- `../mockups/Sensei/CLAUDE.md` — the same system for claude.ai artifacts (the `.zs` no-rokkit drop-in) plus the pre-delivery self-check.
 
 ## The loop
 

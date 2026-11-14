@@ -12,6 +12,8 @@ use crate::tracker::sprint::SprintState;
 pub struct BySource {
     pub branch: i64,
     pub prompt: i64,
+    /// Sessions that fetched a ticket (get_ticket, D63): the start of work on it.
+    pub fetch: i64,
 }
 
 /// The usage of a distinct set of sessions. A sum over no known values is
@@ -86,6 +88,8 @@ pub struct RepoUsage {
 pub struct SprintParts {
     pub candidates_in_window: i64,
     pub linked_sprint: Usage,
+    /// The sessions behind `linked_sprint`, sorted.
+    pub linked_sprint_sessions: Vec<uuid::Uuid>,
     pub linked_other: Usage,
     pub unlinked: Usage,
 }
@@ -104,6 +108,15 @@ pub async fn ticket_usages(
     only: Option<&[uuid::Uuid]>,
 ) -> Result<HashMap<uuid::Uuid, Usage>, String> {
     let pairs = pg.ticket_sessions(tracker_id, only).await?;
+    ticket_usages_of(pg, tracker_id, &pairs).await
+}
+
+/// Usage of each ticket over exactly these (ticket, session) pairs.
+pub async fn ticket_usages_of(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    pairs: &[crate::db::pg_store::tracker_usage::TicketSession],
+) -> Result<HashMap<uuid::Uuid, Usage>, String> {
     let members: Vec<(String, uuid::Uuid)> =
         pairs.iter().map(|p| (p.task_id.to_string(), p.session_id)).collect();
     let targets: Vec<(String, uuid::Uuid)> =
@@ -148,6 +161,17 @@ pub async fn sprint_usages(
     tracker_id: uuid::Uuid,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<SprintUsage>, String> {
+    sprint_usages_among(pg, tracker_id, now, None).await
+}
+
+/// Every non-removed sprint's partition over the candidate sessions in `only`
+/// (all of them when `None`), newest first.
+pub async fn sprint_usages_among(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    now: chrono::DateTime<chrono::Utc>,
+    only: Option<&std::collections::HashSet<uuid::Uuid>>,
+) -> Result<Vec<SprintUsage>, String> {
     use crate::db::pg_store::tracker_usage::Part;
     let sprints = pg.tracker_sprints(tracker_id).await?;
     let windows: Vec<(uuid::Uuid, Result<_, &'static str>)> = sprints
@@ -160,7 +184,10 @@ pub async fn sprint_usages(
         .collect::<Result<_, String>>()?;
     let open: Vec<_> =
         windows.iter().filter_map(|(id, w)| w.as_ref().ok().map(|(f, t)| (*id, *f, *t))).collect();
-    let classified = pg.sprint_window_sessions(tracker_id, &open).await?;
+    let mut classified = pg.sprint_window_sessions(tracker_id, &open).await?;
+    if let Some(only) = only {
+        classified.retain(|(_, s, _)| only.contains(s));
+    }
     let group = |sprint: uuid::Uuid, part: &str| format!("{sprint}/{part}");
     let name = |part: Part| match part {
         Part::LinkedSprint => "linked_sprint",
@@ -190,6 +217,16 @@ pub async fn sprint_usages(
                 candidates_in_window: classified.iter().filter(|(sp, _, _)| *sp == id).count()
                     as i64,
                 linked_sprint: take(id, "linked_sprint"),
+                linked_sprint_sessions: {
+                    let mut s: Vec<uuid::Uuid> = classified
+                        .iter()
+                        .filter(|(sp, _, p)| *sp == id && *p == Part::LinkedSprint)
+                        .map(|(_, s, _)| *s)
+                        .collect();
+                    s.sort();
+                    s.dedup();
+                    s
+                },
                 linked_other: take(id, "linked_other"),
                 unlinked: take(id, "unlinked"),
             });
@@ -300,7 +337,7 @@ mod tests {
     fn an_empty_set_has_null_sums_and_zero_counts() {
         let v = serde_json::to_value(Usage::default()).unwrap();
         assert_eq!(v["sessions"], 0);
-        assert_eq!(v["by_source"], serde_json::json!({"branch": 0, "prompt": 0}));
+        assert_eq!(v["by_source"], serde_json::json!({"branch": 0, "prompt": 0, "fetch": 0}));
         for f in [
             "active_secs",
             "tokens_fresh",
@@ -549,7 +586,10 @@ mod tests {
         sync(&pg, t, &FakeBoard::standard()).await;
         let auth2 = task_id(&pg, t, "10002").await;
         let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
-        assert_eq!((u.sessions, u.by_source.clone()), (3, BySource { branch: 3, prompt: 1 }));
+        assert_eq!(
+            (u.sessions, u.by_source.clone()),
+            (3, BySource { branch: 3, prompt: 1, fetch: 0 })
+        );
         assert_eq!((u.active_secs, u.active_n), (Some(180.0), 2), "a NULL duration is not 0");
         assert_eq!((u.tokens_fresh, u.tokens_fresh_n), (Some(15), 2));
         assert_eq!((u.metered_cost, u.metered_cost_n), (None, 0), "nothing known: null, not 0");
@@ -558,6 +598,38 @@ mod tests {
         let all = ticket_usages(&pg, t, None).await.unwrap();
         assert_eq!(all.get(&auth2).map(|u| u.sessions), Some(3));
         assert!(!all.contains_key(&task_id(&pg, t, "10003").await), "no sessions: no usage row");
+    }
+
+    /// TG5 (L0 ruling, 2026-11-04): fetching a ticket is usage — the start of work
+    /// on it (F3). A session linked only by `fetch` is counted in a `fetch` bucket,
+    /// so no session is counted outside every bucket: with one source per session,
+    /// the buckets sum to `sessions`. (A session found by two sources is in both
+    /// buckets, as before — buckets are "sessions with a link of this source".)
+    #[tokio::test]
+    async fn a_fetch_only_session_counts_in_its_own_bucket() {
+        let pg = PgStore::test_store().await;
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        session_with(&pg, Some(r), &[], &["looking at AUTH-2"]).await;
+        let fetched = session_with(&pg, Some(r), &[], &[]).await;
+        sync(&pg, t, &FakeBoard::standard()).await;
+        let auth2 = task_id(&pg, t, "10002").await;
+        sqlx_core::query::query(
+            "INSERT INTO sensei.session_task_links (session_id, task_id, source, matched_key, mentions)
+             VALUES ($1, $2, 'fetch', 'AUTH-2', 1)",
+        )
+        .bind(fetched)
+        .bind(auth2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
+        let by = serde_json::to_value(&u.by_source).unwrap();
+        assert_eq!(by, serde_json::json!({"branch": 1, "prompt": 1, "fetch": 1}));
+        let sum: i64 = ["branch", "prompt", "fetch"].iter().map(|k| by[k].as_i64().unwrap()).sum();
+        assert_eq!((u.sessions, sum), (3, 3), "every session is in a bucket");
     }
 
     #[tokio::test]
@@ -578,7 +650,7 @@ mod tests {
         // every ticket is read in one query (as the ticket list does).
         let auth3 = task_id(&pg, t, "10003").await;
         let only_prompt = ticket_usages(&pg, t, None).await.unwrap()[&auth3].clone();
-        assert_eq!(only_prompt.by_source, BySource { branch: 0, prompt: 1 });
+        assert_eq!(only_prompt.by_source, BySource { branch: 0, prompt: 1, fetch: 0 });
         let parts = ticket_usage_by_repo(&pg, t, auth2).await.unwrap();
         assert_eq!(parts.len(), 3);
         assert_eq!(parts.iter().map(|r| r.usage.sessions).sum::<i64>(), total.sessions);
@@ -848,7 +920,7 @@ mod tests {
             (1, 1),
             "one session, linked to two backlog tickets"
         );
-        assert_eq!(b.usage.by_source, BySource { branch: 1, prompt: 1 });
+        assert_eq!(b.usage.by_source, BySource { branch: 1, prompt: 1, fetch: 0 });
         assert_eq!(
             (b.usage.active_secs, b.usage.tokens_fresh),
             (Some(600.0), Some(10)),

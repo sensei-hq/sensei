@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Notice } from '@sensei/ui';
 	import { SectionHead } from '$lib/components/kit';
 	import Spark from '$lib/components/kit/Spark.svelte';
 	import type { MyMetricsView } from '$lib/my-metrics-view';
@@ -13,7 +15,7 @@
 		/** Null when the read failed. */
 		view: MyMetricsView | null;
 		/** Non-null when the read FAILED: "nothing sent" and "could not ask" differ. */
-		error?: string | null;
+		error?: ReadError | string | null;
 	}
 	let { view, error = null }: Props = $props();
 </script>
@@ -30,13 +32,13 @@
 	{/snippet}
 	<section class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error || !view}
-			<p role="alert" class="text-sm text-danger">Could not load your metrics — {error ?? 'no answer'}</p>
+			<Notice size="panel" {...dojoLoadNotice("your metrics", error)} data-load-error />
 		{:else}
-			<p class="text-xs text-ink-soft">The last {view.days} days, across the repositories you share.</p>
+			<p class="text-xs text-ink-mute">The last {view.days} days, across the repositories you share.</p>
 			<ul class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
 				{#each view.cards as c (c.key)}
 					<li class="flex flex-col gap-2 rounded border border-paper-edge p-4">
-						<span class="text-xs text-ink-soft">{c.label}</span>
+						<span class="text-xs text-ink-mute">{c.label}</span>
 						{#if c.empty}
 							<span class="text-sm text-ink-faint">Nothing sent in this window</span>
 						{:else}

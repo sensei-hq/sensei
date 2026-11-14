@@ -19,7 +19,7 @@
 		<div class="flex gap-3 {mine ? 'flex-row-reverse' : 'flex-row'}">
 			{#if mine}
 				<span
-					class="bg-accent-soft text-accent flex flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+					class="bg-accent-soft text-on-accent-soft flex flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
 					style="width: 28px; height: 28px"
 					aria-hidden="true">{initials}</span
 				>
@@ -33,7 +33,7 @@
 				>
 					<div class="text-ink text-sm" style="line-height: 1.5">{turn.text}</div>
 				</div>
-				<div class="mono text-ink-mute text-xs {mine ? 'text-right' : ''}" style="margin-top: 3px">
+				<div class="mono text-ink-soft text-xs {mine ? 'text-right' : ''}" style="margin-top: 3px">
 					{mine ? (me?.name ?? 'you') : 'sensei'} · {turn.when}
 				</div>
 			</div>

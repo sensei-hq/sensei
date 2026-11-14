@@ -64,13 +64,13 @@ offline machine the whole thing runs on the local model.
 
 ## Signals shown
 
-| Element | Value | Meaning |
-|---|---|---|
-| Gateway status | `.healthy`, `.chains` | the routing surface in one call |
-| Inference pane | hardware chip · installed models · cost total · circuit state | what the user tunes/pays |
-| Cost surface | running total from `sensei.inference_calls` | real cost, not estimate |
-| Circuit state | `closed \| open \| half-open` + `next_probe_at` | why a provider is skipped |
-| MOE panel | confidence (high/medium/low) + disagreement list + traces | the debate, visible |
+| Element | Value | Meaning | Decision it drives / next step |
+|---|---|---|---|
+| Gateway status | `.healthy`, `.chains` | the routing surface in one call | unhealthy → open Preferences › Inference and fix the chain |
+| Inference pane | hardware chip · installed models · cost total · circuit state | what the user tunes/pays | change a chain's model or provider |
+| Cost surface | running total from `sensei.inference_calls` | real cost, not estimate | move a costly chain to a local or cheaper model |
+| Circuit state | `closed \| open \| half-open` + `next_probe_at` | why a provider is skipped | open → check the provider's key or status; it re-probes at `next_probe_at` |
+| MOE panel | confidence (high/medium/low) + disagreement list + traces | the debate, visible | low confidence → read the disagreement and decide yourself |
 
 ## Done gate
 

@@ -14,23 +14,25 @@ export interface DojoViewerView extends PersonView {
 export interface DojoViewerWire {
 	principal_id: string;
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 	joined_at: string;
 	workspaces: ViewerWorkspaceView[];
 }
 
 export function toViewerViews(rows: DojoViewerWire[]): DojoViewerView[] {
-	return rows.map((r) => ({ principalId: r.principal_id, name: r.display_name, email: r.email, workspaces: r.workspaces }));
+	return rows.map((r) => ({ principalId: r.principal_id, name: r.display_name, handle: r.handle, email: r.email, workspaces: r.workspaces }));
 }
 
 /** Someone the admin surfaces name: a viewer, a team member. */
 export interface PersonView {
 	principalId: string;
 	name: string | null;
+	handle: string | null;
 	email: string | null;
 }
 
-/** A person's label: their name, else their email, else a short id — never an invented name. */
+/** A person's label: their name, else their handle, else their email, else honest words — never an id fragment, never an invented name. */
 export function personLabel(p: PersonView): string {
-	return p.name ?? p.email ?? p.principalId.slice(0, 8);
+	return p.name ?? p.handle ?? p.email ?? 'Name not shared yet';
 }

@@ -15,8 +15,13 @@ Homebrew tap for [sensei](https://github.com/sensei-hq/sensei) — AI developmen
 
 ```sh
 brew tap sensei-hq/tap
+brew trust sensei-hq/tap
 brew install sensei-hq/tap/sensei
 ```
+
+Homebrew 7 and later load a third-party tap only once you trust it — without `brew trust` an
+install stops with "Refusing to load … from untrusted tap sensei-hq/tap". Trust is kept, so this
+is once per machine; an older Homebrew has no `brew trust` and needs no step.
 
 This installs two binaries:
 

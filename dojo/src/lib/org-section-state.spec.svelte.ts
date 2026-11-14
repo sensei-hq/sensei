@@ -36,7 +36,7 @@ describe('OrgSectionState', () => {
 		const a = actions();
 		const reload = vi.fn().mockResolvedValue(undefined);
 		const s = new OrgSectionState(a, reload);
-		const v = { principalId: 'v1', name: null, email: 'v@x.co', workspaces: [] };
+		const v = { principalId: 'v1', name: null, handle: null, email: 'v@x.co', workspaces: [] };
 		await s.grantView(v, 'p1');
 		await s.revokeView(v, 'p1');
 		await s.removeViewer(v);
@@ -68,6 +68,9 @@ describe('OrgSectionState', () => {
 		const s = new OrgSectionState(actions({ saveTeam: vi.fn().mockRejectedValue(apiError('this dōjō already has a team named P')) }), vi.fn());
 		expect(await s.saveTeam(null, 'P')).toBe(false);
 		expect(s.actionError).toBe('this dōjō already has a team named P');
+		expect(s.actionNotice).toMatchObject({ tone: 'fault', title: "That change didn't go through", detail: 'this dōjō already has a team named P' });
+		s.dismiss();
+		expect([s.actionError, s.actionNotice]).toEqual([null, null]);
 	});
 
 	it('says why a write failed, and does not reload', async () => {

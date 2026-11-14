@@ -1401,6 +1401,20 @@ async fn list_all_sessions_joins_workspace_and_uses_camelcase_times() {
         "durationSecs = gap-aware active seconds"
     );
     assert_eq!(row2["model"].as_str(), Some("claude-opus-4-8"), "model surfaced");
+    assert!(row2["activeByHour"].is_null(), "not analysed: the hours are unknown, never []");
+
+    // Hotspots: the split filed by the hour it happened reaches the digest as stored.
+    sqlx_core::query::query(
+        "UPDATE activity.sessions SET active_by_hour = '[[490000, 600000, 120000]]' WHERE id=$1",
+    )
+    .bind(session_id)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let all3 = s.list_all_sessions(500, None, None).await.unwrap();
+    let row3 =
+        all3.iter().find(|r| r["id"].as_str() == Some(session_id.to_string().as_str())).unwrap();
+    assert_eq!(row3["activeByHour"], serde_json::json!([[490000, 600000, 120000]]));
 
     sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
         .bind(session_id)
@@ -1739,6 +1753,67 @@ async fn workspaces_with_session_activity_reports_the_workspace() {
         .unwrap();
 }
 
+/// A transcript re-read under a new rule (automated turns, 2026-10-29) changes what
+/// analysis derives without any new session: the turns landing count as the
+/// workspace's activity, so the scheduler makes it due instead of waiting a day.
+#[tokio::test]
+async fn transcript_turns_landing_are_the_workspaces_activity() {
+    let s = pg_store().await;
+    let pid = s
+        .create_workspace(&format!("_test:act-tx-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let fid = create_test_folder(&s, &format!("act-tx-{}", uuid::Uuid::new_v4())).await;
+    let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
+    sqlx_core::query::query(
+        "UPDATE activity.sessions SET started_at = now() - interval '10 days', completed_at = now() - interval '9 days' WHERE id = $1",
+    )
+    .bind(sid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index) VALUES ('test', $1, 'claude', 0)",
+    )
+    .bind(&csid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let activity = s.get_workspaces_with_session_activity().await.unwrap();
+    let latest = activity.iter().find(|(p, _)| *p == pid).expect("the workspace appears").1;
+
+    sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+        .bind(&csid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+        .bind(sid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    assert!(
+        latest > chrono::Utc::now() - chrono::Duration::hours(1),
+        "the turn that just landed is the latest activity, not the session's end 9 days ago: {latest}"
+    );
+}
+
 #[tokio::test]
 async fn workspace_ftr_and_quality_decode_numeric_metrics() {
     // Regression: the headline (Σ props / value) and the daily AVG(...) trend /
@@ -1773,6 +1848,7 @@ async fn workspace_ftr_and_quality_decode_numeric_metrics() {
         duration_ms: Some(1000),
         claude_ms: Some(1000),
         user_ms: Some(0),
+        active_by_hour: None,
         module: None,
         tool_usage: &serde_json::json!({}),
     })
@@ -1962,4 +2038,168 @@ async fn a_session_active_in_the_window_counts_however_long_ago_it_started() {
         chrono::Utc::now().signed_duration_since(last) < chrono::Duration::days(1),
         "last_session_at is the last activity, not the start ten days ago: {last}"
     );
+}
+
+/// The Sessions charts by the day work happened (user, 2026-10-29): a session that ran for
+/// eleven days was filed whole on the day it started. `activity_by_hour` gives, per hour,
+/// the turns, the corrected turns and the tokens spent — from the turns themselves, so a
+/// long session counts on every day it ran. Tokens are NULL in an hour no transcript
+/// turn was captured for: unknown, never 0.
+#[tokio::test]
+async fn activity_by_hour_counts_turns_corrections_and_tokens_where_they_happened() {
+    let s = pg_store().await;
+    let pid = s
+        .create_workspace(&format!("_test:hours-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let fid = create_test_folder(&s, "hours").await;
+    let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+    // Two hours a day apart: 3 turns (one corrected) with tokens, then 1 turn with none.
+    let h1 = chrono::Utc::now().timestamp() / 3600 - 30;
+    let h2 = h1 + 24;
+    let at = |h: i64, m: i64| chrono::DateTime::from_timestamp(h * 3600 + m * 60, 0).unwrap();
+    for (n, (h, m, corrected)) in
+        [(h1, 1, false), (h1, 20, true), (h1, 40, false), (h2, 5, false)].iter().enumerate()
+    {
+        sqlx_core::query::query(
+            "INSERT INTO activity.turns (session_id, turn_number, started_at, ended_at, is_correction) VALUES ($1, $2, $3, $3, $4)",
+        )
+        .bind(sid)
+        .bind(n as i32 + 1)
+        .bind(at(*h, *m))
+        .bind(*corrected)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+    for (n, (m, tin, tout)) in [(2, 1000_i64, 50_i64), (41, 500, 25)].iter().enumerate() {
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index, started_at, tokens_in, tokens_out)
+             VALUES ('test', $1, 'claude', $2, $3, $4, $5)",
+        )
+        .bind(&csid)
+        .bind(n as i32)
+        .bind(at(h1, *m))
+        .bind(*tin)
+        .bind(*tout)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    let hours = s.activity_by_hour(Some(7), Some(&pid)).await.unwrap();
+    assert_eq!(hours, serde_json::json!([[h1, 3, 1, 1500, 75], [h2, 1, 0, null, null]]));
+    let none = s.activity_by_hour(Some(7), Some(&uuid::Uuid::new_v4())).await.unwrap();
+    assert_eq!(none, serde_json::json!([]), "another workspace's hours are not ours");
+
+    sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+        .bind(&csid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+        .bind(sid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+/// Automated prompts (a `/loop` tick, a peer message, a task notification) are turns
+/// that spend tokens, but not turns you took (user, 2026-10-29): an hour counts your
+/// turns and corrections only — a turn whose origin is unknown counts as yours, as
+/// before — while its tokens include every turn.
+#[tokio::test]
+async fn activity_by_hour_counts_your_turns_and_every_turns_tokens() {
+    let s = pg_store().await;
+    let pid = s
+        .create_workspace(&format!("_test:origin-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let fid = create_test_folder(&s, "origin").await;
+    let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+    let h = chrono::Utc::now().timestamp() / 3600 - 5;
+    let ms = |m: i64| (h * 3600 + m * 60) * 1000;
+    let turn = |n: i32, m: i64, corrected: bool, origin: Option<&str>| {
+        serde_json::json!({
+            "turn_number": n, "segment": 1, "started_ms": ms(m), "ended_ms": ms(m),
+            "duration_ms": 0, "is_correction": corrected, "triage_signal": null,
+            "tool_calls": 0, "origin": origin,
+        })
+    };
+    let turns = serde_json::json!([
+        turn(1, 1, false, Some("human")),
+        turn(2, 10, true, Some("scheduled")),
+        turn(3, 20, true, None),
+        turn(4, 30, false, Some("peer")),
+    ]);
+    s.replace_session_turns(&sid, &turns).await.unwrap();
+    let stored: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
+        "SELECT origin FROM activity.turns WHERE session_id = $1 ORDER BY turn_number",
+    )
+    .bind(sid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let stored: Vec<Option<&str>> = stored.iter().map(|(o,)| o.as_deref()).collect();
+    assert_eq!(stored, vec![Some("human"), Some("scheduled"), None, Some("peer")]);
+
+    let at = |m: i64| chrono::DateTime::from_timestamp(h * 3600 + m * 60, 0).unwrap();
+    for (n, (m, origin, tin)) in [(2, "human", 100_i64), (11, "scheduled", 40)].iter().enumerate() {
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index, started_at, tokens_in, tokens_out, origin)
+             VALUES ('test', $1, 'claude', $2, $3, $4, 1, $5)",
+        )
+        .bind(&csid)
+        .bind(n as i32)
+        .bind(at(*m))
+        .bind(*tin)
+        .bind(*origin)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    let hours = s.activity_by_hour(Some(7), Some(&pid)).await.unwrap();
+    assert_eq!(hours, serde_json::json!([[h, 2, 1, 140, 2]]));
+
+    sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+        .bind(&csid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+        .bind(sid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
 }

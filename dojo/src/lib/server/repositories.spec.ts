@@ -422,11 +422,13 @@ describe('syncPlan', () => {
 //
 // This returns the row the screen needs, from the same view the daemon reads, so
 // what a user is shown and what the daemon does cannot disagree.
-import { listMyRepositories } from './repositories';
+import { isBillingHiddenRepo, listMyRepositories } from './repositories';
 
 describe('listMyRepositories — what a human is shown', () => {
 	function view(rows: Record<string, unknown>[]): Record<string, FakeTable> {
-		return { 'rpc:my_repositories': { rows } };
+		// The branches read is the shared set's default-empty, as
+		// metric_activations is in tables(): no rows means nothing tracked.
+		return { 'rpc:my_repositories': { rows }, 'rpc:my_graph_branches': { rows: [] } };
 	}
 	const ROW = {
 		repository_id: 'r1',
@@ -434,6 +436,7 @@ describe('listMyRepositories — what a human is shown', () => {
 		name: 'api',
 		tenant: 'organization/acme',
 		owning_org: 'acme',
+		origin: 'organization',
 		principal_id: ALICE,
 		forge_visibility: 'public',
 		authority: 'user',
@@ -472,6 +475,30 @@ describe('listMyRepositories — what a human is shown', () => {
 		});
 	});
 
+	it('carries each repository’s tracked graph branches, so the screen shows what the daemon will push', async () => {
+		// The same `my_graph_branches` read the plan uses — what the screen shows
+		// and what the daemon pushes cannot disagree. Default first, then by
+		// name; a repository tracking none carries [] (its graph does not sync),
+		// never a guessed main.
+		const db = fakeDojoDb({
+			'rpc:my_repositories': {
+				rows: [ROW, { ...ROW, repository_id: 'r2', repo_key: 'github.com/acme/web', name: 'web' }]
+			},
+			'rpc:my_graph_branches': {
+				rows: [
+					{ repository_id: 'r1', branch: 'develop', is_default: false },
+					{ repository_id: 'r1', branch: 'main', is_default: true }
+				]
+			}
+		});
+		const [api, web] = await listMyRepositories(db as never);
+		expect(api.graph_branches).toEqual([
+			{ branch: 'main', is_default: true },
+			{ branch: 'develop', is_default: false }
+		]);
+		expect(web.graph_branches).toEqual([]);
+	});
+
 	it('THROWS on a read error rather than reporting an empty list', async () => {
 		// An empty list reads as "you have no repositories", which is a different
 		// and load-bearing claim. Same fail-closed rule as `listUserOrgs`.
@@ -485,6 +512,131 @@ describe('listMyRepositories — what a human is shown', () => {
 			'rpc:my_repositories': { rows: [], error: { message: 'boom' } }
 		});
 		await expect(listMyRepositories(db as never)).rejects.toThrow(/boom/);
+	});
+
+	it('keeps billing-hidden rows in the load AND carries their refusal, so one predicate hides and counts', async () => {
+		// WP8 F5: hidden is presentation, not the read. The load must see the
+		// hidden rows (otherwise the member-line count is impossible) and each
+		// row must carry `entitlement_refusal` (otherwise the predicate has
+		// nothing to read). The predicate itself is pinned below; this pins
+		// that the read gives it what it needs.
+		const hidden = {
+			...ROW,
+			repository_id: 'r-hidden',
+			repo_key: 'github.com/acme/secret',
+			name: 'secret',
+			forge_visibility: 'private',
+			may_share: false,
+			elected: false,
+			sync_enabled: false,
+			entitlement_refusal: 'not_subscribed',
+			reason_code: 'not_subscribed'
+		};
+		const db = fakeDojoDb(view([hidden, ROW]));
+		const out = await listMyRepositories(db as never);
+		expect(out.map((r) => r.repo_key)).toEqual(['github.com/acme/secret', 'github.com/acme/api']);
+		expect(out[0].entitlement_refusal).toBe('not_subscribed');
+		// And the one load marks them: the hidden row carries the flag, the
+		// visible one does not. Both screens read this flag.
+		expect(out[0].billing_hidden).toBe(true);
+		expect(out[1].billing_hidden).toBe(false);
+	});
+
+	it('selects entitlement_refusal (and origin): the predicate reads columns, not the fixture', async () => {
+		// `fakeDojoDb`'s `.select()` ignores its column argument, so the test
+		// above passes with the columns dropped from `MY_REPO_COLUMNS` — and
+		// live the predicate would then read `undefined`. Spy on what the
+		// load ASKS for, not what the fixture contains.
+		const db = fakeDojoDb(view([ROW]));
+		const selected: string[] = [];
+		const rpc = db.rpc.bind(db);
+		db.rpc = ((fn: string, args?: Record<string, unknown>) => {
+			const chain = rpc(fn, args) as unknown as {
+				select: (cols?: string, opts?: { count?: string; head?: boolean }) => unknown;
+			};
+			const select = chain.select.bind(chain);
+			chain.select = (cols?: string, opts?: { count?: string; head?: boolean }) => {
+				if (cols !== undefined) selected.push(cols);
+				return select(cols, opts);
+			};
+			return chain;
+		}) as unknown as typeof db.rpc;
+		await listMyRepositories(db as never);
+		const asked = selected.join(',');
+		expect(asked).toContain('entitlement_refusal');
+		expect(asked).toContain('origin');
+	});
+});
+
+// ── WP8 F5: one predicate hides and counts ───────────────────────────────────
+//
+// Billing hides an org-private repository whose ENTITLEMENT refuses for a
+// billing reason, and counts it on the member line instead. The list and the
+// count share this predicate so they cannot disagree: neither re-derives the
+// set. The hidden set is `unclaimed` | `not_subscribed` |
+// `subscription_expired` (D88: no grace) — a capture refusal is not a billing
+// state, and an election refusal on an entitled row must not hide it, which
+// is why the predicate reads `entitlement_refusal` and not `reason_code`.
+describe('isBillingHiddenRepo — the hidden set, decided once', () => {
+	function row(over: Record<string, unknown>) {
+		return {
+			origin: 'organization',
+			forge_visibility: 'private',
+			entitlement_refusal: null,
+			...over
+		} as Parameters<typeof isBillingHiddenRepo>[0];
+	}
+
+	describe('hides billing-refused org-private rows', () => {
+		it.each([['unclaimed'], ['not_subscribed'], ['subscription_expired']])(
+			'hides an org-private repository refused %s',
+			(refusal) => {
+				expect(isBillingHiddenRepo(row({ entitlement_refusal: refusal }))).toBe(true);
+			}
+		);
+	});
+
+	it('shows an entitled org-private repository', () => {
+		expect(isBillingHiddenRepo(row({ entitlement_refusal: null }))).toBe(false);
+	});
+
+	it('shows a capture refusal: stale or unknown is not a billing state', () => {
+		expect(isBillingHiddenRepo(row({ entitlement_refusal: 'forge_visibility_stale' }))).toBe(false);
+		expect(isBillingHiddenRepo(row({ entitlement_refusal: 'forge_visibility_unknown' }))).toBe(false);
+	});
+
+	it('shows an entitled row even when the final reason is an election refusal', () => {
+		// The whole argument for reading `entitlement_refusal` instead of
+		// `reason_code`: this row's `reason_code` is `not_elected_org`, but
+		// its entitlement said yes — and a predicate that also hides on a set
+		// `reason_code` must fail here.
+		expect(
+			isBillingHiddenRepo(row({ entitlement_refusal: null, reason_code: 'not_elected_org' }))
+		).toBe(false);
+	});
+
+	it('shows an org-PUBLIC repository whatever its entitlement says', () => {
+		expect(
+			isBillingHiddenRepo(row({ forge_visibility: 'public', entitlement_refusal: 'not_subscribed' }))
+		).toBe(false);
+	});
+
+	it('shows a personal repository whatever its entitlement says', () => {
+		expect(
+			isBillingHiddenRepo(row({ origin: 'personal', entitlement_refusal: 'not_subscribed' }))
+		).toBe(false);
+	});
+
+	it('shows an unknown origin: hiding fails visible', () => {
+		// `origin` is a NOT NULL enum in the view, so these rows never come
+		// from it — a future origin value, or a row from elsewhere. Either
+		// way the predicate cannot prove org-private, so it shows.
+		expect(
+			isBillingHiddenRepo(row({ origin: 'syndicate', entitlement_refusal: 'not_subscribed' }))
+		).toBe(false);
+		expect(isBillingHiddenRepo(row({ origin: null, entitlement_refusal: 'not_subscribed' }))).toBe(
+			false
+		);
 	});
 });
 
@@ -505,8 +657,10 @@ describe('listMyRepositories — what a human is shown', () => {
 // hypothetical.
 describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	function manyRows(n: number) {
+		// Zero-padded: the read orders by repository_id, and the fake sorts
+		// textually — unpadded, r999 would sort last instead of r2349.
 		return Array.from({ length: n }, (_, i) => ({
-			repository_id: `r${i}`,
+			repository_id: `r${String(i).padStart(4, '0')}`,
 			repo_key: `github.com/acme/repo-${i}`,
 			name: `repo-${i}`,
 			tenant: 'organization/acme',
@@ -528,7 +682,10 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	}
 
 	it('returns EVERY repository past the first page, not the first 1000', async () => {
-		const db = fakeDojoDb({ 'rpc:my_repositories': { rows: manyRows(2350) } });
+		const db = fakeDojoDb({
+			'rpc:my_repositories': { rows: manyRows(2350) },
+			'rpc:my_graph_branches': { rows: [] }
+		});
 		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(2350);
 		// The last row is the one a single unpaged read loses.
@@ -538,7 +695,10 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	it('stops at exactly one page when the total IS the page size', async () => {
 		// The off-by-one that turns a page loop into an infinite one: a full final
 		// page looks identical to "there is more".
-		const db = fakeDojoDb({ 'rpc:my_repositories': { rows: manyRows(1000) } });
+		const db = fakeDojoDb({
+			'rpc:my_repositories': { rows: manyRows(1000) },
+			'rpc:my_graph_branches': { rows: [] }
+		});
 		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(1000);
 	});
@@ -550,5 +710,46 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 		const db = fakeDojoDb({ ...tables(), 'rpc:my_repositories': { rows: manyRows(1200) } });
 		const plan = await syncPlan(db as never);
 		expect(plan.allowed).toHaveLength(1200);
+	});
+});
+
+// ── Paged reads need a deterministic order, not just pages ────────────────────
+//
+// Each page re-runs the read with a fresh OFFSET; without an ORDER BY Postgres
+// keeps no row order between runs, so past 1,000 rows a row can land on two
+// pages or on none, with no error (WP4 F1). One row per (repository, caller)
+// makes repository_id the total order for my_repositories; branches add their
+// name.
+describe('paged reads page in a deterministic order', () => {
+	function orderedDb() {
+		const orders: Record<string, string[]> = {};
+		const db = {
+			rpc: (fn: string, _args?: Record<string, unknown>) => {
+				orders[fn] = [];
+				const chain: Record<string, unknown> = {};
+				chain.select = () => chain;
+				chain.order = (column: string) => {
+					orders[fn].push(column);
+					return chain;
+				};
+				chain.range = () => Promise.resolve({ data: [], error: null });
+				return chain;
+			}
+		};
+		return { db: db as never, orders };
+	}
+
+	it('listMyRepositories orders both reads', async () => {
+		const { db, orders } = orderedDb();
+		expect(await listMyRepositories(db)).toEqual([]);
+		expect(orders['my_repositories']).toEqual(['repository_id']);
+		expect(orders['my_graph_branches']).toEqual(['repository_id', 'branch']);
+	});
+
+	it('syncPlan orders both reads', async () => {
+		const { db, orders } = orderedDb();
+		expect(await syncPlan(db)).toEqual({ allowed: [], denied: [] });
+		expect(orders['my_repositories']).toEqual(['repository_id']);
+		expect(orders['my_graph_branches']).toEqual(['repository_id', 'branch']);
 	});
 });

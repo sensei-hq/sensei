@@ -91,7 +91,6 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   // #288 — the last five.
   { name: 'tryGetHealth', call: () => api().tryGetHealth(), body: { daemonDbMode: 'full' } },
   { name: 'tryGetWorkspaceTools', call: () => api().tryGetWorkspaceTools('p1'), body: { tools: [], count: 0 } },
-  { name: 'tryGetIntakeGuide', call: () => api().tryGetIntakeGuide(), body: { frame: '', axes: [], playbooks: [] } },
   { name: 'tryListMemories', call: () => api().tryListMemories({ status: 'active' }), body: { memories: [] } },
   { name: 'tryListKnowledgeSources', call: () => api().tryListKnowledgeSources(), body: { sources: [] } },
 ];
@@ -168,10 +167,6 @@ describe('auth requests leave the default to the daemon (#296)', () => {
     await call();
     return seen;
   };
-  it('a status with no persona names none', async () => {
-    const [u] = await urls(() => api().tryGetAuthStatus());
-    expect(u).toMatch(/\/api\/auth\/status$/);
-  });
   it('a sign-in with no persona names none', async () => {
     const [u] = await urls(() => api().tryStartSignIn());
     expect(u).toMatch(/\/api\/auth\/signin$/);

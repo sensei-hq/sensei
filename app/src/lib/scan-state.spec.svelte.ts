@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ScanWorkspaceState, ScanActivityState, commonParent, pollStep, triggerScans } from './scan-state.svelte.js';
+import { ScanWorkspaceState, ScanActivityState, ScanState, commonParent, pollStep, triggerScans } from './scan-state.svelte.js';
 import type { ScanWorkspace, ScanWorkspaceFolder, ActivityEvent } from './types.js';
 
 // ── Factories ────────────────────────────────────────────────────────────────
@@ -50,6 +50,19 @@ describe('ScanWorkspaceState', () => {
     const state = new ScanWorkspaceState();
     expect(state.items).toEqual([]);
     expect(state.totalFolders).toBe(0);
+  });
+
+  // Audit item 15 (2026-10-28): the scan page recounted each workspace's
+  // folders and files in its template — a second copy of the totals' rule.
+  it('progressOf is one workspace\'s counts, and the totals are their sum', () => {
+    const state = new ScanWorkspaceState();
+    state.add(workspace('p1', 'Lumen', [
+      folder('f1', 'a', { filesTotal: 10, filesCompleted: 10, status: 'indexed' }),
+      folder('f2', 'b', { filesTotal: 5, filesCompleted: 2, status: 'indexing' }),
+    ]));
+    state.add(workspace('p2', 'Other', [folder('f3', 'c', { filesTotal: 4, filesCompleted: 0, status: 'queued' })]));
+    expect(state.progressOf(state.items[0]!)).toEqual({ folders: 2, ready: 1, files: 15, completed: 12 });
+    expect([state.totalFolders, state.readyFolders, state.totalFiles, state.completedFiles]).toEqual([3, 1, 19, 12]);
   });
 
   it('add workspace', () => {
@@ -391,5 +404,14 @@ describe('triggerScans', () => {
     await expect(triggerScans({ tryScanFolder }, [root('/a', false), root('/c', false)]))
       .rejects.toThrow(/\/c.*Service Unavailable/);
     expect(tryScanFolder).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ScanState.notice', () => {
+  it('a failed scan: a fault Notice with the reason', () => {
+    const st = new ScanState();
+    expect(st.notice).toBeNull();
+    st.error = 'daemon unreachable';
+    expect(st.notice).toEqual({ tone: 'fault', title: 'The scan failed', detail: 'daemon unreachable', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

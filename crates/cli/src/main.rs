@@ -18,8 +18,17 @@ fn cfg() -> &'static SenseiConfig {
     sensei_bootstrap::config()
 }
 
+/// Process-scoped daemon base URL, resolved once in `main()` from
+/// `--daemon-url` > `SENSEI_DAEMON_URL` > default. A cell rather than a
+/// threaded parameter: ~20 call sites across this binary (and `auth`) read
+/// the base, and the CLI is a single-shot process — one command per
+/// invocation — so process scope IS command scope, exactly like bootstrap's
+/// `config()` singleton. Unit tests never set it (they don't run `main`),
+/// so `daemon_url()` in tests is plain `sensei_bootstrap::daemon_url()`.
+static DAEMON_BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 fn daemon_url() -> String {
-    sensei_bootstrap::daemon_url()
+    DAEMON_BASE.get().cloned().unwrap_or_else(sensei_bootstrap::daemon_url)
 }
 
 #[derive(Parser)]
@@ -33,6 +42,11 @@ struct Cli {
     /// plugin/MCP in one shot after a sensei upgrade.
     #[arg(long)]
     upgrade: bool,
+
+    /// Daemon base URL — `host:port` or full `http://host:port`.
+    /// Precedence: this flag > SENSEI_DAEMON_URL env > 127.0.0.1:7744.
+    #[arg(long, value_name = "URL")]
+    daemon_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -97,7 +111,10 @@ enum Commands {
     /// Show daemon status
     Status,
 
-    /// Issue-tracker connections (Jira) for a workspace
+    /// Show relay registration — one line: the lane and crew, or not-registered
+    Relay,
+
+    /// Issue-tracker connections (Jira, GitLab, GitHub) for a workspace
     Tracker {
         #[command(subcommand)]
         cmd: tracker::TrackerCmd,
@@ -144,6 +161,13 @@ enum Commands {
     Models {
         #[command(subcommand)]
         cmd: ModelsCommands,
+    },
+
+    /// Imported transcripts: list files gone from disk, or rebuild one as
+    /// lossy JSONL from its kept turns.
+    Transcript {
+        #[command(subcommand)]
+        cmd: TranscriptCommands,
     },
 
     /// Add an external library's documentation
@@ -212,6 +236,29 @@ enum FolderCommands {
     },
 }
 
+/// `sensei transcript <cmd>` — the lossy exporter reads kept turns through the
+/// daemon; the daemon owns the database.
+#[derive(Subcommand)]
+enum TranscriptCommands {
+    /// List transcript files gone from disk that still have kept turns.
+    Missing,
+    /// Rebuild a session's transcript as JSONL from its kept turns. Lossy by
+    /// design (tool I/O, thinking, record boundaries and the uuid chain are
+    /// unrecoverable); every line is marked `sensei_regenerated` and ingest
+    /// skips marked lines, so an export can never degrade the rows it came from.
+    Export {
+        /// Session ids to export.
+        sessions: Vec<String>,
+        /// Also export every missing-file session (see `transcript missing`).
+        #[arg(long)]
+        missing: bool,
+        /// Where to write: stdout for one session by default; a file for one
+        /// session, or an existing directory (`<session>.jsonl` each) for many.
+        #[arg(long)]
+        out: Option<String>,
+    },
+}
+
 /// `sensei models <cmd>` — on-demand local model provisioning via the daemon.
 #[derive(Subcommand)]
 enum ModelsCommands {
@@ -232,6 +279,7 @@ const UPGRADE_ENDPOINT: &str = "/api/assistants/upgrade";
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let _ = DAEMON_BASE.set(sensei_bootstrap::daemon_url_with_flag(cli.daemon_url.as_deref()));
 
     // `sensei --upgrade` (flag form) — refresh every detected assistant, the
     // same all-ACP fan-out as the `upgrade` subcommand with no --acp.
@@ -282,6 +330,7 @@ fn main() -> ExitCode {
             restart_daemon(port.unwrap_or_else(|| cfg().daemon_port))
         }
         Some(Commands::Status) => daemon_cmd("status", None),
+        Some(Commands::Relay) => relay_status(),
         Some(Commands::Tracker { cmd }) => std::process::exit(tracker::run(cmd)),
         Some(Commands::Scan { path, force }) => scan(&path, force),
         Some(Commands::Scaffold { what, path }) => scaffold_cmd(what, path.as_deref()),
@@ -295,6 +344,7 @@ fn main() -> ExitCode {
             ModelsCommands::Pull { id } => models_pull(&id),
             ModelsCommands::Status => models_status(),
         },
+        Some(Commands::Transcript { cmd }) => return transcript_cmd(cmd),
         Some(Commands::AddLib { name, url }) => add_lib(&name, url.as_deref()),
         Some(Commands::Doctor { fix }) => return ExitCode::from(doctor::run(fix) as u8),
         Some(Commands::Upgrade { acp }) => upgrade_cmd(acp.as_deref()),
@@ -457,12 +507,35 @@ fn is_user_scope_configured() -> bool {
 
 /// Mark user scope as configured.
 fn mark_user_scope_configured() {
-    let sensei_dir = cfg().sensei_dir();
-    let mut local = SenseiLocalConfig::load(&sensei_dir);
-    local.user_scope_configured = true;
-    if let Err(e) = local.save(&sensei_dir) {
+    if let Err(e) =
+        SenseiLocalConfig::update(&cfg().sensei_dir(), |c| c.user_scope_configured = true)
+    {
         eprintln!("Warning: failed to write sensei config: {e}");
     }
+}
+
+/// Add sensei's server to a project's `.mcp.json`, keeping every other server
+/// (D83 batch A, audit rows 17-19). A file that cannot be read or parsed, or is
+/// not the object `.mcp.json` must be, is refused and left as it is.
+fn upsert_mcp_json(mcp_file: &std::path::Path) -> Result<(), String> {
+    let existing = sensei_bootstrap::config::read_existing(mcp_file)
+        .map_err(|e| format!("read {}: {e}", mcp_file.display()))?;
+    let mut mcp_config: serde_json::Value = match existing {
+        None => serde_json::json!({}),
+        Some(s) => {
+            serde_json::from_str(&s).map_err(|e| format!("parse {}: {e}", mcp_file.display()))?
+        }
+    };
+    let servers = mcp_config
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", mcp_file.display()))?
+        .entry("mcpServers")
+        .or_insert(serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| format!("{}: mcpServers is not an object", mcp_file.display()))?;
+    servers.insert(MCP_REGISTRY_KEY.into(), serde_json::json!({"command": SENSEI_MCP_BIN}));
+    let json = serde_json::to_string_pretty(&mcp_config).map_err(|e| e.to_string())?;
+    fs::write(mcp_file, json).map_err(|e| e.to_string())
 }
 
 // ── Init ────────────────────────────────────────────────────────────────────
@@ -672,22 +745,10 @@ fn init_project_scope(_recommended: bool) {
 
     // 2. .mcp.json — upsert sensei entry (for non-plugin ACPs)
     let mcp_file = repo_root.join(".mcp.json");
-    let mut mcp_config: serde_json::Value = mcp_file
-        .exists()
-        .then(|| fs::read_to_string(&mcp_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({"mcpServers": {}}));
-
-    mcp_config
-        .as_object_mut()
-        .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
-        .map(|servers| {
-            servers.insert(MCP_REGISTRY_KEY.into(), serde_json::json!({"command": SENSEI_MCP_BIN}))
-        });
-
-    fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
-    println!("\n  [ok] .mcp.json");
+    match upsert_mcp_json(&mcp_file) {
+        Ok(()) => println!("\n  [ok] .mcp.json"),
+        Err(e) => eprintln!("\n  [failed]  .mcp.json — {e}"),
+    }
 
     // 3. Clean up stale per-project hooks from .claude/settings.local.json
     //    Global plugin hooks handle all hook events — per-project hooks are redundant.
@@ -1147,6 +1208,165 @@ fn scaffold_cmd(what: Option<ScaffoldTarget>, path: Option<&str>) {
 /// `sensei index doctor` — GET the daemon's read-only index integrity report and
 /// print per-class drift counts + a few samples. Read-only: the daemon's periodic
 /// audit owns repair.
+fn transcript_cmd(cmd: TranscriptCommands) -> ExitCode {
+    match cmd {
+        TranscriptCommands::Missing => transcript_missing(),
+        TranscriptCommands::Export { sessions, missing, out } => {
+            transcript_export(&sessions, missing, out.as_deref())
+        }
+    }
+}
+
+fn transcript_missing() -> ExitCode {
+    ensure_daemon();
+    match client().get(format!("{}/api/transcripts/missing", daemon_url())).send() {
+        Ok(r) if r.status().is_success() => {
+            let rows: Vec<serde_json::Value> = match r.json() {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("transcript missing failed: bad response: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if rows.is_empty() {
+                println!("No missing transcript files with kept turns.");
+            }
+            for row in rows {
+                println!(
+                    "{}\t{}\t{} turns\t{}",
+                    row["session_id"].as_str().unwrap_or("?"),
+                    row["source"].as_str().unwrap_or("?"),
+                    row["turns"].as_i64().unwrap_or(0),
+                    row["file_path"].as_str().unwrap_or("?"),
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Ok(r) => {
+            eprintln!("transcript missing failed: HTTP {}", r.status());
+            ExitCode::FAILURE
+        }
+        Err(e) => {
+            eprintln!("transcript missing failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Where one export run writes.
+#[derive(Debug)]
+enum ExportOut {
+    Stdout,
+    File(PathBuf),
+    Dir(PathBuf),
+}
+
+/// Stdout for one session by default; a file for one session, an existing
+/// directory (`<session>.jsonl` each) for many. Errors rather than guessing.
+fn resolve_export_out(sessions: &[String], out: Option<&str>) -> Result<ExportOut, String> {
+    if sessions.is_empty() {
+        return Err("name a session id or pass --missing".to_string());
+    }
+    match out {
+        None if sessions.len() == 1 => Ok(ExportOut::Stdout),
+        None => Err(format!("{} sessions need --out <dir>", sessions.len())),
+        Some(p) => {
+            let path = PathBuf::from(p);
+            if path.is_dir() {
+                Ok(ExportOut::Dir(path))
+            } else if sessions.len() == 1 {
+                Ok(ExportOut::File(path))
+            } else {
+                Err("--out must be an existing directory for several sessions".to_string())
+            }
+        }
+    }
+}
+
+fn fetch_export(session: &str) -> Result<String, String> {
+    match client().get(format!("{}/api/transcripts/export/{session}", daemon_url())).send() {
+        Ok(r) if r.status().is_success() => r.text().map_err(|e| e.to_string()),
+        Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
+            Err("no kept turns for this session".to_string())
+        }
+        Ok(r) if r.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY => {
+            Err("source not supported by the exporter yet".to_string())
+        }
+        Ok(r) if r.status() == reqwest::StatusCode::CONFLICT => {
+            Err("transcript file still exists (or no watermark proves it gone) — not touching it"
+                .to_string())
+        }
+        Ok(r) => Err(format!("HTTP {}", r.status())),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn transcript_export(sessions: &[String], missing: bool, out: Option<&str>) -> ExitCode {
+    ensure_daemon();
+    let mut ids: Vec<String> = sessions.to_vec();
+    if missing {
+        match client().get(format!("{}/api/transcripts/missing", daemon_url())).send() {
+            Ok(r) if r.status().is_success() => {
+                let rows: Vec<serde_json::Value> = match r.json() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("transcript export: missing list unreadable: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                for row in rows {
+                    if let Some(s) = row["session_id"].as_str()
+                        && !ids.iter().any(|id| id == s)
+                    {
+                        ids.push(s.to_string());
+                    }
+                }
+            }
+            Ok(r) => {
+                eprintln!("transcript export: missing list failed: HTTP {}", r.status());
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("transcript export: missing list failed: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let dest = match resolve_export_out(&ids, out) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("transcript export: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut failed = 0;
+    for id in &ids {
+        let body = match fetch_export(id) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{id}: {e}");
+                failed += 1;
+                continue;
+            }
+        };
+        let written = match &dest {
+            ExportOut::Stdout => {
+                print!("{body}");
+                io::stdout().flush().map_err(|e| e.to_string())
+            }
+            ExportOut::File(p) => fs::write(p, &body).map_err(|e| e.to_string()),
+            ExportOut::Dir(d) => {
+                fs::write(d.join(format!("{id}.jsonl")), &body).map_err(|e| e.to_string())
+            }
+        };
+        if let Err(e) = written {
+            eprintln!("{id}: write failed: {e}");
+            failed += 1;
+        }
+    }
+    if failed > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+}
+
 fn index_doctor() {
     ensure_daemon();
     match client().get(format!("{}/api/index/doctor", daemon_url())).send() {
@@ -1371,6 +1591,55 @@ fn print_models_status(d: &serde_json::Value) {
     }
 }
 
+/// `sensei relay` (item 5): one-line registration status over the person
+/// `now` payload — the first lane and its crew, or not-registered.
+/// Status only; lanes register over MCP.
+fn relay_status() {
+    ensure_daemon();
+    match client().get(format!("{}/relay/now", daemon_url())).send() {
+        Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>() {
+            Ok(d) => println!("{}", format_relay_status(&d)),
+            Err(e) => eprintln!("relay status failed: unexpected response ({e})"),
+        },
+        Ok(r) => eprintln!("{}", relay_http_error(r.status())),
+        Err(e) => eprintln!("relay status failed: {e}"),
+    }
+}
+
+/// Render the one-line relay status. Kept pure over the JSON so the line
+/// is unit-testable without a daemon (the models precedent).
+fn format_relay_status(d: &serde_json::Value) -> String {
+    let lanes = d["lanes"].as_array().cloned().unwrap_or_default();
+    let Some(first) = lanes.first() else {
+        return "relay: not registered — no lanes yet".to_string();
+    };
+    let code = first["code"].as_str().unwrap_or("?");
+    let role = first["role"].as_str().unwrap_or("?");
+    let crew_id = first["crew_id"].as_str().unwrap_or("");
+    let crew = d["crews"]
+        .as_array()
+        .and_then(|crews| crews.iter().find(|c| c["id"].as_str() == Some(crew_id)))
+        .and_then(|c| c["goal"].as_str())
+        .map(|goal| format!("\"{goal}\""))
+        .unwrap_or_else(|| crew_id.chars().take(8).collect());
+    let mut line = format!("relay: registered as {code} ({role}) in crew {crew}");
+    if lanes.len() > 1 {
+        line.push_str(&format!(" (+{} more lanes)", lanes.len() - 1));
+    }
+    line
+}
+
+/// The stderr line for a failed relay status read. Sign-in failures name
+/// the remedy (the onboarding audience runs this first); anything else
+/// reports the HTTP status like the other daemon-backed commands.
+fn relay_http_error(status: reqwest::StatusCode) -> String {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        "relay: not signed in — sign in to check registration".to_string()
+    } else {
+        format!("relay status failed: HTTP {status}")
+    }
+}
+
 /// Format a `ProvisionPhase` JSON value (`{"phase":"...", ...}`) as a compact,
 /// human-readable string. Pure over the daemon's serde shape (kernel
 /// `ProvisionPhase`, internally tagged `"phase"`, snake_case).
@@ -1397,6 +1666,63 @@ fn format_phase(phase: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    // ── D83 batch A: .mcp.json is never rewritten from a failed read ─────────
+
+    #[test]
+    fn a_corrupt_mcp_json_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".mcp.json");
+        std::fs::write(&path, "{ \"mcpServers\": { \"other\": {} }, oops").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(super::upsert_mcp_json(&path).is_err(), "unparsable: refused");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "and the user's servers left byte for byte"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_mcp_json_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".mcp.json");
+        std::fs::write(&path, [b'{', 0xff, 0xfe, b'}']).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(super::upsert_mcp_json(&path).is_err(), "not UTF-8: refused");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    /// Valid JSON of the wrong shape: today nothing is inserted, the file is
+    /// written back, and `init` says `[ok]`.
+    #[test]
+    fn an_mcp_json_that_is_not_an_object_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        for body in ["[]", r#"{ "mcpServers": [] }"#] {
+            let path = dir.path().join(".mcp.json");
+            std::fs::write(&path, body).unwrap();
+            assert!(super::upsert_mcp_json(&path).is_err(), "{body}: refused");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+        }
+    }
+
+    #[test]
+    fn the_mcp_upsert_keeps_every_other_server_and_creates_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".mcp.json");
+        std::fs::write(&path, r#"{ "mcpServers": { "other": { "command": "x" } } }"#).unwrap();
+        super::upsert_mcp_json(&path).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(
+            v["mcpServers"]["other"].is_object() && v["mcpServers"][MCP_REGISTRY_KEY].is_object(),
+            "{v}"
+        );
+        let fresh = dir.path().join("fresh.json");
+        super::upsert_mcp_json(&fresh).unwrap();
+        assert!(std::fs::read_to_string(&fresh).unwrap().contains(MCP_REGISTRY_KEY));
+    }
+
     use super::*;
 
     #[test]
@@ -1481,6 +1807,141 @@ mod tests {
     fn models_requires_a_subcommand() {
         // Bare `sensei models` must not parse — a subcommand is required.
         assert!(Cli::try_parse_from(["sensei", "models"]).is_err());
+    }
+
+    #[test]
+    fn transcript_missing_subcommand_parses() {
+        let cli = Cli::parse_from(["sensei", "transcript", "missing"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Transcript { cmd: TranscriptCommands::Missing })
+        ));
+    }
+
+    #[test]
+    fn transcript_export_parses_sessions_missing_and_out() {
+        let cli =
+            Cli::parse_from(["sensei", "transcript", "export", "s1", "s2", "--out", "/tmp/x"]);
+        match cli.command {
+            Some(Commands::Transcript {
+                cmd: TranscriptCommands::Export { sessions, missing, out },
+            }) => {
+                assert_eq!(sessions, ["s1", "s2"]);
+                assert!(!missing);
+                assert_eq!(out.as_deref(), Some("/tmp/x"));
+            }
+            other => panic!("expected Transcript export, got {:?}", other.is_some()),
+        }
+        let cli = Cli::parse_from(["sensei", "transcript", "export", "--missing"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Transcript { cmd: TranscriptCommands::Export { missing: true, .. } })
+        ));
+    }
+
+    #[test]
+    fn transcript_requires_a_subcommand() {
+        assert!(Cli::try_parse_from(["sensei", "transcript"]).is_err());
+    }
+
+    #[test]
+    fn export_out_resolves_stdout_file_and_dir() {
+        // One session, no --out → stdout.
+        assert!(matches!(resolve_export_out(&["s1".to_string()], None), Ok(ExportOut::Stdout)));
+        // No sessions at all is a usage error, not a silent no-op.
+        assert!(resolve_export_out(&[], None).is_err());
+        // Several sessions need a directory to land in.
+        assert!(resolve_export_out(&["s1".to_string(), "s2".to_string()], None).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        // An existing directory takes files however many sessions there are…
+        match resolve_export_out(&["s1".to_string()], Some(dir.path().to_str().unwrap())) {
+            Ok(ExportOut::Dir(_)) => {}
+            other => panic!("expected Dir, got {other:?}"),
+        }
+        // …while a plain path is a file only for one session.
+        let file = dir.path().join("one.jsonl");
+        match resolve_export_out(&["s1".to_string()], Some(file.to_str().unwrap())) {
+            Ok(ExportOut::File(_)) => {}
+            other => panic!("expected File, got {other:?}"),
+        }
+        assert!(
+            resolve_export_out(&["s1".to_string(), "s2".to_string()], Some(file.to_str().unwrap()))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn relay_subcommand_parses_bare() {
+        // Item 5: bare `sensei relay` is the status — no subcommand.
+        let cli = Cli::parse_from(["sensei", "relay"]);
+        assert!(matches!(cli.command, Some(Commands::Relay)));
+    }
+
+    #[test]
+    fn relay_status_names_the_lane_and_crew() {
+        use serde_json::json;
+        let d = json!({
+            "lanes": [{"id": "l1", "crew_id": "c9", "code": "L1", "role": "coordinator"}],
+            "crews": [{"id": "c9", "goal": "Ship it"}],
+        });
+        assert_eq!(
+            format_relay_status(&d),
+            "relay: registered as L1 (coordinator) in crew \"Ship it\""
+        );
+    }
+
+    #[test]
+    fn relay_status_falls_back_to_the_crew_id() {
+        use serde_json::json;
+        let d = json!({
+            "lanes": [{"id": "l1", "crew_id": "01938931-0000-7000-8000-0000000000c1", "code": "L2", "role": "contributor"}],
+            "crews": [{"id": "01938931-0000-7000-8000-0000000000c1", "goal": null}],
+        });
+        assert_eq!(
+            format_relay_status(&d),
+            "relay: registered as L2 (contributor) in crew 01938931"
+        );
+    }
+
+    #[test]
+    fn relay_status_counts_further_lanes() {
+        use serde_json::json;
+        let d = json!({
+            "lanes": [
+                {"id": "l1", "crew_id": "c9", "code": "L1", "role": "coordinator"},
+                {"id": "l2", "crew_id": "c9", "code": "L2", "role": "contributor"},
+                {"id": "l3", "crew_id": "c9", "code": "L3", "role": "contributor"},
+            ],
+            "crews": [{"id": "c9", "goal": "Ship it"}],
+        });
+        assert_eq!(
+            format_relay_status(&d),
+            "relay: registered as L1 (coordinator) in crew \"Ship it\" (+2 more lanes)"
+        );
+    }
+
+    #[test]
+    fn relay_http_error_names_sign_in_for_401() {
+        assert_eq!(
+            relay_http_error(reqwest::StatusCode::UNAUTHORIZED),
+            "relay: not signed in — sign in to check registration"
+        );
+        assert_eq!(
+            relay_http_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR),
+            "relay status failed: HTTP 500 Internal Server Error"
+        );
+    }
+
+    #[test]
+    fn relay_status_without_lanes_is_not_registered() {
+        use serde_json::json;
+        assert_eq!(
+            format_relay_status(&json!({"lanes": [], "crews": []})),
+            "relay: not registered — no lanes yet"
+        );
+        // Missing or misshapen lanes read as empty (the models precedent):
+        // a 200 always carries lanes[], so anything else is no lanes.
+        assert_eq!(format_relay_status(&json!({})), "relay: not registered — no lanes yet");
     }
 
     #[test]

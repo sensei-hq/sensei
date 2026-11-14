@@ -1,6 +1,7 @@
 -- Electing a repository for sharing, as the signed-in person (#236 step 3;
 -- access matrix "Workspaces and repositories": repository elections R/W own (user
--- authority), R/W tenant for an admin (org authority)).
+-- authority, personal tenants), R/W tenant for an admin (org authority — which
+-- since D46 holds an org's PUBLIC repositories too, not just its private ones).
 --
 -- dojo.set_repository_election decides from the CALLER's own verdict row (the
 -- one dojo.my_repositories returns): who holds the authority, and whether this
@@ -47,12 +48,13 @@ begin
     -- ── ola (contributor) ────────────────────────────────────────────────────
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000122"}', true);
 
-    select * into r from dojo.set_repository_election('github.com/ztest-el/pub', true);
-    if r.elected is distinct from true or r.authority <> 'user' or r.sync_enabled is distinct from true then
-        raise exception 'election: ola''s own public repo should elect and sync, got %', r;
-    end if;
-    select * into r from dojo.set_repository_election('github.com/ztest-el/pub', false);
-    if r.elected is distinct from false then raise exception 'election: ola''s second choice should stand, got %', r; end if;
+    -- The org's public repository is not hers to change (D46), private or
+    -- public alike.
+    begin
+        perform dojo.set_repository_election('github.com/ztest-el/pub', false);
+        raise exception 'election: a contributor changed the organisation''s public election';
+    exception when insufficient_privilege then null;
+    end;
 
     begin
         perform dojo.set_repository_election('github.com/ztest-el/priv', true);
@@ -84,10 +86,21 @@ begin
     end if;
     select * into r from dojo.set_repository_election('github.com/ztest-el/priv', true);
 
+    -- And the organisation's PUBLIC election is hers to hold too (D46): elect,
+    -- then switch off, and the second choice stands.
+    select * into r from dojo.set_repository_election('github.com/ztest-el/pub', true);
+    if r.elected is distinct from true or r.authority <> 'organization' or r.sync_enabled is distinct from true then
+        raise exception 'election: the admin should elect the org public repo, got %', r;
+    end if;
+    select * into r from dojo.set_repository_election('github.com/ztest-el/pub', false);
+    if r.elected is distinct from false then raise exception 'election: the admin''s second choice should stand, got %', r; end if;
+
     -- ola now sees the organisation's choice.
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000122"}', true);
     select elected into r from dojo.my_repositories() where repo_key = 'github.com/ztest-el/priv';
     if r.elected is distinct from true then raise exception 'election: ola should see the org''s election'; end if;
+    select elected into r from dojo.my_repositories() where repo_key = 'github.com/ztest-el/pub';
+    if r.elected is not false then raise exception 'election: ola should see the org''s public off'; end if;
 end $$;
 
 reset role;
@@ -95,12 +108,14 @@ do $$
 declare
     rows text;
 begin
-    select string_agg(authority || ':' || coalesce(e.principal_id::text, 'none') || ':' || elected, ', '
-                      order by authority)
+    -- Named per repository: two organisation rows now, and `order by authority`
+    -- alone would leave their order unstable.
+    select string_agg(r.name || ':' || authority || ':' || coalesce(e.principal_id::text, 'none') || ':' || elected, ', '
+                      order by r.repo_key)
       into rows
       from dojo.repository_elections e join dojo.repositories r on r.id = e.repository_id
      where r.repo_key like 'github.com/ztest-el/%';
-    if rows is distinct from 'user:a0000000-0000-4000-8000-000000000122:false, organization:none:true' then
+    if rows is distinct from 'priv:organization:none:true, pub:organization:none:false' then
         raise exception 'elections stored: %', rows;
     end if;
     if exists (select 1 from pg_class c join pg_namespace s on s.oid = c.relnamespace

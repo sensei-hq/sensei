@@ -4,7 +4,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/atlas` (proposed — a 10th `ProjectSidebar` section; the mockup's `ProjectAtlasWindow` renders `<ProjectSidebar … active="atlas"/>`)
-**Source mockup:** [`lib/project/project-atlas.jsx`](../../mockups/Sensei/lib/project/project-atlas.jsx) → `ProjectAtlasWindow` (screen: `ProjectAtlas`; canvas: `AtlasGraph`; inspector: `AtlasInspector`; legend: `AtlasLegend`)
+**Source mockup:** `lib/project/project-atlas.jsx` → `ProjectAtlasWindow` (screen: `ProjectAtlas`; canvas: `AtlasGraph`; inspector: `AtlasInspector`; legend: `AtlasLegend`)
 **Data:** the node/edge graph (`GET /api/graph/nodes`, `GET /api/graph/call-flow`) · communities (`GET /api/graph/communities/info` = `get_communities`, **blocked by G5a on the MCP path**) · `GET /api/graph/callers` / `/api/graph/callees` (`get_callers`/`get_callees`)
 **App file:** _project-window Atlas is greenfield_ — an **observatory-scoped** graph view already exists at `app/src/routes/(observatory)/atlas/+page.svelte` (2 levels: Communities/Symbols, keyed by repo *name*, default `sensei`). The project-window Atlas (repo→package→module→symbol drill + docs layer, scoped to `[id]`) is not built.
 **Daemon files:** `crates/senseid/src/api/handlers/query.rs` (`query_communities` already aggregates via `resolve_scope_ids`), `crates/senseid/src/api/handlers/mcp.rs` (`get_communities` still uses single-folder `resolve_folder_id` — **the G5a bug**), `crates/senseid/src/api/handlers/codebase.rs` (`detect_communities` / `list_communities`)

@@ -35,7 +35,7 @@
   <div class="flex items-baseline justify-between mb-2.5">
     <Eyebrow>{label}</Eyebrow>
     {#if trailing}
-      <span class="font-mono text-xs text-ink-mute">{trailing}</span>
+      <span class="font-mono text-xs text-ink-soft">{trailing}</span>
     {/if}
   </div>
 
@@ -59,7 +59,7 @@
   {#if activity}
     <div class="flex items-center gap-2 mt-3 pt-3 border-t border-paper-edge">
       <Spinner size={11} />
-      <span class="font-mono text-xs text-ink-soft truncate">{activity}</span>
+      <span class="font-mono text-xs text-ink-mute truncate">{activity}</span>
     </div>
   {/if}
 

@@ -1,0 +1,50 @@
+{
+  "body": {
+    "data": {
+      "repository": {
+        "issue": {
+          "assignees": {
+            "nodes": []
+          },
+          "body": "Body of issue 6",
+          "createdAt": "2026-08-28T08:45:20Z",
+          "databaseId": 1006,
+          "issueType": null,
+          "number": 6,
+          "projectItems": {
+            "nodes": [
+              {
+                "fieldValueByName": null,
+                "isArchived": false,
+                "project": {
+                  "id": "PVT_2"
+                }
+              }
+            ],
+            "pageInfo": {
+              "endCursor": "c3",
+              "hasNextPage": false
+            }
+          },
+          "repository": {
+            "nameWithOwner": "acme/platform",
+            "url": "https://github.com/acme/platform"
+          },
+          "state": "OPEN",
+          "title": "Issue 6",
+          "updatedAt": "2026-08-28T08:45:20Z",
+          "url": "https://github.com/acme/platform/issues/6"
+        }
+      }
+    }
+  },
+  "operation": "Issue",
+  "status": 200,
+  "variables": {
+    "after": null,
+    "field": "Sprint",
+    "name": "platform",
+    "number": 6,
+    "owner": "acme"
+  }
+}

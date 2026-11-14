@@ -1479,8 +1479,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.27.8"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.27.8#c2823592f4c1cfaf907942a3be26216971f498d4"
+version = "0.27.9"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.27.9#e550b65ca86c5875cbb0b2bb1702519d31ae03ad"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1499,7 +1499,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
- "sqlparser 0.62.0",
+ "sqlparser",
  "sqlx",
  "tar",
  "thiserror 2.0.18",
@@ -1634,7 +1634,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1755,7 +1755,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2635,7 +2635,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3218,7 +3218,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4197,16 +4197,16 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.14"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
+checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4631,7 +4631,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4689,7 +4689,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4851,7 +4851,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -4869,7 +4869,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-cli"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "chrono",
  "clap",
@@ -4979,7 +4979,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-logger"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "chrono",
  "reqwest 0.12.28",
@@ -4992,7 +4992,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-mcp"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "reqwest 0.12.28",
  "sensei-bootstrap",
@@ -5009,7 +5009,7 @@ dependencies = [
 
 [[package]]
 name = "senseid"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
@@ -5022,11 +5022,13 @@ dependencies = [
  "dirs",
  "dojo-protocol",
  "encoding_rs",
+ "flate2",
  "globset",
  "hex",
  "ignore",
  "json5",
  "keyring",
+ "libc",
  "notify",
  "notify-debouncer-mini",
  "notify-rust",
@@ -5054,8 +5056,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "serial_test",
  "sha2 0.10.9",
- "sqlparser 0.57.0",
  "sqlx-core",
  "sqlx-postgres",
  "tempfile",
@@ -5229,6 +5231,31 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
+]
+
+[[package]]
+name = "serial_test"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "699f4197115b8a7e7ff19c9a315a4bd6fffec26cc4626ef45ecaea389e081c6d"
+dependencies = [
+ "futures-executor",
+ "futures-util",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "serial_test_derive",
+]
+
+[[package]]
+name = "serial_test_derive"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94e153fc76e1c6a068703d6d29c508a0b15c061c4b7e43da59cc097bc342673c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5408,35 +5435,13 @@ dependencies = [
 
 [[package]]
 name = "sqlparser"
-version = "0.57.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07c5f081b292a3d19637f0b32a79e28ff14a9fd23ef47bd7fce08ff5de221eca"
-dependencies = [
- "log",
- "recursive",
- "sqlparser_derive 0.3.0",
-]
-
-[[package]]
-name = "sqlparser"
 version = "0.62.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c6d1b651dc4edf07eead2a0c6c78016ce971bc2c10da5266861b13f25e7cec"
 dependencies = [
  "log",
  "recursive",
- "sqlparser_derive 0.5.0",
-]
-
-[[package]]
-name = "sqlparser_derive"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da5fc6819faabb412da764b99d3b713bb55083c11e7e0c00144d386cd6a1939c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
+ "sqlparser_derive",
 ]
 
 [[package]]
@@ -5830,7 +5835,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6831,7 +6836,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

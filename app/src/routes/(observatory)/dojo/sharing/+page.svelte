@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { Notice, StateView } from '@sensei/ui';
     import { railIcon } from "../../observatory-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, Kanji, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, Kanji } from '$lib/components';
   import {
     CollectiveSharing,
     ATTRIBUTION_OPTIONS,
@@ -52,7 +53,7 @@
   <div class="mb-3">
     <h2 class="display text-base font-medium m-0 text-ink">{title}</h2>
     {#if sub}
-      <p class="text-xs text-ink-soft mt-1 mb-0 max-w-[640px] leading-normal">{sub}</p>
+      <p class="text-xs text-ink-mute mt-1 mb-0 max-w-[640px] leading-normal">{sub}</p>
     {/if}
   </div>
 {/snippet}
@@ -69,18 +70,18 @@
 
     {#if data.error || !state}
       <div class="max-w-[1060px] mx-auto px-7 pb-10">
-        <ScreenState status="error" error={data.error ?? 'Failed to load sharing preferences'} onretry={invalidateAll} />
+        <StateView status="error" error={data.error ?? 'Failed to load sharing preferences'} onretry={invalidateAll} />
       </div>
     {:else}
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-collective-destination={state.destination}>
       <!-- meta: last-changed + live save / error feedback -->
       <div class="flex items-center gap-3 mt-5 mb-7 text-xs">
-        <span class="text-ink-mute" data-updated>{state.updatedLabel}</span>
+        <span class="text-ink-soft" data-updated>{state.updatedLabel}</span>
         {#if state.saving}
-          <span class="text-ink-soft" data-saving>saving…</span>
+          <span class="text-ink-mute" data-saving>saving…</span>
         {/if}
-        {#if state.error}
-          <span class="text-danger" data-error>{state.error}</span>
+        {#if state.notice}
+          <Notice size="inline" bare expanded {...state.notice} data-error />
         {/if}
       </div>
 
@@ -97,7 +98,7 @@
               <Kanji char={d.kanji} size="lg" tone={on ? 'accent' : 'muted'} />
               <div class="flex-1 min-w-0">
                 <div class="text-sm text-ink">{d.label}</div>
-                <div class="text-xs text-ink-soft mt-0.5 leading-normal">{d.blurb}</div>
+                <div class="text-xs text-ink-mute mt-0.5 leading-normal">{d.blurb}</div>
               </div>
               {@render switchBtn(
                 on,
@@ -109,7 +110,7 @@
           {/each}
         </div>
         {#if !state.sharing}
-          <p class="text-xs text-ink-mute mt-2 mb-0" data-nothing-leaves>
+          <p class="text-xs text-ink-soft mt-2 mb-0" data-nothing-leaves>
             Nothing leaves the machine while both destinations are off.
           </p>
         {/if}
@@ -128,8 +129,8 @@
               disabled={state.saving}
               onclick={() => state.setCadence(c.value)}
               class="px-3 py-1.5 rounded-full text-xs cursor-pointer border transition-colors disabled:opacity-50 disabled:cursor-not-allowed {active
-                ? 'bg-accent-soft text-accent border-accent-soft'
-                : 'bg-paper-mute text-ink-soft border-paper-edge'}"
+                ? 'bg-accent-soft text-on-accent-soft border-accent-soft'
+                : 'bg-paper-mute text-ink-mute border-paper-edge'}"
             >{c.label}</button>
           {/each}
         </div>
@@ -152,7 +153,7 @@
               <Kanji char={cat.kanji} size="base" tone={on ? 'accent' : 'muted'} />
               <div class="flex-1 min-w-0">
                 <div class="text-sm text-ink">{cat.label}</div>
-                <div class="text-xs text-ink-soft mt-0.5 leading-normal">{cat.blurb}</div>
+                <div class="text-xs text-ink-mute mt-0.5 leading-normal">{cat.blurb}</div>
               </div>
               {@render switchBtn(on, () => state.toggleCategory(cat.key), `share ${cat.label}`, `cat-${cat.key}`)}
             </div>
@@ -182,9 +183,9 @@
                   class="rounded-full {active ? 'bg-accent' : 'border border-ink-faint'}"
                   style="width: 12px; height: 12px;"
                 ></span>
-                <span class="text-sm {active ? 'text-ink' : 'text-ink-soft'}">{a.label}</span>
+                <span class="text-sm {active ? 'text-ink' : 'text-ink-mute'}">{a.label}</span>
               </div>
-              <p class="text-xs text-ink-soft mt-1 mb-0 leading-normal">{a.blurb}</p>
+              <p class="text-xs text-ink-mute mt-1 mb-0 leading-normal">{a.blurb}</p>
             </button>
           {/each}
         </div>

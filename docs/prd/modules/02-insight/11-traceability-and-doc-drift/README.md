@@ -32,7 +32,9 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 
 - In: `scan_project_doc_drift` (triggered on doc change, code change, or daily full
   refresh); identifier extraction + signature comparison; drift-item lifecycle
-  (`open → fixed → resolved_auto`, dismiss); apply-fix endpoint; branch-scoped
+  (`open → fixed → resolved_auto`, dismiss); an **apply-fix endpoint** that is
+  designed, not built — no `/api/traceability/**` route exists, and
+  `GET /api/graph/doc-drift` is the only drift route (`routes.rs:332`); branch-scoped
   drift lists; bidirectional `trace_links`; doc-doctor lint findings + enforcement
   modes (audit-only / warn / block); auto-generated doc stubs.
 - Out: `section`-node granularity of the code graph (M4 — the prerequisite for
@@ -41,11 +43,13 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 
 ## Surfaces
 
-- **API** — `POST /api/traceability/{id}/apply-fix`; Workspace Overview `Doc drift`
+- **API** — `GET /api/graph/doc-drift` (`codebase::doc_drift`, `routes.rs:332`) is
+  the whole surface today; `POST /api/traceability/{id}/apply-fix` is specified and
+  not built; Workspace Overview `Doc drift`
   stat; Observatory + Workspace Traceability screens. The expansion drawer's
   `get_trace_links(node)` tool **does not exist** (gap `G-TRACE-TOOL`).
 - **Daemon** — `db/pg_store/graph.rs::scan_project_doc_drift` (+
-  `api/handlers/project_detail.rs`), `analysis/doc_drift.rs`
+  `api/handlers/workspace_detail.rs`), `analysis/doc_drift.rs`
   (identifier extraction — unit-tested, no DB round-trip).
 - **App** — Traceability screens (list, filter by confidence/state, Expected-vs-Actual
   drawer); Insights violation cards for high-confidence drift; /sensei:validate
@@ -76,13 +80,13 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Workspace Overview `Doc drift` stat | `count(*) … where state='open' and project_id=X` | "Doc drift: 3" |
-| High-confidence drift | identifier gone (or unambiguous rename) | README: `authenticate()` → `authenticateWithCredentials` |
-| Medium-confidence drift | identifier exists, signature changed | Expected-vs-Actual drawer |
-| `get_trace_links(node)` *(not built)* | both directions around a node | "3 docs reference `RefreshTokenStore`" |
-| Doc-doctor findings | stale / undocumented / inconsistent / broken | severity-filtered on the Traceability screen |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Workspace Overview `Doc drift` stat | `count(*) … where state='open' and project_id=X` | "Doc drift: 3" | open Traceability and fix the drifted docs |
+| High-confidence drift | identifier gone (or unambiguous rename) | README: `authenticate()` → `authenticateWithCredentials` | apply the fix (`apply-fix`) |
+| Medium-confidence drift | identifier exists, signature changed | Expected-vs-Actual drawer | update the doc's signature from the Expected-vs-Actual drawer |
+| `get_trace_links(node)` *(not built)* | both directions around a node | "3 docs reference `RefreshTokenStore`" | not built — today, open the referencing docs by hand before changing the node |
+| Doc-doctor findings | stale / undocumented / inconsistent / broken | severity-filtered on the Traceability screen | fix by severity: refresh stale docs, document undocumented exports |
 
 ## Done gate
 

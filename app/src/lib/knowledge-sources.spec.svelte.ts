@@ -125,4 +125,43 @@ describe('KnowledgeSourcesState', () => {
     expect(state.addError).toBe('bad');
     expect(state.url).toBe('https://hive.example.com');
   });
+
+  // L5: the writes stay in the state after the list read moves to the loader,
+  // so remove/sync are pinned here — success reloads, failure is said aloud.
+  it('remove() reloads the list on success', async () => {
+    const list = vi.fn().mockResolvedValue({ ok: true, data: { sources: [] } });
+    const api = mockApi({ tryListKnowledgeSources: list });
+    const state = new KnowledgeSourcesState();
+    await state.remove(api, 's1');
+    expect(list).toHaveBeenCalled();
+    expect(state.error).toBeNull();
+  });
+
+  it('remove() sets error and keeps the list when delete fails', async () => {
+    const api = mockApi({
+      deleteKnowledgeSource: vi.fn().mockResolvedValue({ ok: false, error: { status: 500, message: 'boom' } }),
+    });
+    const state = new KnowledgeSourcesState();
+    state.sources = [sourceFixture()];
+    await state.remove(api, 's1');
+    expect([state.error, state.sources.map((s) => s.id)]).toEqual(['boom', ['s1']]);
+  });
+
+  it('sync() reloads the list on success', async () => {
+    const list = vi.fn().mockResolvedValue({ ok: true, data: { sources: [sourceFixture()] } });
+    const api = mockApi({ tryListKnowledgeSources: list });
+    const state = new KnowledgeSourcesState();
+    await state.sync(api, 's1');
+    expect(list).toHaveBeenCalled();
+    expect(state.error).toBeNull();
+  });
+
+  it('sync() sets error when sync fails', async () => {
+    const api = mockApi({
+      syncKnowledgeSource: vi.fn().mockResolvedValue({ ok: false, error: { status: 502, message: 'hive down' } }),
+    });
+    const state = new KnowledgeSourcesState();
+    await state.sync(api, 's1');
+    expect(state.error).toBe('hive down');
+  });
 });

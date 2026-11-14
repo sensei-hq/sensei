@@ -51,9 +51,17 @@ pub(crate) async fn get_sessions_stub(
     };
     let total = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
+    // The work by the hour it happened — the charts file it by local day, so a session
+    // that ran for days counts on each of them, not on the day it started.
+    let activity =
+        state.pg.activity_by_hour(range_days, workspace.as_ref()).await.map_err(|e| {
+            tracing::warn!(error = %e, "get_sessions_stub: activity_by_hour failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     Ok(Json(serde_json::json!({
         "stats": { "totalSessions": total, "completed": completed },
         "sessions": sessions,
+        "activity": activity,
         "toolUsage": [],
         "benchmarkPairs": []
     })))
@@ -852,6 +860,25 @@ mod tests {
             )),
             trackers: Default::default(),
         }))
+    }
+
+    /// The digest carries the work by the hour it happened (`activity`), beside the
+    /// sessions — what the Trend, Stream and Tokens charts file by day (2026-10-29).
+    #[tokio::test]
+    async fn the_digest_carries_activity_by_the_hour() {
+        let Some(state) = make_state().await else {
+            return;
+        };
+        let q: std::collections::HashMap<String, String> = [("range".into(), "7d".into())].into();
+        let axum::Json(body) =
+            super::get_sessions_stub(axum::extract::State(state), axum::extract::Query(q))
+                .await
+                .expect("the digest answers");
+        let activity = body["activity"].as_array().expect("an activity array");
+        for h in activity {
+            let h = h.as_array().expect("[hour, turns, corrections, tokensIn, tokensOut]");
+            assert_eq!(h.len(), 5, "{h:?}");
+        }
     }
 
     #[tokio::test]

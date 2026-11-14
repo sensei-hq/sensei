@@ -106,7 +106,11 @@ def collect(root: pathlib.Path) -> tuple[list[tuple[str, int, str]], list[str]]:
       * `indexer/lang/sql/` — sample SQL the parser is TESTED ON, source text
         rather than a query anyone runs; and
       * the bootstrap deploy tests, which deploy fixture designs (and older
-        shapes of this one) to scratch databases of their own.
+        shapes of this one) to scratch databases of their own; and
+      * a statement addressed to a schema its own file deploys as a fixture
+        (a `design.yaml` string declaring `schemas: - <name>`, e.g. the
+        `dbd112` scratch deploy in `tasks/schema_deploy.rs`). Only those
+        statements are skipped: the file's other SQL is still checked.
 
     All are reported, never silently dropped: an unchecked query this script
     does not mention is precisely the gap it exists to close.
@@ -126,12 +130,22 @@ def collect(root: pathlib.Path) -> tuple[list[tuple[str, int, str]], list[str]]:
         if str(path).endswith("crates/bootstrap/tests/deploy_upgrade.rs"):
             skipped.append(f"{path} — deploys its own fixture designs to scratch databases")
             continue
+        # Schemas this file deploys itself, from an inline fixture design.
+        fixtures = set(FIXTURE_SCHEMA.findall(text))
         for m in RUST_STR.finditer(text):
             sql = unescape(m.group(1))
             if looks_complete(sql):
                 line = text[: m.start()].count("\n") + 1
+                own = next((f for f in fixtures if re.search(rf"\b{re.escape(f)}\.", sql)), None)
+                if own:
+                    skipped.append(f"{path}:{line} — addresses {own}, a fixture schema the file deploys itself")
+                    continue
                 found.append((str(path), line, sql.strip().rstrip(";")))
     return found, skipped
+
+
+# `schemas:\n  - <name>` inside a Rust string: a fixture design's schema list.
+FIXTURE_SCHEMA = re.compile(r"schemas:\\n\s*-\s*([A-Za-z_][A-Za-z0-9_]*)")
 
 
 def check(stmts: list[tuple[str, int, str]], url: str) -> tuple[list, list, int]:
