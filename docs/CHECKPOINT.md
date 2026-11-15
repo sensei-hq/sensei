@@ -15,12 +15,14 @@ Catalogue spec `docs/spec/2026-11-14-shared-component-catalogue.md` approved (d�
   stats band draws them; preview fixtures may compute props from the view (`propsFor`).
 - #419 wrap-up: guidance v2 (codename, nudge, closed crew → stop; `ce92c3ba2`), lanes.md §4, live + e2e DBs
   reconciled (`dbd diff` clean), daemon installed, relay e2e 8/8. Editor tag → #396. #419 closes on lane merge.
+- #424 runs (2026-11-15, red→green each): state `runList`/`startRun`/`cancelRun` (`41bbbefb2`); selectors draft
+  card + `toPastRuns`; RunCard Start/Cancel + PastRunsList + runs-read Notice; bench fixtures. Left: PastRunView.
 - sensei v0.22.1 released (notarized, tap, dōjō deployed); shipped issues closed (memory: close on merge).
 
-**Remaining (in order):** #426. Then catalogue Order 2–5 (guards, dōjō `/preview`, families; QueueSection and
+**Remaining (in order):** #424 PastRunView (read-only archive, rows open it) → #426 journey (app e2e). Then catalogue Order 2–5 (guards, dōjō `/preview`, families; QueueSection and
 dōjō ListSection need their row controls inside display-only rows). Queued: #446 (sqlx 0.9 / SQLite CVE), #447.
 
-**Next command:** #426 — read the issue, then red-first per item.
+**Next command:** PastRunView red-first (GET /relay/runs/{id}), then `app/e2e/lib/relay-crew.ts` for #426.
 
 **Open questions (user):** none.
 
