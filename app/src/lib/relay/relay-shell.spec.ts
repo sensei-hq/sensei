@@ -22,9 +22,31 @@ import {
 // a pure selector from the page's state to what ShellScreen draws. Rules the
 // selector owns are pinned here, not in the component.
 
-const actions = (): RelayShellActions => ({ view: vi.fn(), compose: vi.fn(), filter: vi.fn(), narrow: vi.fn() });
+const actions = (): RelayShellActions => ({ view: vi.fn(), compose: vi.fn(), filter: vi.fn(), narrow: vi.fn(), createRun: vi.fn() });
 const ids = (items: Array<Record<string, unknown>>) => items.map((i) => (i.type === 'separator' ? '|' : String(i.id)));
 const item = (items: Array<Record<string, unknown>>, id: string) => items.find((i) => i.id === id) as Record<string, unknown>;
+
+describe('toRelayShell · Create run from the Queue (restores the queue cutover’s trigger, lost in #420)', () => {
+  it('backlog items picked on the Queue: Create run · N after the views; it opens the form', () => {
+    const a = actions();
+    const shell = toRelayShell({ ...loadedQueue(), selected: 2 }, a);
+    expect(ids(shell.toolbar)).toEqual(['now', 'queue', 'crew', '|', 'create-run', 'message', 'info']);
+    const create = item(shell.toolbar, 'create-run');
+    expect(create).toMatchObject({ label: 'Create run · 2', type: 'button' });
+    (create.onclick as () => void)();
+    expect(a.createRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('no crew yet: it still shows — the run is drafted, and starts once the crew is set up', () => {
+    const shell = toRelayShell({ ...noRun(), view: 'queue', selected: 1 }, actions());
+    expect(item(shell.toolbar, 'create-run')).toMatchObject({ label: 'Create run · 1' });
+  });
+
+  it('nothing picked, or another view: no Create run', () => {
+    expect(item(toRelayShell({ ...loadedQueue(), selected: 0 }, actions()).toolbar, 'create-run')).toBeUndefined();
+    expect(item(toRelayShell({ ...loadedNow(), selected: 3 }, actions()).toolbar, 'create-run')).toBeUndefined();
+  });
+});
 
 describe('toRelayShell · toolbar', () => {
   it('loaded: the three views, a divider, Message the crew, the info toggle — in that order', () => {

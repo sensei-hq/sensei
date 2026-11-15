@@ -528,6 +528,18 @@ describe('Relay · Queue', () => {
     expect(isActive(tab(c, 'Now'))).toBe(false);
   });
 
+  it('picking backlog items shows Create run · N in the toolbar; it opens the run form (the queue cutover trigger, lost in #420)', async () => {
+    const { c } = await open();
+    need(tab(c, 'Queue'), 'the Queue tab').click();
+    await tick();
+    expect(toolbarButton(c, 'Create run · 1')).toBeNull();
+    need(one(need(section(c, 'backlog'), 'Backlog'), '[data-relay-select]'), 'a backlog row’s checkbox').click();
+    await tick();
+    need(toolbarButton(c, 'Create run · 1'), 'Create run · 1').click();
+    await tick();
+    expect(one(c, '[data-create-sprint]')).not.toBeNull();
+  });
+
   it('a triage row: title, kind first then tags, the ticket button, and +', async () => {
     const { c } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
