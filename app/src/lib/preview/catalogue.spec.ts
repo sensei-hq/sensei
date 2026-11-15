@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { componentsOf, entriesFor, previewHref, readView, type PreviewEntry } from './catalogue.js';
+import { componentsOf, entriesFor, previewHref, propsFor, readView, type PreviewEntry } from './catalogue.js';
 
 const e = (id: string): PreviewEntry => ({ id, note: `${id} note`, component: (() => null) as never, props: {} });
 const CATALOGUE = [e('LaneList/mockup'), e('LaneList/phone'), e('WaitList/waiting'), e('Pill/neutral'), e('WaitList/nudged-by-you')];
@@ -38,5 +38,20 @@ describe('the preview catalogue', () => {
     expect(previewHref('WaitList', view, { width: 'phone' })).toBe('/preview/WaitList?theme=dark&glyph=icon&width=phone&fixture=waiting');
     expect(previewHref('WaitList', view, { fixture: null })).toBe('/preview/WaitList?theme=dark&glyph=icon&width=wide');
     expect(previewHref('Pill', view, { fixture: null })).toBe('/preview/Pill?theme=dark&glyph=icon&width=wide');
+  });
+});
+
+describe('a fixture’s props', () => {
+  const view = { theme: 'dark', glyph: 'icon', width: 'phone', fixture: null } as const;
+
+  it('fixed props are drawn as they are, in any view', () => {
+    expect(propsFor(e('Pill/neutral'), view)).toEqual({});
+    expect(propsFor({ ...e('Pill/x'), props: { value: 'idle' } }, view)).toEqual({ value: 'idle' });
+  });
+
+  it('props that depend on the view are worked out from it (marks follow the query)', () => {
+    const entry: PreviewEntry = { ...e('StatCard/x'), props: (v) => ({ marks: v.glyph, wide: v.width === 'wide' }) };
+    expect(propsFor(entry, view)).toEqual({ marks: 'icon', wide: false });
+    expect(propsFor(entry, { ...view, glyph: 'kanji', width: 'wide' })).toEqual({ marks: 'kanji', wide: true });
   });
 });
