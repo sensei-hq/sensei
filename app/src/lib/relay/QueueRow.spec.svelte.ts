@@ -70,6 +70,17 @@ describe('QueueRow', () => {
     expect(mount(QueueRow, { row: backlog() }).querySelector('[data-add-to-backlog]')).toBeNull();
   });
 
+  it('a refused + says why on its row; a later + that is taken clears it (no silent no-op)', async () => {
+    let answer: string | null = 'This item is no longer in triage.';
+    const onadd = vi.fn(async () => answer);
+    const c = mount(QueueRow, { row: triage(), onadd });
+    (c.querySelector('[data-add-to-backlog]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(c.querySelector('[data-add-refused]')?.textContent).toContain('This item is no longer in triage.'));
+    answer = null;
+    (c.querySelector('[data-add-to-backlog]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(c.querySelector('[data-add-refused]')).toBeNull());
+  });
+
   it('a backlog row is picked for a run by its checkbox — under its own hook, not rokkit’s data-select', () => {
     const ontoggle = vi.fn();
     const c = mount(QueueRow, { row: backlog(), selected: true, ontoggle });
