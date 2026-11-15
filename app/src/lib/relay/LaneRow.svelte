@@ -2,17 +2,18 @@
   // One lane (COMPONENTS §3b LaneRow; CONTRACT §1c-2): role mark · objective over
   // codename · assistant · the one task (and, under it, the step progress the holder
   // reported — #418, beyond the mockup) · state pill · time in state · chevron. A
-  // lane on a task is one link to it; an idle lane is no link and has no chevron.
+  // lane on a task is one link to it; an idle lane is no link and has no chevron. The
+  // link (or plain row) is LaneList's rokkit List row; this is its content.
   // On a phone: mark, name and pill, then task and time, no chevron.
   import { Pill } from '@rokkit/ui';
   import type { RelayLaneRowView } from '@sensei/state';
   import RoleMark from './RoleMark.svelte';
-  import { NOW_CARD_ROW, NOW_ROW } from './primitives.js';
+  import { NOW_ROW } from './primitives.js';
 
   let { row }: { row: RelayLaneRowView } = $props();
 </script>
 
-{#snippet parts()}
+<span data-lane-row={row.code} class={NOW_ROW}>
   <span data-part="mark" class="flex-[0_0_24px]"><RoleMark role={row.role} /></span>
   <span data-part="name" class="order-1 md:order-none flex flex-col min-w-0 flex-[1_1_calc(100%-190px)] md:flex-[0_0_170px]">
     <strong class="text-sm font-semibold truncate">{row.name}</strong>
@@ -57,12 +58,4 @@
     <!-- No link, no chevron — but its room, so the pill and time stay in the column. -->
     <span data-chevron-space aria-hidden="true" class="hidden md:inline invisible">›</span>
   {/if}
-{/snippet}
-
-<li data-lane-row={row.code} class={NOW_CARD_ROW}>
-  {#if row.href}
-    <a href={row.href} class="{NOW_ROW} hover:bg-paper-soft">{@render parts()}</a>
-  {:else}
-    <div class={NOW_ROW}>{@render parts()}</div>
-  {/if}
-</li>
+</span>

@@ -1043,8 +1043,8 @@ describe('Relay — rows at phone width', () => {
   it('a lane row is the mockup’s parts in order: mark, name, task, state, time, chevron (#422)', async () => {
     const { c } = await open();
     const row = need(one(c, '[data-lane-row="L1"]'), '[data-lane-row="L1"]');
-    const link = need(one(row, 'a'), 'the row’s link');
-    expect([...link.children].map((el) => el.getAttribute('data-part'))).toEqual(['mark', 'name', 'task', 'state', 'when', 'chevron']);
+    expect(row.closest('a[data-list-item]')).not.toBeNull();
+    expect([...row.children].map((el) => el.getAttribute('data-part'))).toEqual(['mark', 'name', 'task', 'state', 'when', 'chevron']);
     expect(one(row, '[data-part="mark"] [data-lane-role]')).not.toBeNull();
     expect(text(one(row, '[data-part="name"]'))).toContain('Diagrams');
     expect(text(one(row, '[data-part="task"]'))).toContain('Structure view on the shell');

@@ -81,9 +81,9 @@ export function roleMarkClass(role: RelayRole, status: RoleStatus, size: 24 | 30
 
 // ── Now rows (§3b) ───────────────────────────────────────────────────────────
 
-/** A lane or completed row (mockup `laneRow`): full width, wraps on a phone, pad 10/14, gap 4×12. */
-export const NOW_ROW =
-  'w-full flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 px-3.5 text-ink no-underline text-left';
+/** A lane or completed row's content (mockup `laneRow`): full width, wraps on a phone, gap 4×12.
+ *  Its rokkit List card row (`variant="card"`) pads it 10/14 and draws the hairline. */
+export const NOW_ROW = 'w-full flex flex-wrap items-center gap-x-3 gap-y-1 text-ink text-left';
 
 /** The card a Now list's rows sit in: 1px edge, radius 12, paper; rows split by a mute hairline. */
 export const NOW_CARD = 'm-0 p-0 list-none flex flex-col border border-solid border-paper-edge rounded-xl bg-paper overflow-hidden';

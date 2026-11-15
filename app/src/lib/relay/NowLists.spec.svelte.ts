@@ -73,7 +73,7 @@ describe('LaneList · LaneRow', () => {
     expect(link.tagName).toBe('A');
     expect(link.getAttribute('href')).toBe('/relay/c/t-structure');
     expect(li.querySelectorAll('a')).toHaveLength(0);
-    expect([...links[0].children].map((el) => el.getAttribute('data-part'))).toEqual(['mark', 'name', 'task', 'state', 'when', 'chevron']);
+    expect([...li.children].map((el) => el.getAttribute('data-part'))).toEqual(['mark', 'name', 'task', 'state', 'when', 'chevron']);
     expect(text(part(li, 'name'))).toBe('Diagrams cobalt-lyra · Claude Code 2.1');
     expect(text(part(li, 'task'))).toBe('Structure view on the shell (tests r1)');
     expect(text(part(li, 'state'))).toBe('working');

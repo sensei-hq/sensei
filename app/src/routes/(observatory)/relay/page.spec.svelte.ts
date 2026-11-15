@@ -147,7 +147,7 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     expect(text(loose)).toContain('Prototype the scratch parser');
     const looseGroup = need(one(c, `[data-crew-group="${F.LOOSE_CREW_ID}"]`), 'the loose crew’s group');
     expect(text(one(looseGroup, '[data-crew-heading]'))).toContain('jerrythomas/scratch');
-    expect(one(loose, `a[href="/relay/${F.LOOSE_CREW_ID}/t-scratch"]`)).not.toBeNull();
+    expect(loose.closest(`a[data-list-item][href="/relay/${F.LOOSE_CREW_ID}/t-scratch"]`)).not.toBeNull();
     expect(need(one(c, '[data-lane-row="L1"]'), 'L1').closest(`a[data-list-item][href="/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
   });
 
