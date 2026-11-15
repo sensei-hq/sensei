@@ -7092,8 +7092,12 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         let crew_ids: Vec<Uuid> = crews.iter().map(|c| c.0).collect();
+        // A closed crew still scopes what it did today (completed, today's counts),
+        // but it is not a crew on the screen (#426): the screen takes the first crew
+        // as its own, and a closed one would take runs it can never start.
         let crews_json: Vec<serde_json::Value> = crews
             .iter()
+            .filter(|c| c.4 != "closed")
             .map(|(id, repo_key, workspace_id, goal, status, started_at, heartbeat_at)| {
                 serde_json::json!({
                     "id": id.to_string(),

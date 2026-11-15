@@ -6200,9 +6200,13 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["crew_id"], coord.2);
         assert_eq!(body["status"], "closed");
+        // A closed crew leaves Now (#426: the screen would take it as its own).
         let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
         assert_eq!(status, StatusCode::OK, "{now}");
-        assert_eq!(now["crews"][0]["status"], "closed");
+        assert!(
+            !now["crews"].as_array().unwrap().iter().any(|c| c["id"] == coord.2),
+            "the closed crew is not on Now: {now}"
+        );
         // The census crew row carries no completed_at (out of brief scope
         // to add one); the stamp itself is pinned at the store level
         // (`close_crew_stamps_completed_at`).
