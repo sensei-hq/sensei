@@ -9,6 +9,7 @@ import { flushSync } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import IntegrationsScreen from './IntegrationsScreen.svelte';
 import { TrackerIntegration, type TrackerApi } from './integrations-state.svelte.js';
+import { projectSdlc } from '$lib/tracker-fixtures.js';
 import type { TrackerConnection } from '$lib/types.js';
 
 const SENTINEL = 'SENTINEL-TOKEN-XYZ';
@@ -28,10 +29,17 @@ const connected: TrackerConnection = {
   external_scope: 'AUTH',
   board_ref: '42',
   board_name: 'AUTH Scrum',
+  sprint_source: null,
+  sprint_source_changed_at: null,
+  full_path: null,
+  url: null,
+  iteration_field: null,
   status: 'connected',
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
   counts: { tasks: 142, sprints: 6 },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  sdlc_project: projectSdlc(),
 };
 
 function api(over: Partial<TrackerApi> = {}): TrackerApi {
@@ -46,6 +54,9 @@ function api(over: Partial<TrackerApi> = {}): TrackerApi {
       data: { counts: { sprints: 6, tasks: 142, removed: 0, links: 0, skipped_members: 0 } },
     }),
     tryDisconnectTracker: async () => ({ ok: true, data: undefined }),
+    trySetTrackerWriteback: async () => ({ ok: true, data: connected }),
+    tryGetTrackerFields: async () => ({ ok: true, data: { fields: [] } }),
+    tryPutTrackerFields: async (_p, _t, fields) => ({ ok: true, data: { fields } }),
     ...over,
   };
 }
@@ -85,11 +96,87 @@ describe('not connected', () => {
     expect(email.type).toBe('email');
   });
 
-  it('offers Jira and shows GitLab as coming soon, not selectable', async () => {
-    const { q } = await open();
-    const gitlab = q('[data-tracker="gitlab"]')!;
-    expect(gitlab.getAttribute('aria-disabled')).toBe('true');
-    expect(gitlab.textContent).toMatch(/coming soon/i);
+  it('offers Jira and GitLab; GitLab asks for its URL, the host again and a token, never an email', async () => {
+    const { state, q } = await open();
+    const gitlab = q<HTMLInputElement>('[data-tracker="gitlab"] input')!;
+    expect(gitlab.disabled).toBe(false);
+    gitlab.click();
+    flushSync();
+    expect(state.kind).toBe('gitlab');
+    expect(q('[data-field="email"]')).toBeNull();
+    expect(q('a[data-link="create-token"]')).toBeNull();
+    state.boardUrl = 'https://gitlab.example.com/acme/platform';
+    flushSync();
+    expect(q('[data-field="confirm_host"]')).not.toBeNull();
+    state.boardUrl = 'https://gitlab.com/acme/platform';
+    flushSync();
+    expect(q('[data-field="confirm_host"]')).toBeNull();
+  });
+
+  it('a GitLab board names GitLab, its sprint source and no write-back, and never Jira', async () => {
+    const gitlab: TrackerConnection = {
+      ...connected,
+      kind: 'gitlab',
+      base_url: 'https://gitlab.example.com',
+      account: 'group_bot',
+      external_scope: 'acme',
+      board_ref: 'group:857',
+      board_name: 'acme',
+      sprint_source: 'milestone',
+      full_path: 'acme',
+      status: 'error',
+      last_error: 'unauthorized',
+      writeback: { ...connected.writeback, enabled: false },
+    };
+    const { m, q } = await open({ tryListTrackers: async () => ({ ok: true, data: [gitlab] }) });
+    const card = q('[data-tracker="t-1"]')!;
+    expect(card.textContent).toContain('GitLab · gitlab.example.com · acme');
+    expect(q('[data-sprint-source="milestone"]')!.textContent).toContain('Sprints: milestones');
+    expect(q('[data-writeback="unsupported"]')!.textContent).toContain('not available for GitLab yet');
+    expect(q('[data-action="writeback"]')).toBeNull();
+    expect(card.textContent).not.toMatch(/Jira/);
+    expect(m.container.textContent).toContain('Jira, GitLab or GitHub boards');
+  });
+
+  it('offers GitHub: a project URL, a token, an optional Iteration field, and the field names when asked', async () => {
+    const { q, state } = await open();
+    const github = q<HTMLInputElement>('[data-tracker="github"] input')!;
+    expect(github.disabled).toBe(false);
+    github.click();
+    flushSync();
+    expect(state.kind).toBe('github');
+    expect(q('[data-field="email"]')).toBeNull();
+    expect(q('[data-field="confirm_host"]')).toBeNull();
+    expect(q('[data-field="board_url"]')).not.toBeNull();
+    expect(q('[data-field="token"]')).not.toBeNull();
+    expect(q('[data-field="iteration_field"]')).not.toBeNull();
+    expect(q('[data-github-choices]')).toBeNull();
+    state.iterationFields = ['Sprint', 'Release'];
+    flushSync();
+    const choices = q('[data-github-choices]')!;
+    expect(choices.textContent).toContain('Sprint');
+    expect(choices.textContent).toContain('Release');
+  });
+
+  it('a GitHub project names GitHub, its Iteration field and no write-back, and never Jira or GitLab', async () => {
+    const github: TrackerConnection = {
+      ...connected,
+      kind: 'github',
+      base_url: 'https://api.github.com',
+      account: 'user1',
+      external_scope: 'acme/3',
+      board_ref: 'project:PVT_1',
+      board_name: 'Roadmap',
+      url: 'https://github.com/orgs/acme/projects/3',
+      iteration_field: 'Sprint',
+      writeback: { ...connected.writeback, enabled: false },
+    };
+    const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [github] }) });
+    const card = q('[data-tracker="t-1"]')!;
+    expect(card.textContent).toContain('GitHub · acme/3 · Roadmap');
+    expect(card.textContent).toContain('Sprints: the Sprint iteration field');
+    expect(q('[data-writeback="unsupported"]')!.textContent).toContain('not available for GitHub yet');
+    expect(card.textContent).not.toMatch(/Jira|GitLab/);
   });
 
   it('links to Atlassian to create a token and says where it is kept', async () => {
@@ -211,7 +298,7 @@ describe('connected', () => {
     const dialog = q('[data-component="disconnect-dialog"]')!;
     expect(dialog.textContent).toContain('Disconnect board #42?');
     expect(dialog.textContent).toContain(
-      'This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and Jira itself is not changed.',
+      'This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and the tracker itself is not changed.',
     );
     expect((document.activeElement as HTMLElement).dataset.action).toBe('cancel-disconnect');
     (document.activeElement as HTMLButtonElement).click();
@@ -255,4 +342,129 @@ describe('accessibility (axe, structural rules; contrast is checked in the e2e s
       expect(bad).toEqual([]);
     });
   }
+});
+
+describe('write-back on the board card (W-UI)', () => {
+  const active = { ...connected, writeback: { ...connected.writeback, state: 'active' as const, assigned: 2 } };
+
+  it('the header says what sensei writes back, and where', async () => {
+    const { m } = await open({ tryListTrackers: async () => ({ ok: true, data: [active] }) });
+    expect(m.container.textContent).toContain(
+      'Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab and GitHub boards are read-only for now).',
+    );
+    expect(m.container.textContent).not.toContain('never changes anything in Jira');
+  });
+
+  it('each card shows its write-back state and a labelled switch that sends one request', async () => {
+    const calls: Array<boolean> = [];
+    const { q } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [active] }),
+      trySetTrackerWriteback: async (_p, _t, enabled) => {
+        calls.push(enabled);
+        return { ok: true, data: { ...active, writeback: { ...active.writeback, enabled, state: 'disabled' } } };
+      },
+    });
+    const line = q('[data-tracker="t-1"] [data-writeback-state]');
+    expect(line?.getAttribute('data-writeback-state')).toBe('active');
+    expect(line?.textContent?.trim()).toBe('Writing to 2 tickets assigned to you.');
+    const toggle = q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]');
+    expect(toggle?.type).toBe('checkbox');
+    expect(toggle?.checked).toBe(true);
+    expect(toggle?.labels?.[0]?.textContent).toContain('Write back to Jira');
+    toggle!.click();
+    await settle();
+    expect(calls).toEqual([false]);
+    expect(q('[data-tracker="t-1"] [data-writeback-state]')?.getAttribute('data-writeback-state')).toBe('disabled');
+    expect(q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')?.checked).toBe(false);
+  });
+
+  it.each([
+    ['active', { assigned: 2 }, 'Writing to 2 tickets assigned to you.'],
+    ['disabled', { enabled: false }, 'Write-back is off.'],
+    ['pass_failed', { error: 'db' }, 'Couldn’t record what was written. Write-back retries on each sync.'],
+    [
+      'owner_not_a_person',
+      {},
+      'This token belongs to an app account, so sensei can’t tell which tickets are yours. Nothing is written.',
+    ],
+    [
+      'owner_lookup_failed',
+      { error: 'forbidden' },
+      'Couldn’t check which tickets are yours: This account can’t read that board. Retrying on each sync.',
+    ],
+    ['owner_unknown', {}, 'Checking which tickets are yours on the next sync.'],
+    ['nothing_assigned', { assigned: 0 }, 'No tickets on this board are assigned to you.'],
+  ] as const)('the card says %s in words', async (state, over, text) => {
+    const card = { ...connected, writeback: { ...connected.writeback, state, ...over } };
+    const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [card] }) });
+    const line = q('[data-tracker="t-1"] [data-writeback-state]');
+    expect(line?.getAttribute('data-writeback-state')).toBe(state);
+    expect(line?.textContent?.trim()).toBe(text);
+  });
+
+  it('the switch is disabled while a request runs and keeps its place until the daemon answers', async () => {
+    let answer: (r: { ok: true; data: TrackerConnection }) => void = () => {};
+    const { q } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [active] }),
+      trySetTrackerWriteback: () => new Promise((r) => (answer = r)),
+    });
+    const toggle = () => q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')!;
+    toggle().click();
+    flushSync();
+    expect(toggle().checked).toBe(true);
+    expect(toggle().disabled).toBe(true);
+    answer({ ok: true, data: { ...active, writeback: { ...active.writeback, enabled: false, state: 'disabled' } } });
+    await settle();
+    expect(toggle().checked).toBe(false);
+    expect(toggle().disabled).toBe(false);
+  });
+
+  it('a refused switch flips back and the alert says why', async () => {
+    const { q } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [active] }),
+      trySetTrackerWriteback: async () => ({
+        ok: false,
+        error: { status: 403, message: 'forbidden_caller', body: { error: 'forbidden_caller' } },
+      }),
+    });
+    q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')!.click();
+    await settle();
+    expect(q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')?.checked).toBe(true);
+    expect(q('[role="alert"]')?.textContent).toContain('refused this window’s request');
+  });
+});
+
+describe('the Fields section (W-UI)', () => {
+  it('lists the mapping, says not to sum the fields, and names a refused field on its row', async () => {
+    const { q, state } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [connected] }),
+      tryGetTrackerFields: async () => ({
+        ok: true,
+        data: { fields: [{ metric: 'active_hours', field_ref: 'customfield_10050' }] },
+      }),
+      tryPutTrackerFields: async () => ({
+        ok: false,
+        error: {
+          status: 422,
+          message: 'field_in_use',
+          body: { error: 'field_in_use', field_ref: 'customfield_10050' },
+        },
+      }),
+    });
+    q<HTMLButtonElement>('[data-tracker="t-1"] [data-action="fields"]')!.click();
+    await settle();
+    const section = q('[data-tracker="t-1"] [data-section="fields"]');
+    expect(section).not.toBe(null);
+    expect(section!.textContent).toContain(
+      'Each ticket counts its own sessions in full; don’t sum these fields across tickets.',
+    );
+    expect(q<HTMLInputElement>('[data-section="fields"] input[data-field-ref]')?.value).toBe('customfield_10050');
+    expect(q<HTMLSelectElement>('[data-section="fields"] select[data-field-metric]')?.value).toBe('active_hours');
+    q<HTMLButtonElement>('[data-section="fields"] [data-action="save-fields"]')!.click();
+    await settle();
+    expect(q('[data-section="fields"] [data-field-row="0"] [data-field-error] [data-part="title"]')?.textContent?.trim()).toBe(
+      'That field already has values on this board. Pick an empty field.',
+    );
+    expect(state.alert).toBe(null);
+  });
 });

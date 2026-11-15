@@ -20,10 +20,19 @@ this as *sensei is doing the work, and I'm in the loop.*
 > `run_limits.rs`, three relay drivers), the runs API (`/api/runs*`, register
 > plan, update task status, report outcome), the Dōjō gate (33 tests in
 > `dojo/gate.rs`) and the Dōjō protocol (`dojo-protocol/src/relay.rs`) are
-> built and tested. The flag `SENSEI_RUN_DRIVE` is **OFF by default** (not
-> merged to main) — the drive loop heartbeats only. **The mobile and desktop
-> relay screens are greenfield / unbuilt** (no test). There are no §12 gap IDs
-> named for M21; the nearest are D-1/D-2 → T1.
+> built and tested — but of the three only Claude is reachable: `driver_for` returns
+> `ClaudeDriver` for every config (`relay_drivers/mod.rs:29-31`), so ACP and the
+> fallbacks are dead code behind a factory that never chooses them. The flag
+> `SENSEI_RUN_DRIVE` is **OFF by default**, so on a default daemon the drive loop
+> heartbeats only. **The mobile relay is built in the dōjō** — run detail at
+> `(app)/you/(inbox)/runs/[run_id]`, with `(console)/console/relay/[run_id]` a 308
+> redirect there for old push deep links, over the `v1/t/[origin]/[org]/relay/…`
+> routes — and is **unverified in production** (D27). The **desktop relay screen is greenfield**
+> (no test). There are no §12 gap IDs named for M21; the nearest are D-1/D-2 → T1.
+
+> **Relay lanes (requirement, 2026-11-05):** sensei as the broker between assistant sessions a person opened:
+> one coordinator plus contributors on lanes, a review-first task queue, Markdown reports with telemetry, and
+> events pushed to the dōjō. See [lanes.md](lanes.md) and its [data model](lanes-data.md).
 
 ## In scope / out of scope
 
@@ -34,9 +43,9 @@ this as *sensei is doing the work, and I'm in the loop.*
   the Dōjō gate (hard blocks: main-branch push, history rewrite, destructive
   deletes, deploy/publish/bump, credentials, money; semantic review for
   obfuscation), `/hook/gate` and `/hook/nudge`, `dojo.relay_*` tables.
-- Out: **mobile relay screen** (greenfield); **desktop relay screen**
-  (greenfield); the planner baseline/ratchet (C-1 → M20); tracker adapters
-  (D-6 → T3).
+- Out: the **dōjō's relay screens** (built in the dōjō tree, not here — see
+  Surfaces); the **desktop relay screen** (greenfield); the planner
+  baseline/ratchet (C-1 → M20); tracker adapters (D-6 → T3).
 
 ## Surfaces
 
@@ -49,8 +58,11 @@ this as *sensei is doing the work, and I'm in the loop.*
   `run_limits.rs`; `relay_drivers/{claude.rs, acp.rs, fallback.rs, mod.rs,
   trait_def.rs}`; `dojo/gate.rs`; `api/handlers/runs.rs`; `api/handlers/sessions.rs`
   (hook endpoints).
-- **App** — **mobile relay screen** (greenfield) · **desktop relay screen**
-  (greenfield) · run detail in Observatory.
+- **App** — **desktop relay screen** (greenfield) · run detail in Observatory.
+- **Dōjō (mobile relay)** — run detail `(app)/you/(inbox)/runs/[run_id]`; the legacy
+  `(console)/console/relay/[run_id]` is a 308 redirect there for old push deep links;
+  and the relay Worker routes
+  `v1/t/[origin]/[org]/relay/{gates,inbox,nudge,push,reply,segments,session,status,review}`.
 - **Data** — **`activity.runs`, `activity.run_events`**; `dojo.relay_inbox`,
   `dojo.relay_sessions`, `dojo.relay_segments`.
   **No `sensei.runs` / `dojo.relay_messages` / `dojo.relay_gates` tables** — the
@@ -78,16 +90,16 @@ this as *sensei is doing the work, and I'm in the loop.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Run status | pending / running / paused / stalled / done / failed | `running` |
-| Drive tick | heartbeat + progress log | `tick 12 · phase 2/3 · task 5/7` |
-| Limit hit | daily / weekly / monthly cap | `daily cap · reset 02:00 UTC` |
-| Watchdog | healthy / stalled (recover N/3) / crashed | `stalled · recover 2/3` |
-| Gate decision | allow / deny (hard) / review (semantic) | `deny · destructive rm -rf` |
-| Nudge | user action required | `nudge: approve gate #g-4` |
-| Relay segment | phase / task / gate / tool-call | `task: add /login route` |
-| Dōjō inbox | pending / acknowledged | `pending · 3 unacked` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Run status | pending / running / paused / stalled / done / failed | `running` | stalled or failed → open the run; resume or stop it |
+| Drive tick | heartbeat + progress log | `tick 12 · phase 2/3 · task 5/7` | none — candidate to cut (heartbeat) |
+| Limit hit | daily / weekly / monthly cap | `daily cap · reset 02:00 UTC` | wait for the reset, or raise the cap |
+| Watchdog | healthy / stalled (recover N/3) / crashed | `stalled · recover 2/3` | stalled at 3/3 → recover the run by hand |
+| Gate decision | allow / deny (hard) / review (semantic) | `deny · destructive rm -rf` | review → approve or deny it in the dōjō inbox |
+| Nudge | user action required | `nudge: approve gate #g-4` | approve or deny the gate it names |
+| Relay segment | phase / task / gate / tool-call | `task: add /login route` | none — candidate to cut |
+| Dōjō inbox | pending / acknowledged | `pending · 3 unacked` | acknowledge the pending items |
 
 ## Done gate
 
@@ -119,19 +131,20 @@ SENSEI_RUN_DRIVE=1 cargo test -p senseid drive_run -- --nocapture 2>&1 | head -4
 - **A `base64` obfuscation slips through semantic review** — review regressed.
 - **The Dōjō protocol serialises a DB string that doesn't match the enum** —
   round-trip regressed.
-- **A mobile/desktop relay screen claims to show live drive progress** —
-  greenfield, must read as placeholder.
+- **The desktop relay screen claims to show live drive progress** — greenfield,
+  must read as placeholder.
 
 ## Scenarios
 
 - [`scenarios/relay.feature`](scenarios/relay.feature) — the drive loop,
   watchdog, limits, gate, Dōjō protocol (pinned).
 - [`scenarios/relay-drivers.feature`](scenarios/relay-drivers.feature) — the
-  three relay drivers and the unbuilt mobile/desktop screens (`NO TEST`).
+  three relay drivers and the unbuilt desktop screen (`NO TEST`).
 
 ## Open gaps
 
-- **Mobile relay screen** — greenfield, no test.
+- **Mobile relay unverified in production** — the dōjō surface is built (routes
+  above); no production run has been observed (D27).
 - **Desktop relay screen** — greenfield, no test.
 - [C-1](../../../../reorg.md) — planner persistence feeds the run's plan graph.
 - [D-6](../../../../reorg.md) — tracker adapters (Linear, Jira, GitHub Issues) →

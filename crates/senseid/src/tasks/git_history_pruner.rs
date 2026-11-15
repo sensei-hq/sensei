@@ -66,8 +66,10 @@ pub fn spawn(pg: Arc<PgStore>) {
 
 /// One prune pass. Non-fatal: a failure is logged and retried next tick.
 pub async fn prune_once(pg: &PgStore) -> Result<(), String> {
-    let configured = pg.get_config(RETENTION_KEY).await.ok().flatten();
-    let days = effective_retention_days(configured);
+    let days = crate::tasks::retention::setting(
+        pg.get_config(RETENTION_KEY).await,
+        effective_retention_days,
+    )?;
     let removed = pg.prune_commits_older_than(days).await?;
     if removed > 0 {
         tracing::info!(
@@ -83,9 +85,58 @@ pub async fn prune_once(pg: &PgStore) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// The default is used when nothing is configured.
-    ///
-    /// Mutation that must break this test: change `unwrap_or(DEFAULT_RETENTION_DAYS)`.
+    /// D83 batch A, row 155 (review F4): a retention that cannot be read stops
+    /// the prune, and a commit past every window stays. The second half proves
+    /// the commit is in the prune's reach once the read works.
+    #[tokio::test]
+    async fn a_failed_retention_read_stops_the_prune_and_deletes_nothing() {
+        let pg = PgStore::test_store().await;
+        let pid = pg
+            .create_workspace(&format!("_test:prune:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let rid =
+            crate::tasks::test_support::seed_bare_repository(&pg, &pid, &uuid::Uuid::new_v4())
+                .await;
+        sqlx_core::query::query(
+            "INSERT INTO sensei.commits(repository_id, sha, authored_at) VALUES ($1, $2, '2000-01-01')",
+        )
+        .bind(rid)
+        .bind(format!("{:040}", 1))
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let run = |sql: &'static str| sqlx_core::query::query(sql);
+        let kept = |pg: &PgStore| {
+            let pool = pg.pool().clone();
+            async move {
+                let (n,): (i64,) = sqlx_core::query_as::query_as(
+                    "SELECT count(*) FROM sensei.commits WHERE repository_id = $1",
+                )
+                .bind(rid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                n
+            }
+        };
+
+        run("ALTER TABLE sensei.config RENAME TO config_unreadable")
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let failed = prune_once(&pg).await;
+        let after_failed = kept(&pg).await;
+        run("ALTER TABLE sensei.config_unreadable RENAME TO config")
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        prune_once(&pg).await.unwrap();
+        let after_ok = kept(&pg).await;
+
+        assert!(failed.is_err(), "a failed read is the prune's error: {failed:?}");
+        assert_eq!((after_failed, after_ok), (1, 0), "kept on a failed read; pruned once it reads");
+    }
     #[test]
     fn an_unset_retention_falls_back_to_the_default() {
         assert_eq!(effective_retention_days(None), DEFAULT_RETENTION_DAYS);

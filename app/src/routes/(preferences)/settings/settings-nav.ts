@@ -1,3 +1,4 @@
+import { resolveActiveHref as resolveRailHref } from "$lib/rail";
 /**
  * Settings rail data — pure, no runes.
  *
@@ -122,15 +123,7 @@ function allHrefs(): string[] {
  * matches — the caller decides whether to fall back to a default.
  */
 export function resolveActiveHref(pathname: string): string {
-  const hrefs = allHrefs();
-  if (hrefs.includes(pathname)) return pathname;
-
-  let best = "";
-  for (const href of hrefs) {
-    if (pathname.startsWith(href + "/") && href.length > best.length)
-      best = href;
-  }
-  return best;
+  return resolveRailHref(pathname, allHrefs(), []);
 }
 
 /** The icon of the rail entry at `href` (#133), for that screen's header. */

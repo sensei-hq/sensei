@@ -4,6 +4,7 @@
  * and survives stage navigation.
  */
 
+import { failureNotice } from '@sensei/ui';
 import { ReactiveStageContext } from './stage.svelte.js';
 import { EventManager } from './events.js';
 import { senseiApi, dataOrThrow, failureReason, type ApiResult } from './api.js';
@@ -124,12 +125,28 @@ export class ScanWorkspaceState extends ReactiveStageContext<ScanWorkspace> {
     return commonParent(workspace.folders.map(f => f.path));
   }
 
+  /** One workspace's scan counts — the rule the totals below sum (audit
+   *  2026-10-28, item 15: the scan page recounted these in its template). A
+   *  folder is ready once 'indexed'. */
+  progressOf(workspace: ScanWorkspace): { folders: number; ready: number; files: number; completed: number } {
+    return {
+      folders: workspace.folders.length,
+      ready: workspace.folders.filter(f => f.status === 'indexed').length,
+      files: workspace.folders.reduce((n, f) => n + f.filesTotal, 0),
+      completed: workspace.folders.reduce((n, f) => n + f.filesCompleted, 0),
+    };
+  }
+
+  #sum(key: 'folders' | 'ready' | 'files' | 'completed'): number {
+    return this.items.reduce((n, p) => n + this.progressOf(p)[key], 0);
+  }
+
   get totalFolders() {
-    return this.items.reduce((s, p) => s + p.folders.length, 0);
+    return this.#sum('folders');
   }
 
   get readyFolders() {
-    return this.items.reduce((s, p) => s + p.folders.filter(f => f.status === 'indexed').length, 0);
+    return this.#sum('ready');
   }
 
   /**
@@ -169,11 +186,11 @@ export class ScanWorkspaceState extends ReactiveStageContext<ScanWorkspace> {
   }
 
   get totalFiles() {
-    return this.items.reduce((s, p) => s + p.folders.reduce((fs, f) => fs + f.filesTotal, 0), 0);
+    return this.#sum('files');
   }
 
   get completedFiles() {
-    return this.items.reduce((s, p) => s + p.folders.reduce((fs, f) => fs + f.filesCompleted, 0), 0);
+    return this.#sum('completed');
   }
 
   get scanning() {
@@ -258,6 +275,11 @@ export class ScanState {
   status = $state<ScanRunStatus>('idle');
   rootCount = $state(0);
   error = $state<string | null>(null);
+
+  /** Notice props for a scan that failed (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice('The scan failed', this.error);
+  }
   daemonReachable = $state(true);
 
   #events: EventManager<StateEvent<{ id: string }>> | null = null;

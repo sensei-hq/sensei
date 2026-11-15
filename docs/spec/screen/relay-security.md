@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion)
 **Route:** Relay iOS app · security & permissions (no web route — phone app)
-**Source mockup:** [`lib/relay/relay.jsx`](../../mockups/Sensei/lib/relay/relay.jsx) → `RelaySecurity`
+**Source mockup:** `lib/relay/relay.jsx` → `RelaySecurity`
 **Data:** greenfield — reads pairing + permission state held by the coordinator/relay for this phone. Proposed: `GET /api/relay/pairing` → `{ device: {machine, state:'paired', e2e: true}, permissions: {approve_commands, send_replies, receive_file_contents}, notifications: {push_when_needed} }`; `PATCH /api/relay/pairing/permissions` to toggle a scope; `POST /api/relay/pairing/new` opens the [Pairing](relay-pairing.md) round-trip for another machine.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + relay transport not built_

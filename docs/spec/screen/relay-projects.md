@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion · planner)
 **Route:** Relay iOS app · Projects (no web route)
-**Source mockup:** [`lib/relay/relay-planner.jsx`](../../mockups/Sensei/lib/relay/relay-planner.jsx) → `RelayProjects`
+**Source mockup:** `lib/relay/relay-planner.jsx` → `RelayProjects`
 **Data:** _greenfield_ — `GET /api/relay/projects` (coordinator-published, filtered status only): one row per active project, each with its single active plan, phase `n of x`, `pct`, the track running `now`, and a `flag` telling the human whether it needs them.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + planner model not built_

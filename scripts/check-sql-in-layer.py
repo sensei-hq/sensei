@@ -15,14 +15,13 @@ is NOT under `db/pg_store/` and NOT inside a `#[cfg(test)]` module.
 WHY THE TEST EXEMPTION IS NOT A HOLE. A fixture writing rows directly is
 modelling a state production reaches some other way; it is not a data-access
 path a schema change can silently break, because a broken fixture fails its own
-test. The exemption is by MODULE, not by filename, so moving a statement above a
-`#[cfg(test)]` marker to dodge the gate does not work.
+test. The exemption is by ITEM, not by filename or position, so moving a
+statement above a `#[cfg(test)]` marker to dodge the gate does not work.
 
-The marker is the first line starting with `#[cfg(test)]` at column 0, matching
-how the repo's own inventories counted this population. A file whose whole
-contents are tests but which carries no such marker — `db/pg_store/tests.rs` and
-the `*_tests.rs` siblings — is exempted by name, because its module declaration
-lives elsewhere.
+What counts as test code — each item under `#[cfg(test)]` (an inline module or a
+test-only fn), and whole-file test modules such as `db/pg_store/tests.rs` and the
+`*_tests.rs` siblings whose declaration lives elsewhere — is defined once in
+`scripts/_rust_scan.py`, shared with `check-no-fabrication.py`.
 """
 
 import pathlib
@@ -30,20 +29,13 @@ import re
 import subprocess
 import sys
 
+sys.dont_write_bytecode = True  # no __pycache__ beside the scripts
+from _rust_scan import TestCode  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "crates/senseid/src"
 LAYER = "db/pg_store/"
-# Whole-file test modules, declared `#[cfg(test)] mod <name>;` from mod.rs.
-TEST_FILE_SUFFIXES = ("/tests.rs", "_tests.rs", "/test_support.rs")
 CALL = re.compile(r"sqlx_core::query(_as)?::query(_as)?\b")
-
-
-def first_test_module(path: pathlib.Path) -> int:
-    """Line number of the file's `#[cfg(test)]` marker, or a line past the end."""
-    for n, line in enumerate(path.read_text().splitlines(), 1):
-        if line.startswith("#[cfg(test)]"):
-            return n
-    return 1 << 30
 
 
 def main() -> int:
@@ -54,18 +46,16 @@ def main() -> int:
     ).stdout.splitlines()
 
     offences = []
-    cache: dict[str, int] = {}
+    tests = TestCode(ROOT, sorted(SRC.rglob("*.rs")))
     for line in hits:
         path_s, lineno, text = line.split(":", 2)
         rel = str(pathlib.Path(path_s).resolve().relative_to(ROOT))
-        if LAYER in rel or rel.endswith(TEST_FILE_SUFFIXES):
+        if LAYER in rel:
             continue
         # A type position (`QueryAs<...>` in a signature) is not a call site.
         if not CALL.search(text):
             continue
-        if path_s not in cache:
-            cache[path_s] = first_test_module(pathlib.Path(path_s))
-        if int(lineno) >= cache[path_s]:
+        if tests.is_test_line(pathlib.Path(path_s), int(lineno)):
             continue
         offences.append((rel, lineno, text.strip()))
 

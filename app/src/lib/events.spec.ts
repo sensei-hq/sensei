@@ -12,6 +12,7 @@ class MockEventSource {
   readyState = 0; // CONNECTING
   onmessage: ((e: { data: string }) => void) | null = null;
   onerror: (() => void) | null = null;
+  onopen: (() => void) | null = null;
 
   constructor(public url: string) {
     MockEventSource.instances.push(this);
@@ -21,6 +22,12 @@ class MockEventSource {
 
   close() {
     this.readyState = 2; // CLOSED
+  }
+
+  // Test helper: simulate the socket opening (initial + every reconnect)
+  simulateOpen() {
+    this.readyState = 1;
+    this.onopen?.();
   }
 
   // Test helper: simulate a server-sent event
@@ -163,5 +170,16 @@ describe('EventManager', () => {
     expect(MockEventSource.instances).toHaveLength(1);
 
     vi.useRealTimers();
+  });
+
+  it('fires onopen on every socket open (initial + reconnects)', () => {
+    // F8: routes re-read on reconnect (broadcast has no replay); the hook
+    // mirrors EventSource's own onopen shape.
+    const mgr = new EventManager<string>('http://test/sse', (d) => d);
+    const opened: number[] = [];
+    mgr.onopen = () => opened.push(MockEventSource.instances.length);
+    mgr.subscribe(() => {});
+    MockEventSource.instances[0].simulateOpen();
+    expect(opened).toEqual([1]);
   });
 });

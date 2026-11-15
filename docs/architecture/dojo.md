@@ -127,7 +127,7 @@ works while the app is open:
 | `notification_prefs` | per user: which events push (approvals/decisions/stalls), quiet hours, per-Dōjō mute. |
 | **daemon ↔ Dōjō channel** | today: findings up, governance down; from 2026-10-21 projects, teams, roles and connections sync **both ways** (dōjō wins on conflict) and external trackers/CI are a **read-only pull** by the dōjō — see [`spec/dojo/daemon-sync.md`](../spec/dojo/daemon-sync.md#direction-of-sync-user-2026-10-21). Relay adds a **bidirectional** live channel — the daemon publishes session state (phase / gated-action / decision / chat); phone/console send back approve/deny/answer/chat, which the daemon consumes to continue the held session. A new realtime client in the daemon. |
 
-**Metering** follows cost (the [business model](../journeys/dojo.md#business-model--free-where-public-or-personal)):
+**Metering** follows cost (the [business model](../journeys/dojo.md#business-model--public-free-private-on-a-subscription)):
 the individual loop is free; `push_subscriptions` / `relay_sessions` carry the
 per-tier limits (device count, concurrency) that the paid tiers meter. Wrapping
 Supabase realtime under **kavach** for a unified pub/sub is a candidate (raise

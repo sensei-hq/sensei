@@ -1,13 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import {
-		SectionHead,
-		Btn,
-		Chip,
-		Icon,
-		Avatar,
-		RoleTag,
-		KanjiToken, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, Icon, Avatar, RoleTag, KanjiToken } from '$lib/components/kit';
 	import type { KitMember, KitRolePolicy, KitChatTurn } from '$lib/components/kit/types';
 	import { ROLE_SURFACE_TABS, resolveTab } from '$lib/role-surfaces-view';
 	import { MEMBER_ROLES } from '$lib/admin-view';
@@ -77,7 +72,7 @@
 		onRemoveTeamMember?: (team: TeamView, principalId: string) => void;
 		onGrantTeam?: (team: TeamView, workspaceId: string) => void;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 
 
@@ -128,7 +123,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the members, policies and audit" {error} />
+			<Notice size="panel" {...dojoLoadNotice("the members, policies and audit", error)} data-load-error />
 		{:else}
 			<!-- The three admin surfaces — a segmented tab strip. -->
 			<div class="flex flex-wrap gap-2" role="tablist">
@@ -141,10 +136,10 @@
 						onclick={() => select(t.id)}
 						class="inline-flex cursor-pointer items-center gap-2 rounded border text-sm {on
 							? 'bg-paper-soft border-paper-edge text-ink'
-							: 'text-ink-mute border-transparent bg-transparent'}"
+							: 'text-ink-soft border-transparent bg-transparent'}"
 						style="padding: 8px 12px"
 					>
-						<Icon name={t.icon} size={15} toneClass={on ? 'text-accent' : 'text-ink-mute'} />{t.label}
+						<Icon name={t.icon} size={15} toneClass={on ? 'text-accent' : 'text-ink-soft'} />{t.label}
 					</button>
 				{/each}
 			</div>
@@ -161,13 +156,13 @@
 							<div class="flex-1" style="min-width: 0">
 								<div class="flex items-center gap-2">
 									<span class="text-ink text-sm font-medium">{m.name}</span>
-									{#if m.you}<Chip toneClass="text-ink-mute">you</Chip>{/if}
+									{#if m.you}<Chip toneClass="text-ink-soft">you</Chip>{/if}
 								</div>
 								<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
 									git: {m.git} · {m.scopes}
 								</div>
 							</div>
-							<span class="text-ink-mute text-xs">{m.active}</span>
+							<span class="text-ink-soft text-xs">{m.active}</span>
 							{#if onSetRole && m.userId && !m.you}
 								<!-- Change-role picker (admin): a native select keeps the kit lean
 								     and stays keyboard/a11y-correct. The viewer's own row stays a
@@ -228,7 +223,7 @@
 							<KanjiToken char={r.kanji} size="xl" toneClass="text-accent" w={30} />
 							<div class="flex-1" style="min-width: 0">
 								<div class="text-ink text-sm font-medium">{r.label}</div>
-								<div class="text-ink-mute text-xs">{r.note}</div>
+								<div class="text-ink-soft text-xs">{r.note}</div>
 							</div>
 							<Btn size="sm" variant="ghost" icon="tuning-2">Edit policy</Btn>
 						</div>
@@ -239,7 +234,7 @@
 				<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 					{#each audit as x, i (i)}
 						<div class="border-paper-edge flex items-center gap-3 border-b" style="padding: 12px 16px">
-							<Icon name="clipboard-list" size={17} toneClass="text-ink-mute" />
+							<Icon name="clipboard-list" size={17} toneClass="text-ink-soft" />
 							<span class="text-ink flex-1 text-sm">
 								{x.who === 'sensei' ? 'sensei' : me} · {x.text.slice(0, 60)}…
 							</span>

@@ -4,6 +4,11 @@ import kavach from '../../kavach.config.js';
 // The preset itself does not load under vitest (an extensionless ESM import in
 // @rokkit/unocss); the shortcuts and safelist under test are this app's own.
 vi.mock('@rokkit/unocss', () => ({ presetRokkit: () => ({ name: 'rokkit-stub' }) }));
+// The `unocss` umbrella re-exports every preset and transformer, and its JSX
+// transformer pulls oxc-parser, whose `browser` export (the condition
+// svelteTesting() adds) is a WASM build with an optional binding that is not
+// installed. uno.config.js needs only defineConfig, which returns its argument.
+vi.mock('unocss', () => ({ defineConfig: <T>(config: T) => config }));
 const { default: uno } = await import('../../uno.config.js');
 
 // kavach's AuthProvider renders `i-auth-{provider}` for every configured sign-in

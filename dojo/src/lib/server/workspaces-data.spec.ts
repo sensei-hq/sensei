@@ -6,6 +6,7 @@ import {
 	listOrgWorkspaces,
 	listUserWorkspaces,
 	getWorkspaceConstitution,
+	getWorkspaceMetrics,
 	attachRunToWorkspace,
 	fileRunUnderWorkspace,
 	AdminError,
@@ -25,12 +26,85 @@ function makeListDb(result: { data: unknown; error: unknown }) {
 	return { db: b as unknown as DojoClient, captured };
 }
 
+// Table-keyed mock for the activity sort: each `.from(table)` chain resolves
+// that table's canned result at its `.order()` / `.in()` terminal, and each
+// `.rpc(fn, args)` resolves the `rpc:<fn>` entry — recording every call so
+// tests can pin the read's narrowing (F3: one rpc with the listed ids).
+function makeActivityDb(tables: Record<string, { data?: unknown; error: unknown }>) {
+	let table = '';
+	const calls: Array<{ table: string; op: string; args: unknown[] }> = [];
+	const b: Record<string, unknown> = {};
+	b.from = (t: string) => ((table = t), b);
+	b.select = () => b;
+	b.eq = (...args: unknown[]) => {
+		calls.push({ table, op: 'eq', args });
+		return b;
+	};
+	b.order = (...args: unknown[]) => {
+		calls.push({ table, op: 'order', args });
+		return Promise.resolve(tables[table] ?? { data: [], error: null });
+	};
+	b.in = (...args: unknown[]) => {
+		calls.push({ table, op: 'in', args });
+		return Promise.resolve(tables[table] ?? { data: [], error: null });
+	};
+	b.rpc = (fn: string, args: unknown) => {
+		calls.push({ table: fn, op: 'rpc', args: [args] });
+		return Promise.resolve(tables[`rpc:${fn}`] ?? { data: [], error: null });
+	};
+	return { db: b as unknown as DojoClient, calls };
+}
+
 describe('listOrgWorkspaces', () => {
 	it('returns the tenant rows', async () => {
 		const rows = [{ id: 'p1' }, { id: 'p2' }];
-		const { db, captured } = makeListDb({ data: rows, error: null });
+		const { db, calls } = makeActivityDb({
+			workspaces: { data: rows, error: null },
+			'rpc:workspace_activity': { data: [], error: null }
+		});
 		expect(await listOrgWorkspaces(db, 't1')).toEqual(rows);
-		expect(captured.tenantEq).toBe('t1');
+		expect(calls.find((c) => c.table === 'workspaces' && c.op === 'eq')?.args).toEqual(['tenant_id', 't1']);
+	});
+	it('keeps API order when no workspace has any activity', async () => {
+		const { db } = makeActivityDb({
+			workspaces: { data: [{ id: 'w1' }, { id: 'w2' }], error: null },
+			'rpc:workspace_activity': { data: [], error: null }
+		});
+		expect((await listOrgWorkspaces(db, 't1')).map((w) => w.id)).toEqual(['w1', 'w2']);
+	});
+	it('L4 workspace-sort r4 — most recently active first, quiet last, one rpc', async () => {
+		const { db, calls } = makeActivityDb({
+			workspaces: {
+				data: [
+					{ id: 'w1', last_run_at: null },
+					{ id: 'w2', last_run_at: null },
+					{ id: 'w3', last_run_at: null }
+				],
+				error: null
+			},
+			// The max lives in the DB (F3): one rpc, per-workspace activity.
+			'rpc:workspace_activity': {
+				data: [
+					{ workspace_id: 'w1', last_activity_at: '2026-11-02T10:00:00Z' },
+					{ workspace_id: 'w2', last_activity_at: '2026-11-03T10:00:00Z' }
+				],
+				error: null
+			}
+		});
+		const out = await listOrgWorkspaces(db, 't1');
+		expect(out.map((w) => w.id)).toEqual(['w2', 'w1', 'w3']);
+		expect(out[2]).toEqual({ id: 'w3', last_run_at: null });
+		// F3: the rpc carries the listed ids — a whole-view read would hit
+		// max_rows and truncate with no error.
+		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'rpc');
+		expect(activityRead?.args, 'rpc narrowed to listed ids').toEqual([{ p_ids: ['w1', 'w2', 'w3'] }]);
+	});
+	it('L4 workspace-sort r4 — an rpc error fails closed, never API order', async () => {
+		const { db } = makeActivityDb({
+			workspaces: { data: [{ id: 'w1' }], error: null },
+			'rpc:workspace_activity': { data: null, error: { message: 'act boom' } }
+		});
+		await expect(listOrgWorkspaces(db, 't1')).rejects.toThrow(AdminError);
 	});
 	it('honest-empty [] when data is null', async () => {
 		const { db } = makeListDb({ data: null, error: null });
@@ -59,11 +133,41 @@ function makeUserDb(result: { data: unknown; error: unknown }) {
 }
 
 describe('listUserWorkspaces — every workspace the caller may read (RLS), across dōjōs', () => {
+	it('L4 workspace-sort r4 — the personal list sorts by activity too, quiet last', async () => {
+		const { db, calls } = makeActivityDb({
+			workspaces: {
+				data: [
+					{ id: 'w1', last_run_at: null },
+					{ id: 'w2', last_run_at: null }
+				],
+				error: null
+			},
+			'rpc:workspace_activity': {
+				data: [{ workspace_id: 'w2', last_activity_at: '2026-11-03T10:00:00Z' }],
+				error: null
+			}
+		});
+		const out = await listUserWorkspaces(db);
+		expect(out.map((w) => w.id)).toEqual(['w2', 'w1']);
+		expect(out[1]).toEqual({ id: 'w1', last_run_at: null });
+		const activityRead = calls.find((c) => c.table === 'workspace_activity' && c.op === 'rpc');
+		expect(activityRead?.args, 'rpc narrowed to listed ids').toEqual([{ p_ids: ['w1', 'w2'] }]);
+	});
+	it('L4 workspace-sort r4 — the personal list fails closed when the rpc errors', async () => {
+		const { db } = makeActivityDb({
+			workspaces: { data: [{ id: 'w1' }], error: null },
+			'rpc:workspace_activity': { data: null, error: { message: 'act boom' } }
+		});
+		await expect(listUserWorkspaces(db)).rejects.toThrow(AdminError);
+	});
 	it('returns the readable rows with their dōjō, with no owner filter', async () => {
 		const rows = [{ id: 'p1', tenant_id: 't1' }, { id: 'p2', tenant_id: 't2' }];
-		const { db, captured } = makeUserDb({ data: rows, error: null });
+		const { db, calls } = makeActivityDb({
+			workspaces: { data: rows, error: null },
+			'rpc:workspace_activity': { data: [], error: null }
+		});
 		expect(await listUserWorkspaces(db)).toEqual(rows);
-		expect(captured.eqs).toEqual([]);
+		expect(calls.filter((c) => c.table === 'workspaces' && c.op === 'eq')).toEqual([]);
 	});
 	it('honest-empty [] when data is null (genuine empty, not a mask)', async () => {
 		const { db } = makeUserDb({ data: null, error: null });
@@ -170,5 +274,154 @@ describe('fileRunUnderWorkspace', () => {
 		b.update = () => b;
 		b.eq = () => Promise.resolve({ error: { message: 'denied' } });
 		await expect(fileRunUnderWorkspace(b as unknown as DojoClient, 's', 'p')).rejects.toBeInstanceOf(AdminError);
+	});
+});
+
+// WP4: a workspace's metric series — the read behind its charts. The gate (403),
+// the tenant scope (404) and the rollup (500 on error, never []) are three
+// separate answers, so they are decided in that order.
+describe('getWorkspaceMetrics', () => {
+	const TODAY = new Date('2026-11-03T12:00:00Z');
+
+	function makeMetricsDb(opts: {
+		canRead: boolean;
+		inTenant: boolean;
+		series: unknown[] | { error: { message: string } };
+	}) {
+		const calls: string[] = [];
+		const orders: Array<{ column: string; nullsFirst?: boolean }> = [];
+		const rpc = (fn: string, _args: Record<string, unknown>) => {
+			calls.push(`rpc:${fn}`);
+			if (fn === 'can_read_workspace') {
+				return Promise.resolve({ data: opts.canRead, error: null });
+			}
+			const chain: Record<string, unknown> = {};
+			chain.select = () => chain;
+			chain.order = (column: string, o?: { nullsFirst?: boolean }) => {
+				orders.push({ column, nullsFirst: o?.nullsFirst });
+				return chain;
+			};
+			chain.range = () => {
+				const s = opts.series;
+				return Promise.resolve(
+					Array.isArray(s) ? { data: s, error: null } : { data: null, error: s.error }
+				);
+			};
+			return chain;
+		};
+		const from = (table: string) => {
+			calls.push(`from:${table}`);
+			const chain: Record<string, unknown> = {};
+			chain.select = () => chain;
+			chain.eq = () => chain;
+			chain.maybeSingle = () =>
+				Promise.resolve(
+					opts.inTenant ? { data: { id: 'w1' }, error: null } : { data: null, error: null }
+				);
+			return chain;
+		};
+		return { db: { rpc, from } as unknown as DojoClient, calls, orders };
+	}
+
+	const ROWS = [
+		{
+			repository_id: 'r1',
+			repo_key: 'github.com/acme/api',
+			metric_key: 'ftr',
+			scope: 'repo',
+			principal_id: null,
+			computed_on: '2026-11-03',
+			grain: 'daily',
+			value: '0.5',
+			props: {}
+		},
+		{
+			repository_id: 'r1',
+			repo_key: 'github.com/acme/api',
+			metric_key: 'ftr',
+			scope: 'pooled',
+			principal_id: null,
+			computed_on: '2026-11-03',
+			grain: 'daily',
+			value: 7,
+			props: { pooled_rows: 3, numerator: '15', denominator: 6 }
+		}
+	];
+
+	it('returns the shaped series for a workspace the caller may read', async () => {
+		const { db } = makeMetricsDb({ canRead: true, inTenant: true, series: ROWS });
+		await expect(getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY })).resolves.toEqual({
+			since: '2026-10-05',
+			days: 30,
+			rows: [
+				{
+					repository_id: 'r1',
+					repo_key: 'github.com/acme/api',
+					metric_key: 'ftr',
+					scope: 'repo',
+					principal_id: null,
+					day: '2026-11-03',
+					value: 0.5,
+					props: {}
+				},
+				{
+					repository_id: 'r1',
+					repo_key: 'github.com/acme/api',
+					metric_key: 'ftr',
+					scope: 'pooled',
+					principal_id: null,
+					day: '2026-11-03',
+					value: 7,
+					props: { pooled_rows: 3, numerator: '15', denominator: 6 }
+				}
+			]
+		});
+	});
+
+	it('refuses a caller who may not read the workspace, before touching its rows', async () => {
+		// The gate runs first: an outsider learns nothing, not even whether the
+		// workspace is in this dōjō.
+		const { db, calls } = makeMetricsDb({ canRead: false, inTenant: true, series: ROWS });
+		const err = await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY }).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminError);
+		expect(err.status).toBe(403);
+		expect(calls).toEqual(['rpc:can_read_workspace']);
+	});
+
+	it('answers 404 when the workspace lives in another dōjō', async () => {
+		const { db, calls } = makeMetricsDb({ canRead: true, inTenant: false, series: ROWS });
+		const err = await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY }).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminError);
+		expect(err.status).toBe(404);
+		expect(calls).not.toContain('rpc:workspace_metric_series');
+	});
+
+	it('fails closed on a series error — never []', async () => {
+		const { db } = makeMetricsDb({
+			canRead: true,
+			inTenant: true,
+			series: { error: { message: 'connection reset' } }
+		});
+		const err = await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY }).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminError);
+		expect(err.status).toBe(500);
+		expect(err.message).toMatch(/connection reset/);
+	});
+
+	it('pages the series in a deterministic total order — an unordered OFFSET can drop or repeat rows', async () => {
+		// Each page re-runs the rollup with a fresh OFFSET; without an ORDER BY
+		// Postgres keeps no row order between runs, so past 1,000 rows a row can
+		// land on two pages or on none, with no error. The order is unique per
+		// row: within one branch the table's natural key is unique, and a pooled
+		// row carries a null principal where a detail row carries a real one.
+		const { db, orders } = makeMetricsDb({ canRead: true, inTenant: true, series: ROWS });
+		await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY });
+		expect(orders).toEqual([
+			{ column: 'repository_id', nullsFirst: undefined },
+			{ column: 'metric_key', nullsFirst: undefined },
+			{ column: 'scope', nullsFirst: undefined },
+			{ column: 'computed_on', nullsFirst: undefined },
+			{ column: 'principal_id', nullsFirst: true }
+		]);
 	});
 });

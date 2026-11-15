@@ -1,6 +1,12 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Notice } from '@sensei/ui';
+	import { ScreenShell } from '@rokkit/app';
+	import { NAV_YOU } from '$lib/nav';
+	import { glyphs } from '$lib/glyphs.svelte';
+	import { splitBillingHidden } from '$lib/billing-hidden';
+	import { panelsFor, savePanels } from '$lib/view-states.svelte';
 	// Sharing — the DECISION surface for `dojo.all_my_repositories`.
 	//
 	// Every other consumer of that view reads it: the daemon through
@@ -11,79 +17,181 @@
 	//
 	// PRESENTATIONAL. It renders the verdict it is handed and reports a toggle
 	// upward; it never re-derives `sync_enabled`, because the view is the single
-	// place `may_share AND elected` is decided.
+	// place `may_share AND elected` is decided. Nor does it decide what the plan
+	// hides (WP8): the server sends `billing_hidden`, and those rows are left out
+	// for every user with nothing said about them here (user ruling 2026-11-05) —
+	// admins see them in their org's Plan & billing.
+	//
+	// On rokkit's ScreenShell (D87, view `dojo.you.sharing`): search in the filter
+	// band narrows the listed rows by name or key; the bands remember how the user
+	// left them (view-states).
 	import type { MyRepoWire } from '$lib/client-data';
+	import { authorityLabel, visibilityLabel } from '$lib/you-state.svelte';
+	import { GRAPH_LABELS } from '$lib/graph-labels';
 
 	interface Props {
 		repos: MyRepoWire[];
 		/** Non-null when the read FAILED. Rendered instead of an empty list: "you
 		 *  have no repositories" and "we could not ask" are different answers. */
-		error?: string | null;
-		/** Repo keys with a toggle in flight, so the row can disable itself. */
+		error?: ReadError | string | null;
+		/** Repo keys with a write in flight, so the row can disable itself. */
 		pending?: ReadonlySet<string>;
 		onToggle?: (repoKey: string, elected: boolean) => void;
+		onTrack?: (repoKey: string, branch: string, label: string | null) => void;
+		onUntrack?: (repoKey: string, branch: string) => void;
 	}
-	let { repos, error = null, pending = new Set<string>(), onToggle }: Props = $props();
+	let { repos, error = null, pending = new Set<string>(), onToggle, onTrack, onUntrack }: Props = $props();
 
-	/** What the forge said, or that it has not been asked. Never guessed. */
-	function visibilityLabel(v: MyRepoWire['forge_visibility']): string {
-		return v === null ? 'not yet captured' : v;
+	// Draft branch names and labels, per repository. The input starts EMPTY —
+	// pre-filling `main` would be the guess the plan refuses to make.
+	const VIEW = 'dojo.you.sharing';
+	const nav = NAV_YOU.flatMap((g) => g.items).find((i) => i.id === 'sharing');
+	let panels = $state(panelsFor(VIEW));
+	let filter = $state<{ values: Record<string, unknown>; stat?: string | null }>({ values: {}, stat: null });
+	const query = $derived(String(filter.values.q ?? '').trim().toLowerCase());
+	const shown = $derived(splitBillingHidden(repos).shown);
+	const visible = $derived(
+		query
+			? shown.filter((r) => (r.name ?? '').toLowerCase().includes(query) || r.repo_key.toLowerCase().includes(query))
+			: shown
+	);
+
+	let drafts = $state<Record<string, string>>({});
+	let labels = $state<Record<string, string>>({});
+	// The `repoKey branch` awaiting its in-page confirmation, if any.
+	// Untracking deletes that branch's graph, so one click is never enough.
+	let confirming = $state<string | null>(null);
+
+	function trackRepo(r: MyRepoWire): void {
+		const branch = (drafts[r.repo_key] ?? '').trim();
+		if (!branch) return;
+		onTrack?.(r.repo_key, branch, labels[r.repo_key] || null);
+		drafts[r.repo_key] = '';
 	}
 
-	/** Who holds the choice. `null` means no authority is derivable yet, which is
-	 *  a real state — not "user" by default. */
-	function authorityLabel(r: MyRepoWire): string {
-		if (r.authority === 'organization') return `${r.owning_org ?? 'the organisation'} decides`;
-		if (r.authority === 'user') return 'you decide';
-		return 'nobody yet';
-	}
 </script>
 
-<Screen>
-	{#snippet header()}
-		<div class="px-4 pt-4 md:px-8 md:pt-8">
-			<SectionHead
-				eyebrow="You · sharing"
-				title="Sharing"
-				description="Which repositories send metrics to a dōjō. A repository syncs only when it is permitted and whoever holds the choice has made it."
-			/>
-		</div>
-	{/snippet}
+<ScreenShell
+	viewId={VIEW}
+	mark={{ kanji: nav?.kanji ?? '', icon: nav?.icon }}
+	glyphs={glyphs.mode === 'icon' ? 'icon' : 'text'}
+	title="Sharing"
+	description="Which repositories send metrics to a dōjō. A repository syncs only when it is permitted and whoever holds the choice has made it."
+	search={{ placeholder: 'Search repositories' }}
+	bind:filter
+	bind:panels
+	onpanels={(next) => savePanels(VIEW, next)}
+>
 <section class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 
 	{#if error}
 		<!-- An error state, never an empty list. -->
-		<p role="alert" class="text-sm text-danger">Could not load your repositories — {error}</p>
+		<Notice size="panel" {...dojoLoadNotice("your repositories", error)} data-load-error />
 	{:else if repos.length === 0}
-		<p class="text-sm text-ink-soft">
+		<p class="text-sm text-ink-mute">
 			No repositories yet. They appear once sensei has scanned a clone and the daemon
 			has registered it.
 		</p>
 	{:else}
+		{#if visible.length > 0}
 		<ul class="flex flex-col gap-2">
-			{#each repos as r (r.repository_id)}
+			{#each visible as r (r.repository_id)}
 				<li class="flex flex-col gap-2 rounded border border-line p-3 md:flex-row md:items-center md:justify-between">
 					<div class="flex flex-col gap-1">
 						<span class="text-sm text-ink">{r.name ?? r.repo_key}</span>
-						<span class="text-xs text-ink-soft">
+						<span class="text-xs text-ink-mute">
 							{r.tenant} · {visibilityLabel(r.forge_visibility)} · {authorityLabel(r)}
 						</span>
 						{#if !r.sync_enabled && r.reason}
 							<!-- The refusal names itself AND what to do. A bare "off" here is
 							     the exact ambiguity the reason registry exists to remove. -->
-							<span class="text-xs text-ink-soft">
+							<span class="text-xs text-ink-mute">
 								{r.reason}{#if r.remedy} — {r.remedy}{/if}{#if r.reason_actor && !r.configurable_by_me}
 									<span class="text-ink-faint"> ({r.reason_actor} can change it)</span>
 								{/if}
 							</span>
 						{/if}
+						<!-- The branches whose code graph this repository shares — what the
+						     daemon will push. An empty set says so honestly: the graph does
+						     not sync, and nothing here guesses `main`. -->
+						{#if r.graph_branches.length === 0}
+							<span class="text-xs text-ink-mute">graph: no tracked branch — its graph does not sync</span>
+						{:else}
+							<ul class="flex flex-wrap gap-x-3 gap-y-1">
+								{#each r.graph_branches as b (b.branch)}
+									<li class="flex items-center gap-1 text-xs text-ink-mute">
+										<span>{b.is_default ? `${b.branch} (default)` : b.branch}</span>
+										{#if confirming === `${r.repo_key} ${b.branch}`}
+											<span class="text-ink-faint">deletes its graph — sure?</span>
+											<button
+												type="button"
+												class="underline"
+												aria-label={`Confirm untracking ${b.branch}`}
+												disabled={pending.has(r.repo_key)}
+												onclick={() => {
+													onUntrack?.(r.repo_key, b.branch);
+													confirming = null;
+												}}
+											>
+												Yes, untrack
+											</button>
+											<button type="button" class="underline" onclick={() => (confirming = null)}>
+												Cancel
+											</button>
+										{:else}
+											<button
+												type="button"
+												class="underline"
+												aria-label={`Untrack ${b.branch}`}
+												disabled={!r.configurable_by_me || pending.has(r.repo_key)}
+												onclick={() => (confirming = `${r.repo_key} ${b.branch}`)}
+											>
+												Untrack
+											</button>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+						<div class="flex flex-wrap items-center gap-2">
+							<input
+								type="text"
+								class="rounded border border-line bg-transparent px-2 py-1 text-xs text-ink"
+								placeholder="branch name"
+								aria-label={`Branch to track for ${r.name ?? r.repo_key}`}
+								value={drafts[r.repo_key] ?? ''}
+								disabled={!r.configurable_by_me || pending.has(r.repo_key)}
+								oninput={(e) => (drafts[r.repo_key] = e.currentTarget.value)}
+							/>
+							<select
+								class="rounded border border-line bg-transparent px-2 py-1 text-xs text-ink"
+								aria-label={`Label for ${r.name ?? r.repo_key}`}
+								value={labels[r.repo_key] ?? ''}
+								disabled={!r.configurable_by_me || pending.has(r.repo_key)}
+								onchange={(e) => (labels[r.repo_key] = e.currentTarget.value)}
+							>
+								<option value="">No label</option>
+								{#each GRAPH_LABELS as l}
+									<option value={l}>{l}</option>
+								{/each}
+							</select>
+							<button
+								type="button"
+								class="rounded border border-line px-2 py-1 text-xs text-ink"
+								aria-label={`Track a branch of ${r.name ?? r.repo_key}`}
+								disabled={!r.configurable_by_me || pending.has(r.repo_key)}
+								onclick={() => trackRepo(r)}
+							>
+								Track
+							</button>
+						</div>
 					</div>
 
 					<div class="flex items-center gap-3">
-						<span class="text-xs" class:text-success={r.sync_enabled} class:text-ink-soft={!r.sync_enabled}>
+						<span class="text-xs" class:text-success={r.sync_enabled} class:text-ink-mute={!r.sync_enabled}>
 							{r.sync_enabled ? 'sharing' : 'not sharing'}
 						</span>
-						<label class="flex items-center gap-2 text-xs text-ink-soft">
+						<label class="flex items-center gap-2 text-xs text-ink-mute">
 							<input
 								type="checkbox"
 								checked={r.elected}
@@ -101,6 +209,11 @@
 				</li>
 			{/each}
 		</ul>
+		{:else if query}
+			<p class="text-sm text-ink-mute">No repository matches “{filter.values.q}”.</p>
+		{:else}
+			<p class="text-sm text-ink-mute">None of your repositories can be shared right now.</p>
+		{/if}
 	{/if}
 </section>
-</Screen>
+</ScreenShell>

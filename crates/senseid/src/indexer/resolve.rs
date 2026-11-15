@@ -4574,15 +4574,110 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,060, headroom {})",
+             (ceiling 1,161, headroom {})",
             elsewhere.len(),
-            1_060_i64 - other as i64
+            1_161_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
         // indexer cannot follow stopped dangling — measured 1,304 → 1,045.
+        //
+        // Raised 1,060 → 1,075 on 2026-11-02, measured 1,062 over 223 identities.
+        // The largest buckets are the classes named above — `AppState·pg` (478),
+        // reached by every new handler through the alias, and variants a macro
+        // declares (`SchemaSource::Dbd`, used again by the enum import). The 17
+        // since 1,045 were NOT split per identity; the cure is following the
+        // alias (backlog), not a lower number.
+        //
+        // Raised 1,075 → 1,080 on 2026-11-05, measured 1,078 over 227 identities
+        // (reviewer-measured base 1,075/225; the newer base differs by
+        // markdown only, which the indexer does not read): this slice adds 3
+        // over 2 new identities. An earlier revision of this comment blamed
+        // all +16 since 11-02 on develop's drift, measured with only r3
+        // stashed — r1 and r2's tests were still in the tree. Largest buckets
+        // unchanged — `AppState·pg` (484) through the alias, `task_queue`
+        // (31), `gateway` (26) — plus macro-declared items. The cure is still
+        // following the alias (backlog), not a lower number.
+        //
+        // Merged with the delivery-metrics slice on 2026-11-05/06: there,
+        // `AppState·pg` grew 481 → 484 and `AppState·trackers` (the tick takes
+        // the tracker runtime) joined the list. Same class; same cure.
+        //
+        // Raised 1,080 → 1,105 on 2026-11-06, measured 1,103 over 227
+        // identities: the relay slice adds 25 over 0 new identities — every
+        // one an `AppState·pg`/`event_tx` reach through the alias from a new
+        // handler, test, or spawn (the codebase idiom; the alias gap is the
+        // backlog cure above). An earlier revision of this slice also added
+        // 27 identities via a `pub(crate) use` re-export the indexer cannot
+        // follow; those moved to the `pub(crate) mod` path their callers name
+        // (the 2026-10-26 cure) instead of spending the ratchet.
+        // Raised 1,105 → 1,116 on 2026-11-06, measured 1,114 over 228
+        // identities: item 3's reds clone the `RelayResourceRequest` input
+        // (the codebase idiom), and the 11 `clone` references dangle —
+        // derive-generated, in no source file (the third documented cause).
+        // Raised 1,116 → 1,120 on 2026-11-06, measured 1,118 over 228
+        // identities: item 3's phase-B bodies add 4 refs over 0 new
+        // identities (alias reaches from the new store fns and handlers).
+        // Raised 1,120 → 1,123 on 2026-11-07, measured 1,121 over 228
+        // identities (develop base 1,119/228): the F3 gap fix adds 2 over
+        // 0 new identities — `AppState·pg` alias reaches from the two new
+        // lane handlers and the sweeper-driving test. Same documented
+        // class, same backlog cure (follow the alias), not a lower number.
+        // Raised 1,123 → 1,128 on 2026-11-09, measured 1,126 over 228
+        // identities (develop base 1,122/228 — F1/F2/F9 spent the headroom
+        // to 1 without raising): the F8 timeline slice adds 4 over 0 new
+        // identities — `AppState·pg`/`event_tx` alias reaches from the new
+        // steps + SSE handlers and their driving tests (view field
+        // included). Same documented class, same backlog cure (follow the
+        // alias), not a lower number.
+        // Raised 1,128 → 1,131 on 2026-11-09, measured 1,129 over 227
+        // identities (develop base 1,126/227): the #339 pins observe
+        // public.logs through a pg-backed `Logger` built inline in the
+        // executor's test helper — the codebase idiom (server.rs builds two
+        // the same way) — and the three construction spellings
+        // (`Logger::new`, `LogWriter::pg`, `LogLevel::Info`) dangle one each:
+        // cross-crate `sensei_logger::` paths the walk does not follow (the
+        // re-export cause above). Same documented class, same backlog cure
+        // (follow the re-export), not a lower number.
+        // Raised 1,131 → 1,136 on 2026-11-10, measured 1,134 over 229
+        // identities: merging develop (1,129/227) into the delivery-metrics
+        // slice sums the two branches' raises, each measured against its own
+        // base; the merge adds no code of its own here. Same class, same cure.
+        // Raised 1,136 → 1,153 on 2026-11-12, measured 1,151 over 231
+        // identities (develop base 1,136/229, headroom 0): the relay
+        // autonomous-queue slice adds 15 over 2 new identities — the
+        // derive-generated `clone` of `RelayCheckpointInput` (2) and of
+        // `relay::gate·GateInput` (1), the third documented cause — and the
+        // other 12 land in the existing buckets (`AppState·pg` 524 and
+        // `event_tx` 12 lead the list), reached through the alias from the new
+        // claim, checkpoint, release, queue and run handlers, the gate pass
+        // and their driving tests. Same documented class, same backlog cure
+        // (follow the alias and the derive), not a lower number.
+        // Raised 1,136 → 1,140 on 2026-11-10, measured 1,138 over 230
+        // identities (develop base 1,136/229 — the ratchet stood at zero
+        // headroom): the #359 r2 pin adds 2 over 1 new identity. The new
+        // one is the test-only `FakeEmbedAdapter`'s `self.clone()` in
+        // `register_into` (the codebase idiom; `Arc::clone` exists in no
+        // walked source — the derive-generated cause above), and the
+        // shared-identity +1 is another `Logger::noop` reach (the ctx
+        // mirrors `make_ctx`; cross-crate `sensei_logger::` paths the
+        // walk does not follow — the #339 re-export cause). Same
+        // documented classes, same backlog cures, not a lower number.
+        // Merged 2026-11-14 (#359 into develop): measured 1,153 over 232 —
+        // develop's 1,151/231 plus the #359 pin's 2/1, exactly additive; the
+        // ceiling stays 1,153 at zero headroom. The merge adds no code here.
+        // Raised 1,153 → 1,161 on 2026-11-13, measured 1,159 over 231
+        // identities: the transcript-export slice adds 8 over 0 new
+        // identities — 4× `AppState·pg` alias reaches (two handler reads, the
+        // missing-list read, the route-test seeder) and 4× clap-derive
+        // `Cli::parse_from`/`try_parse_from` in the CLI arg tests. Same
+        // documented classes, same backlog cures, not a lower number. (The
+        // println above still named the 1,136 ceiling; corrected to match.)
+        // Merged 2026-11-14 (#435 into develop, after #359): measured 1,161
+        // over 232 — develop's 1,153/232 plus the export slice's 8/0, exactly
+        // additive. Ceiling 1,161, headroom 0. The merge adds no code here.
         assert!(
-            other <= 1_060,
+            other <= 1_161,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

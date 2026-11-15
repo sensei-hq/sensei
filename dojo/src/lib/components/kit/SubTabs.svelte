@@ -22,10 +22,10 @@
 			onclick={() => onPick(t.id)}
 			class="inline-flex items-center gap-1 whitespace-nowrap rounded-full text-sm {on
 				? 'bg-paper-mute text-ink font-medium'
-				: 'text-ink-mute'}"
+				: 'text-ink-soft'}"
 			style="padding: 4px 12px"
 		>
-			{#if t.icon}<Icon name={t.icon} size={14} toneClass={on ? 'text-ink' : 'text-ink-mute'} />{/if}
+			{#if t.icon}<Icon name={t.icon} size={14} toneClass={on ? 'text-ink' : 'text-ink-soft'} />{/if}
 			{t.label}
 			{#if t.badge}<span class="mono text-accent text-xs">{t.badge}</span>{/if}
 		</button>

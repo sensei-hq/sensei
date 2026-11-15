@@ -15,7 +15,7 @@
 | **What** | [`prd/`](prd/README.md) | what we are building and why — vision · objectives · personas · 29 module specs | are new, or want the product intent |
 | **Where** | [`roadmap/`](roadmap/README.md) | is it built? how far? what's next? — per-module status + gaps | want the current truth |
 | **How** | [`architecture/`](architecture/README.md) | implementation per surface | are building or reviewing code |
-| **Seen** | [`mockups/`](mockups/) · [`journeys/`](journeys/README.md) · [`design/`](design/README.md) | what it looks like, the paths through it, the design system | are designing or validating UX |
+| **Seen** | `mockups/` · [`journeys/`](journeys/README.md) · [`design/`](design/README.md) | what it looks like, the paths through it, the design system | are designing or validating UX |
 
 **Precedence** ([`prd/README.md`](prd/README.md) §Precedence): `prd` > `roadmap`
 > `architecture` > `mockups`. If two disagree, the higher one wins and the lower
@@ -45,7 +45,6 @@ one is the bug.
 | `app/` | SvelteKit + Tauri | Desktop app (observatory + project window) |
 | `crates/` | Rust | `senseid` · `cli` · `mcp` · `bootstrap` · `dojo-protocol` · `logger` |
 | `dojo/` | SvelteKit | Dōjō web app — developer · maintainer · admin · lead consoles (SSO-gated) |
-| `website/` | SvelteKit | Marketing site — **P2 module**, claims must trace to the roadmap |
 | `database/` | SQL (dbd) | DDL definitions — one DB `sensei`, port 7744 |
 | `homebrew/` | Ruby | Homebrew tap (subtree → `sensei-hq/homebrew-tap`) |
 | `marketplace/` | Markdown | Skills · commands · plugins · agents (subtree → `sensei-hq/marketplace`) |

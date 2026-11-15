@@ -17,7 +17,7 @@ pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 ///
 /// Builds on [`crate::api::util::require_secure_url`] for parsing and the https
 /// rule, then refuses that helper's loopback-`http` exemption, userinfo, IP-literal
-/// hosts and any explicit port other than 443. Path, query and fragment are
+/// hosts, a trailing-dot host and any explicit port other than 443. Path, query and fragment are
 /// discarded. `host_allowed` is the adapter's own host rule, applied last.
 pub fn normalize_base_url(
     raw: &str,
@@ -35,7 +35,8 @@ pub fn normalize_base_url(
     }
     let host = url.host_str().ok_or(InvalidBaseUrl)?;
     let is_ip = host.starts_with('[') || host.parse::<std::net::IpAddr>().is_ok();
-    if is_ip || !host_allowed(host) {
+    // A trailing dot names the same host yet slips past every suffix rule (`localhost.`).
+    if is_ip || host.ends_with('.') || !host_allowed(host) {
         return Err(InvalidBaseUrl);
     }
     Ok(format!("https://{host}"))
@@ -113,6 +114,18 @@ mod tests {
                 "{raw:?} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn a_trailing_dot_is_refused_by_the_shared_rule() {
+        // A permissive predicate, so only the shared rule can refuse (§G5.1, D19).
+        for raw in ["https://localhost.", "https://x.local.", "https://gitlab.example.com."] {
+            assert_eq!(normalize_base_url(raw, |_| true), Err(InvalidBaseUrl), "{raw}");
+        }
+        assert_eq!(
+            normalize_base_url("https://gitlab.example.com", |_| true),
+            Ok("https://gitlab.example.com".into())
+        );
     }
 
     fn now() -> chrono::DateTime<chrono::Utc> {

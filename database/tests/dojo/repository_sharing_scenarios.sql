@@ -13,9 +13,9 @@
 --
 -- WHAT BREAKS THIS TEST:
 --   * `sync_enabled` going back to a constant (the shipped phase-1 view);
---   * dropping `origin = 'personal' → ALLOW` back INTO the entitlement CASE —
---     A2 turns green-to-red immediately, which is the point: a personal private
---     repository is subscription-gated like everyone else's;
+--   * dropping `origin = 'personal' → ALLOW` back OUT of the entitlement CASE
+--     (D46) — A2 turns green-to-red immediately, which is the point: a
+--     personal private repository is free, subscription or none;
 --   * testing `billing.status <> 'active'` before testing whether a billing ROW
 --     exists — H2 goes red, because `NULL <> 'active'` is NULL, not TRUE, and a
 --     value test alone falls through to ALLOW;
@@ -169,7 +169,9 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, provider, visibili
 insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected) values
   -- L: the ORG elected it (mandate). Everything allows except the claim.
   ('5ecc0000-0000-0000-0000-000000000008', '5ecc0000-0000-0000-0000-00000000001e', 'organization', null, true),
-  -- A, A2, D: the user elected, and the user holds authority.
+  -- A, A2: the user elected, and the user holds authority. D's user election
+  -- is unread history: the org holds its public repos (D46), and the absent
+  -- org decision elects.
   ('5ecc0000-0000-0000-0000-000000000001', '5ecc0000-0000-0000-0000-000000000010', 'user', '5ecc0000-0000-0000-0000-00000000a11c', true),
   ('5ecc0000-0000-0000-0000-000000000002', '5ecc0000-0000-0000-0000-000000000011', 'user', '5ecc0000-0000-0000-0000-00000000a11c', true),
   ('5ecc0000-0000-0000-0000-000000000003', '5ecc0000-0000-0000-0000-000000000014', 'user', '5ecc0000-0000-0000-0000-00000000a11c', true),
@@ -197,14 +199,14 @@ begin
           from (values
             --  §8b   repo_key                          authority   may_share elected sync   refused_by     reason_code
             ('A',  'github.com/ztest-alice-sub/a',   'user',         true,  true,  true,  null,          null),
-            ('A2', 'github.com/ztest-alice-free/a2', 'user',         false, true,  false, 'entitlement', 'not_subscribed'),
+            ('A2', 'github.com/ztest-alice-free/a2', 'user',         true,  true,  true,  null,          null),
             -- B, C, E: no election row. A connected identity's repository syncs by
             -- default (#301): absence is consent, an explicit `false` (O) is not.
             ('B',  'github.com/ztest-alice-sub/b',   'user',         true,  true,  true,  null,          null),
             ('C',  'github.com/ztest-alice-free/c',  'user',         true,  true,  true,  null,          null),
             ('O',  'github.com/ztest-alice-free/o',  'user',         true,  false, false, 'election',    'not_elected_user'),
-            ('D',  'github.com/ztest-on/d',          'user',         true,  true,  true,  null,          null),
-            ('E',  'github.com/ztest-on/e',          'user',         true,  true,  true,  null,          null),
+            ('D',  'github.com/ztest-on/d',          'organization', true,  true,  true,  null,          null),
+            ('E',  'github.com/ztest-on/e',          'organization', true,  true,  true,  null,          null),
             ('F',  'github.com/ztest-on/f',          'organization', true,  true,  true,  null,          null),
             ('G',  'github.com/ztest-off/g',         'organization', true,  false, false, 'election',    'not_elected_org'),
             ('H',  'github.com/ztest-pastdue/h',     'organization', false, true,  false, 'entitlement', 'not_subscribed'),

@@ -29,7 +29,24 @@ export const STORAGE_KEYS = {
    *  Defaults to "grid"; survives reloads so a return visit lands in the
    *  same layout. No settings-row endpoint exists for this today. */
   workspacesView:   `${NS}:workspaces:view`,
+  /** Workspace · Diagrams: whether "What it's for" is open ("open" | "closed"). */
+  diagramsAbout:    `${NS}:diagrams:about`,
+  /** Workspace · Diagrams: whether the workspace stats band is shown ("open" | "closed"). */
+  diagramsStats:    `${NS}:diagrams:stats`,
+  /** Workspace · Diagrams: whether the controls band is shown ("open" | "closed"). */
+  diagramsControls: `${NS}:diagrams:controls`,
+  /** Workspace · Diagrams: whether the side panel is shown ("open" | "closed"). */
+  diagramsSide:     `${NS}:diagrams:side`,
 } as const;
+
+/** The active Storage, or null when there isn't a usable one. Feature-detects
+ *  the methods rather than just `typeof localStorage` so a build-time / SSR
+ *  context — or a test runner whose experimental `localStorage` global is a
+ *  non-functional stub — resolves cleanly instead of throwing. */
+export function browserStorage(): Storage | null {
+  const ls = (globalThis as { localStorage?: Storage }).localStorage;
+  return ls && typeof ls.getItem === 'function' && typeof ls.setItem === 'function' ? ls : null;
+}
 
 /** Re-exported namespace for any consumer that needs to build a key
  *  outside the canonical set above. */

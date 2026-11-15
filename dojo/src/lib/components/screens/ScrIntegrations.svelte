@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import { Screen, Notice } from '@sensei/ui';
 	import { Button } from '@rokkit/ui';
 	import { SectionHead, Chip, Icon, ListSection, AzureConnect } from '$lib/components/kit';
 	import { dojoLine, mappingLine } from '$lib/integrations-view';
@@ -43,30 +43,26 @@
 			</div>
 		{/if}
 
-		{#if state.error}
-			<div class="bg-danger-soft border-danger-soft text-ink rounded-lg border p-4 text-sm" role="alert">
-				{state.error}
-			</div>
+		{#if state.errorNotice}
+			<Notice size="panel" {...state.errorNotice} />
 		{/if}
 
 		{#if state.loaded}
-			{#if !state.complete}
-				<div class="bg-warning-soft border-warning-soft text-ink rounded-lg border p-4 text-sm">
-					GitHub could not read every organization you belong to; the list below is not complete.
-				</div>
+			{#if state.incompleteNotice}
+				<Notice size="inline" expanded {...state.incompleteNotice} />
 			{/if}
 			<ListSection icon="link-circle" title="GitHub organizations" count={state.units.length}>
 				{#each state.units as u (u.id)}
 					<div class="border-paper-edge flex flex-col gap-2 border-b px-4 py-3">
 						<div class="flex flex-wrap items-center gap-3">
-							<Icon name="buildings-2" size={18} toneClass="text-ink-mute" />
+							<Icon name="buildings-2" size={18} toneClass="text-ink-soft" />
 							<span class="text-ink text-sm font-medium">{u.login}</span>
-							<Chip toneClass={u.role === 'admin' ? 'text-accent' : 'text-ink-mute'}
+							<Chip toneClass={u.role === 'admin' ? 'text-accent' : 'text-ink-soft'}
 								>{u.role === 'admin' ? 'GitHub admin' : 'GitHub member'}</Chip
 							>
 						</div>
 						<div class="flex flex-col gap-1 pl-8">
-							<span class="mono text-ink-mute text-xs">{dojoLine(u)}</span>
+							<span class="mono text-ink-soft text-xs">{dojoLine(u)}</span>
 							<span class="text-ink-faint text-xs">{mappingLine(u)}</span>
 						</div>
 						{#if u.canClaim || u.canMapAsDojo || u.canMapAsWorkspace}
@@ -111,7 +107,7 @@
 						{/if}
 					</div>
 				{:else}
-					<div class="text-ink-mute p-4 text-sm">This GitHub account sees no organizations.</div>
+					<div class="text-ink-soft p-4 text-sm">This GitHub account sees no organizations.</div>
 				{/each}
 			</ListSection>
 		{/if}

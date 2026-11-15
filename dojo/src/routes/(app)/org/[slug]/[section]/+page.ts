@@ -1,3 +1,4 @@
+import { readError, NOT_A_MEMBER, type ReadError } from '$lib/read-error';
 import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { ORG_SECTIONS, labelForSection } from '$lib/nav';
@@ -6,8 +7,8 @@ import { tabForSection } from '$lib/role-surfaces-view';
 import { guardTenantScope } from '$lib/org-guard';
 import {
 	getKnowledge,
+	listMyRepos,
 	listWorkspaces,
-	DojoApiError,
 	type KnowledgeLibraryWire,
 	type WorkspaceRow
 } from '$lib/client-data';
@@ -36,6 +37,7 @@ import {
 	type BillingResponse
 } from '$lib/admin-data';
 import { toKitBilling, noBilling } from '$lib/billing-map';
+import { loadBillingSection, type BillingSection } from '$lib/billing-section-load';
 import {
 	toKitTriageGroups,
 	toKitApprovals,
@@ -106,16 +108,16 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		empty: K,
 		fetcher: (tk: string) => Promise<W>,
 		map: (w: W) => K
-	): Promise<{ value: K; error: string | null }> {
+	): Promise<{ value: K; error: ReadError | null }> {
 		if (section !== forSection) return { value: empty, error: null };
 		try {
 			const guarded = await guardTenantScope<W>(tenantKey, undefined as unknown as W, fetcher);
-			// A membership-less guard returns the sentinel; treat as empty.
-			if (guarded.noMembership) return { value: empty, error: null };
+			// No tenant for this membership: a refusal, said — never a blank screen (L3, r1).
+			if (guarded.noMembership) return { value: empty, error: NOT_A_MEMBER };
 			return { value: map(guarded.value), error: null };
 		} catch (e) {
-			const error = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
-			return { value: empty, error };
+			// The status travels with the message, so a 403 reads as a refusal (M3, r1).
+			return { value: empty, error: readError(e) };
 		}
 	}
 
@@ -124,7 +126,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	let triage: KitTriageGroup[] = [];
 	let candidateDetail: KitCandidateDetail = toKitCandidateDetail(undefined);
 	let approvals: KitApproval[] = [];
-	let triageError: string | null = null;
+	let triageError: ReadError | null = null;
 	if (section === 'triage' || section === 'approvals') {
 		try {
 			const guarded = await guardTenantScope<TriageRow[]>(tenantKey, [], (tk) => listTriage(tk, opts));
@@ -138,7 +140,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 			const topRow = top ? rows.find((r) => r.signature === top.id) : undefined;
 			candidateDetail = toKitCandidateDetail(topRow);
 		} catch (e) {
-			triageError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+			triageError = readError(e);
 		}
 	}
 
@@ -150,7 +152,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	let viewers: DojoViewerView[] = [];
 	let viewerWorkspaces: ViewerWorkspaceView[] = [];
 	let teams: TeamView[] = [];
-	let membersError: string | null = null;
+	let membersError: ReadError | null = null;
 	if (section === 'members' || section === 'audit') {
 		try {
 			const [m, p, a, v, pr, tm] = await Promise.all([
@@ -170,7 +172,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 			rolePolicies = toKitRolePolicies(p.value);
 			auditLog = toKitAuditThread(a.value);
 		} catch (e) {
-			membersError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+			membersError = readError(e);
 		}
 	}
 
@@ -209,12 +211,17 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 
 	// Billing (admin) — the LIVE billable seat count (dojo.tenant_seat_usage) and
 	// the account's plan + renewal; nothing a payment provider would supply (#106).
-	const billingRes = await guardedFor<BillingResponse, KitBilling>(
-		'billing',
-		noBilling(),
-		(tk) => getBilling(tk, opts),
-		toKitBilling
-	);
+	// Beside it, in parallel, the org's private repositories the plan hides, from
+	// the caller's own repositories (a tenant's repository appears for each member)
+	// grouped by the server's `billing_hidden` flag; each read fails on its own.
+	const billingSection: BillingSection =
+		section === 'billing'
+			? await loadBillingSection(
+					slug,
+					() => guardedFor<BillingResponse, KitBilling>('billing', noBilling(), (tk) => getBilling(tk, opts), toKitBilling),
+					() => listMyRepos(opts)
+				)
+			: { billing: noBilling(), billingError: null, billingHidden: null, billingHiddenError: null };
 
 	// Workspaces (org) — the tenant's dojo.workspaces (daemon-populated on relay runs).
 	// Real read; honest-empty until populated — NOT the orgWorkspacesFor(slug) fixture.
@@ -275,7 +282,9 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		identityError: identityRes.error,
 		health: healthRes.value,
 		healthError: healthRes.error,
-		billing: billingRes.value,
-		billingError: billingRes.error
+		billing: billingSection.billing,
+		billingError: billingSection.billingError,
+		billingHidden: billingSection.billingHidden,
+		billingHiddenError: billingSection.billingHiddenError
 	};
 };

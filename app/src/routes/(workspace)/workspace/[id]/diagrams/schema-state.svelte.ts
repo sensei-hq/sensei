@@ -1,33 +1,20 @@
-// Diagrams · Schema — the workspace's database: tables and their keys, or every
-// object and what it depends on (#221).
+// Diagrams · Database · ER — the workspace's database as dbd's viewer shows it
+// (user, 2026-11-02): the design's Overview, Diagram and Entities, or one
+// entity's page (a table, an object, an enum), with the sidebar on the right.
 //
 // ## The payload is dbd's, passed through
 //
-// The daemon serves the ER half of dbd's `SchemaModel` v2 and rokkit's
-// `toGraphInput` reads it. This controller FILTERS that model and hands the
-// result to `toGraphInput` — it never re-keys a node or renames a field, because
-// a field rokkit cannot resolve looks correct while silently never firing.
-//
-// ## A filter counts what it cut
-//
-// Choosing a schema hides the others. A key or dependency with one end in a
-// hidden schema is a real relationship, so it is not drawn AND it is counted
-// beside the picture. Without the count, a schema whose keys all lead elsewhere
-// reads as self-contained.
-//
-// An unresolved dependency (a built-in, an object the store does not describe)
-// has no end in ANY schema, so no filter hides it: it stays while its source is
-// shown, drawn dimmed by rokkit as `unplaced`.
+// The daemon serves dbd's `SchemaModel` v3 (tables, refs, entities, deps,
+// enums); rokkit's `@rokkit/graph/schema` views read it as a `DesignModel`
+// unchanged — never re-keyed or renamed, because a field rokkit cannot resolve
+// looks correct while silently never firing. This state owns only what the page
+// does: the read, the open tab, the selection, and the diagram's settings.
 
-import { toGraphInput } from '@rokkit/graph/schema';
-import type { SchemaDep, SchemaEntity, SchemaPayload, SchemaRef, SchemaTable } from '$lib/types.js';
-
-export type SchemaScope = 'er' | 'dependencies';
-
-export const SCOPES: { value: SchemaScope; label: string }[] = [
-  { value: 'er', label: 'Tables & keys' },
-  { value: 'dependencies', label: 'Dependencies' },
-];
+import { databaseLabel, overviewCounts, pageFor, type DesignModel } from '@rokkit/graph/schema';
+import type { Density, EdgeStyle } from '@rokkit/graph';
+import { messages } from '@rokkit/states';
+import type { Stat } from '@sensei/codemap';
+import type { SchemaPayload } from '$lib/types.js';
 
 export interface SchemaApi {
   tryGetWorkspaceSchema: (
@@ -37,35 +24,28 @@ export interface SchemaApi {
   >;
 }
 
-export interface SchemaOption {
-  /** `null` is All. */
-  value: string | null;
-  label: string;
-  tables: number;
-}
-
-/** The id `toGraphInput` gives a node, so a selection and a node agree. */
-export function objectId(schema: string, name: string): string {
-  return schema ? `${schema}.${name}` : name;
-}
-
-function plural(n: number, one: string, many: string): string {
-  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
-}
+/** The design-level tabs (dbd's; Changelog waits for dbd release 1). */
+export type DesignTabId = 'overview' | 'diagram' | 'entities';
 
 export class SchemaState {
   #api: SchemaApi;
   #workspaceId: () => string;
-
-  scope = $state<SchemaScope>('er');
-  /** The chosen schema; `null` is All. `load` drops a choice the new payload
-   *  does not name. */
-  #chosen = $state<string | null>(null);
   #picked = $state<string | null>(null);
 
   payload = $state<SchemaPayload | null>(null);
   failure = $state<string | null>(null);
   loading = $state(true);
+  tab = $state<DesignTabId>('overview');
+  /** The ER diagram's field detail and edge style — rokkit's own settings. */
+  density = $state<Density>('keys');
+  edgeStyle = $state<EdgeStyle>('curved');
+  /**
+   * The object the ER canvas centres on (user, 2026-11-06), or null for the design.
+   * It is not the selection: a press on the canvas walks into a neighbourhood, while
+   * the sidebar's own press opens the object's page — two answers to "what next"
+   * that would otherwise fight over one field.
+   */
+  #focus = $state<string | null>(null);
 
   constructor(api: SchemaApi, workspaceId: () => string) {
     this.#api = api;
@@ -76,144 +56,62 @@ export class SchemaState {
     this.#api = api;
   }
 
-  get scopes() {
-    return SCOPES;
-  }
-
-  get view(): 'loading' | 'error' | 'none' | 'graph' {
+  get view(): 'loading' | 'error' | 'none' | 'design' {
     if (this.loading) return 'loading';
     if (this.failure) return 'error';
     const p = this.payload;
-    if (!p || (p.tables.length === 0 && p.entities.length === 0)) return 'none';
-    return 'graph';
+    if (!p || (p.tables.length === 0 && p.entities.length === 0 && (p.enums ?? []).length === 0)) return 'none';
+    return 'design';
   }
 
-  /** Every schema the payload names, tables first counted. */
-  get schemaOptions(): SchemaOption[] {
-    const p = this.payload;
-    if (!p) return [];
-    const counts = new Map<string, number>();
-    for (const t of p.tables) counts.set(t.schema, (counts.get(t.schema) ?? 0) + 1);
-    for (const e of p.entities) if (!counts.has(e.schema)) counts.set(e.schema, 0);
-    const named = [...counts.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, tables]) => ({ value: name, label: name, tables }));
-    return [{ value: null, label: 'All', tables: p.tables.length }, ...named];
+  /** The payload as rokkit's views read it. */
+  get model(): DesignModel | null {
+    return this.payload as DesignModel | null;
   }
 
-  get schema(): string | null {
-    return this.#chosen;
+  /** The design's counts as the header's stat cards (user, 2026-11-03) — a
+   *  card per kind it has, iconed as the diagram draws it; null until read. */
+  get stats(): Stat[] | null {
+    const m = this.view === 'design' ? this.model : null;
+    return m
+      ? overviewCounts(m).map((c) => ({ label: c.label, value: c.count.toLocaleString('en-US'), tone: 'ink' as const, icon: c.icon }))
+      : null;
   }
 
-  #shows(schema: string): boolean {
-    const s = this.schema;
-    return s === null || s === schema;
+  /** The line under the cards: the database and the model's version, each when known. */
+  get note(): string | null {
+    const m = this.model;
+    const parts = [
+      databaseLabel(m?.project?.db),
+      m?.version ? messages.graph.modelVersion.replace('{n}', String(m.version)) : undefined,
+    ].filter(Boolean);
+    return parts.length ? parts.join(' · ') : null;
   }
 
-  get #tables(): SchemaTable[] {
-    return (this.payload?.tables ?? []).filter((t) => this.#shows(t.schema));
-  }
-
-  get #entities(): SchemaEntity[] {
-    return (this.payload?.entities ?? []).filter((e) => this.#shows(e.schema));
-  }
-
-  /** Keys with both ends shown, and the count with exactly one. */
-  get #refs(): { kept: SchemaRef[]; cut: number } {
-    let cut = 0;
-    const kept: SchemaRef[] = [];
-    for (const r of this.payload?.refs ?? []) {
-      const ends = [this.#shows(r.from.s), this.#shows(r.to.s)];
-      if (ends[0] && ends[1]) kept.push(r);
-      else if (ends[0] || ends[1]) cut++;
-    }
-    return { kept, cut };
-  }
-
-  /** Deps with both ends shown — or an unresolved one whose source is — and the
-   *  count of placed deps with exactly one end shown. */
-  get #deps(): { kept: SchemaDep[]; cut: number } {
-    let cut = 0;
-    const kept: SchemaDep[] = [];
-    for (const d of this.payload?.deps ?? []) {
-      const from = this.#shows(d.from.s);
-      if (d.unresolved) {
-        if (from) kept.push(d);
-        continue;
-      }
-      const to = this.#shows(d.to.s);
-      if (from && to) kept.push(d);
-      else if (from || to) cut++;
-    }
-    return { kept, cut };
-  }
-
-  /** Links the schema filter cut, in the scope being drawn. */
-  get cut(): number {
-    return this.scope === 'er' ? this.#refs.cut : this.#deps.cut;
-  }
-
-  /** `toGraphInput` over the filtered model — nodes, edges and dbd's field map. */
-  get graphInput() {
-    const model = {
-      tables: this.#tables,
-      refs: this.#refs.kept,
-      entities: this.#entities,
-      deps: this.#deps.kept,
-    };
-    return toGraphInput(model, this.scope);
-  }
-
-  /** One fact per line. */
-  get coverage(): string[] {
-    // What the picture in view draws: keys are not drawn under Dependencies,
-    // and views and routines are not drawn under Keys.
-    const lines = [
-      this.scope === 'er'
-        ? `${plural(this.#tables.length, 'table', 'tables')} · ${plural(this.#refs.kept.length, 'key', 'keys')}`
-        : `${plural(this.#tables.length + this.#entities.length, 'object', 'objects')} · ${plural(this.#deps.kept.length, 'dependency', 'dependencies')}`,
-    ];
-    const cut = this.cut;
-    if (cut > 0) {
-      lines.push(
-        this.scope === 'er'
-          ? `${plural(cut, 'key leads', 'keys lead')} out of the shown schema, not drawn`
-          : `${plural(cut, 'dependency crosses', 'dependencies cross')} out of the shown schema, not drawn`,
-      );
-    }
-    if (this.scope === 'dependencies') {
-      const dim = this.#deps.kept.filter((d) => d.unresolved).length;
-      if (dim > 0) {
-        lines.push(
-          `${plural(dim, 'dependency', 'dependencies')} on a built-in or undescribed object, drawn dimmed`,
-        );
-      }
-    }
-    return lines;
-  }
-
-  /** The selected table's id, or null. A selection the filter hides is gone. */
   get selected(): string | null {
-    const id = this.#picked;
-    if (id === null) return null;
-    return this.#tables.some((t) => objectId(t.schema, t.name) === id) ? id : null;
+    return this.#picked;
   }
 
-  get selectedTable(): SchemaTable | null {
-    const id = this.selected;
-    return id === null ? null : (this.#tables.find((t) => objectId(t.schema, t.name) === id) ?? null);
+  /** Which page the selection opens; null is the design itself. */
+  get page(): 'table' | 'object' | 'enum' | null {
+    const m = this.model;
+    return m && this.#picked ? (pageFor(m, this.#picked) ?? null) : null;
   }
 
-  select(id: string | null) {
-    this.#picked = id;
+  select(key: string | null) {
+    this.#picked = key;
+    // A page replaces the canvas; coming back to it should not reopen a neighbourhood
+    // the reader left two pages ago.
+    this.#focus = null;
   }
 
-  setScope(scope: SchemaScope) {
-    this.scope = scope;
+  /** The canvas's own selection: a neighbourhood, or the design when null. */
+  get focus(): string | null {
+    return this.#focus;
   }
 
-  setSchema(schema: string | null) {
-    this.#chosen = schema;
+  focusOn(key: string | null) {
+    this.#focus = key;
   }
 
   async load() {
@@ -229,11 +127,9 @@ export class SchemaState {
           ? `Could not reach the daemon — ${res.error.message}`
           : `The daemon returned ${res.error.status} ${res.error.message}`;
     }
-    // A choice the new payload does not name falls back to All: an empty
-    // picture for a schema that is gone answers nothing.
-    if (this.#chosen !== null && !this.schemaOptions.some((o) => o.value === this.#chosen)) {
-      this.#chosen = null;
-    }
+    // A selection the new design does not have clears: a page for nothing
+    // answers nothing.
+    if (this.#picked !== null && this.page === null) this.#picked = null;
     this.loading = false;
   }
 }

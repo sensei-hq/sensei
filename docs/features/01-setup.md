@@ -34,8 +34,8 @@ The entry gate is deliberately three steps:
 
 ## Mockups
 
-- [Health — a probe on dependencies, and resolution](../mockups/Sensei/lib/setup/bootstrap-splash.jsx)
-- [Setup wizard — folder + scan stages](../mockups/Sensei/lib/setup/setup-wizard.jsx)
+- Health — a probe on dependencies, and resolution
+- Setup wizard — folder + scan stages
 - Dōjō auto-discover — not yet mocked
 
 ## What's involved

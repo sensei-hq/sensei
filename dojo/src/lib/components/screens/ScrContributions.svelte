@@ -31,7 +31,8 @@
 </script>
 
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
+	import { Screen, Notice } from '@sensei/ui';
+	import { actionFailedNotice, dojoLoadNotice } from '$lib/dojo-notices';
 	import { SectionHead, StatBadge, ListSection, KanjiToken, Chip, Btn } from '$lib/components/kit';
 	import type { KitContribution, KitDownstream, KitContribStat } from '$lib/components/kit/types';
 	import { tallyContributions } from '$lib/personal-view';
@@ -63,6 +64,7 @@
 		loadError?: string | null;
 		onPin?: (item: KitDownstream) => void;
 	} = $props();
+	const errorNotice = $derived(actionFailedNotice(error));
 
 	// Tally the stat row off the shared rows so it stays honest against the list
 	// it summarizes; the lifetime `helped` count carries from the fixture stat.
@@ -86,11 +88,11 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-		{#if error}
-			<p role="alert" class="text-sm text-danger m-0">{error}</p>
+		{#if errorNotice}
+			<Notice size="inline" expanded {...errorNotice} />
 		{/if}
 		{#if loadError}
-			<p role="alert" class="text-sm text-danger m-0">Could not load your contributions — {loadError}</p>
+			<Notice size="panel" {...dojoLoadNotice("your contributions", loadError)} data-load-error />
 		{:else}
 		<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
 			{#each mine as c, i (i)}
@@ -131,7 +133,7 @@
 			count={downstream.length}
 		>
 			{#snippet right()}
-				<span class="mono text-ink-mute text-xs">from your dōjōs · never silently merged</span>
+				<span class="mono text-ink-soft text-xs">from your dōjōs · never silently merged</span>
 			{/snippet}
 			{#each downstream as it, i (i)}
 				<div class="border-paper-edge flex items-center gap-4 border-b px-4 py-3">
@@ -150,7 +152,7 @@
 							edgeClass="border-success-soft">adopted</Chip
 						>
 					{:else}
-						<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+						<Chip toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 							>new</Chip
 						>
 						<Btn size="sm" variant="ghost" icon="pin" onclick={() => onPin?.(it)}>Pin</Btn>

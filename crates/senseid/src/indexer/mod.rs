@@ -166,9 +166,9 @@ fn corpus_rust_sources() -> Vec<(String, String)> {
 ///
 /// The sibling of [`corpus_rust_sources`], and it exists for the same reason: a
 /// fixture proves the walk handles what the fixture's author thought of, and
-/// the corpus proves it handles what is there. `app/`, `dojo/` and `website/`
-/// are three real SvelteKit applications, which is a harder corpus than
-/// anything a test would write.
+/// the corpus proves it handles what is there. `app/` and `dojo/` are two real
+/// SvelteKit applications, which is a harder corpus than anything a test would
+/// write. (The website was a third until it moved to its own repository.)
 ///
 /// `node_modules` and build output are excluded, and so is everything
 /// generated: `.svelte-kit` holds code nobody wrote, so a defect found in it is
@@ -179,7 +179,7 @@ fn corpus_web_sources() -> Vec<(String, String)> {
         .parent()
         .and_then(|p| p.parent())
         .expect("the crate sits two levels below the workspace root");
-    web_sources_under(root, &["app", "dojo", "website"], 200)
+    web_sources_under(root, &["app", "dojo"], 200)
 }
 
 /// The same reader, pointed anywhere.

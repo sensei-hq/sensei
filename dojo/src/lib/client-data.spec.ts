@@ -10,6 +10,7 @@ import {
 	createInvite,
 	acceptInvite,
 	provisionFromForge,
+	setGraphBranch,
 	startAzureConnectAsOwn,
 	listAzureGrantOrganizations,
 	importAzureOrganization,
@@ -152,6 +153,34 @@ describe('getMicrosoftLink (#308 R5c)', () => {
 		const { fn, calls } = fakeFetch(200, { state: 'not_linked', reason: 'why' });
 		expect(await getMicrosoftLink({ fetch: fn, accessToken: 'jwt' })).toEqual({ state: 'not_linked', reason: 'why' });
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/microsoft`);
+	});
+});
+
+describe('setGraphBranch — track vs untrack', () => {
+	it('PUTs the repo, branch and label to track', async () => {
+		const OUT = { repo_key: 'github.com/acme/api', branch: 'develop', tracked: true, is_default: false };
+		const { fn, calls } = fakeFetch(200, OUT);
+		expect(await setGraphBranch('github.com/acme/api', 'develop', true, 'development', { fetch: fn })).toEqual(OUT);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/repositories/graph-branches`);
+		expect(calls[0].init?.method).toBe('PUT');
+		expect(JSON.parse(calls[0].init?.body as string)).toEqual({
+			repo_key: 'github.com/acme/api',
+			branch: 'develop',
+			label: 'development'
+		});
+	});
+
+	it('DELETEs the repo and branch to untrack, with no label', async () => {
+		// Untracking takes no label — the route ignores it, so the client does
+		// not send one rather than sending one that means nothing.
+		const OUT = { repo_key: 'github.com/acme/api', branch: 'develop', tracked: false, is_default: false };
+		const { fn, calls } = fakeFetch(200, OUT);
+		expect(await setGraphBranch('github.com/acme/api', 'develop', false, null, { fetch: fn })).toEqual(OUT);
+		expect(calls[0].init?.method).toBe('DELETE');
+		expect(JSON.parse(calls[0].init?.body as string)).toEqual({
+			repo_key: 'github.com/acme/api',
+			branch: 'develop'
+		});
 	});
 });
 

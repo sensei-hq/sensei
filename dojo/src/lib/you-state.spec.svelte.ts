@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { YouSectionState, forgeSyncMessage, type YouApi } from '$lib/you-state.svelte';
-import type { MyRepoWire } from '$lib/client-data';
+import { YouSectionState, forgeSyncMessage, visibilityLabel, authorityLabel, type YouApi } from '$lib/you-state.svelte';
+import type { GraphBranchOutcomeWire, MyRepoWire } from '$lib/client-data';
 
 // The personal-zone section's actions (#293): every write says why it failed,
 // and nothing shows a decision the server did not record.
@@ -11,6 +11,7 @@ function api(over: Partial<YouApi> = {}): YouApi {
 		setPackAdoption: vi.fn().mockResolvedValue(undefined),
 		provisionFromForge: vi.fn().mockResolvedValue({ synced: true, personal: null, tenants: [] }),
 		setRepoElection: vi.fn().mockResolvedValue({ repo_key: 'r', elected: true, sync_enabled: true, reason_code: null }),
+		setGraphBranch: vi.fn().mockResolvedValue({ repo_key: 'r', branch: 'b', tracked: true, is_default: false } satisfies GraphBranchOutcomeWire),
 		...over
 	} as YouApi;
 }
@@ -84,4 +85,46 @@ describe('sharing', () => {
 		expect(s.sharingError(null)).toBe('denied');
 		expect(s.sharingPending.has('r')).toBe(false);
 	});
+
+	it('tracks a branch and reloads; a refusal says why', async () => {
+		const s = new YouSectionState();
+		const r = reload();
+		const setGraphBranch = vi.fn().mockResolvedValue({ repo_key: 'r', branch: 'develop', tracked: true, is_default: false });
+		await s.track(api({ setGraphBranch }), 'r', 'develop', 'development', r);
+		expect(setGraphBranch).toHaveBeenCalledWith('r', 'develop', true, 'development');
+		expect(r).toHaveBeenCalledOnce();
+		expect(s.sharingError(null)).toBeNull();
+		expect(s.sharingPending.has('r')).toBe(false);
+		await s.track(api({ setGraphBranch: boom('forbidden') }), 'r', 'develop', null, r);
+		expect(s.sharingError(null)).toBe('forbidden');
+		expect(r).toHaveBeenCalledOnce();
+	});
+
+	it('untracks a branch and reloads; a refusal says why', async () => {
+		const s = new YouSectionState();
+		const r = reload();
+		const setGraphBranch = vi.fn().mockResolvedValue({ repo_key: 'r', branch: 'develop', tracked: false, is_default: false });
+		await s.untrack(api({ setGraphBranch }), 'r', 'develop', r);
+		expect(setGraphBranch).toHaveBeenCalledWith('r', 'develop', false, null);
+		expect(r).toHaveBeenCalledOnce();
+		await s.untrack(api({ setGraphBranch: boom('forbidden') }), 'r', 'develop', r);
+		expect(s.sharingError(null)).toBe('forbidden');
+		expect(r).toHaveBeenCalledOnce();
+	});
 });
+
+// Audit item 15 (2026-10-28): the Sharing screen built these labels itself.
+describe('sharing labels', () => {
+	it('says what the forge said, or that it was not asked — never a guess', () => {
+		expect(visibilityLabel('private')).toBe('private');
+		expect(visibilityLabel(null)).toBe('not yet captured');
+	});
+
+	it('says who holds the choice; no authority is a real state, not "you"', () => {
+		expect(authorityLabel({ authority: 'organization', owning_org: 'acme' } as never)).toBe('acme decides');
+		expect(authorityLabel({ authority: 'organization', owning_org: null } as never)).toBe('the organisation decides');
+		expect(authorityLabel({ authority: 'user' } as never)).toBe('you decide');
+		expect(authorityLabel({ authority: null } as never)).toBe('nobody yet');
+	});
+});
+

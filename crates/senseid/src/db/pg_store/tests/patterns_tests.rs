@@ -228,3 +228,57 @@ async fn correction_upsert_is_idempotent_by_signature() {
         "a signature not in the keep set is pruned"
     );
 }
+
+/// The Metrics read asked the narration cache once per metric — 28 sequential
+/// `UPDATE … RETURNING` per page load (median 1.37 s each in the slow log). One
+/// statement now reads every key: each hit's copy, keyed, its `last_used_at`
+/// bumped so hot copy stays warm; a miss is absent.
+#[tokio::test]
+async fn the_narration_cache_reads_many_keys_in_one_statement_and_bumps_the_hits() {
+    let s = pg_store().await;
+    let kind = format!("_test_kind_{}", uuid::Uuid::new_v4());
+    for (hash, detail) in [("h1", "one"), ("h2", "two")] {
+        s.upsert_narration_cache(&crate::db::pg_store::NarrationRow {
+            kind: &kind,
+            facts_hash: hash,
+            title: "t",
+            detail,
+            model_provider: None,
+            model_id: None,
+        })
+        .await;
+    }
+    sqlx_core::query::query(
+        "UPDATE sensei.narration_cache SET last_used_at = now() - interval '1 day' WHERE kind = $1",
+    )
+    .bind(&kind)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let got = s.get_narration_cache_many(&[(&kind, "h1"), (&kind, "missing"), (&kind, "h2")]).await;
+    let fresh: Vec<(String, bool)> = query_as(
+        "SELECT facts_hash, last_used_at > now() - interval '1 minute' FROM sensei.narration_cache
+          WHERE kind = $1 ORDER BY facts_hash",
+    )
+    .bind(&kind)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.narration_cache WHERE kind = $1")
+        .bind(&kind)
+        .execute(s.pool())
+        .await
+        .ok();
+
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert_eq!(
+        got.get(&(kind.clone(), "h1".to_string())),
+        Some(&("t".to_string(), "one".to_string()))
+    );
+    assert_eq!(
+        got.get(&(kind.clone(), "h2".to_string())),
+        Some(&("t".to_string(), "two".to_string()))
+    );
+    assert_eq!(fresh, vec![("h1".to_string(), true), ("h2".to_string(), true)]);
+}

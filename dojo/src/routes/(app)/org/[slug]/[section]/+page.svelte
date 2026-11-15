@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import { Notice } from '@sensei/ui';
 	import ScrOrgLadder from '$lib/components/screens/ScrOrgLadder.svelte';
 	import ScrWorkspaces from '$lib/components/screens/ScrWorkspaces.svelte';
 	import ScrTriage from '$lib/components/screens/ScrTriage.svelte';
@@ -189,7 +190,7 @@
 {:else if data.section === 'health'}
 	<ScrHealth orgName={data.orgName} health={data.health} error={data.healthError} />
 {:else if data.section === 'billing'}
-	<ScrBilling orgName={data.orgName} billing={data.billing} error={data.billingError} />
+	<ScrBilling orgName={data.orgName} billing={data.billing} error={data.billingError} hidden={data.billingHidden} hiddenError={data.billingHiddenError} />
 {:else}
 	<!-- Named branches only. This used to be an unlabelled `{:else}` holding
 	     billing, which happened to be correct because ORG_SECTIONS covered
@@ -201,21 +202,15 @@
 	<ScrPlaceholder title={labelForSection(data.section, 'org')} eyebrow={data.orgName} />
 {/if}
 
-{#if org.actionError}
+{#if org.actionNotice}
 	<!-- Honest surfacing of a failed console action — a dismissible toast, never a
 	     silent no-op. Cleared on the next attempt. -->
-	<div
-		class="bg-danger-soft border-danger-soft text-ink fixed z-50 flex items-center gap-3 rounded-lg border text-sm"
-		style="right: 16px; bottom: 16px; padding: 12px 16px; max-width: 380px"
-		role="alert"
-	>
-		<span class="flex-1">{org.actionError}</span>
-		<button
-			type="button"
-			class="text-ink-mute cursor-pointer text-xs underline"
-			onclick={() => (org.actionError = null)}
-		>
-			dismiss
-		</button>
+	<div class="fixed right-4 bottom-4 z-50 max-w-sm">
+		<Notice
+			size="inline"
+			expanded
+			{...org.actionNotice}
+			secondary={{ label: 'Dismiss', name: 'dismiss', onclick: () => org.dismiss() }}
+		/>
 	</div>
 {/if}

@@ -10,12 +10,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   syncTone,
+  syncToneClass,
   entityLabel,
   agreementLine,
-  worstSyncState,
-  summarise,
   detailLine,
-  groupSync,
 } from './dojo-status-state.svelte.js';
 import type { SyncStateRow } from '$lib/types.js';
 
@@ -30,6 +28,7 @@ function row(over: Partial<SyncStateRow> = {}): SyncStateRow {
     synced_at: '2026-08-31T19:57:55Z',
     updated_at: '2026-08-31T19:57:55Z',
     persona: 'jerrythomas',
+    remedy: null,
     ...over,
   };
 }
@@ -93,44 +92,6 @@ describe('agreementLine', () => {
   });
 });
 
-describe('worstSyncState', () => {
-  it('ranks a fault above everything', () => {
-    expect(worstSyncState({ synced: 40, skipped: 5, error: 1 })).toBe('error');
-  });
-
-  it('ranks pending above skipped, since one resolves and one is a decision', () => {
-    expect(worstSyncState({ synced: 3, skipped: 2, pending: 1 })).toBe('pending');
-  });
-
-  it('is null when there is nothing at all, not a fabricated all-clear', () => {
-    expect(worstSyncState({})).toBeNull();
-  });
-
-  it('ignores an unknown state rather than ranking it worst', () => {
-    expect(worstSyncState({ mystery: 9, synced: 1 })).toBe('synced');
-  });
-});
-
-describe('summarise', () => {
-  it('counts what it names', () => {
-    expect(summarise({ synced: 40, error: 2 })).toBe('42 tracked · 2 failing');
-  });
-
-  it('says everything agrees when nothing is wrong', () => {
-    expect(summarise({ synced: 3 })).toBe('3 tracked · all agreed');
-  });
-
-  it('counts a skip without calling it a failure', () => {
-    expect(summarise({ synced: 3, skipped: 2 })).toBe('5 tracked · 2 skipped');
-  });
-
-  it('reports nothing tracked rather than claiming everything agrees', () => {
-    // The honest-empty case. "all agreed" over zero entities would say the sync
-    // is healthy on an install that has never synced anything.
-    expect(summarise({})).toBe('nothing tracked yet');
-  });
-});
-
 describe('detailLine', () => {
   // A checkout's graph push records WHY it was skipped as a code (#225). The
   // screen says what that means for this checkout instead of printing the code.
@@ -186,56 +147,41 @@ describe('a partial sync (#225)', () => {
     expect(detailLine(partial)).toBe('1 file(s) over the cap, not shared: big.rs');
   });
 
-  it('ranks after pending and before a skip', () => {
-    expect(worstSyncState({ partial: 1, skipped: 1, synced: 1 })).toBe('partial');
-    expect(worstSyncState({ pending: 1, partial: 1 })).toBe('pending');
-  });
+});
 
-  it('is counted in the summary by name', () => {
-    expect(summarise({ synced: 3, partial: 1 })).toBe('4 tracked · 1 partial');
+describe('syncToneClass', () => {
+  it('colours each sync state from the state module, skipped muted and never as a fault', () => {
+    expect(syncToneClass('synced')).toBe('text-success');
+    expect(syncToneClass('partial')).toBe('text-warning');
+    expect(syncToneClass('error')).toBe('text-danger');
+    expect(syncToneClass('pending')).toBe('text-info');
+    expect(syncToneClass('skipped')).toBe('text-ink-soft');
+    expect(syncToneClass('something_new')).toBe('text-ink-soft');
   });
 });
 
+describe('repository verdicts', () => {
+  const skippedRepo = (over: Partial<SyncStateRow>) =>
+    row({
+      entity: 'repository',
+      entity_key: 'github.com/sensei-hq/dbd',
+      state: 'skipped',
+      synced_at: null,
+      ...over,
+    });
 
-// The user (2026-10-27): one flat list mixed identities, days and branches —
-// `torii` and `torii@develop` read as two repositories, and "default" (a
-// Keychain slot) read as "the default identity". Grouped: identity (by its
-// NAME) → day → repository, each branch under its repository.
-describe('groupSync', () => {
-  const who = [
-    { slot: 'default', label: 'sensei-hq-org' },
-    { slot: 'jerrythomas', label: 'jerrythomas' },
-  ];
-
-  it('groups by identity name, then day (newest first), then repository, with branches folded in', () => {
-    const rows = [
-      row({ entity: 'repository_metric', entity_key: 'github.com/sensei-hq/torii', synced_at: '2026-10-27T10:00:00Z' }),
-      row({ entity: 'repository_graph', entity_key: 'github.com/sensei-hq/torii@develop', state: 'skipped', synced_at: null, attempted_at: '2026-10-27T11:00:00Z' }),
-      row({ entity: 'repository_metric', entity_key: 'github.com/jerrythomas/rokkit', synced_at: '2026-10-20T10:00:00Z' }),
-      row({ entity: 'forge_mirror', entity_key: 'default', direction: 'pull', state: 'error', synced_at: null, attempted_at: '2026-10-27T09:00:00Z', persona: 'default' }),
-    ];
-    const g = groupSync(rows, who);
-    expect(g.map((i) => i.label)).toEqual(['jerrythomas', 'sensei-hq-org']);
-    const mine = g[0];
-    expect(mine.days.map((d) => d.day)).toEqual(['2026-10-27', '2026-10-20']);
-    const torii = mine.days[0].repositories;
-    expect(torii.map((r) => r.name)).toEqual(['github.com/sensei-hq/torii']);
-    expect(torii[0].items.map((i) => [i.row.entity, i.branch])).toEqual([
-      ['repository_metric', null],
-      ['repository_graph', 'develop'],
-    ]);
-    // An identity's own entities (its sync plan, its forge mirror) are its own,
-    // not a repository's.
-    expect(g[1].days[0].own.map((i) => i.row.entity)).toEqual(['forge_mirror']);
+  it('a_skipped_repository_reads_muted_with_its_remedy', () => {
+    // The remedy arrives server-joined from `sensei.reason_codes`; the screen
+    // renders it, never a TS copy of the text.
+    const r = skippedRepo({ last_error: 'denied:not_subscribed', remedy: 'Ask an admin to subscribe' });
+    expect(syncTone(r.state)).toBe('muted');
+    expect(detailLine(r)).toBe('Ask an admin to subscribe');
   });
 
-  it('keeps rows no identity has written yet, in a group of their own, last', () => {
-    const g = groupSync([row({ persona: null }), row({ entity_key: 'x', persona: 'jerrythomas' })], who);
-    expect(g.map((i) => i.label)).toEqual(['jerrythomas', null]);
-  });
-
-  it('a row never agreed nor tried has no day, and sorts after the dated ones', () => {
-    const g = groupSync([row({ synced_at: null, attempted_at: null }), row({ entity_key: 'y' })], who);
-    expect(g[0].days.map((d) => d.day)).toEqual(['2026-08-31', null]);
+  it('an_unknown_reason_passes_through_verbatim', () => {
+    // No `repository_sharing` code names `no_connection`: without a joined
+    // remedy the recorded reason shows as-is rather than blanking.
+    const r = skippedRepo({ last_error: 'unmapped:no_connection', remedy: null });
+    expect(detailLine(r)).toBe('unmapped:no_connection');
   });
 });

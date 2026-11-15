@@ -202,22 +202,23 @@ async fn write_one_repo(
     let mut out = RepoResult { abs_path: abs.clone(), ..Default::default() };
     let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
 
-    // A repo gets a WORKSPACE, 1:1. Without it the chain that answers "which
+    // A repo gets a WORKSPACE. Without it the chain that answers "which
     // workspaces use this library" — and everything keyed on it, including the
     // update scheduler and therefore the registry-URL extraction — had no input
-    // at all. Matched by name, so the 147 workspaces predating this scan are
-    // reused rather than duplicated.
+    // at all. Named by the same rule the repo scan applies (README `workspace:`
+    // frontmatter, else the folder name) so one scan never files a repo twice.
     //
     // The workspace is recorded BELOW, against the repository, once the folder
     // and its repository both exist. It is deliberately not an argument to the
     // folder upsert: since #211 there is no `folders.workspace_id` to put it in.
-    let workspace_id = match pg.get_or_create_workspace_by_name(&name).await {
-        Ok((id, _created)) => Some(id),
-        Err(e) => {
-            out.errors.push(format!("get_or_create_workspace_by_name({name}): {e}"));
-            None
-        }
-    };
+    let workspace_id =
+        match crate::tasks::handlers::repo_scan::resolve_workspace(pg, root, &name).await {
+            Ok((id, _created)) => Some(id),
+            Err(e) => {
+                out.errors.push(format!("resolve_workspace({name}): {e}"));
+                None
+            }
+        };
 
     let folder_id = match pg
         .upsert_folder(&crate::db::pg_store::FolderRow {
@@ -1889,6 +1890,51 @@ mod corpus {
         .await
         .expect("read folder_workspaces");
         assert_eq!(resolved, vec![name], "`folder_workspaces` cannot resolve the scanned repo");
+    }
+
+    /// A README that opts into a workspace (`workspace:` frontmatter) is grouped
+    /// there by THIS scan too, the same rule `repo_scan::resolve_workspace` applies.
+    /// Otherwise one `sensei scan` puts the repo in two workspaces: the grouped
+    /// one, and a second named after its folder.
+    ///
+    /// Mutation that must break this test: name the workspace after the folder
+    /// in `write_one_repo` again.
+    #[tokio::test]
+    async fn a_readme_workspace_groups_the_scanned_repository_and_mints_no_folder_workspace() {
+        let pg = PgStore::test_store().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let (folder, grouped) = (format!("member{tag}"), format!("group{tag}"));
+        let repo = tmp.path().join(&folder);
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("README.md"), format!("---\nworkspace: {grouped}\n---\n# m\n"))
+            .unwrap();
+
+        let root_id = resolve_watch_root(&pg, tmp.path()).await;
+        let summary =
+            scan_and_write_structure(&pg, tmp.path(), &root_id, StageEvents::none()).await;
+        let written =
+            summary.repos.iter().find(|r| r.repository_id.is_some()).expect("repo written");
+
+        let linked: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT p.name FROM sensei.repositories_in_workspaces pr
+               JOIN sensei.workspaces p ON p.id = pr.workspace_id
+              WHERE pr.repository_id = $1",
+        )
+        .bind(written.repository_id.expect("repository row"))
+        .fetch_all(pg.pool())
+        .await
+        .expect("read junction");
+        assert_eq!(linked, vec![grouped], "the README's workspace is the repo's only workspace");
+
+        let minted: i64 = sqlx_core::query_scalar::query_scalar(
+            "SELECT count(*) FROM sensei.workspaces WHERE name = $1",
+        )
+        .bind(&folder)
+        .fetch_one(pg.pool())
+        .await
+        .expect("count");
+        assert_eq!(minted, 0, "no workspace named after the folder");
     }
 
     /// cargo test -p senseid --lib indexer::pipeline::corpus -- --ignored --nocapture

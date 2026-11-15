@@ -70,14 +70,14 @@ I don't debug platform quirks.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Install command | one-liner for all targets | `curl -fsSL https://sensei.dev/install.sh \| sh` |
-| Health check | all-green on fresh machine | `sensei doctor` → 5/5 ready |
-| Service status | daemon running via native manager | `brew services list \| grep sensei` |
-| Data dir | platform-conventional | `~/Library/Application Support/sensei` |
-| Engine status | rustup, ollama, postgres ready | `sensei doctor --engines` |
-| Upgrade | canonical step order | `sensei upgrade` → db → engines → daemon |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Install command | one-liner for all targets | `curl -fsSL https://sensei.dev/install.sh \| sh` | run it |
+| Health check | all-green on fresh machine | `sensei doctor` → 5/5 ready | fix the red item `sensei doctor` names |
+| Service status | daemon running via native manager | `brew services list \| grep sensei` | stopped → `brew services start sensei` |
+| Data dir | platform-conventional | `~/Library/Application Support/sensei` | none — candidate to cut |
+| Engine status | rustup, ollama, postgres ready | `sensei doctor --engines` | install the missing engine |
+| Upgrade | canonical step order | `sensei upgrade` → db → engines → daemon | run `sensei upgrade` |
 
 ## Done gate
 
@@ -126,8 +126,8 @@ sensei doctor --json | jq '.components[] | select(.status != "ready")'
   distribute** (decision 7, reorg §10.3) (P1).
 - [D-13](../../../../roadmap/06-gaps.md) — 28 medium OSV advisories (transitive;
   none code-fixable) (P3).
-- [D-12](../../../../roadmap/06-gaps.md) — dependency drift: `@rokkit/*`,
-  `@kavach/*` held back by lockfiles (P3).
+- ~~D-12~~ — **closed 2026-11-03** by `eefc6c119`: every `@kavach/*` at 1.3.2, so
+  `@rokkit/*` resolves once at 1.14.0 (#191).
 
 ## Related
 

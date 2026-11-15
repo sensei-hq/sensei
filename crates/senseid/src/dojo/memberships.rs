@@ -305,6 +305,11 @@ pub struct ConnectionView {
     pub last_heartbeat_at: Option<String>,
     pub enabled: bool,
     pub bound_workspaces: Vec<BoundWorkspace>,
+    /// The session slot of the persona this membership belongs to — what the
+    /// identity list (`GET /api/auth/personas`, `sessionSlot`) and the sync rows
+    /// (`persona`) key on, so Settings · Dōjō can list each identity's dōjōs.
+    /// `None` when no persona is bound, or the bound one is signed out.
+    pub persona_slot: Option<String>,
 }
 
 impl ConnectionView {
@@ -324,6 +329,7 @@ impl ConnectionView {
             last_heartbeat_at: row.last_heartbeat_at,
             enabled: row.enabled,
             bound_workspaces,
+            persona_slot: row.persona.and_then(|p| p.session_slot),
         }
     }
 }
@@ -500,5 +506,55 @@ mod tests {
             "healthy",
         );
         assert!(empty_tenant.unwrap_err().contains("tenant_key"));
+    }
+
+    fn membership_with(persona: Option<crate::db::pg_store::MembershipPersona>) -> DojoMembership {
+        DojoMembership {
+            id: uuid::Uuid::nil(),
+            registry_url: "http://localhost:7755".into(),
+            tenant_key: "github/sensei-hq".into(),
+            dojo_url: "http://localhost:7755/github/sensei-hq".into(),
+            kind: "employer".into(),
+            org_slugs: vec!["sensei-hq".into()],
+            role: "contributor".into(),
+            authenticated_via: "github_oauth".into(),
+            attribution_default: "named".into(),
+            sync_status: "authenticating".into(),
+            last_seq: 0,
+            last_heartbeat_at: None,
+            enabled: true,
+            persona,
+        }
+    }
+
+    #[test]
+    fn the_view_names_whose_membership_it_is_by_session_slot() {
+        // Settings · Dōjō lists each identity's dōjōs: the slot is the key the
+        // identity list and the sync rows already use.
+        let bound = crate::db::pg_store::MembershipPersona {
+            persona_id: uuid::Uuid::nil(),
+            session_slot: Some("jerrythomas".into()),
+        };
+        let v = ConnectionView::from_row(membership_with(Some(bound)), vec![]);
+        assert_eq!(v.persona_slot.as_deref(), Some("jerrythomas"));
+        assert_eq!(serde_json::to_value(&v).unwrap()["persona_slot"], "jerrythomas");
+    }
+
+    #[test]
+    fn a_signed_out_or_unbound_membership_has_no_slot() {
+        let signed_out = crate::db::pg_store::MembershipPersona {
+            persona_id: uuid::Uuid::nil(),
+            session_slot: None,
+        };
+        assert_eq!(
+            ConnectionView::from_row(membership_with(Some(signed_out)), vec![]).persona_slot,
+            None
+        );
+        assert_eq!(ConnectionView::from_row(membership_with(None), vec![]).persona_slot, None);
+        assert!(
+            serde_json::to_value(ConnectionView::from_row(membership_with(None), vec![])).unwrap()
+                ["persona_slot"]
+                .is_null()
+        );
     }
 }

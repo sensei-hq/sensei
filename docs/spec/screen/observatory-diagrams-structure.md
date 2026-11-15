@@ -2,7 +2,7 @@
 
 **Segment:** 04 · Observatory / Project window
 **Route:** `/project/[id]/diagrams/structure`
-**Source mockup:** [`lib/project/project-pages.jsx`](../../mockups/Sensei/lib/project/project-pages.jsx) → `PROJ_DIAGRAMS` `diag-structure`, rendered by [`Sensei Schema and Call Graph.dc.html`](../../mockups/Sensei/Sensei%20Schema%20and%20Call%20Graph.dc.html) view `structure`
+**Source mockup:** `lib/project/project-pages.jsx` → `PROJ_DIAGRAMS` `diag-structure`, rendered by `Sensei Schema and Call Graph.dc.html` view `structure`
 **Data:** `sensei.graph_nodes` + `sensei.edges`, both already populated. **No new indexing.**
 **App file:** _greenfield_
 **Daemon files:** _greenfield_ — no HTTP handler serves a structure payload yet
@@ -126,7 +126,7 @@ Fails with 500 on a DB error — never an empty payload
 - **Empty state on a DB error.** Indistinguishable from an unindexed project.
 - **Loading everything at symbol level.** sensei is 27,441 nodes at project
   grain; symbol level across a client monorepo is not renderable and must wait
-  for drill-down ([rokkit#165](https://github.com/jerrythomas/rokkit/issues/165)).
+  for drill-down ([rokkit#165](https://github.com/sensei-hq/rokkit/issues/165)).
 
 ## Not in scope
 

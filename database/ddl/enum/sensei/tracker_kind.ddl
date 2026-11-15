@@ -3,7 +3,9 @@ set search_path to sensei, extensions;
 -- Which issue tracker a connection speaks to. One value per registered adapter
 -- (`crate::tracker::adapters()`); a value with no adapter is a bug, not data.
 create type tracker_kind as enum (
-  'jira'      -- Jira Cloud (Agile REST); GitLab is the next adapter
+  'jira'      -- Jira Cloud (Agile REST)
+, 'gitlab'    -- gitlab.com and self-managed, Free/CE up (REST v4)
+, 'github'    -- github.com Projects (v2), GraphQL (tracker-github, D92)
 );
 
 comment on type tracker_kind is

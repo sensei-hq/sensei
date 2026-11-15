@@ -98,10 +98,19 @@ export function e2eKeychainHas(service: string): boolean {
 
 /** Declare an MCP server in the isolated home's Cursor config, as a user who
  *  configured one would have. Discovery picks it up on its next scan. */
-export function seedCursorMcpServer(key: string): void {
+export function seedCursorMcpServer(key: string, command = '/usr/bin/true'): void {
   const dir = join(E2E_HOME, '.cursor');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { [key]: { command: '/usr/bin/true', args: [] } } }));
+  writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { [key]: { command, args: [] } } }));
+}
+
+/** The sensei-mcp the e2e daemon ships with (`make install-debug` overlays the brew prefix). */
+export const SENSEI_MCP_BIN = '/opt/homebrew/bin/sensei-mcp';
+
+/** Declare sensei's own MCP for Cursor in the isolated home, as `sensei init` writes it — the
+ *  e2e home has no assistant configured with sensei until a spec does this. */
+export function seedSenseiMcp(): void {
+  seedCursorMcpServer('sensei', SENSEI_MCP_BIN);
 }
 
 /** Remove the Cursor config {@link seedCursorMcpServer} wrote. */

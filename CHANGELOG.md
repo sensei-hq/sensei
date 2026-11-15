@@ -15,6 +15,63 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-11-15
+
+### Added
+
+- **Raw transcript backup.** Every ingested transcript's bytes are kept gzipped
+  in `activity.transcript_raw` (sha-keyed, so re-reads never rewrite the blob),
+  and pruned 90 days past their last sighting (`activity.transcript_raw_retention_days`)
+  on the daily activity prune pass — rotated files stay recoverable for the window.
+- **`/sensei:register`** joins a session to the active crew in one command (#415).
+- **SDD framework per ticket.** Each ticket records the spec-driven framework it was
+  built with (#390, #391, #392).
+- **Transcript export of a missing file** is lossy rather than an error: what was
+  ingested is exported and the missing source is said (#435).
+- **Relay autonomous queue.** A crew runs on a queue instead of hand-offs: lanes claim
+  ready tasks and floating reviews first-come-first-served (`POST /api/relay/tasks/claim_next`,
+  `/{id}/claim`, `/{id}/claim_review`, `/{id}/release`, `/{id}/checkpoint`, `GET /api/relay/queue`;
+  MCP `relay_claim_next` … `relay_get_queue`), a report floats for any non-author lane, a
+  claim-early task's report is gated until its dependencies are done
+  (409 `relay_upstream_deps_unmet`). The person creates a **sprint run** from the Relay
+  screen (`POST /relay/runs`): Task 0 plans it, a peer approves, the plan unpacks into
+  ready tasks, and the band shows the run's counts; "Needs a reviewer" lists floating
+  reviews and each lane shows the review it holds. A **deterministic merge gate** merges
+  what a peer approved (`git merge-tree` probe, verify in a throwaway worktree, `--no-ff`),
+  or sends it back with a `merge_conflict` / `build_failure` finding. `register` needs
+  only a family (role defaults to contributor, the one active crew is joined, a
+  `suggested_name` becomes the lane title); guidance v2 spells the loop out.
+- **Sweeper duties:** limit pauses end at `resumes_at` (never on a beat; `limit_resume`
+  ends one early), abandoned review claims are released after 60 s, dead lanes' wait
+  holds are evicted, a review floating 15 min nudges everyone, and a run completes itself.
+
+### Changed
+
+- **BREAKING** (relay schema): `relay.tasks.reviewer_lane_id` is gone (`review_claimed_by`
+  + `review_claimed_at`), `ready` is the pool default, `assigned_at` is nullable, and
+  three tables arrive (`relay.runs`, `relay.run_items`, `relay.lane_waiters`). `sensei
+  upgrade` converges it; planned-but-unassigned tasks become `ready`. The reviewer
+  re-pick and `assign`'s `reviewer_lane` are gone. Reading an envelope never starts a
+  task; the holder's first write does. `tasks/wait` and `tasks` refuse unknown query
+  keys and take `timeout_seconds`.
+- **Embedding calls are capped per scan run** and the rest continue in the
+  background, so a large scan no longer stalls on the model (#359).
+
+### Fixed
+
+- **Rust projects without a committed `Cargo.lock` indexed nothing on Rust 1.100.**
+  rust-analyzer 1.100 writes a lockfile into such a project; it read as an edit, so
+  every compile was stale on arrival. A file the compile writes itself is now part of
+  what it compiled; an edit made during the compile still counts.
+- **The relay merge gate's cleanup** removes a verify worktree left locked by a
+  `git worktree add` the budget killed.
+- **The schema diagram canvas** is sized to its content (#432).
+
+### Security
+
+- `quinn-udp` 0.5.16 (RUSTSEC-2026-0538). RUSTSEC-2026-0459 (bundled SQLite in
+  `libsqlite3-sys` 0.30.1) is a recorded exception until the sqlx 0.9 move (#446).
+
 ## [0.21.1] — 2026-10-27
 
 ### Added
@@ -963,7 +1020,7 @@ retires roughly 5,600 lines of v1.
 
 ### Known issues
 
-See [`docs/production-readiness.md`](docs/production-readiness.md), which
+See `docs/production-readiness.md`, which
 measures each of these against the live system:
 
 - `activity.sessions.metered_cost` is never non-zero, so no cost metric is

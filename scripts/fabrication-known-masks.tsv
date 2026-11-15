@@ -1,0 +1,482 @@
+file	line	severity	anchor
+# Every FAILURE-MASK in Appendix A of coord/audits/fabrication-2026-11-03.md (audit commit ba24e3cb6).
+# `anchor` is that line's whitespace-collapsed text at the audit commit. check-no-fabrication.py refuses
+# an allowlist row whose (file, anchor) equals one of these: a mask is fixed, never allowlisted.
+app/src/lib/wizard-state.svelte.ts	776	HIGH	} catch {
+app/src/routes/(observatory)/ObservatorySidebar.svelte	48	HIGH	<span class="font-mono text-ink-soft">daemon · running</span><br />
+app/src/routes/(preferences)/settings/dojo/dojo-connection-state.svelte.ts	123	HIGH	summary: identitySummary(i, memberships ?? [], sync ?? []),
+app/src/routes/(preferences)/settings/dojo/dojo-connection-state.svelte.ts	197	HIGH	return dojoGroups(this.#src.memberships ?? [], this.#src.sync ?? [], i.sessionSlot, 'all');
+app/src/routes/(workspace)/workspace/[id]/metrics/+page.svelte	144	HIGH	components={health?.components ?? {}}
+app/src/routes/(workspace)/workspace/[id]/metrics/+page.svelte	145	HIGH	score={health?.health_score ?? null}
+app/src/routes/(workspace)/workspace/[id]/metrics/+page.svelte	146	HIGH	ratedMetrics={health?.rated_metrics ?? 0}
+app/src/routes/(workspace)/workspace/[id]/tickets/tickets-state.svelte.ts	221	HIGH	const total = this.tasks?.length ?? 0;
+crates/bootstrap/src/config.rs	329	HIGH	.ok()
+crates/bootstrap/src/config.rs	330	HIGH	.and_then(|s| serde_json::from_str(&s).ok())
+crates/bootstrap/src/config.rs	331	HIGH	.unwrap_or_default()
+crates/cli/src/doctor.rs	188	HIGH	let health: serde_json::Value = match client.get(format!("{base}/api/assistants/health")).send()
+crates/cli/src/doctor.rs	209	HIGH	let adapters = health["adapters"].as_array().cloned().unwrap_or_default();
+crates/cli/src/main.rs	522	HIGH	.ok()
+crates/cli/src/main.rs	523	HIGH	.and_then(|r| r.json().ok())
+crates/cli/src/main.rs	524	HIGH	.unwrap_or_default();
+crates/cli/src/main.rs	677	HIGH	.then(|| fs::read_to_string(&mcp_file).ok())
+crates/cli/src/main.rs	679	HIGH	.and_then(|s| serde_json::from_str(&s).ok())
+crates/cli/src/main.rs	680	HIGH	.unwrap_or(serde_json::json!({"mcpServers": {}}));
+crates/cli/src/main.rs	832	HIGH	let result: serde_json::Value = r.json().unwrap_or_default();
+crates/cli/src/main.rs	877	HIGH	let result: serde_json::Value = r.json().unwrap_or_default();
+crates/cli/src/main.rs	966	HIGH	let reports: Vec<serde_json::Value> = r.json().unwrap_or_default();
+crates/cli/src/main.rs	1154	HIGH	let report: serde_json::Value = r.json().unwrap_or_default();
+crates/cli/src/main.rs	1346	HIGH	let d: serde_json::Value = r.json().unwrap_or_default();
+crates/cli/src/managed.rs	73	HIGH	let existing = fs::read_to_string(path).ok(); // nosemgrep
+crates/cli/src/tracker.rs	661	HIGH	let v: Value = resp.json().unwrap_or(Value::Null);
+crates/senseid/src/api/handlers/auth.rs	1014	HIGH	let auth_user_id = usable.as_ref().ok().and_then(|v| v["userId"].as_str().map(String::from));
+crates/senseid/src/api/handlers/auth.rs	1026	HIGH	.ok()
+crates/senseid/src/api/handlers/auth.rs	1027	HIGH	.and_then(|r| r.ok());
+crates/senseid/src/api/handlers/auth.rs	1151	HIGH	Err(_) => Some("missing"),
+crates/senseid/src/api/handlers/auth.rs	1260	HIGH	let body: serde_json::Value = r.json().await.unwrap_or_default();
+crates/senseid/src/api/handlers/auth.rs	1277	HIGH	.unwrap_or_default();
+crates/senseid/src/api/handlers/auth.rs	1412	HIGH	let Ok(r) = crate::federation::http_client()
+crates/senseid/src/api/handlers/auth.rs	1433	HIGH	let list: serde_json::Value = r.json().await.unwrap_or_default();
+crates/senseid/src/api/handlers/auth.rs	1442	HIGH	.unwrap_or_default();
+crates/senseid/src/api/handlers/knowledge.rs	1292	HIGH	let workspace_id = state.pg.folder_workspace_id(folder_id).await.ok()??;
+crates/senseid/src/api/handlers/knowledge.rs	1293	HIGH	let membership_id = state.pg.workspace_bound_membership(&workspace_id).await.ok()??;
+crates/senseid/src/api/handlers/knowledge.rs	1294	HIGH	let membership = state.pg.get_dojo_membership(&membership_id).await.ok()??;
+crates/senseid/src/api/handlers/knowledge.rs	1295	HIGH	let pairs = state.pg.folder_namespace_pairs(folder_id).await.ok()?;
+crates/senseid/src/api/handlers/knowledge.rs	1302	HIGH	Err(e) => {
+crates/senseid/src/api/handlers/knowledge.rs	1309	HIGH	resolved.unwrap_or_default()
+crates/senseid/src/api/handlers/sessions.rs	491	HIGH	Err(_) => tracing::warn!(
+crates/senseid/src/api/handlers/stance.rs	72	HIGH	.unwrap_or_else(|_| crate::stance::ResolvedStance::fallback());
+crates/senseid/src/api/handlers/workspace.rs	334	HIGH	let existing = std::fs::read_to_string(&readme).unwrap_or_default();
+crates/senseid/src/assistants/helpers.rs	141	HIGH	json5::from_str::<serde_json::Value>(&raw).unwrap_or(serde_json::json!({}))
+crates/senseid/src/assistants/watchdog.rs	88	HIGH	let last = pg.latest_hook_event_ts(CLAUDE_FAMILY).await.unwrap_or_else(|e| {
+crates/senseid/src/db/pg_store/metrics.rs	223	HIGH	serde_json::json!({ "day": day.to_string(), "ftr_rate": ftr.unwrap_or(0.0), "session_count": count.unwrap_or(0) })
+crates/senseid/src/db/pg_store/metrics.rs	1341	HIGH	let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
+crates/senseid/src/db/pg_store/mod.rs	1091	HIGH	let scope: dojo_protocol::ArtifactScope = serde_json::from_value(scope_v).unwrap_or_else(|e| {
+crates/senseid/src/db/pg_store/mod.rs	1095	HIGH	let attribution: dojo_protocol::Attribution = serde_json::from_value(attribution_v).unwrap_or_else(|e| {
+crates/senseid/src/db/pg_store/sessions.rs	1204	HIGH	if let Ok(Some(fp)) = self.find_folder_for_path(cwd).await {
+crates/senseid/src/db/pg_store/sessions.rs	1293	HIGH	if let Ok(Some(fp)) = self.find_folder_for_path(cwd).await {
+crates/senseid/src/indexer/community.rs	381	HIGH	let meta = pg.get_node_name_kind(&god_ids).await.unwrap_or_default();
+crates/senseid/src/tasks/handlers/advance_run.rs	531	HIGH	.ok()
+crates/senseid/src/tasks/handlers/publish_run.rs	115	HIGH	update.workspace_slug = ctx.pg().run_workspace_slug(&run_id).await.ok().flatten();
+crates/senseid/src/tasks/handlers/repo_scan.rs	734	HIGH	.ok()
+crates/senseid/src/tasks/handlers/repo_scan.rs	742	HIGH	.ok()
+crates/senseid/src/tasks/handlers/repo_scan.rs	745	HIGH	.unwrap_or_else(|| parent_repo.to_string()),
+crates/senseid/src/tasks/handlers/tool_insights.rs	30	HIGH	raw_rows.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect();
+crates/senseid/src/tasks/library_update_scheduler.rs	231	HIGH	let advs = vuln.advisories(ecosystem, name).await.unwrap_or_default();
+crates/senseid/src/tasks/processors/metadata/frontmatter.rs	144	HIGH	let map = serde_yaml::from_str::<serde_yaml::Mapping>(&rest[..idx]).unwrap_or_default();
+crates/senseid/src/tasks/processors/metadata/frontmatter.rs	148	HIGH	let map = serde_yaml::from_str::<serde_yaml::Mapping>(stripped).unwrap_or_default();
+crates/senseid/src/tool_discovery.rs	276	HIGH	let builtins = pg.distinct_builtin_tool_names().await.unwrap_or_default();
+crates/senseid/src/tool_discovery.rs	293	HIGH	let servers = pg.list_mcp_servers(None).await.unwrap_or_default();
+database/ddl/procedure/staging/import_assistant_events.ddl	31	HIGH	, coalesce(stg.family, 'claude')::sensei.assistant_family as family
+database/ddl/procedure/staging/import_assistant_events.ddl	35	HIGH	, coalesce(stg.ts, extract(epoch from now())::bigint * 1000) as ts
+database/ddl/view/sensei/workspace_quality_signals.ddl	40	HIGH	, COALESCE(ftr.ftr_7d, 0) AS ftr_7d
+dojo/src/routes/(app)/org/[slug]/+page.ts	33	HIGH	} catch (e) {
+dojo/src/routes/v1/t/[origin]/[org]/relay/session/+server.ts	105	HIGH	})().catch(() => {});
+app/src/routes/(preferences)/settings/dojo/dojo-connection-state.svelte.ts	191	MEDIUM	return dojoGroups(this.#src.memberships ?? [], this.#src.sync ?? [], i.sessionSlot, this.filter);
+app/src/routes/(preferences)/settings/dojo/dojo-connection-state.svelte.ts	248	MEDIUM	return (this.#src.sync ?? []).filter((r) => r.persona === slot && IDENTITY_ENTITIES.has(r.entity));
+app/src/routes/(preferences)/settings/preferences-form.ts	15	MEDIUM	const merged: PreferencesData = { ...DEFAULT_PREFERENCES, ...(parsed ?? {}) };
+app/src/routes/(preferences)/settings/preferences-form.ts	37	MEDIUM	try { return JSON.parse(raw) as T; } catch { return undefined; }
+app/src/routes/(workspace)/workspace/[id]/metrics/metrics-state.svelte.ts	82	MEDIUM	return (this.allCorrelations.data ?? []).filter((c) => present.has(c.a) && present.has(c.b));
+crates/cli/src/auth.rs	171	MEDIUM	let state = match p["action"].as_str().unwrap_or("") {
+crates/cli/src/main.rs	643	MEDIUM	fs::create_dir_all(&sensei_dir).ok();
+crates/cli/src/main.rs	653	MEDIUM	)).ok();
+crates/cli/src/main.rs	662	MEDIUM	fs::create_dir_all(&personas_dir).ok();
+crates/cli/src/main.rs	671	MEDIUM	fs::create_dir_all(&mindsets_dst).ok();
+crates/cli/src/main.rs	689	MEDIUM	fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
+crates/cli/src/main.rs	702	MEDIUM	fs::write(&settings_local, json).ok();
+crates/cli/src/main.rs	773	MEDIUM	.ok()
+crates/cli/src/main.rs	774	MEDIUM	.and_then(|r| r.json().ok())
+crates/cli/src/main.rs	775	MEDIUM	.unwrap_or_default();
+crates/cli/src/main.rs	926	MEDIUM	fs::remove_dir_all(&sensei_dir).ok();
+crates/cli/src/main.rs	1165	MEDIUM	let n = |k: &str| r[k].as_u64().unwrap_or(0);
+crates/cli/src/main.rs	1261	MEDIUM	let d: serde_json::Value = r.json().unwrap_or_default();
+crates/cli/src/main.rs	1362	MEDIUM	let models = d["models"].as_array().cloned().unwrap_or_default();
+crates/cli/src/tracker.rs	99	MEDIUM	let list = list.as_array().map(Vec::as_slice).unwrap_or_default();
+crates/cli/src/tracker.rs	128	MEDIUM	let list = trackers.as_array().map(Vec::as_slice).unwrap_or_default();
+crates/cli/src/tracker.rs	448	MEDIUM	let v: Value = resp.json().unwrap_or(Value::Null);
+crates/cli/src/tracker.rs	476	MEDIUM	.unwrap_or_default()
+crates/cli/src/tracker.rs	522	MEDIUM	.unwrap_or_default()
+crates/cli/src/tracker.rs	611	MEDIUM	let list = tasks.as_array().map(Vec::as_slice).unwrap_or_default();
+crates/mcp/src/lib.rs	301	MEDIUM	let outcomes: Value = serde_json::from_str(args["outcomes"].as_str().unwrap_or("[]"))
+crates/mcp/src/lib.rs	302	MEDIUM	.unwrap_or_else(|_| json!([]));
+crates/mcp/src/lib.rs	1199	MEDIUM	let id = p["id"].as_str().unwrap_or_default().to_string();
+crates/senseid/src/api/gateway_config_loader.rs	267	MEDIUM	default_headers: serde_json::from_str(&headers).unwrap_or(serde_json::Value::Null),
+crates/senseid/src/api/gateway_config_loader.rs	268	MEDIUM	config: serde_json::from_str(&config).unwrap_or(serde_json::Value::Null),
+crates/senseid/src/api/handlers/identity.rs	50	MEDIUM	Err(e) => {
+crates/senseid/src/api/handlers/libraries.rs	283	MEDIUM	&& let Ok(content) = std::fs::read_to_string(&pkg_json)
+crates/senseid/src/api/handlers/libraries.rs	284	MEDIUM	&& let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
+crates/senseid/src/api/handlers/mcp.rs	310	MEDIUM	let outcome = params["outcome"].as_str().unwrap_or("completed");
+crates/senseid/src/api/handlers/observatory.rs	647	MEDIUM	} else if let Ok(Some(folder)) = state.pg.get_repo_by_name(&repo_id).await {
+crates/senseid/src/api/handlers/observatory.rs	886	MEDIUM	rows.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect();
+crates/senseid/src/api/handlers/playbook.rs	165	MEDIUM	Err(e) => {
+crates/senseid/src/api/handlers/query.rs	445	MEDIUM	let Ok(ids) = resolve_scope_ids(state, repo_id).await else { return vec![] };
+crates/senseid/src/api/handlers/query.rs	449	MEDIUM	let roots = state.pg.scope_repo_roots(&ids).await.unwrap_or_default();
+crates/senseid/src/api/handlers/runs.rs	115	MEDIUM	crate::tasks::handlers::resolve_run_memberships(&state.pg, &run).await.unwrap_or_default();
+crates/senseid/src/api/handlers/runs.rs	477	MEDIUM	Err(e) => {
+crates/senseid/src/api/handlers/runs.rs	496	MEDIUM	Err(e) => {
+crates/senseid/src/api/handlers/sessions.rs	232	MEDIUM	let outcome = body["outcome"].as_str().unwrap_or("completed");
+crates/senseid/src/api/handlers/stance.rs	64	MEDIUM	.ok()
+crates/senseid/src/api/handlers/workspace.rs	862	MEDIUM	let enclosing = state.pg.enclosing_watch_root(&root_path).await.ok().flatten();
+crates/senseid/src/api/handlers/workspace.rs	863	MEDIUM	let indexed_repo = state.pg.repo_root_for_path(&root_path).await.ok().flatten();
+crates/senseid/src/api/handlers/workspace.rs	946	MEDIUM	Err(e) => {
+crates/senseid/src/api/handlers/workspace.rs	951	MEDIUM	.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+crates/senseid/src/api/handlers/workspace.rs	952	MEDIUM	.unwrap_or(serde_json::json!([]));
+crates/senseid/src/api/server.rs	326	MEDIUM	Err(e) => {
+crates/senseid/src/api/server.rs	390	MEDIUM	Err(e) => {
+crates/senseid/src/api/server.rs	790	MEDIUM	let roots = state.pg.list_watch_roots_to_sync().await.unwrap_or_else(|e| {
+crates/senseid/src/assistants/helpers.rs	24	MEDIUM	.ok()
+crates/senseid/src/assistants/helpers.rs	25	MEDIUM	.and_then(|s| json5::from_str::<serde_json::Value>(&s).ok())
+crates/senseid/src/assistants/helpers.rs	27	MEDIUM	.unwrap_or(false)
+crates/senseid/src/db/pg_store/metrics.rs	223	MEDIUM	serde_json::json!({ "day": day.to_string(), "ftr_rate": ftr.unwrap_or(0.0), "session_count": count.unwrap_or(0) })
+crates/senseid/src/indexer/doc_indexer.rs	53	MEDIUM	serde_yaml::from_str(yaml).unwrap_or_default()
+crates/senseid/src/indexer/lib_indexer.rs	892	MEDIUM	Err(e) => {
+crates/senseid/src/indexer/lib_indexer.rs	913	MEDIUM	Err(e) => {
+crates/senseid/src/indexer/lib_indexer.rs	988	MEDIUM	Err(e) => {
+crates/senseid/src/indexer/lib_indexer.rs	1062	MEDIUM	Err(e) => {
+crates/senseid/src/indexer/lib_indexer.rs	1069	MEDIUM	Err(e) => {
+crates/senseid/src/indexer/pipeline.rs	450	MEDIUM	let content = std::fs::read_to_string(&lock).ok()?;
+crates/senseid/src/indexer/pipeline.rs	453	MEDIUM	.unwrap_or_default();
+crates/senseid/src/indexer/pipeline.rs	627	MEDIUM	let content = std::fs::read_to_string(p).ok()?;
+crates/senseid/src/indexer/pipeline.rs	1142	MEDIUM	.filter_map(Result::ok)
+crates/senseid/src/indexer/pipeline.rs	1154	MEDIUM	Err(_) => Vec::new(),
+crates/senseid/src/indexer/pipeline.rs	1158	MEDIUM	let Ok(text) = std::fs::read_to_string(manifest) else { continue };
+crates/senseid/src/libraries/advisory.rs	189	MEDIUM	let client = reqwest::Client::builder().build().ok()?;
+crates/senseid/src/libraries/advisory.rs	197	MEDIUM	.ok()?;
+crates/senseid/src/libraries/advisory.rs	201	MEDIUM	let body = resp.text().await.ok()?;
+crates/senseid/src/libraries/mod.rs	130	MEDIUM	Err(e) => {
+crates/senseid/src/libraries/mod.rs	145	MEDIUM	Err(e) => {
+crates/senseid/src/libraries/mod.rs	173	MEDIUM	Err(e) => {
+crates/senseid/src/libraries/registry.rs	262	MEDIUM	let client = reqwest::Client::builder().build().ok()?;
+crates/senseid/src/libraries/registry.rs	263	MEDIUM	let resp = client.get(&url).header("User-Agent", "sensei-daemon").send().await.ok()?;
+crates/senseid/src/libraries/registry.rs	267	MEDIUM	let body = resp.text().await.ok()?;
+crates/senseid/src/qlty.rs	36	MEDIUM	let out = cmd.args(args).current_dir(dir).output().ok()?;
+crates/senseid/src/tasks/activity_pruner.rs	101	MEDIUM	let days = parse_retention(pg.get_config("activity.retention_days").await.ok().flatten());
+crates/senseid/src/tasks/activity_pruner.rs	103	MEDIUM	parse_backstop(pg.get_config("activity.capture_backstop_days").await.ok().flatten(), days);
+crates/senseid/src/tasks/activity_pruner.rs	116	MEDIUM	pg.get_config("tasks.execution_retention_days").await.ok().flatten(),
+crates/senseid/src/tasks/activity_pruner.rs	120	MEDIUM	pg.get_config("tasks.execution_failed_retention_days").await.ok().flatten(),
+crates/senseid/src/tasks/capture_drain.rs	61	MEDIUM	if payload["assistant_family"].as_str().unwrap_or("claude") != "claude" {
+crates/senseid/src/tasks/capture_drain.rs	78	MEDIUM	family: payload["assistant_family"].as_str().unwrap_or("claude"),
+crates/senseid/src/tasks/dojo_sync.rs	942	MEDIUM	Err(e) => {
+crates/senseid/src/tasks/git_history_pruner.rs	69	MEDIUM	let configured = pg.get_config(RETENTION_KEY).await.ok().flatten();
+crates/senseid/src/tasks/handlers/corrections.rs	207	MEDIUM	Err(e) => {
+crates/senseid/src/tasks/handlers/embed.rs	201	MEDIUM	Err(e) => {
+crates/senseid/src/tasks/handlers/libraries.rs	149	MEDIUM	.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/libraries.rs	485	MEDIUM	.unwrap_or("npm");
+crates/senseid/src/tasks/handlers/libraries.rs	505	MEDIUM	&& let Ok(Some(target_folder)) = ctx.pg().get_repo_by_path(abs_target).await
+crates/senseid/src/tasks/handlers/process.rs	27	MEDIUM	let Some(folder) = ctx.pg().get_repo_by_path(repo_abs_path).await.ok().flatten() else {
+crates/senseid/src/tasks/handlers/process.rs	78	MEDIUM	let workspace = ctx.pg().get_workspace(&pid).await.ok().flatten();
+crates/senseid/src/tasks/handlers/process.rs	374	MEDIUM	let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+crates/senseid/src/tasks/handlers/process.rs	1042	MEDIUM	let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+crates/senseid/src/tasks/handlers/process.rs	1054	MEDIUM	let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+crates/senseid/src/tasks/handlers/publish_run.rs	122	MEDIUM	let constitution = match ctx.pg().run_folder_id(&run_id).await.ok().flatten() {
+crates/senseid/src/tasks/handlers/publish_run.rs	127	MEDIUM	.ok()
+crates/senseid/src/tasks/handlers/scan.rs	160	MEDIUM	let reabsorbed = ctx.pg().heal_nested_standalone_roots().await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	198	MEDIUM	let repos_assigned = ctx.pg().assign_repositories(&root_id).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	226	MEDIUM	ctx.pg().link_folders_to_repositories(&links).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	231	MEDIUM	Err(e) => {
+crates/senseid/src/tasks/handlers/scan.rs	246	MEDIUM	let deduped = ctx.pg().dedup_structural_folder_nodes(&root_id).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	267	MEDIUM	let stubs = ctx.pg().prune_orphan_stubs_scoped(&ids).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	272	MEDIUM	ctx.pg().prune_mislabelled_containment_extends(&ids).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	281	MEDIUM	ctx.pg().prune_unreferenced_lib_nodes_scoped(&ids).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	299	MEDIUM	Err(e) => {
+crates/senseid/src/tasks/handlers/scan.rs	314	MEDIUM	let orphaned = ctx.pg().mark_orphaned_workspaces().await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	324	MEDIUM	ctx.pg().prune_orphan_keyless_repositories(60).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	333	MEDIUM	let pruned_workspaces = ctx.pg().prune_empty_workspaces(60).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/handlers/scan.rs	340	MEDIUM	let tagged = ctx.pg().tag_files_by_framework_kind(&root_id).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/index_audit.rs	354	MEDIUM	let all = pg.list_watch_roots_to_sync().await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/log_pruner.rs	43	MEDIUM	let days = parse_retention(pg.get_config("logs.retention_days").await.ok().flatten());
+crates/senseid/src/tasks/mcp_discovery.rs	108	MEDIUM	let s = std::fs::read_to_string(path).ok()?;
+crates/senseid/src/tasks/mcp_discovery.rs	109	MEDIUM	json5::from_str::<Value>(&s).ok()
+crates/senseid/src/tasks/processors/metadata/frontmatter.rs	52	MEDIUM	let v: serde_json::Value = serde_yaml::from_str(&yaml).ok()?;
+crates/senseid/src/tool_discovery.rs	239	MEDIUM	let repos = pg.get_workspace_repos(&pid).await.unwrap_or_default();
+crates/senseid/src/tool_discovery.rs	292	MEDIUM	let usage_prefixes = pg.usage_mcp_prefix_tools().await.unwrap_or_default();
+crates/senseid/src/tool_discovery.rs	335	MEDIUM	let _ = pg.set_mcp_server_connection_state(&id, "connected").await;
+crates/senseid/src/tool_discovery.rs	369	MEDIUM	let _ = pg.set_mcp_server_connection_state(&id, "error").await;
+crates/senseid/src/transcript/claude.rs	49	MEDIUM	let Ok(projects) = std::fs::read_dir(&self.root) else {
+crates/senseid/src/transcript/claude.rs	53	MEDIUM	let Ok(entries) = std::fs::read_dir(proj.path()) else {
+crates/senseid/src/transcript/copilot_cli.rs	29	MEDIUM	let Ok(conn) = rusqlite::Connection::open_with_flags(
+crates/senseid/src/transcript/copilot_cli.rs	37	MEDIUM	Err(_) => return Vec::new(),
+crates/senseid/src/transcript/copilot_cli.rs	45	MEDIUM	.map(|r| r.filter_map(|r| r.ok()).collect())
+crates/senseid/src/transcript/copilot_cli.rs	46	MEDIUM	.unwrap_or_default()
+crates/senseid/src/transcript/copilot_cli.rs	314	MEDIUM	let Ok(conn) = rusqlite::Connection::open_with_flags(
+crates/senseid/src/transcript/copilot_cli.rs	324	MEDIUM	Err(_) => return Vec::new(),
+crates/senseid/src/transcript/copilot_cli.rs	332	MEDIUM	.map(|r| r.filter_map(|r| r.ok()).collect())
+crates/senseid/src/transcript/copilot_cli.rs	333	MEDIUM	.unwrap_or_default();
+crates/senseid/src/transcript/copilot_cli.rs	360	MEDIUM	Err(_) => return ParsedTranscript::default(),
+crates/senseid/src/transcript/copilot_cli.rs	459	MEDIUM	if let Ok(entries) = std::fs::read_dir(&session_state) {
+crates/senseid/src/transcript/cursor.rs	253	MEDIUM	let Ok(entries) = std::fs::read_dir(&self.root) else {
+crates/senseid/src/transcript/cursor.rs	266	MEDIUM	if let Ok(dir_entries) = std::fs::read_dir(&agent_dir) {
+crates/senseid/src/transcript/cursor.rs	278	MEDIUM	if let Ok(dir_entries) = std::fs::read_dir(&agent_dir) {
+crates/senseid/src/transcript/cursor.rs	284	MEDIUM	if let Ok(session_entries) = std::fs::read_dir(&session_dir) {
+crates/senseid/src/transcript/opencode.rs	70	MEDIUM	Err(e) => {
+crates/senseid/src/transcript/opencode.rs	76	MEDIUM	let Ok(rows) = rows else { return Vec::new() };
+crates/senseid/src/transcript/vscode.rs	70	MEDIUM	let Ok(conn) = rusqlite::Connection::open_with_flags(
+crates/senseid/src/transcript/vscode.rs	79	MEDIUM	Err(_) => return Vec::new(),
+crates/senseid/src/transcript/vscode.rs	83	MEDIUM	.map(|r| r.filter_map(|r| r.ok()).collect())
+crates/senseid/src/transcript/vscode.rs	84	MEDIUM	.unwrap_or_default()
+crates/senseid/src/transcript/vscode.rs	92	MEDIUM	if let Ok(entries) = std::fs::read_dir(&ws) {
+crates/senseid/src/transcript/vscode.rs	95	MEDIUM	if let Ok(files) = std::fs::read_dir(&chat_dir) {
+crates/senseid/src/transcript/vscode.rs	107	MEDIUM	if let Ok(files) = std::fs::read_dir(&empty) {
+crates/senseid/src/transcript/vscode.rs	146	MEDIUM	if let Ok(entries) = std::fs::read_dir(&ws) {
+crates/senseid/src/transcript/vscode.rs	149	MEDIUM	if let Ok(files) = std::fs::read_dir(&tx_dir) {
+crates/senseid/src/transcript/vscode.rs	294	MEDIUM	Err(_) => return Vec::new(),
+crates/senseid/src/transcript/zed.rs	86	MEDIUM	Err(e) => {
+crates/senseid/src/transcript/zed.rs	92	MEDIUM	let Ok(rows) = rows else { return Vec::new() };
+database/ddl/procedure/staging/import_assistant_events.ddl	30	MEDIUM	coalesce(stg.session_id, '') as session_id
+database/ddl/procedure/staging/import_models_in_router.ddl	16	MEDIUM	, coalesce(stg.cost_per_input_token, 0)
+database/ddl/procedure/staging/import_models_in_router.ddl	17	MEDIUM	, coalesce(stg.cost_per_output_token, 0)
+database/ddl/view/activity/turn_usage.ddl	39	MEDIUM	, coalesce((e.payload -> 'usage' ->> 'input_tokens')::bigint, 0) as fresh
+database/ddl/view/activity/turn_usage.ddl	42	MEDIUM	, coalesce((e.payload -> 'usage' ->> 'output_tokens')::bigint, 0) as output
+database/ddl/view/activity/turn_usage.ddl	81	MEDIUM	, coalesce(h.output, t.output, 0) as output
+database/ddl/view/sensei/workspace_quality_signals.ddl	17	MEDIUM	, AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END) AS ftr_7d
+database/ddl/view/sensei/workspace_quality_signals.ddl	45	MEDIUM	, COALESCE(d.open_drift_count, 0) AS open_drift_count
+dojo/src/routes/v1/t/[origin]/[org]/relay/session/+server.ts	29	MEDIUM	const status = str(body.status) ?? 'running';
+dojo/src/routes/v1/t/[origin]/[org]/relay/session/+server.ts	119	MEDIUM	.catch(() => {});
+app/src/lib/appstate.svelte.ts	49	LOW	} catch (e) {
+app/src/lib/appstate.svelte.ts	70	LOW	} catch (e) {
+app/src/lib/events.ts	76	LOW	} catch {
+app/src/lib/setup/loaders.ts	78	LOW	try { parsed = JSON.parse(stored); } catch { /* malformed, treat as empty */ }
+crates/cli/src/main.rs	434	LOW	.ok()
+crates/cli/src/main.rs	435	LOW	.and_then(|r| r.json::<serde_json::Value>().ok())
+crates/cli/src/main.rs	437	LOW	.unwrap_or_default()
+crates/cli/src/main.rs	696	LOW	&& let Ok(content) = fs::read_to_string(&settings_local)
+crates/cli/src/main.rs	697	LOW	&& let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content)
+crates/cli/src/main.rs	1072	LOW	.ok()
+crates/cli/src/main.rs	1074	LOW	.unwrap_or(false);
+crates/cli/src/tracker.rs	241	LOW	usage["sessions"].as_i64().unwrap_or(0),
+crates/cli/src/tracker.rs	242	LOW	usage["by_source"]["branch"].as_i64().unwrap_or(0),
+crates/cli/src/tracker.rs	243	LOW	usage["by_source"]["prompt"].as_i64().unwrap_or(0)
+crates/cli/src/tracker.rs	490	LOW	let v: Value = resp.json().unwrap_or(Value::Null);
+crates/mcp/src/lib.rs	381	LOW	serde_json::from_str(args["plan"].as_str().unwrap_or("")).unwrap_or(Value::Null);
+crates/mcp/src/lib.rs	381	LOW	serde_json::from_str(args["plan"].as_str().unwrap_or("")).unwrap_or(Value::Null);
+crates/mcp/src/main.rs	129	LOW	Err(_) => continue,
+crates/mcp/src/main.rs	344	LOW	let duration = data["total_duration_ms"].as_u64().unwrap_or(0);
+crates/mcp/src/main.rs	360	LOW	Ok(resp) => {
+crates/mcp/src/main.rs	521	LOW	Err(e) => {
+crates/senseid/src/adapters/config/json.rs	17	LOW	let Ok(val) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/adapters/config/toml_adapter.rs	21	LOW	let Ok(val) = content.parse::<toml::Value>() else {
+crates/senseid/src/adapters/config/yaml.rs	22	LOW	let Ok(val) = serde_yaml::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/adapters/manifest/cargo.rs	37	LOW	let Ok(lock) = content.parse::<toml::Value>() else {
+crates/senseid/src/adapters/manifest/cargo.rs	64	LOW	let Ok(cargo) = content.parse::<toml::Value>() else {
+crates/senseid/src/adapters/manifest/cargo.rs	75	LOW	let Ok(cargo) = content.parse::<toml::Value>() else {
+crates/senseid/src/adapters/manifest/cargo.rs	127	LOW	&& let Ok(toml_val) = content.parse::<toml::Value>()
+crates/senseid/src/adapters/manifest/composer.rs	21	LOW	let Ok(json) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/adapters/manifest/composer.rs	54	LOW	let Ok(json) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/adapters/manifest/composer.rs	72	LOW	let Ok(json) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/adapters/manifest/dbd.rs	51	LOW	dbd_core::config::parse(content).ok()
+crates/senseid/src/adapters/manifest/dotnet.rs	130	LOW	let Ok(entries) = std::fs::read_dir(repo_root) else {
+crates/senseid/src/adapters/manifest/dotnet.rs	141	LOW	let Ok(content) = std::fs::read_to_string(&sln_path) else {
+crates/senseid/src/adapters/manifest/dotnet.rs	166	LOW	let pom = std::fs::read_to_string(&child).unwrap_or_default();
+crates/senseid/src/adapters/manifest/gradle.rs	110	LOW	let script = std::fs::read_to_string(&build).unwrap_or_default();
+crates/senseid/src/adapters/manifest/maven.rs	181	LOW	let pom = std::fs::read_to_string(dir.join("pom.xml")).unwrap_or_default();
+crates/senseid/src/adapters/manifest/npm.rs	51	LOW	let Ok(pkg) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/adapters/manifest/npm.rs	73	LOW	let Ok(pkg) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/adapters/manifest/npm.rs	148	LOW	&& let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+crates/senseid/src/adapters/manifest/npm.rs	162	LOW	&& let Ok(yaml) = serde_yaml::from_str::<serde_json::Value>(&content)
+crates/senseid/src/adapters/manifest/npm.rs	186	LOW	let Ok(pkg) = serde_json::from_str::<serde_json::Value>(content) else { return Vec::new() };
+crates/senseid/src/adapters/manifest/npm.rs	528	LOW	let Ok(v) = serde_json::from_str::<serde_json::Value>(&jsonc_to_json(content)) else {
+crates/senseid/src/adapters/manifest/npm.rs	554	LOW	let Ok(v) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/adapters/manifest/pyproject.rs	27	LOW	let Ok(pyp) = content.parse::<toml::Value>() else {
+crates/senseid/src/adapters/manifest/pyproject.rs	54	LOW	let Ok(pyp) = content.parse::<toml::Value>() else {
+crates/senseid/src/adapters/manifest/pyproject.rs	92	LOW	let Ok(pyp) = content.parse::<toml::Value>() else { return Vec::new() };
+crates/senseid/src/agent_spawn.rs	280	LOW	Ok(Err(_)) | Err(_) => String::new(),
+crates/senseid/src/agent_spawn.rs	280	LOW	Ok(Err(_)) | Err(_) => String::new(),
+crates/senseid/src/api/handlers/auth.rs	1015	LOW	let email = usable.as_ref().ok().and_then(|v| v["email"].as_str().map(String::from));
+crates/senseid/src/api/handlers/auth.rs	1272	LOW	"tenantKey": format!("github/{}", o["login"].as_str().unwrap_or_default()),
+crates/senseid/src/api/handlers/codebase.rs	64	LOW	let repo_id = q.repo_id.unwrap_or_default();
+crates/senseid/src/api/handlers/codebase.rs	252	LOW	let repo_id = q.repo_id.unwrap_or_default();
+crates/senseid/src/api/handlers/codebase.rs	264	LOW	let repo_id = q.repo_id.unwrap_or_default();
+crates/senseid/src/api/handlers/codebase.rs	355	LOW	let repo_id = q.repo_id.unwrap_or_default();
+crates/senseid/src/api/handlers/codebase.rs	587	LOW	_ => Vec::new(),
+crates/senseid/src/api/handlers/libraries.rs	30	LOW	let scope_workspace = q.solution_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+crates/senseid/src/api/handlers/mcp.rs	312	LOW	let turns = params["turns"].as_i64().unwrap_or(0) as i32;
+crates/senseid/src/api/handlers/mcp.rs	313	LOW	let corrections = params["corrections"].as_i64().unwrap_or(0) as i32;
+crates/senseid/src/api/handlers/mcp.rs	560	LOW	if let Ok(content) =
+crates/senseid/src/api/handlers/playbook.rs	146	LOW	let pb = state.pg.get_playbook(&rec.playbook).await.ok().flatten();
+crates/senseid/src/api/handlers/query.rs	414	LOW	.ok()
+crates/senseid/src/api/handlers/query.rs	416	LOW	.unwrap_or_default();
+crates/senseid/src/api/handlers/query.rs	480	LOW	.ok()
+crates/senseid/src/api/handlers/query.rs	486	LOW	.unwrap_or_default();
+crates/senseid/src/api/handlers/query.rs	613	LOW	let Ok(dent) = dent else { continue };
+crates/senseid/src/api/handlers/query.rs	852	LOW	Err(_) => {
+crates/senseid/src/api/handlers/query.rs	890	LOW	Err(e) => {
+crates/senseid/src/api/handlers/query.rs	908	LOW	Err(e) => {
+crates/senseid/src/api/handlers/runs.rs	91	LOW	Some(pid) => match state.pg.workspace_root_path(&pid).await.ok().flatten() {
+crates/senseid/src/api/handlers/scan_events.rs	22	LOW	Err(_) => None,
+crates/senseid/src/api/handlers/sessions.rs	233	LOW	let ftr = body["ftr"].as_bool().unwrap_or(false);
+crates/senseid/src/api/handlers/sessions.rs	234	LOW	let turns = body["turns"].as_i64().unwrap_or(0) as i32;
+crates/senseid/src/api/handlers/sessions.rs	235	LOW	let corrections = body["corrections"].as_i64().unwrap_or(0) as i32;
+crates/senseid/src/api/handlers/sessions.rs	672	LOW	Err(e) => {
+crates/senseid/src/api/handlers/sessions.rs	786	LOW	Err(_) => tracing::warn!(workspace = %workspace,
+crates/senseid/src/api/handlers/stance.rs	115	LOW	.ok()
+crates/senseid/src/api/handlers/tasks.rs	236	LOW	let event = result.ok()?;
+crates/senseid/src/api/handlers/tool_signals.rs	132	LOW	.ok()
+crates/senseid/src/api/handlers/tool_signals.rs	134	LOW	let days_since_last_use = last_used.map(|last| (now - last).num_days()).unwrap_or(i64::MAX);
+crates/senseid/src/api/handlers/workspace.rs	1058	LOW	Err(_) => None,
+crates/senseid/src/api/handlers/workspace_detail.rs	155	LOW	let uuid = crate::api::util::resolve_workspace_uuid(state, id).await.ok().flatten()?;
+crates/senseid/src/api/handlers/workspace_detail.rs	156	LOW	let workspace = state.pg.get_workspace(&uuid).await.ok().flatten()?;
+crates/senseid/src/api/handlers/workspace_detail.rs	170	LOW	.ok()?
+crates/senseid/src/api/handlers/workspace_detail.rs	177	LOW	tokio::task::spawn_blocking(move || serve_icon_from_roots(&roots, &rel)).await.ok()?
+crates/senseid/src/api/server.rs	359	LOW	if let Ok(Some(max_str)) = pg.get_config("max_concurrent_repos").await
+crates/senseid/src/assistants/claude_code.rs	29	LOW	let Some(content) = std::fs::read_to_string(settings_path).ok() else {
+crates/senseid/src/assistants/claude_code.rs	66	LOW	let Some(content) = std::fs::read_to_string(settings_path).ok() else {
+crates/senseid/src/assistants/claude_code.rs	135	LOW	let Some(content) = std::fs::read_to_string(&manifest).ok() else {
+crates/senseid/src/assistants/helpers.rs	103	LOW	let raw = std::fs::read_to_string(path).ok().unwrap_or_default();
+crates/senseid/src/assistants/helpers.rs	103	LOW	let raw = std::fs::read_to_string(path).ok().unwrap_or_default();
+crates/senseid/src/assistants/helpers.rs	106	LOW	Err(_) => return false,
+crates/senseid/src/assistants/mod.rs	445	LOW	Err(e) => {
+crates/senseid/src/assistants/mod.rs	455	LOW	Err(_) => continue,
+crates/senseid/src/assistants/watchdog.rs	54	LOW	let hours = pg.get_config("capture.max_inactivity_hours").await.unwrap_or_else(|e| {
+crates/senseid/src/assistants/watchdog.rs	58	LOW	let weekends = pg.get_config("capture.exclude_weekends").await.unwrap_or_else(|e| {
+crates/senseid/src/db/pg_store/folders.rs	74	LOW	.unwrap_or_default()
+crates/senseid/src/db/pg_store/folders.rs	99	LOW	.unwrap_or_default();
+crates/senseid/src/db/pg_store/graph.rs	3185	LOW	Err(_) => continue,
+crates/senseid/src/db/pg_store/mod.rs	934	LOW	.unwrap_or_else(|_| serde_json::json!([]));
+crates/senseid/src/db/pg_store/patterns.rs	25	LOW	Err(e) => {
+crates/senseid/src/db/pg_store/patterns.rs	57	LOW	Err(e) => {
+crates/senseid/src/db/pg_store/runs.rs	82	LOW	Ok(row.unwrap_or((None, None)))
+crates/senseid/src/db/pg_store/workspaces.rs	782	LOW	.unwrap_or((1,));
+crates/senseid/src/dojo/relay_project.rs	38	LOW	arr.iter().filter_map(|v| serde_json::from_value::<Todo>(v.clone()).ok()).collect()
+crates/senseid/src/dojo_client/dojo_auth.rs	48	LOW	let body = r.text().await.unwrap_or_default();
+crates/senseid/src/dojo_client/dojo_auth.rs	77	LOW	let text = r.text().await.unwrap_or_default();
+crates/senseid/src/dojo_client/dojo_auth.rs	98	LOW	let text = r.text().await.unwrap_or_default();
+crates/senseid/src/dojo_client/glyph_sync.rs	34	LOW	p.glyphs_set_at.as_deref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+crates/senseid/src/dojo_client/user_plane.rs	239	LOW	let text = r.text().await.unwrap_or_default();
+crates/senseid/src/git_identity.rs	61	LOW	Command::new("git").args(["config", "--global", "--get", "user.email"]).output().ok()?;
+crates/senseid/src/git_identity.rs	77	LOW	.ok()?;
+crates/senseid/src/indexer/index.rs	299	LOW	.ok()
+crates/senseid/src/indexer/lang/c/walk.rs	644	LOW	.ok()?;
+crates/senseid/src/indexer/lang/c/walk.rs	647	LOW	let callable = self.declare(scope, name, linkage, Reach::Item).ok()?;
+crates/senseid/src/indexer/lang/c/walk.rs	686	LOW	if let Ok(arm) = fqn::define(&Form::Member {
+crates/senseid/src/indexer/lang/c/walk.rs	783	LOW	let Ok(fqn) = self.push(
+crates/senseid/src/indexer/lang/c/walk.rs	933	LOW	&& let Ok(already) = self.declare(scope, name, linkage, Reach::Item)
+crates/senseid/src/indexer/lang/c/walk.rs	1037	LOW	let Ok(fqn) = self.declare(scope, bound_to, self.no_linkage(), Reach::Item) else {
+crates/senseid/src/indexer/lang/c/walk.rs	1099	LOW	let Ok(fqn) = self.push(
+crates/senseid/src/indexer/lang/csharp/walk.rs	477	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/csharp/walk.rs	607	LOW	let Ok(member) = self.declare(&inner, pname, Reach::Field) else { continue };
+crates/senseid/src/indexer/lang/csharp/walk.rs	690	LOW	let Ok(arm) = fqn::define(&Form::MemberVariant {
+crates/senseid/src/indexer/lang/csharp/walk.rs	779	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/csharp/walk.rs	846	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Field) else { return };
+crates/senseid/src/indexer/lang/csharp/walk.rs	893	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Field) else { continue };
+crates/senseid/src/indexer/lang/csharp/walk.rs	913	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/java/walk.rs	359	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Field) else { return };
+crates/senseid/src/indexer/lang/java/walk.rs	375	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/java/walk.rs	543	LOW	let Ok(arm) = fqn::define(&Form::MemberVariant {
+crates/senseid/src/indexer/lang/java/walk.rs	591	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/java/walk.rs	680	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Field) else { continue };
+crates/senseid/src/indexer/lang/javascript.rs	1550	LOW	&& let Ok(owner) = fqn::define(&Form::Item {
+crates/senseid/src/indexer/lang/javascript.rs	1576	LOW	Err(_) => scope.clone(),
+crates/senseid/src/indexer/lang/kotlin/walk.rs	339	LOW	let Ok(fqn) = self.declare(scope, &name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/kotlin/walk.rs	421	LOW	let Ok(member) = self.declare(&inner, pname, Reach::Field) else { continue };
+crates/senseid/src/indexer/lang/kotlin/walk.rs	478	LOW	let Ok(arm) = fqn::define(&Form::MemberVariant {
+crates/senseid/src/indexer/lang/kotlin/walk.rs	520	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/kotlin/walk.rs	613	LOW	if let Ok(fqn) = self.declare(scope, name, Reach::Field) {
+crates/senseid/src/indexer/lang/kotlin/walk.rs	642	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/php/walk.rs	398	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/php/walk.rs	502	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/php/walk.rs	543	LOW	&& let Ok(prop) = self.declare(scope, pname, Reach::Field)
+crates/senseid/src/indexer/lang/php/walk.rs	592	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Field) else { continue };
+crates/senseid/src/indexer/lang/php/walk.rs	634	LOW	let Ok(fqn) = self.declare(scope, name, reach) else { continue };
+crates/senseid/src/indexer/lang/php/walk.rs	659	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Field) else { return };
+crates/senseid/src/indexer/lang/python/walk.rs	341	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/python/walk.rs	387	LOW	let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+crates/senseid/src/indexer/lang/python/walk.rs	524	LOW	&& let Ok(fqn) = self.declare(scope, self.text(left), Reach::Field)
+crates/senseid/src/indexer/lang/rust/mod.rs	72	LOW	let Ok(from) = self.file_fqn(&facts.package, &facts.module, &facts.path) else {
+crates/senseid/src/indexer/lang/rust/walk.rs	1135	LOW	Err(_) => scope.clone(),
+crates/senseid/src/indexer/lang/rust/walk.rs	1739	LOW	if let Ok(owner) = fqn::define(&Form::Item {
+crates/senseid/src/indexer/lang/sql/facts.rs	295	LOW	let Ok(fqn) = self.identity(module, &object) else {
+crates/senseid/src/indexer/lib_indexer.rs	44	LOW	let Ok(content) = std::fs::read_to_string(repo.join(filename)) else {
+crates/senseid/src/indexer/lib_indexer.rs	959	LOW	&& let Ok(full) = fetch_lib_url_with_timeout(&full_url, 15).await
+crates/senseid/src/indexer/llms_indexer.rs	43	LOW	for entry in WalkDir::new(dir).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+crates/senseid/src/indexer/llms_indexer.rs	67	LOW	for entry in WalkDir::new(repo).max_depth(6).into_iter().filter_map(|e| e.ok()) {
+crates/senseid/src/indexer/pipeline.rs	280	LOW	if let Ok(text) = std::fs::read_to_string(root.join(".gitmodules")) {
+crates/senseid/src/indexer/scan_repo.rs	373	LOW	let Ok(entry) = entry else {
+crates/senseid/src/installer/install.rs	137	LOW	if let Ok(entries) = fs::read_dir(&live_dir) {
+crates/senseid/src/installer/install.rs	155	LOW	if let Ok(entries) = fs::read_dir(&disabled_dir) {
+crates/senseid/src/libraries/dependencies.rs	132	LOW	let Ok(text) = std::fs::read_to_string(manifest) else { continue };
+crates/senseid/src/libraries/dependencies.rs	133	LOW	let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+crates/senseid/src/libraries/mod.rs	76	LOW	let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+crates/senseid/src/libraries/registry.rs	182	LOW	let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+crates/senseid/src/tasks/analyzer_scheduler.rs	170	LOW	Err(e) => {
+crates/senseid/src/tasks/analyzer_scheduler.rs	185	LOW	Err(e) => {
+crates/senseid/src/tasks/capture_drain.rs	77	LOW	session_id: payload["session_id"].as_str().unwrap_or(""),
+crates/senseid/src/tasks/capture_drain.rs	151	LOW	payload.get("ts").and_then(|v| v.as_i64()).filter(|t| *t > 0).unwrap_or(now_ms)
+crates/senseid/src/tasks/contribute_scheduler.rs	88	LOW	Err(e) => {
+crates/senseid/src/tasks/contribute_scheduler.rs	128	LOW	Err(e) => {
+crates/senseid/src/tasks/contribute_scheduler.rs	138	LOW	Err(e) => {
+crates/senseid/src/tasks/contribute_scheduler.rs	145	LOW	Err(e) => {
+crates/senseid/src/tasks/handlers/advance_run.rs	176	LOW	let Ok(run_id) = uuid::Uuid::parse_str(run_id_str) else {
+crates/senseid/src/tasks/handlers/consolidate.rs	168	LOW	.unwrap_or(false)
+crates/senseid/src/tasks/handlers/corrections.rs	143	LOW	ctx.pg().get_config("corrections.similarity_threshold").await.ok().flatten().as_deref(),
+crates/senseid/src/tasks/handlers/corrections.rs	146	LOW	ctx.pg().get_config("corrections.cluster_min").await.ok().flatten().as_deref(),
+crates/senseid/src/tasks/handlers/corrections.rs	163	LOW	let pruned = ctx.pg().delete_corrections_not_in(&[]).await.unwrap_or(0);
+crates/senseid/src/tasks/handlers/corrections.rs	245	LOW	let pruned = ctx.pg().delete_corrections_not_in(&keep).await.unwrap_or(0);
+crates/senseid/src/tasks/handlers/generate.rs	231	LOW	.unwrap_or(serde_json::Value::Array(Vec::new())),
+crates/senseid/src/tasks/handlers/generate.rs	247	LOW	.unwrap_or(false)
+crates/senseid/src/tasks/handlers/generate.rs	286	LOW	if ctx.pg().memory_exists_with_source(&pattern_id).await.unwrap_or(false) {
+crates/senseid/src/tasks/handlers/helpers.rs	66	LOW	Err(_) => return Some(ScanSkipReason::BinaryContent), // unreadable → skippable
+crates/senseid/src/tasks/handlers/metrics/churn.rs	309	LOW	let Ok(out) = crate::git::run_bytes(std::path::Path::new(root), &args) else {
+crates/senseid/src/tasks/handlers/metrics/churn.rs	312	LOW	let Ok(commits) = crate::indexer::git_history::parse_log(&out) else {
+crates/senseid/src/tasks/handlers/metrics/coverage.rs	87	LOW	Err(e) => {
+crates/senseid/src/tasks/handlers/metrics/explainer.rs	67	LOW	.ok()
+crates/senseid/src/tasks/handlers/metrics/explainer.rs	70	LOW	.unwrap_or_default();
+crates/senseid/src/tasks/handlers/model_insight.rs	30	LOW	if ctx.pg().model_recommendation_exists(workspace_id, &reco.model).await.unwrap_or(false) {
+crates/senseid/src/tasks/handlers/process.rs	188	LOW	let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await else {
+crates/senseid/src/tasks/handlers/process.rs	305	LOW	let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+crates/senseid/src/tasks/handlers/publish_run.rs	56	LOW	let Ok(run_id) = uuid::Uuid::parse_str(run_id_str) else {
+crates/senseid/src/tasks/handlers/session_process.rs	313	LOW	let cap = batch_per_tick(pg.get_config("process.batch_per_tick").await.ok().flatten());
+crates/senseid/src/tasks/handlers/warm_narration_cache.rs	22	LOW	let recs = ctx.pg().get_insights_recommendations(None).await.unwrap_or_default();
+crates/senseid/src/tasks/index_audit.rs	168	LOW	let folders = pg.list_folders_by_root(&root.id).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/index_audit.rs	191	LOW	let indexed = pg.list_indexed_files(&fid).await.unwrap_or_else(|e| {
+crates/senseid/src/tasks/library_update_scheduler.rs	168	LOW	let ttl = parse_ttl(pg.get_config("library.check_ttl_secs").await.ok().flatten());
+crates/senseid/src/tasks/metrics_scheduler.rs	191	LOW	Err(e) => {
+crates/senseid/src/tasks/metrics_scheduler.rs	241	LOW	Err(e) => {
+crates/senseid/src/tasks/processors/metadata/frontmatter.rs	203	LOW	let content = std::fs::read_to_string(find_readme(repo_path)?).ok()?;
+crates/senseid/src/tasks/reconcile_scheduler.rs	213	LOW	let stall_ms = parse_stall_secs(pg.get_config(WATCHER_STALL_KEY).await.ok().flatten()) * 1000;
+crates/senseid/src/tool_discovery.rs	178	LOW	for entry in walkdir::WalkDir::new(&cache).max_depth(6).into_iter().filter_map(|e| e.ok()) {
+crates/senseid/src/tool_discovery.rs	270	LOW	let _ = pg.prune_stale_mcp_servers(scan_start).await;
+crates/senseid/src/transcript/claude.rs	78	LOW	let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+crates/senseid/src/transcript/copilot_cli.rs	51	LOW	let content = std::fs::read_to_string(path).ok()?;
+crates/senseid/src/transcript/copilot_cli.rs	74	LOW	Err(_) => continue,
+crates/senseid/src/transcript/copilot_cli.rs	149	LOW	Err(_) => continue,
+crates/senseid/src/transcript/copilot_cli.rs	153	LOW	let ts = super::parse_timestamp_ms(&v).unwrap_or(0);
+crates/senseid/src/transcript/copilot_cli.rs	510	LOW	conn.prepare("SELECT updated_at FROM sessions WHERE id = ?1").ok()?;
+crates/senseid/src/transcript/copilot_cli.rs	511	LOW	let ts: i64 = stmt.query_row(rusqlite::params![sid], |row| row.get(0)).unwrap_or(0);
+crates/senseid/src/transcript/copilot_cli.rs	551	LOW	let raw = std::fs::read_to_string(&events_path).ok()?;
+crates/senseid/src/transcript/copilot_cli.rs	559	LOW	.then(|| read_workspace_yaml(&dir.join("workspace.yaml")).unwrap_or_default());
+crates/senseid/src/transcript/cursor.rs	90	LOW	Err(_) => continue,
+crates/senseid/src/transcript/cursor.rs	159	LOW	Err(_) => continue,
+crates/senseid/src/transcript/cursor.rs	170	LOW	let ts = super::parse_timestamp_ms(&v).unwrap_or(0);
+crates/senseid/src/transcript/cursor.rs	325	LOW	std::fs::read_to_string(path).ok()
+crates/senseid/src/transcript/mod.rs	756	LOW	Err(e) => {
+crates/senseid/src/transcript/mod.rs	769	LOW	Err(e) => {
+crates/senseid/src/transcript/mod.rs	903	LOW	let consented = crate::transcript::consent::consented(pg).await.unwrap_or_else(|e| {
+crates/senseid/src/transcript/mod.rs	915	LOW	Err(e) => {
+crates/senseid/src/transcript/mod.rs	970	LOW	Err(e) => {
+crates/senseid/src/transcript/opencode.rs	112	LOW	.ok()?;
+crates/senseid/src/transcript/opencode.rs	133	LOW	.ok()?;
+crates/senseid/src/transcript/opencode.rs	234	LOW	let Ok(root) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/transcript/vscode.rs	228	LOW	Err(_) => continue,
+crates/senseid/src/transcript/vscode.rs	422	LOW	Err(_) => continue,
+crates/senseid/src/transcript/vscode.rs	426	LOW	let ts = super::parse_timestamp_ms(&v).unwrap_or(0);
+crates/senseid/src/transcript/vscode.rs	506	LOW	.unwrap_or(0);
+crates/senseid/src/transcript/vscode.rs	780	LOW	.ok()?;
+crates/senseid/src/transcript/vscode.rs	785	LOW	.ok()?;
+crates/senseid/src/transcript/vscode.rs	798	LOW	.ok()?
+crates/senseid/src/transcript/vscode.rs	799	LOW	.filter_map(|r| r.ok())
+crates/senseid/src/transcript/vscode.rs	816	LOW	let raw = std::fs::read_to_string(path).ok()?;
+crates/senseid/src/transcript/zed.rs	119	LOW	.ok()?;
+crates/senseid/src/transcript/zed.rs	150	LOW	.ok()?;
+crates/senseid/src/transcript/zed.rs	155	LOW	.ok()?;
+crates/senseid/src/transcript/zed.rs	156	LOW	String::from_utf8(out).map_err(|_| tracing::warn!("zed: thread JSON not valid UTF-8")).ok()
+crates/senseid/src/transcript/zed.rs	287	LOW	let Ok(v) = serde_json::from_str::<serde_json::Value>(content) else {
+crates/senseid/src/transcript/zed.rs	379	LOW	let span = thread_span_ms(&v).unwrap_or((0, 0));
+database/ddl/procedure/staging/import_benchmark_reports.ddl	13	LOW	coalesce(stg.id, gen_random_uuid())
+database/ddl/view/activity/turn_usage.ddl	76	LOW	= (t.fresh, coalesce(t.cache_read, 0), coalesce(t.cache_write, 0), coalesce(t.output, 0))
+database/ddl/view/activity/turn_usage.ddl	79	LOW	, coalesce(h.cache_read, t.cache_read, 0) as cache_read
+database/ddl/view/activity/turn_usage.ddl	80	LOW	, coalesce(h.cache_write, t.cache_write, 0) as cache_write
+database/ddl/view/sensei/workspace_metric_daily.ddl	38	LOW	, coalesce(sum((pm.props->>'numerator')::numeric), 0)
+dojo/src/lib/server/azure-connect.ts	130	LOW	} catch {
+dojo/src/lib/triage-map.ts	56	LOW	conf: row.confidence ?? 0,
+dojo/src/routes/(app)/org/[slug]/workspaces/[id]/+page.ts	30	LOW	} catch {
+dojo/src/routes/(app)/you/workspaces/[id]/+page.ts	26	LOW	} catch {
+dojo/src/routes/v1/integrations/azure_devops/callback/+server.ts	22	LOW	} catch {

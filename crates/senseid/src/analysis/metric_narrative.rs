@@ -257,11 +257,23 @@ pub async fn build_narrative(
     let mut out = Map::new();
     let mut insights = Map::new();
 
-    // Headline (+ subhead) for the whole snapshot.
+    // The headline (+ subhead) for the whole snapshot, then one "what sensei
+    // noticed" sentence per signal — read from the cache in ONE statement (it was
+    // one round trip per metric: 28 sequential writes per page load).
     let hfacts = headline_facts(metrics);
-    match narration_cache::read_cached_copy(store, InsightKind::MetricNarrativeHeadline, &hfacts)
-        .await
-    {
+    let signals: Vec<(&str, Value)> = metrics
+        .iter()
+        .filter_map(|m| {
+            let key = m.get("metric").and_then(Value::as_str)?;
+            Some((key, signal_facts(m, series_by_metric.get(key).map(Vec::as_slice))))
+        })
+        .collect();
+    let mut asks: Vec<(InsightKind, &Value)> =
+        vec![(InsightKind::MetricNarrativeHeadline, &hfacts)];
+    asks.extend(signals.iter().map(|(_, f)| (InsightKind::MetricSignalInsight, f)));
+    let mut copies = narration_cache::read_cached_copies(store, &asks).await.into_iter();
+
+    match copies.next().flatten() {
         Some(c) => {
             out.insert("headline".into(), json!(c.title));
             if !c.detail.is_empty() {
@@ -276,15 +288,8 @@ pub async fn build_narrative(
             limits,
         ),
     }
-
-    // One "what sensei noticed" sentence per signal.
-    for m in metrics {
-        let Some(key) = m.get("metric").and_then(Value::as_str) else { continue };
-        let series = series_by_metric.get(key).map(Vec::as_slice);
-        let sfacts = signal_facts(m, series);
-        match narration_cache::read_cached_copy(store, InsightKind::MetricSignalInsight, &sfacts)
-            .await
-        {
+    for ((key, sfacts), copy) in signals.iter().zip(copies) {
+        match copy {
             Some(c) => {
                 insights.insert(key.to_string(), json!(c.detail));
             }
@@ -292,7 +297,7 @@ pub async fn build_narrative(
                 store,
                 gateway,
                 InsightKind::MetricSignalInsight,
-                &sfacts,
+                sfacts,
                 limits,
             ),
         }

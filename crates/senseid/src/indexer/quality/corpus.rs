@@ -73,11 +73,12 @@ pub(crate) fn read_the_corpus() -> Vec<Read> {
         //
         // They were one package called `web`, on the grounds that the real names
         // live in manifests this reader does not open and a wrong package would
-        // split one symbol into three. It does the opposite: `app/`, `dojo/` and
-        // `website/` are three separate applications that import nothing from
-        // each other, so filing them together MERGES two declarations that are
-        // genuinely distinct — `dojo/src/app.d.ts` and `website/src/app.d.ts`
-        // both minting `typescript·web·app·mod`.
+        // split one symbol into several. It does the opposite: `app/` and `dojo/`
+        // are separate applications that import nothing from each other, so
+        // filing them together MERGES declarations that are genuinely distinct
+        // — the same module path in two applications minting one identity (it
+        // did: `dojo/src/app.d.ts` and the website's both minted
+        // `typescript·web·app·mod` while the website lived here).
         //
         // The directory is not the manifest name, but it is one package per
         // package, which is the property every identity depends on.

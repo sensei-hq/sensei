@@ -76,6 +76,7 @@ describe('InviteState', () => {
 		expect(s.error).toBe('admins only');
 		expect(s.issued).toBeNull();
 		expect(s.sending).toBe(false);
+		expect(s.errorNotice).toEqual({ tone: 'fault', title: "Couldn't send the invite", detail: 'admins only', remedy: 'Fix what it says, then send it again.' });
 	});
 
 	it('starting again clears the last link and error', async () => {

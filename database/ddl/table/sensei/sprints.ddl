@@ -1,6 +1,6 @@
 set search_path to sensei, extensions;
 
--- A tracker's sprints, mirrored read-only. Spec: tracker-jira-linkage.md R2, R5.
+-- A tracker's sprints, mirrored from the provider and never written back. Spec: tracker-jira-linkage.md R2, R5.
 create table if not exists sprints (
   id                     uuid         primary key default gen_random_uuid()
 , tracker_id             uuid         not null references sensei.trackers(id) on delete cascade
@@ -18,14 +18,14 @@ create table if not exists sprints (
 );
 
 comment on table sprints is
-'Sprints of a tracker board, mirrored read-only from the provider. A sprint missing from a full sync gets removed_at (never deleted), so history and links survive.';
+'Sprints of a tracker board, mirrored from the provider and never written back (spec tracker-metrics-writeback writes usage and SDLC metrics to tickets only). A sprint missing from a full sync gets removed_at (never deleted), so history and links survive.';
 
 comment on column sprints.tracker_id
      is 'The board this sprint belongs to.';
 comment on column sprints.external_id
      is 'The provider''s sprint id, as text.';
 comment on column sprints.seq
-     is 'Adapter-supplied creation order (Jira: the numeric sprint id). The tie-break for a ticket''s current sprint; never compare external_id text.';
+     is 'Adapter-supplied ordering key (Jira, GitLab: the numeric sprint id; GitHub: the iteration''s start date in days since 1970-01-01). The tie-break for a ticket''s current sprint; never compare external_id text.';
 comment on column sprints.name
      is 'Sprint name as the provider shows it.';
 comment on column sprints.state

@@ -49,7 +49,15 @@ describe('ScrMyMetrics', () => {
 		const { getByRole, queryByText } = render(ScrMyMetrics, {
 			props: { view: null, error: 'the request failed' }
 		});
-		expect(getByRole('alert').textContent).toMatch(/Could not load your metrics — the request failed/);
+		expect(getByRole('alert').textContent).toMatch(/Couldn't load your metrics[\s\S]*the request failed/);
 		expect(queryByText('Sessions')).toBeNull();
+	});
+
+	// B1 (r2): with no view and no error, the failure still has a title and a next step.
+	it('no view and no error still says what failed, never a blank Notice', () => {
+		const { container } = render(ScrMyMetrics, { view: null, error: null });
+		const n = container.querySelector('[data-load-error]') as HTMLElement;
+		expect(n.querySelector('[data-part="heading"]')?.textContent).toBe("Couldn't load your metrics");
+		expect(n.querySelector('[data-part="remedy"]')?.textContent).toContain('Retry');
 	});
 });

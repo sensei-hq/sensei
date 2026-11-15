@@ -48,7 +48,7 @@ test.describe('Workspace window — Metrics', () => {
     );
 
     const hasMetrics = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('[data-component="workspace-sidebar"] .proj-nav-item'))
+      `Array.from(document.querySelectorAll('[data-component="workspace-sidebar"] [data-list-item]'))
         .some(a => a.textContent && a.textContent.includes('Metrics'))`,
     );
     expect(hasMetrics).toBe(true);

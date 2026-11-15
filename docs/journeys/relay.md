@@ -11,9 +11,19 @@ The relay journey now lives as a section of the Dōjō journey:
   — reach a live session · watch progress · approve · answer a decision · chat back.
 - **Architecture:** [`../architecture/dojo.md` → Relay](../architecture/dojo.md#relay--through-the-dōjō)
   — the realtime line, PWA + Web Push, the native wrapper, and the relay data model.
-- **Business model:** Relay is [free for individuals, paid where shared](dojo.md#business-model--free-where-public-or-personal).
+- **Business model:** Relay is [free in every dōjō](dojo.md#business-model--public-free-private-on-a-subscription), the team on-call queue included (D59).
+- **Permissions:** no pairing; the relay acts only through the signed-in person's dōjō session, with explicit, revocable permissions (D55).
 
 The prior standalone "pair once + zero-knowledge relay transport" model is
 superseded: the transport is now the daemon's existing outbound Dōjō connection,
 reused for realtime. Only *filtered status* + gate prompts + replies cross —
 never code or transcripts.
+
+## Local crews — running a sprint from the Relay screen (2026-11-12)
+
+On the desktop, Relay is also the person's window on a **local crew**: register a coordinator and a few
+contributor sessions (each pastes one `relay_register` line; a contributor needs no role and no crew id), pick
+backlog items on the Queue tab, press **Create sprint**, and watch the sprint band fill as Task 0 plans, a peer
+approves, lanes claim and report, reviews float under "Needs a reviewer", and the gate merges. Nothing is handed
+out by hand: the person answers only what needs them. The loop in full:
+[`../prd/modules/03-delivery/21-relay/lanes.md`](../prd/modules/03-delivery/21-relay/lanes.md) §5–§7.

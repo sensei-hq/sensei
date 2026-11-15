@@ -143,10 +143,10 @@ Feature: Metrics & Health — registry, values, roll-ups, health and gating
     And the gating field is present in the registry seed
 
   # gap: M-8
-  Scenario: thin metrics render behind a coverage gate
+  Scenario: thin metrics render as coverage-aware
     Given a metric backed by few repositories
     When it is presented
-    Then it is faded or gated, never drawn like a strong number
+    Then it is faded, never drawn like a strong number
 
   # gap: M-9
   Scenario: every metric pairs with its chart and level of detail

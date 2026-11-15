@@ -33,8 +33,11 @@ fn without_test_modules(text: &str) -> String {
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
         let next = lines[i + 1..].iter().find(|l| !l.trim().is_empty());
-        if line.trim() == "#[cfg(test)]" && next.is_some_and(|l| l.trim_start().starts_with("mod "))
-        {
+        let is_mod = |l: &&str| {
+            let l = l.trim_start();
+            ["mod ", "pub mod ", "pub(crate) mod "].iter().any(|p| l.starts_with(p))
+        };
+        if line.trim() == "#[cfg(test)]" && next.is_some_and(is_mod) {
             break;
         }
         out.push_str(line.split("//").next().unwrap_or(""));
@@ -562,6 +565,8 @@ async fn a_transcript_source_lands_on_every_turn() {
     let s = super::pg_store().await;
     let turn = crate::transcript::TranscriptTurn {
         turn_index: 1,
+        origin: "human".to_string(),
+        prompt_id: None,
         user_text: Some("hi".into()),
         assistant_text: "hello".into(),
         started_at: None,
@@ -1241,4 +1246,40 @@ fn every_row_is_destructured_exhaustively() {
         }
     }
     assert!(missing.is_empty(), "rows with no exhaustive destructure: {missing:#?}");
+}
+
+/// A turn's origin and prompt id are stored and read back (2026-10-29): tokens count every
+/// turn, first-try only human ones, and the hook's prompt_id finds its turn by them.
+#[tokio::test]
+async fn a_turn_origin_and_prompt_id_round_trip() {
+    use crate::db::pg_store::TranscriptSource;
+    let s = super::pg_store().await;
+    let sid = format!("sess-origin-{}", uuid::Uuid::new_v4());
+    let turn = |i: i32, origin: &str, prompt: &str| crate::transcript::TranscriptTurn {
+        turn_index: i,
+        origin: origin.to_string(),
+        prompt_id: Some(prompt.to_string()),
+        user_text: Some("x".into()),
+        ..Default::default()
+    };
+    s.upsert_transcript_turns(
+        &TranscriptSource {
+            source: "claude_code",
+            session_id: &sid,
+            family: "claude",
+            provider: None,
+            model: None,
+        },
+        &[turn(1, "human", "p1"), turn(2, "scheduled", "p2")],
+    )
+    .await
+    .unwrap();
+    let (turns, _) = s.get_transcript_turns_for_session(&sid).await.unwrap();
+    let got: Vec<_> = turns.iter().map(|t| (t.origin.as_str(), t.prompt_id.as_deref())).collect();
+    assert_eq!(got, [("human", Some("p1")), ("scheduled", Some("p2"))]);
+    sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+        .bind(&sid)
+        .execute(s.pool())
+        .await
+        .unwrap();
 }

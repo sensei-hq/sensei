@@ -1,0 +1,50 @@
+{"toolchain": "cargo", "category": "build", "kind": "fail", "marker": "error: could not compile", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "cargo", "category": "build", "kind": "fail", "marker": "error[E", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "cargo", "category": "build", "kind": "ok_re", "marker": "(?m)^\\s*Finished\\s", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "cargo", "category": "test", "kind": "fail", "marker": "test result: FAILED", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "cargo", "category": "test", "kind": "fail", "marker": "error: test failed", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "cargo", "category": "test", "kind": "ok", "marker": "test result: ok", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "vitest", "category": "test", "kind": "fail_re", "marker": "(?m)^\\s*Tests\\s+\\d+ failed", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "vitest", "category": "test", "kind": "ok_re", "marker": "(?m)^\\s*Tests\\s+\\d+ passed(?: \\| \\d+ (?:skipped|todo))* \\(", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "jest", "category": "test", "kind": "fail_re", "marker": "(?m)^Tests:\\s+.*\\d+ failed", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "jest", "category": "test", "kind": "ok_re", "marker": "(?m)^Tests:\\s+(?:\\d+ (?:skipped|todo), )*\\d+ passed", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "bun", "category": "test", "kind": "fail_re", "marker": "(?m)^\\s*[1-9]\\d* fail$", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "bun", "category": "test", "kind": "ok_re", "marker": "(?m)^\\s*0 fail$", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "svelte-check", "category": "typecheck", "kind": "fail_re", "marker": "svelte-check found [1-9]\\d* errors?", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "svelte-check", "category": "typecheck", "kind": "ok", "marker": "svelte-check found 0 errors", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "tsc", "category": "typecheck", "kind": "fail_re", "marker": "error TS\\d+:", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "playwright", "category": "e2e", "kind": "fail_re", "marker": "(?m)^\\s*\\d+ failed", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "playwright", "category": "e2e", "kind": "ok_re", "marker": "(?m)^\\s*\\d+ passed \\(", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "go", "category": "test", "kind": "fail", "marker": "--- FAIL", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "go", "category": "test", "kind": "fail_re", "marker": "(?m)^FAIL\\s", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "go", "category": "test", "kind": "ok_re", "marker": "(?m)^ok[ \\t]+\\S+", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "mypy", "category": "typecheck", "kind": "fail_re", "marker": "Found \\d+ errors? in", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "mypy", "category": "typecheck", "kind": "ok", "marker": "Success: no issues found", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "pyright", "category": "typecheck", "kind": "fail_re", "marker": "\\b[1-9]\\d* errors?,", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "pyright", "category": "typecheck", "kind": "ok_re", "marker": "\\b0 errors,", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "dotnet", "category": "build", "kind": "fail", "marker": "Build FAILED", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "dotnet", "category": "build", "kind": "ok", "marker": "Build succeeded", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "dotnet", "category": "test", "kind": "fail_re", "marker": "Failed!\\s+-\\s+Failed:\\s+[1-9]", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "dotnet", "category": "test", "kind": "ok_re", "marker": "Passed!\\s+-\\s+Failed:\\s+0", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "maven", "category": "build", "kind": "fail", "marker": "COMPILATION ERROR", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "maven", "category": "build", "kind": "ok", "marker": "BUILD SUCCESS", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "maven", "category": "test", "kind": "fail_re", "marker": "Tests run: \\d+, Failures: [1-9]", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "maven", "category": "test", "kind": "fail_re", "marker": "Tests run: \\d+, Failures: \\d+, Errors: [1-9]", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "maven", "category": "test", "kind": "ok_re", "marker": "Tests run: \\d+, Failures: 0, Errors: 0", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "gradle", "category": "build", "kind": "fail", "marker": "Compilation failed", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "gradle", "category": "build", "kind": "ok", "marker": "BUILD SUCCESSFUL", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "gradle", "category": "test", "kind": "fail_re", "marker": "\\d+ tests completed, \\d+ failed", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "swift", "category": "build", "kind": "fail_re", "marker": "(?m)^error: .*(?:command failed|failed with exit code)", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "swift", "category": "test", "kind": "fail_re", "marker": "with [1-9]\\d* failures?", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "swift", "category": "test", "kind": "ok_re", "marker": "with 0 failures", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "mix", "category": "test", "kind": "fail_re", "marker": "\\b[1-9]\\d* failures?\\b", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "mix", "category": "test", "kind": "ok_re", "marker": "\\b0 failures\\b", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "rspec", "category": "test", "kind": "fail_re", "marker": "\\b[1-9]\\d* failures?\\b", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "rspec", "category": "test", "kind": "ok_re", "marker": "\\b0 failures\\b", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "vitest", "category": "test", "kind": "fail_re", "marker": "(?m)^\\s*Test Files\\s+\\d+ failed", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "svelte-check", "category": "typecheck", "kind": "fail_re", "marker": "(?m)^\\d+ COMPLETED .*\\b[1-9]\\d* ERRORS?\\b", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "svelte-check", "category": "typecheck", "kind": "ok_re", "marker": "(?m)^\\d+ COMPLETED .*\\b0 ERRORS\\b", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "pytest", "category": "test", "kind": "fail_re", "marker": "(?m)^=*\\s*(?:\\d+ \\w+, )*[1-9]\\d* (?:failed|errors?)(?:, \\d+ \\w+)* in [\\d.]+s", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "pytest", "category": "test", "kind": "ok_re", "marker": "(?m)^=*\\s*\\d+ passed(?:, \\d+ (?:skipped|deselected|xfailed|xpassed|warnings?))* in [\\d.]+s", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "node", "category": "test", "kind": "fail_re", "marker": "(?m)^ℹ fail [1-9]\\d*$", "modified_at": "2026-10-29T00:00:00Z"}
+{"toolchain": "node", "category": "test", "kind": "ok_re", "marker": "(?m)^ℹ fail 0$", "modified_at": "2026-10-29T00:00:00Z"}

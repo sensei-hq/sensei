@@ -61,8 +61,8 @@ its FTR impact never **measured**, the loop generates but never closes.
 
 ## The journey — four segments + a cross-cutting Dōjō
 
-Source of truth for the visuals: [`mockups/Sensei/Sensei Journey Map.html`](../mockups/Sensei/Sensei%20Journey%20Map.html)
-and [`mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
+Source of truth for the visuals: `mockups/Sensei/Sensei Journey Map.html`
+and `mockups/Sensei/Sensei Dōjō Journey Map.html`.
 
 ```mermaid
 flowchart TD
@@ -108,21 +108,23 @@ Multi-agent workflows are becoming the norm: several assistants (Claude Code ·
 Codex · OpenCode · Aider) running long, mostly-autonomous jobs across your
 machines. **Relay** makes that legible and controllable when you're away from the
 keyboard — now **folded into the Dōjō**, reachable on phone and console. Visual
-source: [`mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
+source: `mockups/Sensei/Sensei Dōjō Journey Map.html`.
 
 - **Agents run on your own hardware.** The daemon supervises the agent CLIs and
   publishes only a *filtered status* — never the code, never the raw transcript.
 - **Reach a live session through the Dōjō — no pairing.** The daemon already holds
   an outbound line to the Dōjō; that same line, over **realtime**, carries live
   session control. Any signed-in phone or console **subscribes** and picks the
-  session up — no pairing, no install, no open ports. A responsive **PWA** is the
+  session up — no pairing, no install, no open ports. The relay acts only through
+  the signed-in person's dōjō session; explicit, revocable permissions bound what it
+  can do (D55). A responsive **PWA** is the
   surface; a thin native wrapper adds push + offline.
 - **Watch, don't babysit.** A cross-Dōjō Workspaces home ranked by *what's blocked
   on me*; you're pulled in only at a **gate** (approve the exact command), a
   **decision** (3–4 options + a free reply), or to **chat** the run back on course.
-- **Free for individuals, paid where shared.** The individual loop is free; the
-  shared-team coordination around it (on-call inbox, presence, attributed
-  decisions) is the paid tier.
+- **Free for individuals.** The individual loop is free, and so is a personal
+  dōjō (D52). A subscription is needed only for an organisation's private
+  repositories (D46).
 
 Relay extends the north-star: a run you can't supervise can't be corrected — it
 keeps the pair (and the fleet) legible and steerable at a distance. Detail:
@@ -131,16 +133,21 @@ keeps the pair (and the fleet) legible and steerable at a distance. Detail:
 ## The business model — open source, with a paid tier
 
 **The code is open source** and stays that way: anyone can run sensei and a Dōjō
-themselves (D24). The **hosted** Dōjō is free for every Dōjō (D20) — sensei serves the
-individual, and every Dōjō gets its shared basics. **The benefits of the paid tier**
-are the features a team pays for on the hosted Dōjō: **gating**, **integrations**
-(trackers, CI) and **consolidated metrics**, plus the control a business needs (SSO,
-audit) — never to use sensei, never for tokens (inference is BYO-key and local). Tiers + open pricing questions:
-[journeys/dojo → Business model](../journeys/dojo.md#business-model--free-where-public-or-personal).
+themselves (D24). There is no self-hosting product or tier (D17). The **hosted** Dōjō is free for every Dōjō (D20) — sensei serves the
+individual, and every Dōjō gets its shared basics. **Public repositories are free in every
+Dōjō, and a personal Dōjō is free with its private repositories; an organisation's private
+repositories need a subscription** taken by its admin or owner, and stay hidden from its Dōjō
+until then (D46). **A solo developer gets everything free** on their personal Dōjō,
+blocking targets included, and an organisation's public repositories get targets free
+(D52). **The benefits of the paid tier** are the features an organisation pays for on
+its private repositories: **targets** (a target set to block gates work, D47),
+**integrations** (trackers, CI) and **consolidated metrics** (D24, D52), with **SSO and the audit trail free** for every dōjō (D59) — never to use sensei, never for tokens (inference is BYO-key and local). The plan lives
+only in the Dōjō: local sensei works in full on any plan. Tiers + open pricing questions:
+[journeys/dojo → Business model](../journeys/dojo.md#business-model--public-free-private-on-a-subscription).
 
 ## Why it's worth building — one loop, not two products
 
-Source: [`mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html)
+Source: `mockups/Sensei/Sensei End-to-End Journey.html`
 — the machine → Dōjō → beyond loop, a developer's day (Rin), an org's practice
 (Keiko), and the honest case for building it.
 
@@ -150,8 +157,8 @@ Sensei captures the first locally and lets the Dōjō share it; Relay makes the
 second answerable from anywhere.
 
 **Who benefits** — *Solo dev*: a memory that persists + free personal governance.
-*Team*: conventions taught once, inherited on join. *Agency*: client
-confidentiality with an audit trail. *Org*: measurable first-try-right lift across
+*Team*: conventions taught once, inherited on join. *Agency*: each client's work
+governed by that client's dōjō alone, its lessons stripped before they travel (D53). *Org*: measurable first-try-right lift across
 repos.
 
 **Why it's defensible.** Local-first + BYOK means **no token markup to undercut**
@@ -170,8 +177,8 @@ notebook; the Dōjō alone is a governance console with nothing to govern. Toget
 they form a **flywheel**: local observation feeds the shared mind, the shared mind
 makes every developer better, and that pulls more observation in. Sequence the
 wedge — **ship the free local loop** (observe → learn → personal Dōjō) to seed
-adoption, then **charge teams for coordination** (shared scopes, governance,
-Relay-at-scale, confidentiality).
+adoption, then **charge organisations for their private repositories** (targets, integrations,
+consolidated metrics; D24, D52).
 
 ## The six non-negotiable themes
 
@@ -184,7 +191,7 @@ one, we call it out.
 | 2 | **One decision, one default** | The same verb set everywhere — **Apply · Review · Dismiss** — recommended one highlighted, others one keystroke away. |
 | 3 | **Discoverability of depth** | Nothing important hidden behind a one-liner; Preferences is searchable; the sidebar clusters with a Focus mode. |
 | 4 | **Trust through proof** | No claim without a receipt — confidence scores, regression notes, before/after FTR. The user verifies; they don't take our word. |
-| 5 | **Org boundary is the Dōjō membership** | Anything that should stay inside a company or a client travels through a Dōjō membership, not the global Collective. Personal sensei works perfectly with no Dōjō; when one exists, the boundary is exact. |
+| 5 | **Org boundary is the Dōjō membership** | Anything that should stay inside a company or a client stays inside its Dōjō, not the global Collective. Knowledge is promoted outward — user → repository → workspace → dōjō → global shared, the opposite direction to the governance ladder — and leaving a dōjō for global shared needs k ≥ 3 contributors (D56, D26). Personal sensei works perfectly with no Dōjō; when one exists, the boundary is exact. |
 | 6 | **Insight copy comes from the model** | Every human-readable insight string routes through [`insight-copy`](../spec/pipeline/insights.md) (embedded gemma first, static template as fallback). Actions and route labels stay deterministic. |
 
 ## What sensei is *not*

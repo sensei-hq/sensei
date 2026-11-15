@@ -54,7 +54,7 @@ describe('attribution', () => {
 		expect(attributionLabel('named')).toBe('Named');
 		expect(attributionLabel('anonymous')).toBe('Anonymous');
 		expect(attributionToneClass('anonymous')).toBe('text-accent');
-		expect(attributionToneClass('named')).toBe('text-ink-soft');
+		expect(attributionToneClass('named')).toBe('text-ink-mute');
 	});
 });
 
@@ -75,7 +75,7 @@ describe('health tones', () => {
 	});
 
 	it('accents a backed-up queue, else muted', () => {
-		expect(queueDepthToneClass(0)).toBe('text-ink-mute');
+		expect(queueDepthToneClass(0)).toBe('text-ink-soft');
 		expect(queueDepthToneClass(2)).toBe('text-accent');
 	});
 });
@@ -93,7 +93,7 @@ describe('audit action label + tone', () => {
 		expect(actionToneClass('team_created')).toBe('text-success');
 		expect(actionToneClass('role_changed')).toBe('text-accent');
 		expect(actionToneClass('policy_edited')).toBe('text-accent');
-		expect(actionToneClass('mystery')).toBe('text-ink-soft');
+		expect(actionToneClass('mystery')).toBe('text-ink-mute');
 	});
 
 	it('tones the viewer trail: a grant or invite adds, a revoke or removal takes away (#313)', () => {

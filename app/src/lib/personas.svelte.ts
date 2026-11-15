@@ -1,7 +1,16 @@
 // app/src/lib/personas.svelte.ts
 //
-// The identity list behind the sign-in overlay: every persona sensei knows,
-// what each one needs, and the action that fixes it.
+// The identity state behind the sign-in overlay AND Settings · Dōjō: every
+// persona sensei knows, where each one stands, and the action that fixes it.
+//
+// ## One state decides; views render (user, 2026-10-28)
+//
+// The daemon reports FACTS per identity — connected, the token's state and
+// expiry, whether renewal is due, what the Keychain said. This class decides
+// everything from them and its own clock: the status, the sentence, the tone
+// and the button. The overlay and the settings screen render `identities` and
+// nothing else, so they cannot disagree. (They did: "credential expired" beside
+// "ready", and a Keychain approval asked for a credential 14 hours dead.)
 //
 // ## Why a list and not one button
 //
@@ -24,7 +33,7 @@
 // before anything is stored. The list records which account a sign-in expects
 // and its link, so the UI can say so and offer the link for a private window.
 
-/** One persona, exactly as `GET /api/auth/personas` reports it. */
+/** One persona's facts, exactly as `GET /api/auth/personas` reports them. */
 export interface PersonaWire {
   label: string;
   githubLogin: string | null;
@@ -32,11 +41,45 @@ export interface PersonaWire {
   sessionSlot: string | null;
   connected: boolean;
   forgeToken: { state: string; expiresAt: number | null };
-  /** Decided by the daemon's `persona_action`. Never re-derived here. */
-  action: 'connect' | 'signIn' | 'renew' | 'none' | string;
+  /** Renewal is due, by the daemon's scheduler rule (its margin lives there). */
+  renewalDue: boolean;
+  /** What the Keychain said about the stored session; `null` when not read. */
+  keychain: 'readable' | 'needsApproval' | 'missing' | null;
   /** The machine's default identity: the one owning the global git email (#296). */
   isDefault?: boolean;
 }
+
+export type IdentityStatus = 'neverConnected' | 'expired' | 'needsKeychain' | 'expiring' | 'ready';
+export type IdentityTone = 'idle' | 'ok' | 'warn' | 'dead';
+export interface IdentityAction {
+  kind: 'connect' | 'signIn' | 'approve' | 'renew';
+  label: string;
+}
+
+/** One identity as every view renders it — decided here, once. */
+export interface Identity {
+  label: string;
+  /** What to call it: the GitHub login, the label until one is known. */
+  name: string;
+  githubLogin: string | null;
+  sessionSlot: string | null;
+  isDefault: boolean;
+  status: IdentityStatus;
+  expiresAt: number | null;
+  /** The one sentence for where it stands. */
+  standing: string;
+  tone: IdentityTone;
+  /** The button, or `null` when there is nothing to do. */
+  action: IdentityAction | null;
+  busy: boolean;
+  /** The button's text, `opening…` while its sign-in starts; `null` with no button. */
+  buttonLabel: string | null;
+  /** `ready` beside a usable identity with nothing to do; `null` otherwise. */
+  badge: 'ready' | null;
+}
+
+/** Where the list stands, so no view claims emptiness before the answer. */
+export type IdentitiesPhase = 'loading' | 'error' | 'empty' | 'list';
 
 export interface PersonaListDeps {
   /** Resolves `null` when the registry could not be read — never `[]`. */
@@ -44,39 +87,53 @@ export interface PersonaListDeps {
   /** `POST /api/auth/signin`. `expectedLogin` is a hint GitHub uses to
    *  preselect an account; `null` when we have never learned one. */
   startSignIn: (persona: string, expectedLogin: string | null) => Promise<string | null>;
-  /**
-   * Open the daemon's authorize link in the SYSTEM browser — for every kind of
-   * sign-in (#300, decided 2026-10-20). The in-app private window could not
-   * complete passkey, SMS or GitHub Mobile. A browser signed in to GitHub as
-   * someone else is caught by the daemon's account guard, and the UI offers the
-   * link to copy into a private window.
-   */
+  /** Open the daemon's authorize link in the SYSTEM browser (#300). */
   openAuth: (url: string) => Promise<void>;
   /** `POST /api/auth/keychain/approve` (#283). Resolves `null` when approved,
    *  otherwise why not. */
   approveKeychain: (persona: string) => Promise<string | null>;
-  /** `POST /api/auth/personas/{label}/default` — Make default. Resolves `null`
-   *  when done, otherwise why not. */
+  /** `POST /api/auth/personas/{label}/default`. `null` when done, else why not. */
   makeDefault: (label: string) => Promise<string | null>;
+  /** `POST /api/auth/signout?persona=<slot>`. `null` when both the Keychain and
+   *  the registry let go, else why not. Optional: the sign-in overlay never signs out. */
+  signOut?: (slot: string) => Promise<string | null>;
+  /** Unix seconds. Injected so expiry can be tested. */
+  now?: () => number;
 }
+
+/** Each tone's text colour — one map for every view that shows an identity. */
+export const IDENTITY_TONE_CLASS: Record<IdentityTone, string> = {
+  idle: 'text-ink-mute',
+  ok: 'text-success',
+  warn: 'text-warning',
+  dead: 'text-danger'
+};
 
 /** How often, and how many times, the list is re-read while a sign-in is open. */
 const FOLLOW_MS = 3_000;
 const FOLLOW_TICKS = 200;
+/** How often the clock moves and the facts are re-read while the app is open. */
+const TICK_MS = 60_000;
+
+const ACTIONS: Record<Exclude<IdentityStatus, 'ready'>, IdentityAction> = {
+  // First-time. "Sign in again" would read as a fault the user caused.
+  neverConnected: { kind: 'connect', label: 'Connect' },
+  expired: { kind: 'signIn', label: 'Sign in again' },
+  needsKeychain: { kind: 'approve', label: 'Approve keychain access' },
+  expiring: { kind: 'renew', label: 'Renew' }
+};
 
 export class PersonaList {
-  personas = $state<PersonaWire[]>([]);
+  #wire = $state<PersonaWire[]>([]);
+  /** The clock, in unix seconds. Moves on `tick`, so expiry is seen while open. */
+  now = $state(0);
   /** Non-null when a read or an attempt FAILED. Rendered instead of a list:
    *  "no identities" and "we could not ask" are different answers. */
   error = $state<string | null>(null);
-
-  /** Why no identity is the default, when none is (#296) — e.g. no global git
-   *  email, or one that two identities own. `null` when one is, or unknown. */
+  /** Why no identity is the default, when none is (#296). */
   defaultError = $state<string | null>(null);
-
   /** The sign-in in flight, for the UI: which identity, which GitHub account it
-   *  expects (`null` for a first connect), and the link to copy into a private
-   *  window when the browser is signed in as someone else (#300). */
+   *  expects (`null` for a first connect), and the link to copy (#300). */
   pending = $state<{
     label: string;
     expectedLogin: string | null;
@@ -86,75 +143,223 @@ export class PersonaList {
     /** The credential's expiry when the sign-in began: a new one means it finished. */
     was: number | null;
   } | null>(null);
-
-  /** The re-read that follows a sign-in until it finishes. */
-  #follow: ReturnType<typeof setInterval> | null = null;
-
-  /**
-   * Whether a read has SUCCEEDED at least once.
-   *
-   * Without this the overlay renders "No identities yet" the instant it opens —
-   * an empty answer to a question not yet asked. Opening from the menu starts
-   * the read and shows the overlay in the same tick, so the fabricated empty is
-   * visible until the fetch lands, and stays visible if it fails.
-   */
+  /** Whether a read has SUCCEEDED at least once — so nothing claims emptiness
+   *  before the question is answered. */
   loaded = $state(false);
 
   /** Per-row, keyed by label, so one slow sign-in does not disable the list. */
   #busy = $state<Set<string>>(new Set());
+  #follow: ReturnType<typeof setInterval> | null = null;
+  #ticker: ReturnType<typeof setInterval> | null = null;
+  /** How many views need the clock moving: the overlay and the settings screen
+   *  each start it, and one going away must not stop it for the other. */
+  #viewers = 0;
   #deps: PersonaListDeps;
+
+  /** Whether THIS window re-authorizes on its own (the main window; the layout
+   *  sets it). One window, or a renewal would open two browser tabs. */
+  renews = false;
+  /** The identities whose current renewal window has had its one automatic
+   *  attempt. An identity leaves the set when it stops being due — re-armed for
+   *  the next window. */
+  #attempted = new Set<string>();
+
+  /** Called when an identity changed here — a sign-in finished, an approval,
+   *  a new default — so the layout can tell the other windows, each of which
+   *  holds its own copy of this state (as `appState.onConfigSaved`). */
+  onChanged: (() => void) | null = null;
 
   constructor(deps: PersonaListDeps) {
     this.#deps = deps;
+    this.now = this.#clock();
   }
 
-  isBusy(p: PersonaWire): boolean {
-    return this.#busy.has(p.label);
+  #clock(): number {
+    return this.#deps.now ? this.#deps.now() : Math.floor(Date.now() / 1000);
+  }
+
+  /** Every identity, decided. The only thing views render. */
+  identities = $derived(this.#wire.map((w) => this.#identity(w)));
+
+  get phase(): IdentitiesPhase {
+    if (this.error) return 'error';
+    if (!this.loaded) return 'loading';
+    return this.#wire.length === 0 ? 'empty' : 'list';
   }
 
   /**
-   * Whether something is BROKEN enough to open the overlay unasked.
-   *
-   * `signIn` only. Deliberately NOT `connect`: sensei infers personas from
-   * commit authorship, so an install has several that have never been connected
-   * and may never need to be — this machine has two. Counting those would pop
-   * the overlay on every launch, which is the nuisance the automatic path exists
-   * to avoid. They still appear IN the list; they just do not summon it.
-   *
-   * `renew` is excluded too, because renewal is automatic and prompt-free.
+   * The Keychain slot a write signs with (Settings · Metrics' activation): the
+   * default identity while it is usable, else — with no default — the first
+   * usable one. Never another identity standing in for a broken default: that
+   * would write as someone the user did not choose.
    */
+  get writeSlot(): string | null {
+    const usable = (i: Identity) => i.status === 'ready' || i.status === 'expiring';
+    const def = this.identities.find((i) => i.isDefault);
+    if (def) return usable(def) ? def.sessionSlot : null;
+    return this.identities.find(usable)?.sessionSlot ?? null;
+  }
+
+  /** The identities that need you: an expired credential, or a live one the
+   *  Keychain withholds. Never-connected ones do not (an install infers several),
+   *  nor does a renewal (automatic and prompt-free). */
+  get #needing(): Identity[] {
+    return this.identities.filter((i) => i.status === 'expired' || i.status === 'needsKeychain');
+  }
+
+  /** Whether something needs you — sync is paused until it is handled. */
   get needsAttention(): boolean {
-    // `approve` too (#283): the session is there, but sync stays down until
-    // the user lets the daemon read it.
-    return this.personas.some((p) => p.action === 'signIn' || p.action === 'approve');
+    return this.#needing.length > 0;
+  }
+
+  /** The sidebar footer's one sentence while something needs you, else null. */
+  get attentionLine(): string | null {
+    const needing = this.#needing;
+    if (needing.length === 0) return null;
+    const n = needing.length;
+    const who = n === 1 ? '1 identity needs' : `${n} identities need`;
+    const kinds = new Set(needing.map((i) => i.status));
+    const what = kinds.size > 1 ? 'you' : kinds.has('expired') ? 'sign-in' : 'Keychain approval';
+    return `Sync paused — ${who} ${what}`;
+  }
+
+  /** Called with `attentionLine` when an identity STARTS needing you — once, not on
+   *  every check; again only if it recovers and breaks again. The main window turns
+   *  it into a toast that fades (the overlay that covered the screen is gone). */
+  onAttention: ((line: string) => void) | null = null;
+  #announced = new Set<string>();
+
+  #announce(): void {
+    const needing = new Set(this.#needing.map((i) => i.label));
+    const isNew = [...needing].some((label) => !this.#announced.has(label));
+    this.#announced = needing;
+    const line = this.attentionLine;
+    if (isNew && line) this.onAttention?.(line);
+  }
+
+  #status(w: PersonaWire): IdentityStatus {
+    if (!w.connected) return 'neverConnected';
+    const { state, expiresAt } = w.forgeToken;
+    if (state === 'dead' || state === 'absent') return 'expired';
+    // Half-open, as the daemon's scheduler: at the instant of expiry it is gone.
+    if (expiresAt !== null && expiresAt <= this.now) return 'expired';
+    // Only a credential still alive is worth approving the Keychain for.
+    if (w.keychain === 'needsApproval') return 'needsKeychain';
+    if (w.renewalDue) return 'expiring';
+    return 'ready';
+  }
+
+  #identity(w: PersonaWire): Identity {
+    const status = this.#status(w);
+    const expiresAt = w.forgeToken.expiresAt;
+    const left = expiresAt === null ? null : (expiresAt - this.now) / 3600;
+    const standing =
+      status === 'neverConnected' ? 'never signed in on this machine'
+      : status === 'expired' ? 'credential expired'
+      : status === 'needsKeychain' ? 'keychain access needs approval'
+      : left === null ? 'signed in — expiry not yet known'
+      : left < 1 ? `${Math.round(left * 60)} minutes left`
+      : `${left.toFixed(1)} hours left`;
+    // Calm with hours left, urgent within the hour; neutral when nothing is
+    // known to be wrong (never connected, or an expiry not yet learned).
+    const tone: IdentityTone =
+      status === 'neverConnected' ? 'idle'
+      : status === 'expired' ? 'dead'
+      : status === 'needsKeychain' || status === 'expiring' ? 'warn'
+      : left === null ? 'idle'
+      : left < 1 ? 'warn'
+      : 'ok';
+    const action = status === 'ready' ? null : ACTIONS[status];
+    const busy = this.#busy.has(w.label);
+    return {
+      label: w.label,
+      name: w.githubLogin ?? w.label,
+      githubLogin: w.githubLogin,
+      sessionSlot: w.sessionSlot,
+      isDefault: w.isDefault ?? false,
+      status,
+      expiresAt,
+      standing,
+      tone,
+      action,
+      busy,
+      buttonLabel: action === null ? null : busy ? 'opening…' : action.label,
+      badge: status === 'ready' ? 'ready' : null
+    };
   }
 
   async load(): Promise<void> {
     const res = await this.#deps.fetchPersonas().catch(() => null);
+    this.now = this.#clock();
     if (!res) {
-      // Deliberately NOT an empty list. `[]` reads as "you have no identities",
-      // and the action a user reaches for then is to connect one — the wrong
-      // move against a registry that is merely unreachable.
-      this.personas = [];
+      // Deliberately NOT an empty list: "you have no identities" invites a
+      // connect against a registry that is merely unreachable.
+      this.#wire = [];
       this.error = 'could not read the identity list — is the daemon running?';
       return;
     }
-    this.personas = res.personas;
+    this.#wire = res.personas;
     this.defaultError = res.defaultError ?? null;
     this.error = null;
     this.loaded = true;
     this.#settle();
+    this.#announce();
+    await this.#renewDue();
+  }
+
+  /**
+   * Renewal re-runs the authorize flow in the browser (the client secret stays
+   * in Supabase, so the daemon cannot redeem a refresh token itself). For a
+   * user with a live GitHub session that is a ~6 s redirect chain with no
+   * prompt. It opens a browser, so ONE attempt per identity per renewal window:
+   * if it does not complete, the identity becomes expired and its button is the
+   * user's choice.
+   */
+  async #renewDue(): Promise<void> {
+    if (!this.renews) return;
+    for (const id of this.identities) {
+      if (id.status !== 'expiring') {
+        this.#attempted.delete(id.label);
+        continue;
+      }
+      if (this.#attempted.has(id.label)) continue;
+      this.#attempted.add(id.label);
+      await this.signIn(id);
+    }
+  }
+
+  /** Move the clock and re-read the facts. Runs every minute once started. */
+  async tick(): Promise<void> {
+    await this.load();
+  }
+
+  /** Keep the state current while the app is open: the clock moves, so a
+   *  credential that expires on screen says so without anyone reloading. */
+  start(): void {
+    this.#viewers += 1;
+    if (this.#ticker) return;
+    this.#ticker = setInterval(() => void this.tick(), TICK_MS);
+  }
+
+  /** One view is done; the clock stops when none needs it. */
+  stop(): void {
+    this.#viewers = Math.max(0, this.#viewers - 1);
+    if (this.#viewers > 0) return;
+    if (this.#ticker) clearInterval(this.#ticker);
+    this.#ticker = null;
+    this.#stopFollowing();
   }
 
   /** A sign-in has finished when its identity holds a NEW live credential; the
-   *  notice then goes, and so does the re-read that waited for it. */
+   *  notice then goes, the re-reads stop, and the other windows are told. */
   #settle(): void {
     const pending = this.pending;
     if (!pending) return;
-    const p = this.personas.find((x) => (x.sessionSlot ?? x.label) === pending.slot);
-    if (!p || !p.connected || p.forgeToken.state !== 'active' || p.forgeToken.expiresAt === pending.was) return;
+    const w = this.#wire.find((x) => (x.sessionSlot ?? x.label) === pending.slot);
+    if (!w || !w.connected || w.forgeToken.state !== 'active' || w.forgeToken.expiresAt === pending.was) return;
     this.pending = null;
     this.#stopFollowing();
+    this.onChanged?.();
   }
 
   #stopFollowing(): void {
@@ -173,136 +378,90 @@ export class PersonaList {
     }, FOLLOW_MS);
   }
 
-  /** The verb for this row's button. */
-  actionLabel(p: PersonaWire): string {
-    switch (p.action) {
-      case 'connect':
-        // First-time. "Sign in again" would read as a fault the user caused.
-        return 'Connect';
-      case 'signIn':
-        return 'Sign in again';
-      case 'renew':
-        return 'Renew';
-      case 'approve':
-        return 'Approve keychain access';
-      default:
-        return 'Sign in';
-    }
+  #wireOf(id: Identity): PersonaWire | undefined {
+    return this.#wire.find((w) => w.label === id.label);
   }
 
-  /** One line describing where this persona stands. */
-  describe(p: PersonaWire, now: number): string {
-    if (!p.connected) return 'never signed in on this machine';
-    if (p.action === 'approve') return 'keychain access needs approval';
-    const exp = p.forgeToken.expiresAt;
-    if (p.forgeToken.state === 'dead') return 'credential expired';
-    if (exp === null) return 'signed in — expiry not yet known';
-    const hours = (exp - now) / 3600;
-    if (hours <= 0) return 'credential expired';
-    return hours < 1
-      ? `${Math.round(hours * 60)} minutes left`
-      : `${hours.toFixed(1)} hours left`;
-  }
-
-  /**
-   * How alarming this persona's credential standing is.
-   *
-   * Beside [`describe`] because the two answer the same question in different
-   * media — the sentence and the colour — and a second copy of the thresholds
-   * would drift from it. `describe` switches wording at one hour; this switches
-   * tone at the same boundary, from the same fields.
-   *
-   * The distinctions matter on a settings screen:
-   *
-   * * `idle` — never connected, or an expiry the daemon has not learned. Nothing
-   *   is wrong. Colouring either red makes a fresh install look broken, and sends
-   *   the user to re-authenticate a credential that is probably fine.
-   * * `ok` — more than an hour left. Renewal is automatic and takes ~6s, so this
-   *   needs no alarm.
-   * * `warn` — under an hour. This is the state #127 exists for: the only current
-   *   surfaces open AFTER death, so there is nowhere to see it coming.
-   * * `dead` — expired. Distinct from `warn` because the action differs: one is a
-   *   heads-up, the other is a thing you must now do.
-   */
-  tone(p: PersonaWire, now: number): 'idle' | 'ok' | 'warn' | 'dead' {
-    if (!p.connected) return 'idle';
-    if (p.action === 'approve') return 'warn';
-    if (p.forgeToken.state === 'dead') return 'dead';
-    const exp = p.forgeToken.expiresAt;
-    if (exp === null) return 'idle';
-    const seconds = exp - now;
-    if (seconds <= 0) return 'dead';
-    return seconds < 3600 ? 'warn' : 'ok';
-  }
-
-  /** The row's button (#283): approve the Keychain, or sign in. An approval
-   *  opens no browser — the daemon re-reads the session with the Keychain's
-   *  dialog allowed, and the user answers it there. */
-  async act(p: PersonaWire): Promise<void> {
-    if (p.action !== 'approve') return this.signIn(p);
-    if (this.#busy.has(p.label)) return;
-    this.#busy = new Set(this.#busy).add(p.label);
-    this.error = null;
+  async #withBusy(label: string, run: () => Promise<void>): Promise<void> {
+    if (this.#busy.has(label)) return;
+    this.#busy = new Set(this.#busy).add(label);
     try {
-      this.error = await this.#deps
-        .approveKeychain(p.sessionSlot ?? p.label)
-        .catch((e) => (e instanceof Error ? e.message : `could not approve ${p.label}`));
+      await run();
     } finally {
       const next = new Set(this.#busy);
-      next.delete(p.label);
+      next.delete(label);
       this.#busy = next;
     }
   }
 
-  /** Make this identity the default (user, 2026-10-27), then re-read the list
-   *  — the daemon decides which identity is the default, and says so. */
-  async makeDefault(p: PersonaWire): Promise<void> {
-    if (this.#busy.has(p.label)) return;
-    this.#busy = new Set(this.#busy).add(p.label);
-    try {
+  /** The row's button: approve the Keychain (#283) — no browser, the daemon
+   *  re-reads with the Keychain's dialog allowed — or sign in. */
+  async act(id: Identity): Promise<void> {
+    if (id.action?.kind !== 'approve') return this.signIn(id);
+    await this.#withBusy(id.label, async () => {
       this.error = await this.#deps
-        .makeDefault(p.label)
-        .catch((e) => (e instanceof Error ? e.message : `could not make ${p.label} the default`));
-    } finally {
-      const next = new Set(this.#busy);
-      next.delete(p.label);
-      this.#busy = next;
-    }
-    if (!this.error) await this.load();
+        .approveKeychain(id.sessionSlot ?? id.label)
+        .catch((e) => (e instanceof Error ? e.message : `could not approve ${id.label}`));
+    });
+    // A refusal stays on screen; a re-read would clear it.
+    if (this.error) return;
+    await this.load();
+    this.onChanged?.();
+  }
+
+  /** Make this identity the default, then re-read: the daemon decides which
+   *  identity is the default, and says so. */
+  async makeDefault(id: Identity): Promise<void> {
+    await this.#withBusy(id.label, async () => {
+      this.error = await this.#deps
+        .makeDefault(id.label)
+        .catch((e) => (e instanceof Error ? e.message : `could not make ${id.label} the default`));
+    });
+    if (this.error) return;
+    await this.load();
+    this.onChanged?.();
+  }
+
+  /** Sign this identity out on this machine, then re-read: the daemon clears the
+   *  Keychain credential and the registry slot and says whether both happened. An
+   *  identity with no slot has nothing to sign out. */
+  async signOut(id: Identity): Promise<void> {
+    const slot = id.sessionSlot;
+    const signOut = this.#deps.signOut;
+    if (!slot || !signOut) return;
+    await this.#withBusy(id.label, async () => {
+      this.error = await signOut(slot).catch((e) => (e instanceof Error ? e.message : `could not sign ${id.label} out`));
+    });
+    if (this.error) return;
+    await this.load();
+    this.onChanged?.();
   }
 
   /**
-   * Start a sign-in for one persona, in the system browser (#300).
-   *
-   * Addressed by `sessionSlot` when there is one. The label is rewritten to the
-   * verified GitHub login on sign-in and the slot is not, so signing in against
-   * the label addresses a persona that does not exist — the daemon then finds no
-   * slot and silently connects nothing.
+   * Start a sign-in for one identity, in the system browser (#300). Addressed by
+   * its Keychain slot when there is one: the label is rewritten to the verified
+   * login on sign-in and the slot is not.
    */
-  async signIn(p: PersonaWire): Promise<void> {
-    if (this.#busy.has(p.label)) return;
-    this.#busy = new Set(this.#busy).add(p.label);
-    this.error = null;
-    try {
-      const url = await this.#deps
-        .startSignIn(p.sessionSlot ?? p.label, p.githubLogin)
-        .catch(() => null);
-      if (!url) {
-        this.pending = null;
-        this.error = `could not start the sign-in for ${p.label}`;
-        return;
+  async signIn(id: Identity): Promise<void> {
+    await this.#withBusy(id.label, async () => {
+      this.error = null;
+      try {
+        const slot = id.sessionSlot ?? id.label;
+        const url = await this.#deps.startSignIn(slot, id.githubLogin).catch(() => null);
+        if (!url) {
+          this.pending = null;
+          this.error = `could not start the sign-in for ${id.label}`;
+          return;
+        }
+        this.pending = { label: id.label, expectedLogin: id.githubLogin, url, slot, was: this.#wireOf(id)?.forgeToken.expiresAt ?? null };
+        this.#followSignIn();
+        await this.#deps.openAuth(url);
+      } catch (e) {
+        // The shell rejects with a plain string; that string is the reason.
+        const why = e instanceof Error ? e.message : String(e ?? '');
+        this.error = `could not open your browser for ${id.label}${why ? ` — ${why}` : ''}`;
       }
-      const slot = p.sessionSlot ?? p.label;
-      this.pending = { label: p.label, expectedLogin: p.githubLogin, url, slot, was: p.forgeToken.expiresAt };
-      this.#followSignIn();
-      await this.#deps.openAuth(url);
-    } catch (e) {
-      this.error = e instanceof Error ? e.message : `could not open your browser for ${p.label}`;
-    } finally {
-      const next = new Set(this.#busy);
-      next.delete(p.label);
-      this.#busy = next;
-    }
+    });
   }
 }
 
@@ -342,6 +501,15 @@ export const personaList = new PersonaList({
     ]);
     const res = await senseiApi(appState.port).tryMakeDefaultPersona(label);
     return res.ok ? null : res.error.message || 'the daemon did not answer';
+  },
+  signOut: async (slot) => {
+    const [{ senseiApi }, { appState }] = await Promise.all([
+      import('./api.js'),
+      import('./appstate.svelte.js')
+    ]);
+    const res = await senseiApi(appState.port).trySignOut(slot);
+    if (!res.ok) return res.error.message || 'the daemon did not answer';
+    return res.data.ok ? null : (res.data.errors?.join('; ') || 'the sign-out did not complete');
   },
   openAuth: async (url) => {
     // The system browser, for every sign-in (#300): it holds the user's GitHub

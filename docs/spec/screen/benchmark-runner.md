@@ -2,7 +2,7 @@
 
 **Segment:** 02 · Preferences / Extensions
 **Route:** `/instruments/benchmark` (Dashboard, layout A) · `/instruments/benchmark/[runId]` (Notebook run report, layout B)
-**Source mockup:** [`lib/observatory/benchmark.jsx`](../../mockups/Sensei/lib/observatory/benchmark.jsx) → `BenchmarkRunnerDashboard` (A) + `BenchmarkRunnerNotebook` (B)
+**Source mockup:** `lib/observatory/benchmark.jsx` → `BenchmarkRunnerDashboard` (A) + `BenchmarkRunnerNotebook` (B)
 **Data:** `sensei.benchmark_runs` (paired same-task/branch, `sensei_enabled` true/false) · `sensei.benchmark_reports` (strategy-comparison payloads). Corpus registry in-repo at `benchmarks/registry.yaml`.
 **App file:** _greenfield_
 **Daemon files:** _partial / mostly greenfield_ — DDL exists (`database/ddl/table/sensei/benchmark_runs.ddl`, `benchmark_reports.ddl`, staging `import_benchmark_reports.ddl`). The designed owner files (`crates/senseid/src/benchmarks/runner.rs`, `benchmarks/registry.yaml`, `benchmarks/competitors.yaml`) **do not exist yet**; there is no HTTP handler and no `sensei bench` CLI command.

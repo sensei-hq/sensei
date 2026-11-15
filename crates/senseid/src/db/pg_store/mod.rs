@@ -21,6 +21,10 @@ use std::time::Duration;
 #[derive(Clone)]
 pub struct PgStore {
     pool: PgPool,
+    /// H2 shortfall counts (phase B records; see [`sync::ShortfallTracker`]).
+    /// `Arc` so clones share one worker's counting.
+    #[allow(dead_code)] // phase A: constructed, read in phase B
+    shortfalls: std::sync::Arc<std::sync::Mutex<sync::ShortfallTracker>>,
 }
 
 /// The most connections one test's pool may hold ([`PgStore::connect_test`]).
@@ -540,8 +544,10 @@ pub struct MetricMeaning {
     pub how_to_read: String,
 }
 
+mod command_catalogue;
 mod commands;
 mod config;
+pub(crate) mod delivery;
 mod dojo;
 mod extensions;
 pub(crate) mod folders;
@@ -549,7 +555,10 @@ mod git_history;
 mod governance;
 mod graph;
 mod graph_push;
+mod metric_settings;
+pub mod session_signals;
 mod test_db;
+pub mod tracker_history;
 pub use graph_push::GraphCheckout;
 mod indexer;
 /// Named outside this module because the MCP handler picks the direction and
@@ -587,16 +596,17 @@ mod personas;
 pub(crate) use personas::ForgeTokenRow;
 mod playbook;
 mod reasons;
-mod repo_key;
+pub(crate) mod relay;
+pub(crate) mod repo_key;
 mod runs;
 mod schedules;
 mod sessions;
 pub(crate) mod sync;
+pub(crate) mod targets;
 pub(crate) mod tracker_usage;
 pub(crate) mod trackers;
-mod transcript;
+pub(crate) mod transcript;
 mod workspaces;
-pub(crate) use repo_key::normalize_repo_key;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 
 #[cfg(test)]
@@ -653,6 +663,10 @@ impl PgStore {
     /// pools run in parallel — a warm floor of 8 each would exhaust Postgres's
     /// connection limit).
     async fn connect_with(database_url: &str, min: u32, max: u32) -> Result<Self, String> {
+        // The pool keeps the server default (UTC): metrics days are UTC and
+        // billing-adjacent, so the zone stays off the pool. Relay's one
+        // day-windowed read (`relay_now`) sets it per-transaction instead
+        // (L0 ruling 2026-11-06, relay-q15-q19 addendum).
         let pool = PgPoolOptions::new()
             .min_connections(min)
             .max_connections(max)
@@ -677,7 +691,7 @@ impl PgStore {
             .connect(database_url)
             .await
             .map_err(|e| format!("PgStore connect: {}", e))?;
-        Ok(Self { pool })
+        Ok(Self { pool, shortfalls: Default::default() })
     }
 
     /// Connect to the test database — the ONLY constructor tests should use.
@@ -1625,6 +1639,8 @@ pub struct SessionMetricsRow<'a> {
     pub duration_ms: Option<i64>,
     pub claude_ms: Option<i64>,
     pub user_ms: Option<i64>,
+    /// The split by the hour it happened (`[[epoch hour, claude ms, user ms], …]`).
+    pub active_by_hour: Option<&'a serde_json::Value>,
     pub module: Option<&'a str>,
     pub tool_usage: &'a serde_json::Value,
 }

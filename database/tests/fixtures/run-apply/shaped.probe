@@ -1,0 +1,16 @@
+-- Real-shaped probe: every suite file opens begin; and closes rollback;.
+-- --apply must run these (a begin warning is fine) and the canary must be
+-- visible inside.
+begin;
+
+do $$
+declare
+    v integer;
+begin
+    select dojo.__apply_b() into v;
+    if v <> 8 then
+        raise exception 'expected __apply_b() = 8, got %', v;
+    end if;
+end $$;
+
+rollback;

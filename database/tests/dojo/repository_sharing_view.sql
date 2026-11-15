@@ -36,27 +36,33 @@ insert into dojo.principals (id, auth_user_id, display_name) values
   ('5ecd0000-0000-0000-0000-00000000ca01', '5ecd0000-0000-0000-0000-00000000ca02', 'ztest Carol (maintainer)'),
   ('5ecd0000-0000-0000-0000-00000000da7e', '5ecd0000-0000-0000-0000-00000000da7f', 'ztest Dave (lead)');
 
-insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
+-- The billing tenants are CLAIMED orgs (D46: a personal tenant never reaches the
+-- billing terms). 001 keeps its NULL claim — nothing here reads its verdict.
+-- 006 is the personal tenant §4's user-refusal fixture moved to.
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url, claimed_at) values
   ('5ecd0000-0000-0000-0000-000000000001', 'organization/ztest-v-org', 'organization', 'ztest-v-org',
-   'Org', 'dojo.sensei-hq.org/organization/ztest-v-org'),
-  ('5ecd0000-0000-0000-0000-000000000002', 'personal/ztest-v-lastday', 'personal', 'ztest-v-lastday',
-   'Last day of the period', 'dojo.sensei-hq.org/personal/ztest-v-lastday'),
-  ('5ecd0000-0000-0000-0000-000000000003', 'personal/ztest-v-lapsed', 'personal', 'ztest-v-lapsed',
-   'Period ended yesterday', 'dojo.sensei-hq.org/personal/ztest-v-lapsed'),
-  ('5ecd0000-0000-0000-0000-000000000004', 'personal/ztest-v-noperiod', 'personal', 'ztest-v-noperiod',
-   'Active with no period', 'dojo.sensei-hq.org/personal/ztest-v-noperiod'),
-  ('5ecd0000-0000-0000-0000-000000000005', 'personal/ztest-v-trial', 'personal', 'ztest-v-trial',
-   'Trialing', 'dojo.sensei-hq.org/personal/ztest-v-trial');
+   'Org', 'dojo.sensei-hq.org/organization/ztest-v-org', null),
+  ('5ecd0000-0000-0000-0000-000000000002', 'organization/ztest-v-lastday', 'organization', 'ztest-v-lastday',
+   'Last day of the period', 'dojo.sensei-hq.org/organization/ztest-v-lastday', now()),
+  ('5ecd0000-0000-0000-0000-000000000003', 'organization/ztest-v-lapsed', 'organization', 'ztest-v-lapsed',
+   'Period ended yesterday', 'dojo.sensei-hq.org/organization/ztest-v-lapsed', now()),
+  ('5ecd0000-0000-0000-0000-000000000004', 'organization/ztest-v-noperiod', 'organization', 'ztest-v-noperiod',
+   'Active with no period', 'dojo.sensei-hq.org/organization/ztest-v-noperiod', now()),
+  ('5ecd0000-0000-0000-0000-000000000005', 'organization/ztest-v-trial', 'organization', 'ztest-v-trial',
+   'Trialing', 'dojo.sensei-hq.org/organization/ztest-v-trial', now()),
+  ('5ecd0000-0000-0000-0000-000000000006', 'personal/ztest-v-optout', 'personal', 'ztest-v-optout',
+   'Opted out', 'dojo.sensei-hq.org/personal/ztest-v-optout', null);
 
 insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role) values
   ('5ecd0000-0000-0000-0000-000000000001', '5ecd0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'admin'),
   ('5ecd0000-0000-0000-0000-000000000001', '5ecd0000-0000-0000-0000-00000000b0b0', 'employer', 'github_oauth', 'contributor'),
   ('5ecd0000-0000-0000-0000-000000000001', '5ecd0000-0000-0000-0000-00000000ca01', 'employer', 'github_oauth', 'maintainer'),
   ('5ecd0000-0000-0000-0000-000000000001', '5ecd0000-0000-0000-0000-00000000da7e', 'employer', 'github_oauth', 'lead'),
-  ('5ecd0000-0000-0000-0000-000000000002', '5ecd0000-0000-0000-0000-00000000a11c', 'personal', 'github_oauth', 'admin'),
-  ('5ecd0000-0000-0000-0000-000000000003', '5ecd0000-0000-0000-0000-00000000a11c', 'personal', 'github_oauth', 'admin'),
-  ('5ecd0000-0000-0000-0000-000000000004', '5ecd0000-0000-0000-0000-00000000a11c', 'personal', 'github_oauth', 'admin'),
-  ('5ecd0000-0000-0000-0000-000000000005', '5ecd0000-0000-0000-0000-00000000a11c', 'personal', 'github_oauth', 'admin');
+  ('5ecd0000-0000-0000-0000-000000000002', '5ecd0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'admin'),
+  ('5ecd0000-0000-0000-0000-000000000003', '5ecd0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'admin'),
+  ('5ecd0000-0000-0000-0000-000000000004', '5ecd0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'admin'),
+  ('5ecd0000-0000-0000-0000-000000000005', '5ecd0000-0000-0000-0000-00000000a11c', 'employer', 'github_oauth', 'admin'),
+  ('5ecd0000-0000-0000-0000-000000000006', '5ecd0000-0000-0000-0000-00000000a11c', 'personal', 'github_oauth', 'admin');
 
 insert into dojo.billing_accounts (tenant_id, status, period_start, period_end) values
   ('5ecd0000-0000-0000-0000-000000000001', 'active',   current_date - 10, current_date + 20),
@@ -88,7 +94,7 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, provider, visibili
   -- org-private, freshly captured: the org decides
   ('5ecd0000-0000-0000-0000-000000000013', '5ecd0000-0000-0000-0000-000000000001',
    'github.com/ztest-v-org/private', 'private', 'github', 'private', now()),
-  -- org-public, freshly captured: the member decides, whatever their role
+  -- org-public, freshly captured: the admin decides (D46)
   ('5ecd0000-0000-0000-0000-000000000014', '5ecd0000-0000-0000-0000-000000000001',
    'github.com/ztest-v-org/public', 'public', 'github', 'public', now()),
   -- a capture that recorded WHEN but not WHAT. The two columns are written
@@ -108,13 +114,14 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, provider, visibili
   -- subscribed, no election row: nobody has decided (it syncs by default, #301)
   ('5ecd0000-0000-0000-0000-000000000024', '5ecd0000-0000-0000-0000-000000000002',
    'github.com/ztest-v-lastday/unelected', 'unelected', 'github', 'private', now()),
-  -- subscribed and OPTED OUT: the refusal row the registry join is tested on
-  ('5ecd0000-0000-0000-0000-000000000025', '5ecd0000-0000-0000-0000-000000000002',
+  -- subscribed and OPTED OUT: the refusal row the registry join is tested on.
+  -- On the personal tenant: a user refusal still lives there (D46).
+  ('5ecd0000-0000-0000-0000-000000000025', '5ecd0000-0000-0000-0000-000000000006',
    'github.com/ztest-v-lastday/optedout', 'optedout', 'github', 'private', now());
 
 insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected, elected_at) values
   -- The opt-out: absence now means shared (#301), so a refusal needs a decision.
-  ('5ecd0000-0000-0000-0000-000000000002', '5ecd0000-0000-0000-0000-000000000025', 'user',
+  ('5ecd0000-0000-0000-0000-000000000006', '5ecd0000-0000-0000-0000-000000000025', 'user',
    '5ecd0000-0000-0000-0000-00000000a11c', false, now()),
   -- Alice elected BOTH the uncaptured and the stale repository. Neither may
   -- apply: there is no authority to apply it under.
@@ -124,14 +131,15 @@ insert into dojo.repository_elections (tenant_id, repository_id, authority, prin
    '5ecd0000-0000-0000-0000-00000000a11c', true, now()),
   ('5ecd0000-0000-0000-0000-000000000001', '5ecd0000-0000-0000-0000-000000000012', 'user',
    '5ecd0000-0000-0000-0000-00000000a11c', true, now()),
-  ('5ecd0000-0000-0000-0000-000000000002', '5ecd0000-0000-0000-0000-000000000020', 'user',
-   '5ecd0000-0000-0000-0000-00000000a11c', true, timestamptz '2026-03-03 10:00:00+00'),
-  ('5ecd0000-0000-0000-0000-000000000003', '5ecd0000-0000-0000-0000-000000000021', 'user',
-   '5ecd0000-0000-0000-0000-00000000a11c', true, now()),
-  ('5ecd0000-0000-0000-0000-000000000004', '5ecd0000-0000-0000-0000-000000000022', 'user',
-   '5ecd0000-0000-0000-0000-00000000a11c', true, now()),
-  ('5ecd0000-0000-0000-0000-000000000005', '5ecd0000-0000-0000-0000-000000000023', 'user',
-   '5ecd0000-0000-0000-0000-00000000a11c', true, now());
+  -- The billing tenants are orgs now: their elections are the organisation's.
+  ('5ecd0000-0000-0000-0000-000000000002', '5ecd0000-0000-0000-0000-000000000020', 'organization',
+   null, true, timestamptz '2026-03-03 10:00:00+00'),
+  ('5ecd0000-0000-0000-0000-000000000003', '5ecd0000-0000-0000-0000-000000000021', 'organization',
+   null, true, now()),
+  ('5ecd0000-0000-0000-0000-000000000004', '5ecd0000-0000-0000-0000-000000000022', 'organization',
+   null, true, now()),
+  ('5ecd0000-0000-0000-0000-000000000005', '5ecd0000-0000-0000-0000-000000000023', 'organization',
+   null, true, now());
 
 -- Two metric rows on the org-private repository: one describing the REPOSITORY,
 -- one describing BOB. Bob's is the more recent, so a missing principal predicate
@@ -395,10 +403,11 @@ begin
             ('github.com/ztest-v-org/private', '5ecd0000-0000-0000-0000-00000000da7e', false),  -- lead
             ('github.com/ztest-v-org/private', '5ecd0000-0000-0000-0000-00000000ca01', false),  -- maintainer
             ('github.com/ztest-v-org/private', '5ecd0000-0000-0000-0000-00000000b0b0', false),  -- contributor
-            -- Org-PUBLIC: the member's own call, whatever their role.
-            ('github.com/ztest-v-org/public',  '5ecd0000-0000-0000-0000-00000000b0b0', true),
+            -- Org-PUBLIC: the admin's call (D46), like any org repository.
+            ('github.com/ztest-v-org/public',  '5ecd0000-0000-0000-0000-00000000a11c', true),
+            ('github.com/ztest-v-org/public',  '5ecd0000-0000-0000-0000-00000000b0b0', false),
             -- Personal: always the member's.
-            ('github.com/ztest-v-lastday/r',   '5ecd0000-0000-0000-0000-00000000a11c', true)
+            ('github.com/ztest-v-lastday/optedout', '5ecd0000-0000-0000-0000-00000000a11c', true)
         ) as t(repo_key, principal_id, configurable)
     loop
         select v.configurable_by_me into got
@@ -420,12 +429,12 @@ do $$
 declare
     v record;
 begin
-    -- A user's own election.
+    -- The organisation's own election.
     select * into v from dojo.all_my_repositories
      where repo_key = 'github.com/ztest-v-lastday/r'
        and principal_id = '5ecd0000-0000-0000-0000-00000000a11c';
-    if v.configured_by::text <> 'user' or v.configured_at <> timestamptz '2026-03-03 10:00:00+00' then
-        raise exception 'expected the user''s election to be reported, got (%, %).',
+    if v.configured_by::text <> 'organization' or v.configured_at <> timestamptz '2026-03-03 10:00:00+00' then
+        raise exception 'expected the organisation''s election to be reported, got (%, %).',
             coalesce(v.configured_by::text, 'NULL'), coalesce(v.configured_at::text, 'NULL');
     end if;
 
@@ -439,7 +448,7 @@ begin
             coalesce(v.configured_by::text, 'NULL'), coalesce(v.configured_at::text, 'NULL');
     end if;
 
-    -- Nobody has decided: no election row, and the user holds authority.
+    -- Nobody has decided: no election row, so nobody configured it.
     select * into v from dojo.all_my_repositories
      where repo_key = 'github.com/ztest-v-lastday/unelected'
        and principal_id = '5ecd0000-0000-0000-0000-00000000a11c';

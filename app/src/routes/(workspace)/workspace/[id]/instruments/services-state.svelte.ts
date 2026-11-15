@@ -2,6 +2,7 @@
 // flight while its write is out, and a write the daemon refused says why on
 // that row instead of the switch snapping back in silence (#304). The API and
 // the reload are handed in, so a spec can fail them.
+import { failureNotice } from '@sensei/ui';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { failureReason, type ApiResult } from '$lib/api.js';
 import type { WorkspaceService } from '$lib/types.js';
@@ -18,6 +19,11 @@ export class WorkspaceServicesState {
 
   isToggling(id: string): boolean {
     return this.#toggling.has(id);
+  }
+
+  /** Notice props for a service toggle that did not land (packages/ui/notice.js). */
+  toggleNotice(id: string, displayName: string) {
+    return failureNotice(`Couldn't switch ${displayName}`, this.toggleError(id));
   }
 
   toggleError(id: string): string | null {

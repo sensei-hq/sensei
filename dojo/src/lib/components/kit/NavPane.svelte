@@ -47,7 +47,7 @@
 		<div class="mb-4">
 			{#if grp.group}
 				<div
-					class="text-ink-mute text-xs font-semibold uppercase"
+					class="text-ink-soft text-xs font-semibold uppercase"
 					style="letter-spacing: 0.18em; padding: 0 8px; margin-bottom: 8px"
 				>
 					{grp.group}
@@ -63,14 +63,14 @@
 						aria-current={on ? 'page' : undefined}
 						class="grid w-full items-center gap-2 rounded text-sm {on
 							? 'bg-paper border-paper-edge text-ink border'
-							: 'text-ink-soft border border-transparent bg-transparent'}"
+							: 'text-ink-mute border border-transparent bg-transparent'}"
 						style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px"
 					>
 						<span class="flex items-center justify-center" style="width: 16px">
 							{#if mark.kind === 'icon'}
-								<Icon name={mark.value} size={17} toneClass={on ? 'text-accent' : 'text-ink-mute'} />
+								<Icon name={mark.value} size={17} toneClass={on ? 'text-accent' : 'text-ink-soft'} />
 							{:else}
-								<span class="kanji text-sm {on ? 'text-accent' : 'text-ink-mute'}">{mark.value}</span>
+								<span class="kanji text-sm {on ? 'text-accent' : 'text-ink-soft'}">{mark.value}</span>
 							{/if}
 						</span>
 						<span class="truncate">{it.label}</span>

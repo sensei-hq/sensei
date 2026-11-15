@@ -41,7 +41,7 @@
 			{included ? '✓' : ''}
 		</button>
 	{:else}
-		<KanjiToken char={rule.kanji} size="sm" toneClass="text-ink-mute" w={16} />
+		<KanjiToken char={rule.kanji} size="sm" toneClass="text-ink-soft" w={16} />
 	{/if}
 	<span
 		class="text-ink flex-1 text-sm"
@@ -53,10 +53,10 @@
 				type="button"
 				onclick={() => onJump(rule)}
 				title="Jump to {rule.level}"
-				class="mono text-ink-mute bg-paper-mute border-paper-edge inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border text-xs"
+				class="mono text-ink-soft bg-paper-mute border-paper-edge inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border text-xs"
 				style="padding: 3px 9px"
 			>
-				{rule.level}<Icon name="arrow-right-up" size={12} toneClass="text-ink-mute" />
+				{rule.level}<Icon name="arrow-right-up" size={12} toneClass="text-ink-soft" />
 			</button>
 		{:else}
 			<Chip mono>{rule.level}</Chip>
@@ -75,7 +75,7 @@
 			aria-label="Edit rule"
 			class="flex flex-shrink-0 cursor-pointer items-center bg-transparent"
 		>
-			<Icon name="pen-2" size={15} toneClass="text-ink-mute" />
+			<Icon name="pen-2" size={15} toneClass="text-ink-soft" />
 		</button>
 	{/if}
 </div>

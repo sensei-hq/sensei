@@ -29,6 +29,38 @@ impl PgStore {
         }
     }
 
+    /// [`Self::get_narration_cache`] for many keys in ONE statement: each hit's
+    /// `(title, detail)` keyed by `(kind, facts_hash)`, `last_used_at` bumped;
+    /// a miss is absent. A DB error reads as every key missing, logged — the
+    /// same contract as the single read (the caller warms copy on a miss).
+    pub async fn get_narration_cache_many(
+        &self,
+        keys: &[(&str, &str)],
+    ) -> std::collections::HashMap<(String, String), (String, String)> {
+        if keys.is_empty() {
+            return Default::default();
+        }
+        let kinds: Vec<&str> = keys.iter().map(|(k, _)| *k).collect();
+        let hashes: Vec<&str> = keys.iter().map(|(_, h)| *h).collect();
+        let rows: Result<Vec<(String, String, String, String)>, _> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.narration_cache nc SET last_used_at = now() \
+               FROM unnest($1::text[], $2::text[]) AS k(kind, facts_hash) \
+              WHERE nc.kind = k.kind AND nc.facts_hash = k.facts_hash \
+             RETURNING nc.kind, nc.facts_hash, nc.title, nc.detail",
+        )
+        .bind(kinds)
+        .bind(hashes)
+        .fetch_all(&self.pool)
+        .await;
+        match rows {
+            Ok(rows) => rows.into_iter().map(|(k, h, t, d)| ((k, h), (t, d))).collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "get_narration_cache_many: DB error — treating as cache misses");
+                Default::default()
+            }
+        }
+    }
+
     /// Cache write for the narration-cache pipeline. Upserts the generated copy
     /// for `(kind, facts_hash)`; a newer generation wins on conflict and both
     /// timestamps reset. DB errors are logged and swallowed (the caller has
@@ -320,6 +352,48 @@ impl PgStore {
         Ok(())
     }
 
+    /// Hide one of `workspace_id`'s PENDING recommendations from the pending read
+    /// for `days`, returning when it wakes. A re-snooze replaces the wake time.
+    /// A snoozed rec stops being the focal pick at once. `None` when that
+    /// workspace has no pending recommendation with this id.
+    pub async fn snooze_recommendation(
+        &self,
+        workspace_id: &uuid::Uuid,
+        id: &uuid::Uuid,
+        days: i32,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+        let row: Option<(chrono::DateTime<chrono::Utc>,)> = sqlx_core::query_as::query_as(
+            "UPDATE inference.recommendations
+                SET snoozed_until = now() + make_interval(days => $3), focal = false
+              WHERE id = $2 AND workspace_id = $1 AND status = 'pending'
+          RETURNING snoozed_until",
+        )
+        .bind(workspace_id)
+        .bind(id)
+        .bind(days)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(t,)| t))
+    }
+
+    /// The workspace a recommendation belongs to, or `None` when no
+    /// recommendation has this id. The handlers act on a rec only through its
+    /// own workspace's URL.
+    pub async fn recommendation_workspace(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT workspace_id FROM inference.recommendations WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(w,)| w))
+    }
+
     pub async fn measure_recommendation(
         &self,
         id: &uuid::Uuid,
@@ -415,6 +489,7 @@ impl PgStore {
                    ) AS pid(v) ON true
                LEFT JOIN inference.detected_patterns dp ON dp.id = pid.v::uuid
               WHERE r.workspace_id = $1 AND r.status = 'pending'
+                AND (r.snoozed_until IS NULL OR r.snoozed_until <= now())
               GROUP BY r.id, r.action_type, r.urgency",
             )
             .bind(workspace_id)
@@ -1365,6 +1440,11 @@ impl PgStore {
         }))
     }
 
+    /// A workspace's recommendations, ranked. With `status = "pending"` a snoozed
+    /// rec is left out until its `snoozed_until` passes; every other read keeps
+    /// it. Each row carries `file`: the absolute path of the file its source
+    /// pattern is about (a rework hotspot) when that file is still on disk, or
+    /// null — see [`rework_file_path`].
     pub async fn get_workspace_recommendations(
         &self,
         workspace_id: &uuid::Uuid,
@@ -1385,16 +1465,28 @@ impl PgStore {
             Option<f64>,
             bool,
             String,
+            Option<String>,
+            Option<String>,
         )> = sqlx_core::query_as::query_as(
             // `action_type` powers the Upgrades screen's installable filter; it is
             // `not null` on the table and mirrors the impact serializer's `actionType`.
-            "SELECT id, title, urgency::text, status::text, verdict::text, why, impact,
-                        baseline_ftr::float8, current_ftr::float8, acted_at, measured_at,
-                        score::float8, focal, action_type
-                 FROM inference.recommendations WHERE workspace_id = $1
-                   AND ($2::text IS NULL OR status::text = $2)
-                 ORDER BY focal DESC, score DESC NULLS LAST,
-                          CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+            // The source pattern is `based_on.patterns[0]`, cast only when it is a
+            // uuid (a malformed provenance is no pattern, never a failed read).
+            "SELECT r.id, r.title, r.urgency::text, r.status::text, r.verdict::text, r.why, r.impact,
+                        r.baseline_ftr::float8, r.current_ftr::float8, r.acted_at, r.measured_at,
+                        r.score::float8, r.focal, r.action_type, dp.name, f.abs_path
+                 FROM inference.recommendations r
+                 LEFT JOIN inference.detected_patterns dp
+                        ON dp.id = CASE WHEN r.based_on->'patterns'->>0
+                                             ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                                        THEN (r.based_on->'patterns'->>0)::uuid END
+                 LEFT JOIN sensei.folders f ON f.id = dp.folder_id
+                 WHERE r.workspace_id = $1
+                   AND ($2::text IS NULL OR r.status::text = $2)
+                   AND ($2::text IS DISTINCT FROM 'pending'
+                        OR r.snoozed_until IS NULL OR r.snoozed_until <= now())
+                 ORDER BY r.focal DESC, r.score DESC NULLS LAST,
+                          CASE r.urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, r.id
                  LIMIT 50",
         )
         .bind(workspace_id)
@@ -1403,16 +1495,109 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured, score, focal, action_type)| {
+        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured, score, focal, action_type, pattern, folder)| {
+            // Only a file still on disk and still inside the repository: a hotspot
+            // whose file was since moved or deleted, or that a symlink carries out
+            // of the repository, offers nothing to open.
+            let file = pattern.as_deref().and_then(|p| {
+                let root = folder.as_deref()?;
+                rework_file_path(p, Some(root)).filter(|f| rework_file_on_disk(f, root))
+            });
             serde_json::json!({
                 "id": id, "title": title, "urgency": urgency, "status": status, "verdict": verdict,
                 "why": why, "impact": impact, "actionType": action_type,
                 "baseline_ftr": baseline, "current_ftr": current,
                 "acted_at": acted.map(|t| t.to_rfc3339()), "measured_at": measured.map(|t| t.to_rfc3339()),
-                "score": score, "focal": focal,
+                "score": score, "focal": focal, "file": file,
             })
         }).collect())
     }
 
     // ── Index Errors ──────────────────────────────────────────────────
+}
+
+/// The absolute path of the file a rework-hotspot pattern is about, from the
+/// pattern's name (`rework: <file>`, as the session saw the file) and its folder's
+/// absolute path. `None` when the pattern is not a rework hotspot, names no file,
+/// has no folder to place it in, climbs out with a `..` segment, or names an
+/// absolute path outside the folder (a session can edit `~/.zshrc` or another
+/// repository's file; that is not this repository's to offer): a path the action
+/// opens is never guessed. Lexical only: the read also confines it on disk,
+/// through symlinks (see `rework_file_on_disk`).
+fn rework_file_path(pattern_name: &str, folder_abs_path: Option<&str>) -> Option<String> {
+    let file = crate::rework_hotspots::rework_file(pattern_name).filter(|f| !f.is_empty())?;
+    if std::path::Path::new(file).components().any(|c| c == std::path::Component::ParentDir) {
+        return None;
+    }
+    let root = folder_abs_path?.trim_end_matches('/');
+    if file.starts_with('/') {
+        // Components, not a string prefix: `/rx/a.rs` is not inside `/r`.
+        return std::path::Path::new(file)
+            .starts_with(if root.is_empty() { "/" } else { root })
+            .then(|| file.to_string());
+    }
+    Some(format!("{root}/{file}"))
+}
+
+/// Whether `file` is a file on disk inside `root` once symlinks are followed.
+/// Both sides are canonicalised: a symlink inside the repository can point out
+/// of it, and on macOS a temp or home path can itself sit behind one (`/var` →
+/// `/private/var`). A path that cannot be resolved is not offered.
+fn rework_file_on_disk(file: &str, root: &str) -> bool {
+    let (Ok(file), Ok(root)) = (std::fs::canonicalize(file), std::fs::canonicalize(root)) else {
+        return false;
+    };
+    file.is_file() && file.starts_with(root)
+}
+
+#[cfg(test)]
+mod rework_file_path_tests {
+    use super::rework_file_path;
+
+    #[test]
+    fn resolves_relative_against_the_folder_and_keeps_absolute_inside_it() {
+        assert_eq!(
+            rework_file_path("rework: src/a.rs", Some("/r/")).as_deref(),
+            Some("/r/src/a.rs")
+        );
+        // An absolute path is kept only inside its folder (actionitems-lows LOW-1).
+        assert_eq!(rework_file_path("rework: /r/b.rs", Some("/r")).as_deref(), Some("/r/b.rs"));
+        assert_eq!(rework_file_path("rework: /x/b.rs", None), None);
+    }
+
+    #[test]
+    fn never_guesses() {
+        assert_eq!(rework_file_path("correction-prone", Some("/r")), None);
+        assert_eq!(rework_file_path("rework: ", Some("/r")), None);
+        assert_eq!(rework_file_path("rework: src/a.rs", None), None);
+        assert_eq!(rework_file_path("rework: ../../etc/passwd", Some("/r")), None);
+        assert_eq!(rework_file_path("rework: /r/../etc/passwd", Some("/r")), None);
+    }
+
+    /// ActionItems review r1 LOW-1: a session can edit a file outside its
+    /// repository (`~/.zshrc`, another repository); that path is not this
+    /// repository's to offer. An absolute path counts only under the folder.
+    #[test]
+    fn an_absolute_path_is_offered_only_inside_its_folder() {
+        assert_eq!(
+            rework_file_path("rework: /r/src/a.rs", Some("/r")).as_deref(),
+            Some("/r/src/a.rs")
+        );
+        assert_eq!(
+            rework_file_path("rework: /r/src/a.rs", Some("/r/")).as_deref(),
+            Some("/r/src/a.rs")
+        );
+        assert_eq!(rework_file_path("rework: /etc/hosts", Some("/r")), None);
+        assert_eq!(
+            rework_file_path("rework: /rx/a.rs", Some("/r")),
+            None,
+            "a sibling, not a child"
+        );
+        assert_eq!(rework_file_path("rework: /x/b.rs", None), None, "no folder to confine it to");
+        assert_eq!(
+            rework_file_path("rework: /r/../etc/passwd", Some("/r")),
+            None,
+            "`..` climbs out of the folder"
+        );
+    }
 }

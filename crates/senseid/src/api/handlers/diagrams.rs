@@ -4,6 +4,7 @@
 //! shape its view already produces, so the screen and any other consumer cannot
 //! disagree about what a span or a level means.
 
+use crate::analysis::codemap::{COCHANGE_MIN, CODEMAP_KINDS};
 use crate::analysis::neighbourhood::Side;
 use crate::api::state::AppState;
 use axum::{
@@ -495,29 +496,18 @@ pub(crate) async fn layering(
     .await
 }
 
-/// GET /api/workspaces/{id}/diagrams/zones
-///
-/// Martin's abstractness against instability, one point per module. The main
-/// sequence is `A + I = 1`; `distance` is how far off it a module sits, and
-/// `zone` names where — `pain` (concrete and depended upon), `useless`
-/// (abstract and depended upon by nothing), `risk`, or `main`.
-///
-/// No parameters. The grain is the module, which is the grain the mockup uses
-/// and the only one with enough points to read a sequence off — a workspace here
-/// is single digits of packages.
-///
-/// `abstractness`, `instability`, `distance` and `zone` can be NULL, and the
-/// screen MUST omit those points rather than drawing them at an axis origin.
-/// `coverage.unplaceable` counts them, so an omitted point is distinguishable
-/// from one that genuinely sits at zero.
-/// What a Code map band counts: calls and imports (M17).
-const CODEMAP_KINDS: [&str; 2] = ["calls", "imports"];
-
 #[derive(Deserialize)]
 pub(crate) struct CodemapQuery {
     #[serde(rename = "groupBy")]
     group_by: Option<String>,
+    /// A module to focus on: L0 narrows to it and its direct neighbours.
+    focus: Option<String>,
+    /// A Group-by group to focus on: every module in it, and their neighbours.
+    segment: Option<String>,
 }
+
+/// How many of the most used referenced libraries L0 names.
+const LIBRARIES_TOP: usize = 5;
 
 /// GET /api/workspaces/{id}/diagrams/codemap?groupBy=layers|folders
 ///
@@ -527,6 +517,12 @@ pub(crate) struct CodemapQuery {
 /// by layer (default) or by package, and one band per module pair weighted by
 /// the calls and imports behind it. Each band between two drawn modules
 /// carries its direction from the layering (`down`, `skip`, `up`, `level`).
+///
+/// `focus={module}` or `segment={group}` (user, 2026-11-03) narrows the map to
+/// the focused modules and their direct neighbours BEFORE folding, so the
+/// neighbourhood is drawn whole; the cycles kept are the ones it is in, and the
+/// answer says what it focused on. A focus naming nothing here is 404; both at
+/// once is 400.
 pub(crate) async fn codemap(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -537,18 +533,31 @@ pub(crate) async fn codemap(
     if !matches!(group_by.as_str(), "layers" | "folders") {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let focus = match (q.focus, q.segment) {
+        (Some(_), Some(_)) => return Err(StatusCode::BAD_REQUEST),
+        (Some(id), None) => Some(("module", id)),
+        (None, Some(group)) => Some(("segment", group)),
+        (None, None) => None,
+    };
     let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
     let workspace_id = resolve_workspace_id(&state, &id).await?;
+    let params = match &focus {
+        Some((kind, id)) => format!("{group_by}|{kind}={id}"),
+        None => group_by.clone(),
+    };
 
-    cached(&state, "codemap", &workspace_id, group_by.clone(), async {
-        let (nodes, edges, deps, unplaced, complexity) = tokio::try_join!(
+    cached(&state, "codemap", &workspace_id, params, async {
+        let (nodes, edges, deps, unplaced, complexity, paths, libraries) = tokio::try_join!(
             state.pg.structure_nodes(&workspace_id, "module"),
             state.pg.structure_edges(&workspace_id, "module", &kinds),
-            state.pg.dependency_graph(&workspace_id, "module", &kinds),
+            crate::analysis::codemap::module_dependencies(&state.pg, &workspace_id),
             state.pg.structure_unplaced(&workspace_id, &kinds),
             state.pg.codemap_module_complexity(&workspace_id),
+            state.pg.codemap_module_paths(&workspace_id),
+            state.pg.list_libraries_with_usage(None, Some(&workspace_id), 1),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let roles = crate::analysis::codemap::role_counts(&paths);
 
         let units: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
         let ranked = crate::analysis::layering::analyse(&units, &deps);
@@ -573,8 +582,10 @@ pub(crate) async fn codemap(
                         .get(n.id.as_str())
                         .map_or_else(|| "unplaced".to_string(), |l| format!("L{l}")),
                 },
+                package: n.package.clone(),
                 files: n.files,
                 symbols: n.symbols,
+                roles: roles.get(&n.id).copied().unwrap_or_default(),
                 complexity: complexity.get(&n.id).map(|&(functions, complex)| {
                     crate::analysis::codemap::Complexity { functions, complex }
                 }),
@@ -589,7 +600,46 @@ pub(crate) async fn codemap(
                 count: e.occurrences,
             })
             .collect();
+        let focused = match &focus {
+            None => None,
+            Some((kind, id)) => {
+                let members = match *kind {
+                    "module" => {
+                        modules.iter().filter(|m| &m.id == id).map(|m| m.id.clone()).collect()
+                    }
+                    _ => crate::analysis::codemap::segment_members(&modules, id),
+                };
+                if members.is_empty() {
+                    return Err(StatusCode::NOT_FOUND);
+                }
+                let scoped =
+                    crate::analysis::codemap::focus_scope(&modules, &module_edges, &members);
+                let mut members: Vec<String> = members.into_iter().collect();
+                members.sort_unstable();
+                Some((*kind, id.clone(), members, scoped))
+            }
+        };
+        let (modules, module_edges) = match &focused {
+            Some((.., scoped)) => (scoped.modules.clone(), scoped.edges.clone()),
+            None => (modules, module_edges),
+        };
         let l0 = level0(&modules, &module_edges, BLOCK_BUDGET);
+        let cycles: Vec<_> = match &focused {
+            Some((_, _, members, _)) => ranked
+                .cycles
+                .iter()
+                .filter(|c| c.members.iter().any(|m| members.binary_search(m).is_ok()))
+                .collect(),
+            None => ranked.cycles.iter().collect(),
+        };
+        let focus_json = focused.as_ref().map(|(kind, id, members, scoped)| {
+            serde_json::json!({
+                "kind": kind,
+                "id": id,
+                "members": members,
+                "neighbours": scoped.neighbours,
+            })
+        });
 
         let bands: Vec<serde_json::Value> = l0
             .bands
@@ -609,8 +659,10 @@ pub(crate) async fn codemap(
             "blocks": l0.blocks,
             "bands": bands,
             "budget": l0.budget,
-            "cycles": ranked.cycles,
+            "cycles": cycles,
             "coverage": { "unplaced": unplaced },
+            "libraries": crate::analysis::codemap::libraries_summary(&libraries, LIBRARIES_TOP),
+            "focus": focus_json,
         }))
     })
     .await
@@ -634,7 +686,6 @@ pub(crate) async fn codemap_module(
     Query(q): Query<CodemapModuleQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::analysis::codemap::{ModuleFile, level1};
-    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
     let workspace_id = resolve_workspace_id(&state, &id).await?;
     let module = q.id;
 
@@ -642,7 +693,7 @@ pub(crate) async fn codemap_module(
         let (files, nodes, deps) = tokio::try_join!(
             state.pg.codemap_module_files(&workspace_id, &module),
             state.pg.structure_nodes(&workspace_id, "module"),
-            state.pg.dependency_graph(&workspace_id, "module", &kinds),
+            crate::analysis::codemap::module_dependencies(&state.pg, &workspace_id),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if files.is_empty() {
@@ -726,6 +777,7 @@ pub(crate) async fn codemap_file(
         Ok(serde_json::json!({
             "level": "symbol",
             "file": file_id,
+            "role": crate::analysis::codemap::file_role(&path),
             "path": path,
             "symbols": symbols
                 .into_iter()
@@ -740,10 +792,6 @@ pub(crate) async fn codemap_file(
     .await
 }
 
-/// A pair changed together at least this many times to count (M17).
-const COCHANGE_MIN: i64 = 5;
-/// A commit touching more modules than this is a sweep, not a coupling.
-const COCHANGE_MAX_MODULES: i64 = 20;
 /// The most hidden couplings the lens draws.
 const COCHANGE_LIMIT: usize = 40;
 
@@ -757,38 +805,16 @@ pub(crate) async fn codemap_cochange(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::codemap::{CoChange, ModuleEdge, hidden_coupling};
-    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
     let workspace_id = resolve_workspace_id(&state, &id).await?;
 
     cached(&state, "codemap-cochange", &workspace_id, String::new(), async {
-        let ((pairs, commits), edges) = tokio::try_join!(
-            state.pg.codemap_cochange(&workspace_id, COCHANGE_MAX_MODULES, COCHANGE_MIN),
-            state.pg.structure_edges(&workspace_id, "module", &kinds),
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let pairs: Vec<CoChange> = pairs
-            .into_iter()
-            .map(|(a, b, together, a_changes, b_changes)| CoChange {
-                a,
-                b,
-                together,
-                a_changes,
-                b_changes,
-            })
-            .collect();
-        let edges: Vec<ModuleEdge> = edges
-            .into_iter()
-            .map(|e| ModuleEdge {
-                source: e.source,
-                target: e.target,
-                kind: e.kind,
-                count: e.occurrences,
-            })
-            .collect();
+        let (hidden, pairs, commits) =
+            crate::analysis::codemap::hidden_pairs(&state.pg, &workspace_id, COCHANGE_LIMIT)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         Ok(serde_json::json!({
-            "hidden": hidden_coupling(&pairs, &edges, COCHANGE_LIMIT),
-            "pairs": pairs.len(),
+            "hidden": hidden,
+            "pairs": pairs,
             "commits": commits,
             "minTogether": COCHANGE_MIN,
         }))
@@ -796,6 +822,65 @@ pub(crate) async fn codemap_cochange(
     .await
 }
 
+/// GET /api/workspaces/{id}/diagrams/codemap/complexity
+///
+/// The Complexity lens as a tree (user, 2026-11-02): every file local qlty
+/// measured, under its module and folders, each level summed (functions, how
+/// many over cyclomatic 10, the highest cyclomatic, files), most complex first,
+/// with the workspace's totals and its latest maintainability reading
+/// (`module_quality`) — null where none is computed, never a stand-in.
+pub(crate) async fn codemap_complexity(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::codemap::{MeasuredFile, complexity_tree};
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
+
+    cached(&state, "codemap-complexity", &workspace_id, String::new(), async {
+        let (rows, metrics) = tokio::try_join!(
+            state.pg.codemap_file_complexity(&workspace_id),
+            state.pg.get_workspace_metrics(&workspace_id),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let files: Vec<MeasuredFile> = rows
+            .into_iter()
+            .map(|(module, path, functions, complex, max_cyclo)| MeasuredFile {
+                module,
+                path,
+                functions,
+                complex,
+                max_cyclo,
+            })
+            .collect();
+        let tree = complexity_tree(&files);
+        let maintainability = metrics
+            .iter()
+            .find(|m| m.metric == "module_quality")
+            .map(|m| serde_json::json!({ "value": m.value, "date": m.date.to_string() }));
+        Ok(serde_json::json!({
+            "total": tree.total,
+            "modules": tree.modules,
+            "maintainability": maintainability,
+        }))
+    })
+    .await
+}
+
+/// GET /api/workspaces/{id}/diagrams/zones
+///
+/// Martin's abstractness against instability, one point per module. The main
+/// sequence is `A + I = 1`; `distance` is how far off it a module sits, and
+/// `zone` names where — `pain` (concrete and depended upon), `useless`
+/// (abstract and depended upon by nothing), `risk`, or `main`.
+///
+/// No parameters. The grain is the module, which is the grain the mockup uses
+/// and the only one with enough points to read a sequence off — a workspace here
+/// is single digits of packages.
+///
+/// `abstractness`, `instability`, `distance` and `zone` can be NULL, and the
+/// screen MUST omit those points rather than drawing them at an axis origin.
+/// `coverage.unplaceable` counts them, so an omitted point is distinguishable
+/// from one that genuinely sits at zero.
 pub(crate) async fn zones(
     State(state): State<AppState>,
     Path(id): Path<String>,

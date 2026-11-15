@@ -61,7 +61,7 @@ describe('InsightCard', () => {
   it('paints a mute insight with neutral ink tokens', () => {
     const m = mountComponent(InsightCardHarness, { insight: insight({ tone: 'mute' }) });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('.kanji')?.className).toContain('text-ink-mute');
+    expect(m.container.querySelector('.kanji')?.className).toContain('text-ink-soft');
     expect(m.container.querySelector('[data-insight-tag]')?.className).toContain('bg-paper-mute');
   });
 });

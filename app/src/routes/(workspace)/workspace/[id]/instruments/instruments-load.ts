@@ -1,3 +1,4 @@
+import { failureNotice } from '@sensei/ui';
 import { readOutcome, type ApiResult } from '$lib/api.js';
 import type { WorkspaceMcpToolStat, WorkspaceService } from '$lib/types.js';
 import type { ToolUsage } from '$lib/metrics/metric-view.js';
@@ -34,6 +35,7 @@ export async function loadWorkspaceInstruments(api: InstrumentsApi, id: string) 
     // read and its own error, so a failure here does not blank the page.
     toolUsage: u.data?.tools ?? [],
     toolUsageError: u.error,
+    toolUsageNotice: failureNotice("Couldn't read which tools were used", u.error),
     error: e.error ?? m.error ?? s.error,
   };
 }

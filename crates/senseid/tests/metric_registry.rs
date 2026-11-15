@@ -101,3 +101,41 @@ fn the_catalog_documents_exactly_the_registered_metrics() {
         "undocumented: {missing:?}; unregistered: {extra:?}"
     );
 }
+
+/// #156 (review G2; r2 H2: no summed "largest" — it is a prop of `dependency_cycles`):
+/// the architecture shape metrics are catalogued with the keys
+/// L3's gating import names, counted lower-better per repository, rated, and with
+/// a `how_to_read` that names the action — the narrative reads it as the next
+/// step. They are appended after `symbol_size_p95`; no existing row moves.
+#[test]
+fn the_architecture_shape_metrics_are_catalogued() {
+    // (key, a word the next step must use)
+    let shape = [
+        ("dependency_cycles", "cut"),
+        ("layer_up_edges", "interface"),
+        ("zone_of_pain_modules", "abstraction"),
+        ("hidden_coupling_pairs", "explicit"),
+        ("complexity_outlier_modules", "split"),
+    ];
+    for (key, action) in shape {
+        let m = metric(key);
+        assert_eq!(
+            (text(&m, "family"), text(&m, "task_name"), text(&m, "type"), text(&m, "direction")),
+            ("architecture".into(), "architecture".into(), "count".into(), "lower_better".into()),
+            "{key}"
+        );
+        assert!(!text(&m, "unit").is_empty(), "{key} has a unit");
+        assert!(m["rating_scale"].as_array().is_some_and(|s| s.len() == 5), "{key} is rated");
+        assert!(
+            text(&m, "how_to_read").to_lowercase().contains(action),
+            "{key}'s next step says to {action}"
+        );
+    }
+    let keys: Vec<String> = registry().iter().map(|m| text(m, "key")).collect();
+    let after = keys.iter().position(|k| k == "symbol_size_p95").expect("symbol_size_p95");
+    assert_eq!(
+        keys[after + 1..].to_vec(),
+        shape.iter().map(|(k, _)| k.to_string()).collect::<Vec<_>>(),
+        "appended after symbol_size_p95, in this order"
+    );
+}

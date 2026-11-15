@@ -368,6 +368,7 @@ pub fn run_pull_loop(pg: PgStore, interval_secs: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn src(url: &str) -> KnowledgeSource {
         KnowledgeSource {
@@ -407,10 +408,19 @@ mod tests {
     // #236 step 4: a rules source presents the session of the persona whose
     // membership owns its tenant base — matched exactly, not by prefix.
     #[test]
+    #[serial(dojo_url_env)]
     fn a_source_on_a_bound_tenant_presents_the_persona_session() {
-        let ms = [membership("organization/acme", Some(Some("acme-slot")))];
+        // Phase B: `of()` compares the membership against the ambient dōjō,
+        // so the fixture lives at it — registry and source together, or the
+        // tenant-base filter matches nothing.
+        let ambient = crate::dojo_client::settings::dojo_url();
+        let mut m = membership("organization/acme", Some(Some("acme-slot")));
+        m.registry_url = ambient.clone();
+        m.dojo_url = format!("{ambient}/organization/acme");
+        let ms = [m];
+        let source = tenant_base_url(&ambient, "organization/acme");
         assert_eq!(
-            credential_for_source(&ms, &src("http://localhost:7755/v1/t/organization/acme/")),
+            credential_for_source(&ms, &src(&source)),
             TenantCredential::Session { slot: "acme-slot".into() }
         );
     }

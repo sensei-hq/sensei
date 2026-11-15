@@ -118,7 +118,7 @@ export function verdictToneClass(
   const prefix = kind === 'bg' ? 'bg' : kind === 'border' ? 'border' : 'text';
   if (tone === 'success') return `${prefix}-success`;
   if (tone === 'warning') return `${prefix}-warning`;
-  return `${prefix}-ink-mute`;
+  return `${prefix}-ink-soft`;
 }
 
 /** Pure: FTR value → percent string, or an em dash when unknown. */
@@ -133,6 +133,29 @@ export function formatDeltaPct(v: number | null): string {
   const p = Math.round(v * 100);
   if (p === 0) return '±0%';
   return p > 0 ? `+${p}%` : `${p}%`;
+}
+
+/** Pure: a verdict tone as a CSS colour, for an inline edge. */
+export function verdictToneVar(tone: VerdictTone): string {
+  if (tone === 'success') return 'var(--success)';
+  if (tone === 'warning') return 'var(--warning)';
+  return 'var(--ink-soft)';
+}
+
+/**
+ * Pure: an FTR change as every screen shows it — the label and its tone, both
+ * from the ROUNDED percentage (audit 2026-10-28, item 9: the tone came from the
+ * raw sign, so a +0.3pp change read "±0%" in green). On an anti-pattern a fall
+ * is the expected reading, so the tone flips.
+ */
+export function deltaView(
+  v: number | null | undefined,
+  opts: { anti?: boolean } = {},
+): { label: string; tone: VerdictTone; text: string } {
+  const label = formatDeltaPct(v ?? null);
+  const p = v == null ? 0 : Math.round(v * 100);
+  const tone: VerdictTone = p === 0 ? 'ink' : (opts.anti ? p < 0 : p > 0) ? 'success' : 'warning';
+  return { label, tone, text: verdictToneClass(tone) };
 }
 
 /** Pure: bucket measured rows by verdict tone.

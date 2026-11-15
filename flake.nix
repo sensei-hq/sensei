@@ -74,6 +74,7 @@
               go-task
               process-compose
               git
+              gh
 
               # Rust workspace (crates/ + app/src-tauri)
               rustc
@@ -82,7 +83,7 @@
               rustfmt
               rust-analyzer
 
-              # SvelteKit frontends (app/, dojo/, website/)
+              # SvelteKit frontends (app/, dojo/)
               bun
               nodejs
 

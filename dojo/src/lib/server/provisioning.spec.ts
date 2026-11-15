@@ -296,6 +296,34 @@ describe('ensureProvisioned — the identity', () => {
 		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null });
 		expect(db.tables.identities.rows[0]).toMatchObject({ email: 'dev@example.com', display_name: 'Dev User' });
 	});
+	it('L4 forge-handle — provisioning records the forge login as the handle', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(db.tables.identities.rows[0]).toMatchObject({ subject: '4242', handle: 'devuser' });
+	});
+	it('L4 forge-handle — a renamed login refreshes the handle at the next sign-in', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null, login: 'oldname' });
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null, login: 'newname' });
+		expect(db.tables.identities.rows).toHaveLength(1);
+		expect(db.tables.identities.rows[0]).toMatchObject({ handle: 'newname' });
+	});
+	it('L4 forge-handle — a read with no login keeps the recorded handle', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null, login: 'devuser' });
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null });
+		expect(db.tables.identities.rows[0]).toMatchObject({ handle: 'devuser' });
+	});
+	it('L4 forge-handle — a first sign-in with no login stores null, never an invented handle', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: 'X', email: null });
+		expect(db.tables.identities.rows[0].handle).toBeNull();
+	});
+	it('L4 forge-handle — a blank login stores null, never the blank', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null, login: '   ' });
+		expect(db.tables.identities.rows[0].handle).toBeNull();
+	});
 });
 
 describe('ensureProvisioned — without forge facts', () => {

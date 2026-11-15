@@ -95,7 +95,7 @@ test.describe('Observatory · Logs (/activity-logs)', () => {
       '[data-log-level="error"] [data-log-level-chip]',
       'class',
     );
-    expect(errorChipClass ?? '').toContain('text-error');
+    expect(errorChipClass ?? '').toContain('text-on-error-soft');
     const errorChipText = await tauriPage.textContent(
       '[data-log-level="error"] [data-log-level-chip]',
     );

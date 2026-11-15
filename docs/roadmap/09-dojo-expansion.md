@@ -11,7 +11,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 |---|---|---|
 | D1 | Which role ladder is canonical? | **The database enum**: `contributor < maintainer < lead < admin` — what RLS enforces. The PRD (`member < contributor < lead < maintainer < admin`) and the mockup (`developer < …`) are updated to match. |
 | D2 | Where do integrations live? | **The dōjō owns them.** Connected once per workspace in the dōjō, credentials held by the dōjō, shared by the team. The daemon pulls what they mirror through sync; connecting from sensei forwards to the dōjō. Supersedes the daemon-local `sensei.trackers` proposal in `docs/design/integrations-and-gating-requirements.md` §5. |
-| D3 | Does "both ways" include writing to trackers (Jira, Azure Boards, GitHub Issues — the work-item systems whose tickets and sprints a session links to)? | **No — dōjō ⇄ sensei only.** Workspaces, teams, roles and connections sync both ways between the dōjō and sensei; Jira / ADO / GitHub stay read-only (the 2026-10-14 decision stands). |
+| D3 | Does "both ways" include writing to trackers (Jira, Azure Boards, GitHub Issues — the work-item systems whose tickets and sprints a session links to)? | **No — dōjō ⇄ sensei only.** Workspaces, teams, roles and connections sync both ways between the dōjō and sensei; Jira / ADO / GitHub stay read-only (the 2026-10-14 decision stands). *Superseded 2026-10-26 (tracker-metrics-writeback) for usage metrics, and superseded 2026-10-29 (tracker-sdlc-metrics) for SDLC metrics:* the local daemon writes them to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`). |
 | D4 | Where do DORA signals come from? | **CI APIs plus git tags.** Deployments from GitHub Actions and Azure Pipelines through the integrations, git tags as the fallback; a production-incident entity, separate from today's confidentiality `dojo.incidents`, for time to restore and change failure rate. |
 | D5 | Where do repository permissions come from? (2026-10-21, second round) | **The forge, with an admin override.** A person's role on a repository mirrors the git provider's per-repo access (GitHub / Azure DevOps / GitLab), refreshed on sync; a dōjō admin may override it. **Permissions live on repositories** — a workspace is a grouping of repositories and its own permission is only the read-only view (D8). Supersedes the 2026-10-12 decision that team membership grants access. |
 | D6 | Who sees per-person data for a repository? | **The person, and maintainers and above on that repository.** Workspace viewers see aggregates and per-repository splits, never per-person. |
@@ -54,6 +54,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D43 | Azure members match by stable id only (R5b) | A member read adds or ends only people who carry the Azure identity, matched on its stable id, never on email: an Azure principal name is not a verified email (user 2026-10-23). |
 | D44 | The Azure member read runs on a schedule (R5b) | Besides import and Sync, a scheduled job reads each connected Azure organization's members and applies #309's rule (a complete read ends departed provisioned members; a partial read ends nobody) (user 2026-10-23). |
 | D45 | Sign in with Microsoft (R5c, after R5b) | The login page offers **Microsoft** beside GitHub, through kavach's existing `azure` provider and Supabase Auth's Azure provider, with sign-in scopes only (`openid email profile`). A sign-in records the person's Entra object id as their Azure identity, so the member read (D43, D44) can provision and end every member of an Entra-backed Azure DevOps organization by stable id, as GitHub sign-in does for GitHub orgs. **One** multi-tenant app registration serves both sign-in and R5b's connect flow; the user creates it (user 2026-10-23). |
+| D46 | What syncs to the dōjō, who decides, and what a subscription buys | **Sharing is what lets the dōjō show a repository's insights, metrics and diagrams; unshared, it cannot.** **Public repositories are free everywhere** — an organisation's sync automatically (no member toggle; an admin may turn one off as org policy). **A personal dōjō is free, private repositories included** — its repositories are the person's to choose, all by default, and an opt-out holds. **An organisation's private repositories need a subscription** taken by its admin/owner; until there is one they are **hidden** from the organisation's dōjō, whose repository lists say private repositories are supported on paid plans and link to **Settings › Plan & billing**, which reads **Free** until a subscription exists. **The tier lives only in the dōjō: local sensei works in full on any plan**; a subscription is needed only for an organisation's private repositories and the dōjō benefits that come with it. The local `sensei.repositories.visibility` gate (G6) is retired; the dōjō's election is the one authority (user 2026-11-02, revised the same day: personal private repositories are free). |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -73,9 +74,9 @@ creator (`database/ddl/table/dojo/projects.ddl`); the sync keeps filing reposito
 
 | Area | Exists |
 |---|---|
-| Workspaces | Read-only lists (`/v1/t/…/projects`, `/v1/you/projects`); created only by the sync (`file_repository_project`). No create / edit / move-repo; the org workspace drill-in reads fixtures. |
+| Workspaces | Read-only lists (`/v1/t/…/projects`, `/v1/you/projects`); created only by the sync (`file_repository_project`). No create / edit / move-repo. *Since then: the org workspace drill-in reads real data, not fixtures (#106, closed 2026-10-23), and R3 (D30) renamed projects to workspaces — the routes are `/v1/t/[origin]/[org]/workspaces` and `/v1/you/workspaces` (`dojo/src/routes/v1/t/[origin]/[org]/workspaces/+server.ts`, `.../v1/you/workspaces/+server.ts`) and the filing function is `dojo.file_repository_workspace` (`database/ddl/function/dojo/file_repository_workspace.ddl:28`). Writing a workspace is still A4.* |
 | Teams & roles | *Since then: teams, invites and viewers are built (A3); create-a-dōjō is retired (R1).* At the inventory: member role change, create-a-dōjō, invite accept and GitHub provisioning work. `dojo.teams`, `team_members`, `team_projects`, `roles` exist but nothing writes them; no default team is seeded; no Teams screen or API; the invite API has no screen. |
-| Integrations | GitHub org identity only (`tenant_connections`, `forge-github.ts`). No tracker or CI adapter, table, route or screen. |
+| Integrations | GitHub org identity only (`tenant_connections`, `forge-github.ts`). No tracker or CI adapter, table, route or screen. *Since then: R5a's import (GitHub) and R5b's (Azure DevOps) are on develop, and R9 added trackers by level (`sensei.trackers.level`, several boards per workspace); CI and DORA readers are still Wave D.* |
 | Two-way sync | Daemon → dōjō: repositories, metrics, graph, relay. Dōjō → daemon: sync plan, memberships, resolved rules, relay replies. No entity is authored on one side and mirrored to the other. |
 | Pipelines & DORA | Nothing. The metric plumbing (`repository_metrics`, `metric_activations`, `/v1/you/metrics`) is reusable. |
 
@@ -119,9 +120,10 @@ slice builds, passes and ships on its own.
     in BOTH databases with the dōjō app's readers (`billing-data`, the preview rung) and the relay's
     `scope_key` in the same change, since federation needs the key on both sides; the `project_health` metric
     key and `setup.projects`; and R3a's temporary `scope_to_db` / `scope_to_api` translation removed.
-    Part 1 done (d20a5b72: the daemon, `/api/workspaces`, the app). Part 2: the ladder rung, D31's README key.
-    *R3a done on its branch (0ec8271c, 91894026): rehearsed twice on a copy of the daemon DB (counts held) and
-    on a copy of the production dōjō (in sync, counts held).*
+    Part 1 done: the daemon, `/api/workspaces` (`api/routes.rs:123`), the app. Part 2: the ladder rung, D31's README key.
+    *R3 landed on develop as **32c00e699** (2026-10-22, v0.17.0), rehearsed twice on a copy of the daemon DB
+    (counts held) and on a copy of the production dōjō (in sync, counts held). Its branch commits
+    (`0ec8271c`, `91894026`, `d20a5b72`) are not on develop and are not cited here.*
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
     `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
     `sensei` CLI words.
@@ -138,8 +140,8 @@ slice builds, passes and ships on its own.
   - The library screen's levels become **dōjō · workspace · repository**; the preview shows that ladder with
     the packs applied at each rung.
   - Rehearsed on copies of both databases, counts and rule reach compared before/after.
-- **R7 · A dōjō has no Clients section (D34).** *Done 2026-10-22 on branch `r7-no-clients` (not merged): the
-  dōjō app, the wire (`PublishedArtifact.engagement_id`), the dōjō schema and the PRD. The release drops the
+- **R7 · A dōjō has no Clients section (D34).** *Done 2026-10-22, merged to develop as **67e48bad2**
+  (v0.18.0): the dōjō app, the wire (`PublishedArtifact.engagement_id`), the dōjō schema and the PRD. The release drops the
   tables through `apply/before/dojo_clients_retired.sql` (it reconciles without `--prune`) and the enums through
   `apply/after/retired_types.sql`; rehearsed twice on a copy of the production dōjō — in sync, every other count
   held. The mockups still show Clients (the user's to change). Open: `lead` now unlocks nothing a maintainer
@@ -178,10 +180,13 @@ slice builds, passes and ships on its own.
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
-  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) merged to develop 2026-10-23 (18f9311c): Microsoft Entra connect flow (D42), refresh token in Vault with compare-and-set rotation, org → dōjō and project → workspace, repositories filed by project, membership provenance per forge and unit, a scheduled member read every 6 h (D44, Cloudflare Cron through `dojo/worker-entry.js`); two independent security reviews, every finding fixed red-first. Live checks wait on the user's Entra app registration (spec: "R5b · one-time setup"). R5c next.*
-  *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
-  `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
-  the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
+  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 and has been in production since v0.19.0 (`fcd28d2de`; v0.19.0 is the first tag containing `8a584e51`). R5b (Azure) merged to develop 2026-10-23 (18f9311c): Microsoft Entra connect flow (D42), refresh token in Vault with compare-and-set rotation, org → dōjō and project → workspace, repositories filed by project, membership provenance per forge and unit, a scheduled member read every 6 h (D44, Cloudflare Cron through `dojo/worker-entry.js`); two independent security reviews, every finding fixed red-first. Live checks wait on the user's Entra app registration (spec: "R5b · one-time setup"). R5c next.*
+  *R5a (GitHub) is in production, not merely on develop (`fcd28d2de`, v0.19.0): the adapter interface, the
+  claim (`dojo.claim_forge_unit`, `database/ddl/function/dojo/claim_forge_unit.ddl`),
+  `dojo.forge_unit_mappings` + `map_forge_unit` (`.../map_forge_unit.ddl`, `.../forge_unit_mappings.ddl`),
+  Admin → Integrations, and registration by the mapping (`dojo/src/lib/server/forge-github.ts`) — see the
+  spec's "R5a as built". What is still owed is a walk through the import in production, not a deploy:
+  connect a GitHub org, claim its unit, and see its repositories land as workspaces.*
 - **R5c · Sign in with Microsoft (D45).** *Merged to develop 2026-10-23 (ed078710, spec: "R5c as built"; two review rounds: `xms_edov` required, oid lowercased and tenant-pinned, member sets at most 48 h old); the oid's place in Supabase's Azure identity is read from GoTrue's source and waits on the live check.* Add `azure` to the dōjō's kavach providers
   and the login page (sign-in scopes only); local `supabase/config.toml` `[auth.external.azure]` and production's Azure
   provider take the app registration's client id and secret. A Microsoft sign-in records the Entra object id as an

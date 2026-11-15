@@ -36,6 +36,8 @@
 // vendored tree would drop every `docs` folder under the root. So the UI states
 // which one it is before it is saved, not after someone notices what went.
 
+import { failureNotice } from '@sensei/ui';
+
 /** The result of validating what a user typed. */
 export type Normalised =
   | { ok: true; value: string; error?: undefined }
@@ -129,6 +131,11 @@ export class RootExclusions {
   excluded = $state<string[]>([]);
   saving = $state(false);
   error = $state<string | null>(null);
+
+  /** Notice props for an exclusion that was refused (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice("Couldn't use that exclusion", this.error);
+  }
 
   #id: string;
   #rootPath: string;

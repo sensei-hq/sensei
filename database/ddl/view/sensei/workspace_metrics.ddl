@@ -142,6 +142,10 @@ set search_path to sensei, extensions;
 -- 19,581 rows resolve to a real membership and none is NULL, so this is a guard,
 -- not a live case.)
 --
+-- THE PICK ITSELF LIVES IN `sensei.repository_workspace` (2026-11-02), so this view
+-- and `workspace_metric_daily` cannot disagree about it; the reasoning above is why
+-- it is ordered as it is.
+--
 -- DEPLOY NOTE: adding or reordering a column here requires DROP VIEW … CASCADE
 -- followed by re-applying this file and every dependent view. Postgres rejects
 -- `CREATE OR REPLACE VIEW` with "cannot change name of view column" unless the
@@ -153,11 +157,9 @@ set search_path to sensei, extensions;
 create or replace view workspace_metrics as
 select rm.id
      , rm.metric_id
-     , ( select pr.workspace_id
-           from sensei.repositories_in_workspaces pr
-          where pr.repository_id = rm.repository_id
-          order by pr.created_at desc, pr.workspace_id
-          limit 1
+     , ( select rw.workspace_id
+           from sensei.repository_workspace rw
+          where rw.repository_id = rm.repository_id
        )                                   as workspace_id
      , rm.repository_id
      , rm.scope

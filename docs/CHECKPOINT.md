@@ -1,33 +1,31 @@
-# Checkpoint — 2026-10-27 (end of day)
+# Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue → develop)
 
-**Agenda — 2026-10-28 (user):**
-1. **Apple Developer ID → #282.** Sign senseid/sensei/sensei-mcp with it, so a reinstall stops revoking Keychain
-   approval. Then ONE signed install of everything waiting (below) and verify live: get_duplicates from qlty,
-   sync rows by identity, Make default, a dead credential → Sign in; rerun `bun run test:inspect -- tool-calls`.
-2. **Screen-by-screen feedback walk.** One screen at a time; the user gives feedback, changes are made, verified,
-   next. Start from the queue in `docs/roadmap/08-issue-burndown.md` (UI walk).
+**Slice:** Relay autonomous queue — phases 1–5 COMPLETE, merged into develop `072ffec80`; `origin/main` merged back
+(`99038648a`, LICENSE), CHANGELOG dated (`f0d4e3f8c`), bumped to v0.22.0 (`8e60fd7c1`), release PR develop → main
+open (user, 2026-11-12: "merge then minor"). Merging the PR and `make release` on main remain the user's. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/{README,2-daemon,3-mcp,4-app}.md`
+(every step ticked, "Executed" notes per task).
 
-**Built, pushed, NOT installed (waiting for the signed install):** ebcfe469 sync rows name their identity;
-f5eaa279 Make default; 02444525 Settings · Dōjō by identity → day → repository; 140e28d7 get_duplicates from
-qlty's scan; 4db76bd8 dead credential → Sign in, no Keychain read; 8b2dc94f General's choices as toggle groups;
-1d084c72 no "sensei speaks" caption; be2f37f0 no stray mark before a root's path; 72052d8a Playground sends
-what is typed; 3b8017ed "Runs in" lists watched workspaces only; 2677767a Settings as its own window (⌘,);
-05cfb84c rokkit 1.9.1. The app must go with the
-daemon (the dōjō screen reads the identity the new daemon writes). Live DB already converged.
+**Done:**
+- Phases 1–4: DB `b9eb57ac2` on develop; daemon cutover live + `scripts/relay-queue-smoke.sh` PASSED; seven `relay_*`
+  MCP tools installed; app sprint band / create-sprint / floating reviews, `relay-sprint` e2e PASSED; service + app
+  installed.
+- 5.1 docs sync `616ebf188` (PRD, data model, architecture, journeys, features, design status, CHANGELOG).
+- 5.2 issues: #399 #400 #401 #402 #403 #404 #405 closed with comments; #415 narrowed + retitled; #398 #396 #393
+  noted; backlog row `42de5033e`.
+- 5.3 verification on the final tree: fmt + clippy (CI flags) clean; `make test` green end to end — crates, app unit
+  3418, dōjō unit 2400, svelte-check, plugin, SQL 100 files (after `scripts/deploy-dojo-db.sh` converged the stale
+  local Supabase). Branch-caused failures fixed red-first: `e4dc5f2d2`+`fa82e955b` (walk: blanket `impl<T> … for T`
+  invented a type), `ac4951b65` (#161 typed inputs), `2e5265d39` (ratchet 1,136 → 1,153, measured).
+- README risk "upgrade path on other machines" resolved: v0.21.1 ships no `relay` schema; the installer reconciles.
 
-**Done today, rokkit:** #173 and #174 fixed and released as 1.9.1, bumped here (05cfb84c). glyphs-inspect
-stays red on its overview step until the daemon with `?watched=true` is installed.
+**Remaining (user's call):** fix develop's two pre-existing CI reds (bootstrap `sql_test_runner` on CI; `cargo audit`
+RUSTSEC-2026-0459) so the protected-branch PR goes green → merge the PR → `make release` on main → verify the shipped
+artifact reproduces `scripts/relay-queue-smoke.sh` and the diagrams section.
 
-**Queued (burndown, UI walk):** Roots removal progress over the SSE stream (removal is one prune call today —
-needs steps that emit events); Libraries "sensei will wrap" claims docs not held; Instruments switch;
-Replay's scrolling and an easier call history; Svelte components as search symbols.
+**Next command:** `gh pr checks <release PR>`; when green and merged: `git checkout main && git pull && make release`.
 
-**Supabase advisor (production dōjō):** fixed in DDL (0bbbc75c) — RLS on all 13 tables, search_path pinned,
-guarded by database/tests/dojo/advisor_guards.sql; reaches production with the next release's dōjō deploy.
-Production's Data API exposed `sensei`, unlike the repo (public, graphql_public, dojo); the user removed it
-(2026-10-27) — no code reads sensei through the API. The 47 SECURITY DEFINER warnings are the dōjō's caller-gated API + RLS
-helpers (by design); a test that calls each as a non-member is the proposed hardening.
+**Open questions (user):** none — the release is in flight; the diagrams fix is queued behind it.
 
-**Known:** CI qlty workflows disabled (out of minutes; `gh workflow enable` restores). Long-lived Claude
-sessions keep an old sensei-mcp (404 on update_phase) — `/mcp` reconnect. Keychain tests fail on rebuilt
-test binaries (#282).
+**Known broken:** the diagrams section on a released (main) app against a develop daemon — main ⇄ develop discrepancy,
+queued in `docs/backlog.md` "Open — not yet filed". `sensei_test` (Rust template) is stamped for this DDL tree, which
+develop shares after the merge.

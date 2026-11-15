@@ -1,0 +1,2 @@
+# Dead doc links pending a fix by their owner (L6 docs: prd, roadmap, journeys). Remove a row when its link is fixed;
+# check-doc-links fails on a row that no longer matches.

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Icon } from '$lib/components/kit';
 	import { Button } from '@rokkit/ui';
+	import { Notice } from '@sensei/ui';
+	import { askSendNotice } from '$lib/dojo-notices';
 	import { relativeAge } from '$lib/triage/view';
 	import type { RelayAsk, AskAction } from './types';
 	import * as m from '$lib/paraglide/messages';
@@ -25,6 +27,7 @@
 		/** The answer, and for an approval the typed line as its note. */
 		onanswer?: (askId: string, answer: string, note?: string) => void;
 	} = $props();
+	const errorNotice = $derived(askSendNotice(error));
 
 	// action → Solar icon + verb label (status ≠ action: a stalled run takes "resume").
 	const KIND: Record<AskAction, { icon: string; label: string }> = {
@@ -69,7 +72,7 @@
 	<div class="bg-paper-soft border-paper-edge flex items-start gap-3 rounded-lg border p-4">
 		<Icon name="check-circle" size={20} toneClass="text-success" />
 		<div class="min-w-0 flex-1">
-			<div class="text-ink-mute text-sm">{ask.prompt}</div>
+			<div class="text-ink-soft text-sm">{ask.prompt}</div>
 			<div class="text-ink text-sm" style="margin-top: 2px">{m.ask_answered()} · {verdict}</div>
 		</div>
 	</div>
@@ -85,14 +88,14 @@
 						<span class="mono border-accent-soft text-accent rounded-full border text-xs" style="padding: 0 7px; line-height: 16px">{m.ask_blocking()}</span>
 					{/if}
 					<span class="flex-1"></span>
-					<span class="mono text-ink-faint text-xs">{relativeAge(ask.createdAt)}</span>
+					<span class="mono text-on-accent-soft text-xs">{relativeAge(ask.createdAt)}</span>
 				</div>
-				<div class="text-ink text-sm font-medium" style="margin-top: 3px; line-height: 1.4">{ask.prompt}</div>
+				<div class="text-on-accent-soft text-sm font-medium" style="margin-top: 3px; line-height: 1.4">{ask.prompt}</div>
 				{#if ask.context}
-					<div class="text-ink-soft text-sm" style="margin-top: 2px; line-height: 1.5">{ask.context}</div>
+					<div class="text-on-accent-soft text-sm" style="margin-top: 2px; line-height: 1.5">{ask.context}</div>
 				{/if}
 				{#if holds}
-					<div class="mono text-ink-mute text-xs" style="margin-top: 4px">{m.ask_holds({ task: holds })}</div>
+					<div class="mono text-on-accent-soft text-xs" style="margin-top: 4px">{m.ask_holds({ task: holds })}</div>
 				{/if}
 			</div>
 		</div>
@@ -111,7 +114,7 @@
 								: 'border-transparent'} border"
 						>
 							<span class="mono shrink-0 text-xs {on ? 'text-accent' : 'text-ink-faint'}">{i + 1}</span>
-							<span class="text-sm {on ? 'text-ink' : 'text-ink-soft'}">{opt}</span>
+							<span class="text-sm {on ? 'text-ink' : 'text-ink-mute'}">{opt}</span>
 						</button>
 					{/each}
 				</div>
@@ -139,8 +142,8 @@
 					{m.ask_send()}
 				</Button>
 			</div>
-			{#if error}
-				<span role="alert" class="text-danger text-xs">{error}</span>
+			{#if errorNotice}
+				<Notice size="inline" expanded bare {...errorNotice} />
 			{/if}
 			<span class="mono text-ink-faint text-xs">{m.ask_hold_note()}</span>
 		</div>

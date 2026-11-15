@@ -16,11 +16,13 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, DAEMON_URL } from '../helpers';
+import { navigateTo, seedSetupComplete, DAEMON_URL } from '../helpers';
 import { seedCursorMcpServer, clearCursorMcpServers } from '../isolated-home';
 
 test.describe('Observatory Instruments — T2 Slices', () => {
   test.beforeEach(async ({ tauriPage }) => {
+    // Run first on a fresh e2e daemon, the app is still in setup and lands on the wizard.
+    await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/instruments');
     // Playground body is the load anchor — waits for loadCatalog() to
     // settle so the discovered-servers panel below has had its lazy load
@@ -45,7 +47,7 @@ test.describe('Observatory Instruments — T2 Slices', () => {
     if (list.servers.length === 0) {
       // Empty e2e install — panel must show the friendly empty state,
       // and the refresh button is still clickable.
-      await expect(section).toContainText(/No MCP servers discovered/i);
+      await expect(section).toContainText(/No MCP servers yet/i);
       const refreshBtn = tauriPage.locator('[data-testid="refresh-servers"]');
       await expect(refreshBtn).toBeEnabled();
     } else {

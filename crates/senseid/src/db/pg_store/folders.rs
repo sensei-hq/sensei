@@ -827,7 +827,7 @@ impl PgStore {
     /// Populate the canonical `sensei.repositories` registry + `folders.repository_id`
     /// for the git/subtree CHECKOUT-ROOT folders under `root_id` (D10, the repo-grain
     /// metric grain). For each such folder that has a git remote, derive the canonical
-    /// key via [`super::normalize_repo_key`] from its first `remote_urls` entry, upsert
+    /// key via [`super::repo_key::normalize_repo_key`] from its first `remote_urls` entry, upsert
     /// the GLOBAL `sensei.repositories` row (keyed on `repo_key`), and point
     /// `folders.repository_id` at it — so two clones / a rename / a re-checkout of one
     /// remote all resolve to ONE repository and metric history survives a folder move.
@@ -851,7 +851,9 @@ impl PgStore {
         let mut assigned = 0u64;
         for (folder_id, name, url) in rows {
             // No remote / unparseable → local-only: leave repository_id NULL.
-            let Some(key) = url.as_deref().and_then(super::normalize_repo_key) else { continue };
+            let Some(key) = url.as_deref().and_then(super::repo_key::normalize_repo_key) else {
+                continue;
+            };
             let repo_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
                 "INSERT INTO sensei.repositories (repo_key, remote_url, name) VALUES ($1, $2, $3) \
                  ON CONFLICT (repo_key) DO UPDATE SET remote_url = EXCLUDED.remote_url, modified_at = now() \

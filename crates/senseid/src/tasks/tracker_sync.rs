@@ -96,6 +96,7 @@ mod tests {
             account: "dev@example.com".into(),
             token: ApiToken("t".into()),
             project_key: None,
+            sprint_field: None,
         };
         connect(
             pg,

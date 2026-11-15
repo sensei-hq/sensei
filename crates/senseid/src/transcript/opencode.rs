@@ -285,6 +285,8 @@ pub fn parse_opencode_messages(content: &str) -> Vec<TranscriptTurn> {
                 }
                 cur = Some(TranscriptTurn {
                     turn_index: idx,
+                    origin: "human".to_string(),
+                    prompt_id: None,
                     user_text: Some(trimmed.to_string()),
                     assistant_text: String::new(),
                     started_at: time_created.and_then(millis_to_datetime),
@@ -549,16 +551,11 @@ fn merge_facts(facts: &mut TurnFacts, msg: &serde_json::Value) {
     }
 
     let Some(t) = msg.get("tokens") else { return };
-    let add = |slot: &mut Option<i64>, n: Option<i64>| {
-        if let Some(n) = n {
-            *slot = Some(slot.unwrap_or(0) + n);
-        }
-    };
-    add(&mut facts.tokens_in, t.get("input").and_then(|x| x.as_i64()));
-    add(&mut facts.tokens_out, t.get("output").and_then(|x| x.as_i64()));
+    super::add_reported(&mut facts.tokens_in, t.get("input").and_then(|x| x.as_i64()));
+    super::add_reported(&mut facts.tokens_out, t.get("output").and_then(|x| x.as_i64()));
     if let Some(c) = t.get("cache") {
-        add(&mut facts.cache_read, c.get("read").and_then(|x| x.as_i64()));
-        add(&mut facts.cache_write, c.get("write").and_then(|x| x.as_i64()));
+        super::add_reported(&mut facts.cache_read, c.get("read").and_then(|x| x.as_i64()));
+        super::add_reported(&mut facts.cache_write, c.get("write").and_then(|x| x.as_i64()));
     }
 }
 

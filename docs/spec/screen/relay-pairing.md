@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion)
 **Route:** Relay iOS app · pairing / onboarding (no web route — phone app)
-**Source mockup:** [`lib/relay/relay.jsx`](../../mockups/Sensei/lib/relay/relay.jsx) → `RelayPairing`
+**Source mockup:** `lib/relay/relay.jsx` → `RelayPairing`
 **Data:** greenfield — the encrypted onboarding round-trip between phone and coordinator. Proposed: phone `POST /api/relay/pairing/start` → `{ code: "729416", expires_at }` (a 6-digit short code + a per-session keypair); the machine's `sensei relay pair` reads the code back, completes the key exchange, and the coordinator posts pairing-complete → phone advances to [Security](relay-security.md). The phone polls/streams `GET /api/relay/pairing/status` for `waiting_for → paired`.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + relay transport not built · CLI `sensei relay pair` unbuilt_

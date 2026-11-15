@@ -11,9 +11,10 @@ use crate::api::state::AppState;
 
 use crate::api::handlers::err;
 use crate::db::pg_store::trackers::TrackerRow;
+use crate::sdlc::ticket::ticket_figures;
 use crate::tracker::connect::{ConnectError, connect, disconnect};
 use crate::tracker::runtime::sync_stored;
-use crate::tracker::status::status;
+use crate::tracker::status::{WritebackFacts, status, writeback_state};
 use crate::tracker::sync::SyncError;
 use crate::tracker::usage::{
     sprint_usages, ticket_usage_by_repo, ticket_usages, unlinked_in_sprint,
@@ -25,7 +26,7 @@ const FIRST_SYNC_BUSY_RETRIES: u32 = 15 * 60;
 
 /// The house error envelope (`handlers::err`): a status and `{"error": code}`.
 /// Helpers return it as their `Err`; handlers turn it into a response at the edge.
-type ApiErr = (StatusCode, Json<serde_json::Value>);
+pub(crate) type ApiErr = (StatusCode, Json<serde_json::Value>);
 
 fn fail(status: StatusCode, code: &str) -> ApiErr {
     err(status, code)
@@ -37,7 +38,7 @@ fn internal() -> ApiErr {
 
 /// The workspace's uuid, or the response to return (404 for an unknown workspace:
 /// `resolve_workspace_uuid` accepts any well-formed uuid without checking it).
-async fn known_workspace(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiErr> {
+pub(crate) async fn known_workspace(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiErr> {
     let uuid = crate::api::util::resolve_workspace_uuid(state, id)
         .await
         .map_err(|_| internal())?
@@ -51,11 +52,22 @@ async fn known_workspace(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiEr
 
 /// The connection as the API shows it. Never the token, never the keyring name.
 async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, ApiErr> {
-    let (tasks, sprints) = state.pg.tracker_counts(row.id).await.map_err(|_| internal())?;
+    let pg = &state.pg;
+    let (tasks, sprints) = pg.tracker_counts(row.id).await.map_err(|_| internal())?;
+    let (assigned, failing) = pg.writeback_counts(row.id).await.map_err(|_| internal())?;
+    let fields = pg.tracker_fields(row.id).await.map_err(|_| internal())?;
+    let mapped = fields.iter().filter(|f| f.metric.is_some()).count();
+    let (wb_state, wb_error) = writeback_state(&WritebackFacts {
+        enabled: row.writeback_enabled,
+        writeback_error: row.writeback_error.as_deref(),
+        owner_known: row.owner_ref.is_some(),
+        owner_state: row.owner_state.as_deref(),
+        owner_error: row.owner_error.as_deref(),
+        assigned,
+    });
     // R9: the stale threshold is the schedule's interval; the row is seeded, so a
     // missing one is a defect, not a reason to guess.
-    let interval = state
-        .pg
+    let interval = pg
         .load_schedule("tracker_sync")
         .await
         .map_err(|_| internal())?
@@ -63,6 +75,11 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         .interval_secs;
     let st =
         status(row.last_success_at, row.last_error.is_some(), interval as i64, chrono::Utc::now());
+    let (history_error, history_at) =
+        pg.tracker_history_state(row.id).await.map_err(|_| internal())?;
+    let sdlc_project = crate::sdlc::sprint_replay::project_sdlc(pg, row.id, chrono::Utc::now())
+        .await
+        .map_err(|_| internal())?;
     Ok(serde_json::json!({
         "id": row.id,
         "kind": row.kind,
@@ -72,10 +89,33 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         "external_scope": row.external_scope,
         "board_ref": row.board_ref,
         "board_name": row.params.get("board_name"),
+        // GitLab (§G3, §G10): where sprints come from, when that last changed, and
+        // the board's current path (Replace token rebuilds the board URL from it).
+        // Null for Jira.
+        "sprint_source": row.params.get("sprint_source"),
+        "sprint_source_changed_at": row.params.get("sprint_source_changed_at"),
+        "full_path": row.params.get("full_path"),
+        // GitHub (tracker-github §H7): the project's address and the iteration field
+        // in use, which Replace token re-sends. Null for Jira and GitLab.
+        "url": row.params.get("url"),
+        "iteration_field": row.params.get("iteration_field"),
         "status": st.as_str(),
         "last_success_at": row.last_success_at,
         "last_error": row.last_error,
         "counts": {"tasks": tasks, "sprints": sprints},
+        // W8: mapped fields make the fields surface.
+        "writeback": {
+            "enabled": row.writeback_enabled,
+            "state": wb_state.as_str(),
+            "surface": if mapped > 0 { "fields" } else { "comment" },
+            "mapped": mapped,
+            "assigned": assigned,
+            "failing": failing,
+            "error": wb_error,
+        },
+        // S4: the ticket-history task's last run.
+        "history": {"error": history_error, "at": history_at},
+        "sdlc_project": sdlc_project,
     }))
 }
 
@@ -133,14 +173,16 @@ pub(crate) async fn connect_tracker(
         &params.base_url,
         adapter.auth(&params.account, &params.token),
         0,
+        adapter.reads_graphql(),
     ) {
         Ok(t) => t,
         Err(e) => return fail(StatusCode::BAD_GATEWAY, e.code()).into_response(),
     };
     let (base_url, board_ref) = (params.base_url.clone(), params.board_ref.clone());
     let rt = state.trackers.clone();
+    let pg = &state.pg;
     let connected = match connect(
-        &state.pg,
+        pg,
         rt.secrets.clone(),
         adapter,
         transport.as_ref(),
@@ -153,14 +195,14 @@ pub(crate) async fn connect_tracker(
         Ok(c) => c,
         Err(e) => return connect_failure(e, &base_url, &board_ref).into_response(),
     };
-    let row = match state.pg.tracker_by_id(connected.tracker_id).await {
+    let row = match pg.tracker_by_id(connected.tracker_id).await {
         Ok(Some(row)) => row,
         _ => return internal().into_response(),
     };
     // The first sync runs in the background: connect never waits on a sync. The
     // site's other boards moved to this token, so they sync again too.
     for id in std::iter::once(row.id).chain(connected.rekeyed.iter().copied()) {
-        spawn_first_sync(state.pg.clone(), rt.clone(), id);
+        spawn_first_sync(pg.clone(), rt.clone(), id);
     }
     match view(&state, &row).await {
         Ok(v) => (
@@ -217,7 +259,6 @@ async fn sync_current(
 }
 
 fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
-    use crate::tracker::TrackerError;
     match e {
         ConnectError::BoardAlreadyConnected { workspace_id, workspace_name } => (
             StatusCode::CONFLICT,
@@ -235,19 +276,172 @@ fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
         ConnectError::Validate(ValidateError::BoardProjectMismatch) => {
             fail(StatusCode::UNPROCESSABLE_ENTITY, "board_project_mismatch")
         }
-        ConnectError::Validate(ValidateError::Tracker(TrackerError::Unauthorized)) => {
-            fail(StatusCode::UNAUTHORIZED, "unauthorized")
-        }
-        ConnectError::Validate(ValidateError::Tracker(TrackerError::Forbidden)) => {
-            fail(StatusCode::FORBIDDEN, "forbidden")
-        }
+        ConnectError::Validate(ValidateError::IterationFieldAmbiguous(fields)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "iteration_field_ambiguous", "fields": fields})),
+        ),
         ConnectError::Validate(ValidateError::Tracker(e)) => {
-            fail(StatusCode::BAD_GATEWAY, e.code())
+            fail(tracker_error_status(e), e.code())
         }
         ConnectError::CredentialStore => {
             fail(StatusCode::INTERNAL_SERVER_ERROR, "credential_store")
         }
         ConnectError::Db(_) => internal(),
+    }
+}
+
+/// The status a tracker route answers a `TrackerError` with (W7): the credential was
+/// refused (401/403), sensei could not read its own keyring (500), or the tracker
+/// failed (502).
+fn tracker_error_status(e: crate::tracker::TrackerError) -> StatusCode {
+    use crate::tracker::TrackerError as E;
+    match e {
+        E::Unauthorized => StatusCode::UNAUTHORIZED,
+        E::Forbidden => StatusCode::FORBIDDEN,
+        E::TokenMissing | E::CredentialStore => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => StatusCode::BAD_GATEWAY,
+    }
+}
+
+/// The mapped fields as the routes return them, in metric order (W7).
+fn fields_body(rows: &[crate::db::pg_store::trackers::FieldRow]) -> serde_json::Value {
+    let mapped: Vec<_> = rows
+        .iter()
+        .filter_map(|r| {
+            Some(serde_json::json!({"metric": r.metric.as_deref()?, "field_ref": r.field_ref}))
+        })
+        .collect();
+    serde_json::json!({"fields": mapped})
+}
+
+/// `GET /api/workspaces/{id}/trackers/{tracker}/fields`
+pub(crate) async fn get_tracker_fields(
+    State(state): State<AppState>,
+    Path((id, tracker)): Path<(String, String)>,
+) -> Response {
+    let row = match known_tracker(&state, &id, &tracker).await {
+        Ok(row) => row,
+        Err(r) => return r.into_response(),
+    };
+    match state.pg.tracker_fields(row.id).await {
+        Ok(rows) => Json(fields_body(&rows)).into_response(),
+        Err(_) => internal().into_response(),
+    }
+}
+
+/// `PUT /api/workspaces/{id}/trackers/{tracker}/fields` — replace the mapped set (W7),
+/// refused with the first failing check, in order.
+pub(crate) async fn put_tracker_fields(
+    State(state): State<AppState>,
+    Path((id, tracker)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use crate::tracker::writeback::TrackerMetric;
+    let refuse = |code: &str, key: &str, value: &str| {
+        let mut b = serde_json::json!({"error": code});
+        b[key] = serde_json::json!(value);
+        (StatusCode::UNPROCESSABLE_ENTITY, Json(b)).into_response()
+    };
+    // 1. The body's shape.
+    let entries: Option<Vec<(String, String)>> =
+        body.get("fields").and_then(|f| f.as_array()).and_then(|a| {
+            a.iter()
+                .map(|e| {
+                    Some((
+                        e.get("metric")?.as_str()?.to_string(),
+                        e.get("field_ref")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        });
+    let Some(entries) = entries.filter(|_| body.as_object().is_some_and(|o| o.len() == 1)) else {
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "invalid_body").into_response();
+    };
+    // 2. Known metrics, then 3. each metric and field once: each check over the whole body.
+    if let Some((metric, _)) = entries.iter().find(|(m, _)| TrackerMetric::parse(m).is_none()) {
+        return refuse("unknown_metric", "metric", metric);
+    }
+    let (mut metrics, mut refs) =
+        (std::collections::HashSet::new(), std::collections::HashSet::new());
+    for (metric, field_ref) in &entries {
+        if !metrics.insert(metric.clone()) {
+            return refuse("duplicate_mapping", "metric", metric);
+        }
+        if !refs.insert(field_ref.clone()) {
+            return refuse("duplicate_mapping", "field_ref", field_ref);
+        }
+    }
+    // 4. The tracker (its adapter owns the field-id shape); 5. that shape, before any
+    // network call.
+    let row = match known_tracker(&state, &id, &tracker).await {
+        Ok(row) => row,
+        Err(r) => return r.into_response(),
+    };
+    let Some(adapter) =
+        crate::tracker::TrackerKind::parse(&row.kind).and_then(crate::tracker::adapter_for_kind)
+    else {
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_tracker").into_response();
+    };
+    if let Some(r) = refusal_for(adapter.capabilities(), true) {
+        return r.into_response();
+    }
+    if let Some((_, bad)) = entries.iter().find(|(_, r)| !adapter.field_ref_shape(r)) {
+        return refuse("invalid_field_ref", "field_ref", bad);
+    }
+    // The board's lock, as sync and the pass hold it: a mapping never changes under a pass.
+    let Some(_guard) = state.trackers.locks.try_lock(row.id) else {
+        return fail(StatusCode::CONFLICT, "busy").into_response();
+    };
+    // 6–7. What the tracker says, with no 429 retries: Save never waits one out.
+    let pg = &state.pg;
+    let (known, tasks) =
+        match (pg.tracker_fields(row.id).await, pg.writeback_tasks(row.id, false).await) {
+            (Ok(rows), Ok(tasks)) => (rows, tasks),
+            _ => return internal().into_response(),
+        };
+    // A field's values are sensei's own while it is mapped, or retired with a clear
+    // still pending on some ticket; any other value on the board is someone else's.
+    let ours = |field_ref: &str| {
+        known.iter().filter(|k| k.field_ref == field_ref).any(|k| match k.retired_at {
+            Some(at) if k.metric.is_none() => {
+                tasks.iter().any(|t| crate::tracker::writeback::clear_pending(t, at))
+            }
+            _ => true,
+        })
+    };
+    let tracker_failed =
+        |e: crate::tracker::TrackerError| fail(tracker_error_status(e), e.code()).into_response();
+    let t = match crate::tracker::runtime::transport_for(&state.trackers, adapter, &row, 0).await {
+        Ok(t) => t,
+        Err(e) => return tracker_failed(e),
+    };
+    let wanted: Vec<String> = entries.iter().map(|(_, r)| r.clone()).collect();
+    if !wanted.is_empty() {
+        let checks = match adapter.check_fields(t.as_ref(), &wanted).await {
+            Ok(c) => c,
+            Err(e) => return tracker_failed(e),
+        };
+        if let Some(c) = checks.iter().find(|c| !c.exists) {
+            return refuse("field_not_found", "field_ref", &c.field_ref);
+        }
+        if let Some(c) = checks.iter().find(|c| !c.numeric) {
+            return refuse("field_not_number", "field_ref", &c.field_ref);
+        }
+        let board = crate::tracker::BoardScope::of(&row);
+        for field_ref in wanted.iter().filter(|r| !ours(r)) {
+            match adapter.field_in_use(t.as_ref(), &board, field_ref).await {
+                Ok(false) => {}
+                Ok(true) => return refuse("field_in_use", "field_ref", field_ref),
+                Err(e) => return tracker_failed(e),
+            }
+        }
+    }
+    if pg.replace_tracker_fields(row.id, &entries).await.is_err() {
+        return internal().into_response();
+    }
+    match pg.tracker_fields(row.id).await {
+        Ok(rows) => Json(fields_body(&rows)).into_response(),
+        Err(_) => internal().into_response(),
     }
 }
 
@@ -264,6 +458,56 @@ pub(crate) async fn disconnect_tracker(
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => fail(StatusCode::NOT_FOUND, "tracker_not_found").into_response(),
         Err(_) => internal().into_response(),
+    }
+}
+
+/// §G8: turning write-back on, or mapping its fields, on a tracker whose adapter cannot
+/// write back is a 409. Turning it off is always allowed.
+fn writeback_refusal(kind: &str, enabling: bool) -> Result<Option<ApiErr>, String> {
+    Ok(refusal_for(crate::tracker::capabilities_of_kind(kind)?, enabling))
+}
+
+/// Pure: the 409 for turning write-back on with an adapter that cannot.
+fn refusal_for(caps: crate::tracker::Capabilities, enabling: bool) -> Option<ApiErr> {
+    (enabling && !caps.writeback).then(|| fail(StatusCode::CONFLICT, "writeback_unsupported"))
+}
+
+/// `PATCH /api/workspaces/{id}/trackers/{tracker}` — exactly `{"writeback_enabled": bool}` (W8).
+pub(crate) async fn patch_tracker(
+    State(state): State<AppState>,
+    Path((id, tracker)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let enabled = match body.as_object() {
+        Some(o) if o.len() == 1 => o.get("writeback_enabled").and_then(|v| v.as_bool()),
+        _ => None,
+    };
+    let Some(enabled) = enabled else {
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "invalid_body").into_response();
+    };
+    let row = match known_tracker(&state, &id, &tracker).await {
+        Ok(row) => row,
+        Err(r) => return r.into_response(),
+    };
+    match writeback_refusal(&row.kind, enabled) {
+        Ok(None) => {}
+        Ok(Some(r)) => return r.into_response(),
+        Err(_) => return internal().into_response(),
+    }
+    let pg = &state.pg;
+    match pg.set_writeback_enabled(row.id, enabled).await {
+        Ok(true) => {}
+        Ok(false) => return fail(StatusCode::NOT_FOUND, "tracker_not_found").into_response(),
+        Err(_) => return internal().into_response(),
+    }
+    let row = match pg.tracker_by_id(row.id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return fail(StatusCode::NOT_FOUND, "tracker_not_found").into_response(),
+        Err(_) => return internal().into_response(),
+    };
+    match view(&state, &row).await {
+        Ok(v) => Json(v).into_response(),
+        Err(r) => r.into_response(),
     }
 }
 
@@ -299,7 +543,8 @@ pub(crate) async fn get_tracker_task(
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
-    let task = match state.pg.tracker_task_detail(workspace, &key).await {
+    let pg = &state.pg;
+    let task = match pg.tracker_task_detail(workspace, &key).await {
         Ok(Some(task)) => task,
         Ok(None) => match discover_on_miss(&state, workspace, &key).await {
             Ok(task) => task,
@@ -307,12 +552,17 @@ pub(crate) async fn get_tracker_task(
         },
         Err(_) => return internal().into_response(),
     };
-    let usage = match ticket_usages(&state.pg, task.tracker_id, Some(&[task.id])).await {
+    let usage = match ticket_usages(pg, task.tracker_id, Some(&[task.id])).await {
         Ok(mut u) => u.remove(&task.id).unwrap_or_default(),
         Err(_) => return internal().into_response(),
     };
-    let by_repo = match ticket_usage_by_repo(&state.pg, task.tracker_id, task.id).await {
+    let by_repo = match ticket_usage_by_repo(pg, task.tracker_id, task.id).await {
         Ok(r) => r,
+        Err(_) => return internal().into_response(),
+    };
+    let own = std::collections::HashMap::from([(task.id, usage.clone())]);
+    let sdlc = match ticket_figures(pg, task.tracker_id, workspace, &[task.id], &own).await {
+        Ok(mut f) => f.remove(&task.id),
         Err(_) => return internal().into_response(),
     };
     let sessions: Vec<serde_json::Value> = task
@@ -334,9 +584,11 @@ pub(crate) async fn get_tracker_task(
     Json(serde_json::json!({
         "task": {
             "tracker_id": task.tracker_id, "key": task.key, "summary": task.summary, "issue_type": task.issue_type,
-            "status": task.status, "removed": task.removed,
+            "status": task.status, "removed": task.removed, "assigned_to_me": task.assigned_to_me,
+            "writeback_status": task.writeback_status, "writeback_at": task.writeback_at,
         },
         "usage": usage,
+        "sdlc": sdlc,
         "by_repo": by_repo,
         "sessions": sessions,
     }))
@@ -351,7 +603,7 @@ const LOOKUP_DISCOVERY: std::time::Duration = std::time::Duration::from_secs(30)
 /// order until one has it, all within one [`LOOKUP_DISCOVERY`]. A board that is
 /// busy or failing does not stop the others: a found ticket wins, then a board
 /// that answered it has no such ticket, then the first failure.
-async fn discover_on_miss(
+pub(crate) async fn discover_on_miss(
     state: &AppState,
     workspace: uuid::Uuid,
     key: &str,
@@ -484,8 +736,14 @@ pub(crate) async fn list_sprints(
         Ok(t) => t,
         Err(r) => return r.into_response(),
     };
-    let sprints = match sprint_usages(&state.pg, tracker.id, chrono::Utc::now()).await {
+    let pg = &state.pg;
+    let now = chrono::Utc::now();
+    let sprints = match sprint_usages(pg, tracker.id, now).await {
         Ok(s) => s,
+        Err(_) => return internal().into_response(),
+    };
+    let mut sdlc = match crate::sdlc::sprint_replay::sprint_sdlc(pg, tracker.id, now).await {
+        Ok(f) => f,
         Err(_) => return internal().into_response(),
     };
     let rows: Vec<serde_json::Value> = sprints
@@ -495,6 +753,7 @@ pub(crate) async fn list_sprints(
             let mut row = serde_json::json!({
                 "id": s.id, "name": s.name, "state": s.state, "start_at": s.start_at,
                 "end_at": s.end_at, "complete_at": s.complete_at, "tasks": s.tasks,
+                "sdlc": sdlc.remove(&s.id),
             });
             let parts = match su.parts {
                 Ok(p) => serde_json::json!({
@@ -542,13 +801,18 @@ pub(crate) async fn list_tracker_tasks(
         (None, true) => TaskScope::Backlog,
         (None, false) => TaskScope::All,
     };
-    let tasks = match state.pg.tracker_task_rows(tracker.id, scope, q.include_removed).await {
+    let pg = &state.pg;
+    let tasks = match pg.tracker_task_rows(tracker.id, scope, q.include_removed).await {
         Ok(t) => t,
         Err(_) => return internal().into_response(),
     };
     let ids: Vec<uuid::Uuid> = tasks.iter().map(|t| t.id).collect();
-    let mut usage = match ticket_usages(&state.pg, tracker.id, Some(&ids)).await {
+    let mut usage = match ticket_usages(pg, tracker.id, Some(&ids)).await {
         Ok(u) => u,
+        Err(_) => return internal().into_response(),
+    };
+    let mut sdlc = match ticket_figures(pg, tracker.id, tracker.workspace_id, &ids, &usage).await {
+        Ok(f) => f,
         Err(_) => return internal().into_response(),
     };
     let named = |(id, name): &(uuid::Uuid, String)| serde_json::json!({"id": id, "name": name});
@@ -557,11 +821,13 @@ pub(crate) async fn list_tracker_tasks(
         .map(|t| {
             serde_json::json!({
                 "key": t.key, "summary": t.summary, "issue_type": t.issue_type,
-                "status": t.status, "removed": t.removed,
+                "status": t.status, "removed": t.removed, "assigned_to_me": t.assigned_to_me,
+                "writeback_status": t.writeback_status, "writeback_at": t.writeback_at,
                 "current_sprint": t.current_sprint.as_ref().map(named),
                 "sprints": t.sprints.iter().map(named).collect::<Vec<_>>(),
                 // No linked sessions is a genuinely empty set: zero sessions, null sums.
                 "usage": usage.remove(&t.id).unwrap_or_default(),
+                "sdlc": sdlc.remove(&t.id),
             })
         })
         .collect();
@@ -602,11 +868,47 @@ pub(crate) async fn list_unlinked_sessions(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_ambiguous_iteration_field_is_422_with_the_names_to_choose_from() {
+        let (status, axum::Json(body)) = super::connect_failure(
+            crate::tracker::connect::ConnectError::Validate(
+                crate::tracker::ValidateError::IterationFieldAmbiguous(vec![
+                    "Sprint".into(),
+                    "Release".into(),
+                ]),
+            ),
+            "https://api.github.com",
+            "orgs/acme/3",
+        );
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "iteration_field_ambiguous", "fields": ["Sprint", "Release"]})
+        );
+    }
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use serde_json::{Value, json};
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    #[test]
+    fn write_back_is_refused_only_when_enabling_it_on_an_adapter_that_cannot() {
+        use crate::tracker::Capabilities;
+        let cannot = Capabilities { history: false, writeback: false };
+        let (status, body) = super::refusal_for(cannot, true).expect("refused");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body.0, json!({"error": "writeback_unsupported"}));
+        assert!(super::refusal_for(cannot, false).is_none(), "turning it off is allowed");
+        assert!(
+            super::refusal_for(Capabilities { history: true, writeback: true }, true).is_none()
+        );
+        // Through the registry: Jira can, an unknown kind is an error. The HTTP 409 on a
+        // real GitLab tracker is F3's (D10).
+        assert!(super::writeback_refusal("jira", true).unwrap().is_none());
+        assert!(super::writeback_refusal("not-a-kind", true).is_err());
+    }
 
     use crate::tracker::TrackerError;
     use crate::tracker::runtime::test_support::{FakeFactory, fake_runtime};
@@ -755,6 +1057,334 @@ mod tests {
         assert_eq!(listed[0]["external_scope"], json!("AUTH"));
     }
 
+    /// tracker-github E10, E13 and the list fields, end to end: a GitHub project connects
+    /// over HTTP against the recorded fixtures, lists the fields Replace token needs,
+    /// refuses write-back, and cannot be connected by a second workspace.
+    #[tokio::test]
+    async fn a_github_project_connects_lists_its_settings_and_is_connected_once() {
+        let h = harness().await;
+        let (p, other) = (workspace(&h).await, workspace(&h).await);
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(crate::tracker::github::test_support::RecordedGithub::load(&["project"])),
+        );
+        let body = json!({
+            "kind": "github", "level": "sprint",
+            "board_url": "https://github.com/orgs/acme/projects/2",
+            "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers"), Some(body.clone()), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let row = &json(&b)["tracker"];
+        assert_eq!(
+            (row["kind"].clone(), row["board_ref"].clone(), row["account"].clone()),
+            (json!("github"), json!("project:PVT_1"), json!("user1"))
+        );
+        assert_eq!(
+            (row["url"].clone(), row["iteration_field"].clone()),
+            (json!("https://github.com/orgs/acme/projects/2"), json!("Sprint"))
+        );
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let (st, b) = call(
+            &h,
+            "PATCH",
+            &format!("/api/workspaces/{p}/trackers/{t}"),
+            Some(json!({"writeback_enabled": true})),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+        // The same project, typed under another spelling, from another workspace.
+        let again = json!({
+            "kind": "github", "level": "sprint",
+            "board_url": "https://github.com/orgs/ACME/projects/2/views/4",
+            "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{other}/trackers"), Some(again), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("board_already_connected"))
+        );
+    }
+
+    /// tracker-github E10: the board is the project's node id, so the same project under
+    /// a renamed owner path is still the same board.
+    #[tokio::test]
+    async fn a_github_project_under_a_renamed_path_is_still_one_board() {
+        use crate::tracker::github::test_support::{RecordedGithub, fixture_body};
+        let h = harness().await;
+        let (p, other) = (workspace(&h).await, workspace(&h).await);
+        let renamed = RecordedGithub::load(&["project"]).with(
+            "ValidateOrg",
+            json!({"owner": "acme2", "number": 2}),
+            fixture_body("project", "validate_org"),
+        );
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(renamed));
+        let connect = |board_url: &str| json!({"kind": "github", "level": "sprint", "board_url": board_url, "api_token": SENTINEL});
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{p}/trackers"),
+            Some(connect("https://github.com/orgs/acme/projects/2")),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{other}/trackers"),
+            Some(connect("https://github.com/orgs/acme2/projects/2")),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("board_already_connected"))
+        );
+    }
+
+    /// tracker-github E8, E9, E13, end to end: a project with no Iteration field syncs
+    /// with no sprints and no error; a failing items page fails the sync with
+    /// `http_error` and leaves the tickets as they were; history-based figures read
+    /// `unsupported_by_tracker`; the board holds its repository's scope.
+    #[tokio::test]
+    async fn a_github_sync_records_its_failure_and_changes_nothing() {
+        use crate::tracker::github::test_support::RecordedGithub;
+        let h = harness().await;
+        let p = workspace(&h).await;
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(RecordedGithub::load(&["project", "no-field"])),
+        );
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{p}/trackers"),
+            Some(json!({"kind": "github", "level": "sprint",
+                        "board_url": "https://github.com/orgs/acme/projects/3", "api_token": SENTINEL})),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let listed = settled(&h, p).await;
+        assert_eq!(listed[0]["last_error"], Value::Null, "{listed}");
+        assert_eq!(listed[0]["counts"], json!({"tasks": 1, "sprints": 0}));
+        assert_eq!(listed[0]["iteration_field"], Value::Null);
+        let t = tracker(&h, p).await;
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{t}/tasks"), None, None).await;
+        assert!(json(&b).to_string().contains("acme/platform#2"), "{b}");
+        let tracker_id: uuid::Uuid = t.parse().unwrap();
+        assert_eq!(
+            h.state.pg.trackers_holding_scope(p, "github.com/acme/platform").await.unwrap(),
+            vec![tracker_id]
+        );
+        assert!(
+            h.state.pg.trackers_holding_scope(p, "github.com/acme/none").await.unwrap().is_empty()
+        );
+
+        // Now the items page fails: the sync fails whole and the ticket stays.
+        let failing = RecordedGithub::load(&["no-field"]).with(
+            "Items",
+            json!({"id": "PVT_3", "field": "", "after": null}),
+            json!({"errors": [{"type": "SOMETHING_ELSE", "path": ["node"]}]}),
+        );
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(failing));
+        let (st, _) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/{t}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::BAD_GATEWAY);
+        let listed = settled(&h, p).await;
+        assert_eq!(listed[0]["last_error"], json!("http_error"));
+        assert_eq!(listed[0]["counts"], json!({"tasks": 1, "sprints": 0}), "nothing was removed");
+
+        // A project with sprints: their history-based figures are unsupported, not pending.
+        let q = workspace(&h).await;
+        h.factory.serve_transport(
+            crate::tracker::github::API_BASE,
+            Arc::new(RecordedGithub::load(&["project"])),
+        );
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/workspaces/{q}/trackers"),
+            Some(json!({"kind": "github", "level": "sprint",
+                        "board_url": "https://github.com/orgs/acme/projects/2", "api_token": SENTINEL})),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, q).await;
+        let t = tracker(&h, q).await;
+        let (st, b) =
+            call(&h, "GET", &format!("/api/workspaces/{q}/trackers/{t}/sprints"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let reasons: Vec<Value> = json(&b)
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|s| {
+                s["sdlc"]["reasons"].as_object().cloned().unwrap_or_default().into_values()
+            })
+            .collect();
+        assert!(reasons.contains(&json!("unsupported_by_tracker")), "{reasons:?}");
+        assert!(!reasons.contains(&json!("history_pending")), "{reasons:?}");
+    }
+
+    /// A GitHub credential is per owner (user decision 2026-11-09, amending D14 for
+    /// GitHub): a fine-grained token covers one owner, so connecting a project of
+    /// another owner keeps the first project's token; a project of the same owner
+    /// moves it to the newest token, as one site does for Jira and GitLab.
+    #[tokio::test]
+    async fn github_tokens_are_shared_per_owner_not_per_site() {
+        use crate::tracker::github::test_support::{RecordedGithub, fixture_body};
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let project = |kind: &str, owner: &str, number: u64, id: &str| {
+            let mut env = fixture_body("project", "validate_org");
+            let mut board = env["data"]["organization"]["projectV2"].take();
+            board["id"] = json!(id);
+            board["number"] = json!(number);
+            board["owner"] = json!({"__typename": kind, "login": owner});
+            let segment = if kind == "User" { "users" } else { "orgs" };
+            board["url"] = json!(format!("https://github.com/{segment}/{owner}/projects/{number}"));
+            if kind == "User" {
+                json!({"data": {"user": {"projectV2": board}}})
+            } else {
+                json!({"data": {"organization": {"projectV2": board}}})
+            }
+        };
+        let (bob, acme9) =
+            (project("User", "bob", 5, "PVT_7"), project("Organization", "acme", 9, "PVT_8"));
+        let node = |env: &Value, root: &str| json!({"data": {"node": env["data"][root]["projectV2"].clone()}});
+        let no_items = json!({"data": {"node": {"items": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}});
+        let gh = RecordedGithub::load(&["project"])
+            .with("ValidateUser", json!({"owner": "bob", "number": 5}), bob.clone())
+            .with("ValidateOrg", json!({"owner": "acme", "number": 9}), acme9.clone())
+            .with("Board", json!({"id": "PVT_7"}), node(&bob, "user"))
+            .with("Board", json!({"id": "PVT_8"}), node(&acme9, "organization"))
+            .with(
+                "Items",
+                json!({"id": "PVT_7", "field": "Sprint", "after": null}),
+                no_items.clone(),
+            )
+            .with("Items", json!({"id": "PVT_8", "field": "Sprint", "after": null}), no_items);
+        h.factory.serve_transport(crate::tracker::github::API_BASE, Arc::new(gh));
+        let connect = |board_url: &str| json!({"kind": "github", "level": "sprint", "board_url": board_url, "api_token": SENTINEL});
+        let uri = format!("/api/workspaces/{p}/trackers");
+        let secret_of = |board_ref: &'static str| {
+            let pg = h.state.pg.clone();
+            async move {
+                let (s,): (String,) = sqlx_core::query_as::query_as(
+                    "SELECT secret_service FROM sensei.trackers WHERE workspace_id = $1 AND board_ref = $2",
+                )
+                .bind(p)
+                .bind(board_ref)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+                s
+            }
+        };
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/orgs/acme/projects/2")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        let acme_token = secret_of("project:PVT_1").await;
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/users/bob/projects/5")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        assert_eq!(
+            secret_of("project:PVT_1").await,
+            acme_token,
+            "another owner keeps its own token"
+        );
+        assert_ne!(secret_of("project:PVT_7").await, acme_token);
+        let (st, b) =
+            call(&h, "POST", &uri, Some(connect("https://github.com/orgs/acme/projects/9")), None)
+                .await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        settled(&h, p).await;
+        assert_eq!(
+            secret_of("project:PVT_1").await,
+            secret_of("project:PVT_8").await,
+            "the same owner moves to the newest token"
+        );
+        assert_ne!(secret_of("project:PVT_7").await, secret_of("project:PVT_8").await);
+    }
+
+    /// D10, end to end: a GitLab board connects over HTTP against the recorded CE,
+    /// syncs, refuses write-back, and reads `unsupported_by_tracker` where its
+    /// figures need history.
+    #[tokio::test]
+    async fn a_gitlab_board_connects_syncs_and_refuses_write_back() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        h.factory.serve_transport(
+            "https://gitlab.example.com",
+            Arc::new(crate::tracker::gitlab::test_support::RecordedGitlab::load(
+                "ce-closed-milestone",
+            )),
+        );
+        let body = json!({
+            "kind": "gitlab", "level": "sprint",
+            "board_url": "https://gitlab.example.com/groups/acme/-/boards",
+            "confirm_host": "gitlab.example.com", "api_token": SENTINEL,
+        });
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers"), Some(body), None).await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let row = &json(&b)["tracker"];
+        assert_eq!(
+            (row["kind"].clone(), row["board_ref"].clone()),
+            (json!("gitlab"), json!("group:857"))
+        );
+        assert_eq!(row["account"], json!("group_bot"));
+        assert_eq!(
+            (row["sprint_source"].clone(), row["full_path"].clone()),
+            (json!("milestone"), json!("acme"))
+        );
+        assert_eq!(row["sprint_source_changed_at"], Value::Null, "a first source is not a change");
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}");
+
+        let (st, b) = call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": true})), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+        let (st, _) =
+            call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": false})), None).await;
+        assert_eq!(st, StatusCode::OK, "turning it off is allowed");
+        let metric = crate::tracker::writeback::TrackerMetric::ALL[0].as_str();
+        let fields = json!({"fields": [{"metric": metric, "field_ref": "x"}]});
+        let (st, b) = call(&h, "PUT", &format!("{uri}/fields"), Some(fields), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("writeback_unsupported"))
+        );
+
+        let (st, b) = call(&h, "GET", &format!("{uri}/sprints"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let sprints = json(&b);
+        assert_eq!(sprints.as_array().unwrap().len(), 1);
+        let reasons = sprints[0]["sdlc"]["reasons"].as_object().expect("reasons").clone();
+        assert!(!reasons.is_empty());
+        assert!(reasons.values().all(|r| r == "unsupported_by_tracker"), "{reasons:?}");
+    }
+
     #[tokio::test]
     async fn connect_refusals_carry_fixed_codes() {
         let h = harness().await;
@@ -762,10 +1392,13 @@ mod tests {
         let uri = format!("/api/workspaces/{p}/trackers");
         let mut gitlab = connect_body(&site());
         gitlab["kind"] = json!("gitlab");
+        let mut unknown = connect_body(&site());
+        unknown["kind"] = json!("azure_devops");
         let mut no_level = connect_body(&site());
         no_level.as_object_mut().unwrap().remove("level");
         for (body, code) in [
-            (gitlab, "unsupported_tracker"),
+            (gitlab, "host_not_confirmed"),
+            (unknown, "unsupported_tracker"),
             (board_body(&site(), "42", "portfolio"), "invalid_level"),
             (no_level, "level_required"),
         ] {
@@ -879,7 +1512,16 @@ mod tests {
             json(&b)["counts"],
             json!({"sprints": 2, "tasks": 3, "removed": 0, "links": 0, "skipped_members": 0})
         );
-        let _held = h.rt.locks.try_lock(id.parse().unwrap()).unwrap();
+        // The sync's write-back pass holds the guard for a moment after it (W2).
+        let mut held = None;
+        for _ in 0..50 {
+            held = h.rt.locks.try_lock(id.parse().unwrap());
+            if held.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let _held = held.expect("the pass releases the guard");
         let (st, b) = call(&h, "POST", &uri, None, None).await;
         assert_eq!((st, json(&b)["error"].clone()), (StatusCode::CONFLICT, json!("busy")));
     }
@@ -1022,6 +1664,539 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_task_routes_say_whether_a_ticket_is_assigned_to_the_token_owner() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with_assignees([Some("A1"), Some("B2"), None]),
+        );
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let (st, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{t}/tasks"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let mine: Vec<(Value, Value)> = json(&b)
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["key"].clone(), r["assigned_to_me"].clone()))
+            .collect();
+        for (key, want) in [("AUTH-1", true), ("AUTH-2", false), ("AUTH-3", false)] {
+            assert!(mine.contains(&(json!(key), json!(want))), "{key}: {mine:?}");
+        }
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/auth-1"), None, None).await;
+        assert_eq!(json(&b)["task"]["assigned_to_me"], json!(true), "{b}");
+        assert!(!b.contains("B2") && !b.contains("A1"), "no account id in a response: {b}");
+    }
+
+    #[tokio::test]
+    async fn each_board_reports_its_write_back_state_and_each_ticket_its_last_write() {
+        let h = harness().await;
+        let cases = [
+            (
+                json!({"accountId": "A1", "accountType": "atlassian"}),
+                [Some("A1"), None, None],
+                "active",
+                Value::Null,
+            ),
+            (
+                json!({"accountId": "A1", "accountType": "atlassian"}),
+                [None, None, None],
+                "nothing_assigned",
+                Value::Null,
+            ),
+            (json!({"accountType": "app"}), [None, None, None], "owner_not_a_person", Value::Null),
+            (json!({}), [None, None, None], "owner_unknown", Value::Null),
+        ];
+        for (myself, assignees, want, error) in cases {
+            let p = workspace(&h).await;
+            let s = site();
+            h.factory.serve(
+                &format!("https://{s}"),
+                FakeBoard::standard().with_myself(myself.clone()).with_assignees(assignees),
+            );
+            h.factory.serve_writes(
+                &format!("https://{s}"),
+                crate::tracker::test_support::RecordingWrites::default(),
+            );
+            connect(&h, p, &s).await;
+            let card = settled(&h, p).await;
+            assert_eq!(
+                (card[0]["writeback"]["enabled"].clone(), card[0]["writeback"]["state"].clone()),
+                (json!(false), json!("disabled")),
+                "off by default (D50): {card}"
+            );
+            let t = tracker(&h, p).await;
+            let on = Some(json!({"writeback_enabled": true}));
+            let (st, b) =
+                call(&h, "PATCH", &format!("/api/workspaces/{p}/trackers/{t}"), on, None).await;
+            assert_eq!(st, StatusCode::OK, "{b}");
+            let card = json(&b);
+            let wb = &card["writeback"];
+            assert_eq!(wb["state"], json!(want), "{myself}: {card}");
+            assert_eq!(wb["enabled"], json!(true));
+            assert_eq!(wb["surface"], json!("comment"));
+            assert_eq!(wb["mapped"], json!(0));
+            assert_eq!(wb["assigned"], json!(if want == "active" { 1 } else { 0 }));
+            assert_eq!(wb["failing"], json!(0));
+            assert_eq!(wb["error"], error);
+        }
+        // A lookup that fails is shown with its code.
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        h.factory.serve_writes(
+            &format!("https://{s}"),
+            crate::tracker::test_support::RecordingWrites::default(),
+        );
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET owner_ref = NULL, owner_error = 'forbidden',
+                    writeback_enabled = true WHERE id = $1::uuid",
+        )
+        .bind(&t)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (_, b) = call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
+        let wb = &json(&b)[0]["writeback"];
+        assert_eq!(
+            (wb["state"].clone(), wb["error"].clone()),
+            (json!("owner_lookup_failed"), json!("forbidden"))
+        );
+        // Each ticket says what was last written to it, and when.
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{t}/tasks"), None, None).await;
+        let row = &json(&b)[0];
+        assert!(row.get("writeback_status").is_some() && row.get("writeback_at").is_some(), "{b}");
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/auth-1"), None, None).await;
+        let task = &json(&b)["task"];
+        assert!(
+            task.get("writeback_status").is_some() && task.get("writeback_at").is_some(),
+            "{b}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_back_is_switched_with_a_patch_that_says_nothing_else() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with_assignees([Some("A1"), None, None]).with_comment_reads(),
+        );
+        let writes = h.factory.serve_writes(
+            &format!("https://{s}"),
+            crate::tracker::test_support::RecordingWrites::default(),
+        );
+        // A linked session, so a sync with write-back on writes AUTH-1.
+        let repo = crate::tracker::test_support::repo_in(&h.state.pg, p).await;
+        crate::tracker::test_support::session_with(&h.state.pg, Some(repo), &["fix/AUTH-1"], &[])
+            .await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}");
+        let wrote = |n: usize| {
+            let writes = writes.clone();
+            async move {
+                for _ in 0..50 {
+                    if writes.sent().len() >= n {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                writes.sent().len()
+            }
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(writes.sent().len(), 0, "off by default (D50): the first sync writes nothing");
+        let on = Some(json!({"writeback_enabled": true}));
+        let (st, b) = call(&h, "PATCH", &uri, on, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let (st, _) = call(&h, "POST", &format!("{uri}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(wrote(1).await, 1, "switched on, a sync's pass writes AUTH-1");
+        settled(&h, p).await;
+        for bad in [
+            json!({"foo": 1}),
+            json!({}),
+            json!({"writeback_enabled": "no"}),
+            json!({"writeback_enabled": true, "x": 1}),
+            json!([true]),
+        ] {
+            let (st, b) = call(&h, "PATCH", &uri, Some(bad.clone()), None).await;
+            assert_eq!(
+                (st, json(&b)["error"].clone()),
+                (StatusCode::UNPROCESSABLE_ENTITY, json!("invalid_body")),
+                "{bad}"
+            );
+        }
+        let (st, b) =
+            call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": false})), None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let card = json(&b);
+        assert_eq!(card["id"], json!(t), "the tracker, in the listing's shape");
+        assert_eq!(
+            (card["writeback"]["enabled"].clone(), card["writeback"]["state"].clone()),
+            (json!(false), json!("disabled"))
+        );
+        // A sync with a new linked session, while off, writes nothing.
+        crate::tracker::test_support::session_with(&h.state.pg, Some(repo), &["fix/AUTH-1"], &[])
+            .await;
+        let (st, _) = call(&h, "POST", &format!("{uri}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::OK);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(writes.sent().len(), 1, "write-back is off");
+        // Switched back on, it answers active, and the next sync writes the change.
+        let (st, b) = call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": true})), None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let wb = &json(&b)["writeback"];
+        assert_eq!((wb["enabled"].clone(), wb["state"].clone()), (json!(true), json!("active")));
+        let (st, _) = call(&h, "POST", &format!("{uri}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(wrote(2).await, 2, "the change is written once write-back is on again");
+        let ghost = uuid::Uuid::new_v4();
+        let (st, b) = call(
+            &h,
+            "PATCH",
+            &format!("/api/workspaces/{p}/trackers/{ghost}"),
+            Some(json!({"writeback_enabled": true})),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("tracker_not_found"))
+        );
+        let (st, _) = call(
+            &h,
+            "PATCH",
+            &uri,
+            Some(json!({"writeback_enabled": true})),
+            Some("https://evil.example"),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "a foreign page cannot switch write-back");
+    }
+
+    /// A site field list: 10050 and 10051 numbers, 10060 a number someone already
+    /// fills in, 10070 text.
+    fn field_board() -> FakeBoard {
+        FakeBoard::standard()
+            .with(
+                "/rest/api/3/field",
+                0,
+                json!([
+                {"id": "customfield_10050", "schema": {"type": "number"}},
+                {"id": "customfield_10051", "schema": {"type": "number"}},
+                {"id": "customfield_10060", "schema": {"type": "number"}},
+                {"id": "customfield_10070", "schema": {"type": "string"}}]),
+            )
+            .with_jql(
+                "cf[10060] is not EMPTY",
+                json!([{"id": "10001", "key": "AUTH-1", "fields": {}}]),
+            )
+    }
+
+    #[tokio::test]
+    async fn a_field_mapping_is_refused_with_the_first_reason_in_order() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let board = h.factory.serve(&format!("https://{s}"), field_board());
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let put = |body: Value| {
+            let (h, uri) = (&h, uri.clone());
+            async move {
+                let (st, b) = call(h, "PUT", &uri, Some(body), None).await;
+                (st, json(&b))
+            }
+        };
+        let m = |metric: &str, field: &str| json!({"metric": metric, "field_ref": field});
+        for bad in [
+            json!([]),
+            json!({"fields": "x"}),
+            json!({"fields": [{"metric": "sessions"}]}),
+            json!({"fields": [{"metric": 1, "field_ref": "customfield_1"}]}),
+        ] {
+            let (st, b) = put(bad.clone()).await;
+            assert_eq!(
+                (st, b["error"].clone()),
+                (StatusCode::UNPROCESSABLE_ENTITY, json!("invalid_body")),
+                "{bad}"
+            );
+        }
+        let (st, b) = put(json!({"fields": [m("active_secs", "summary")]})).await;
+        assert_eq!(
+            (st, b["error"].clone(), b["metric"].clone()),
+            (StatusCode::UNPROCESSABLE_ENTITY, json!("unknown_metric"), json!("active_secs"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10050"), m("sessions", "customfield_10051")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["metric"].clone()),
+            (json!("duplicate_mapping"), json!("sessions"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10050"), m("api_cost", "customfield_10050")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("duplicate_mapping"), json!("customfield_10050"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "summary")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("invalid_field_ref"), json!("summary"))
+        );
+        assert!(board.calls().is_empty(), "every check so far needs no network");
+        let ghost = uuid::Uuid::new_v4();
+        let (st, b) = call(
+            &h,
+            "PUT",
+            &format!("/api/workspaces/{p}/trackers/{ghost}/fields"),
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("tracker_not_found"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10099")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("field_not_found"), json!("customfield_10099"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10070")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("field_not_number"), json!("customfield_10070"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10060")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("field_in_use"), json!("customfield_10060"))
+        );
+        let (st, _) = call(
+            &h,
+            "PUT",
+            &uri,
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            Some("https://evil.example"),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "a foreign page cannot map fields");
+    }
+
+    #[tokio::test]
+    async fn a_saved_mapping_drives_the_card_and_an_unmapped_field_can_come_back() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let board = h.factory.serve(&format!("https://{s}"), field_board());
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let m = |metric: &str, field: &str| json!({"metric": metric, "field_ref": field});
+        let (st, b) = call(&h, "PUT", &uri,
+            Some(json!({"fields": [m("api_cost", "customfield_10051"), m("active_hours", "customfield_10050")]})), None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let listed = json!({"fields": [m("active_hours", "customfield_10050"), m("api_cost", "customfield_10051")]});
+        assert_eq!(json(&b), listed, "the GET body, in metric order");
+        assert_eq!(json(&call(&h, "GET", &uri, None, None).await.1), listed);
+        let card = |b: String| json(&b)[0]["writeback"].clone();
+        let wb =
+            card(call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1);
+        assert_eq!((wb["surface"].clone(), wb["mapped"].clone()), (json!("fields"), json!(2)));
+        assert_eq!(
+            call(&h, "PUT", &uri, Some(json!({"fields": []})), None).await.0,
+            StatusCode::OK
+        );
+        let wb =
+            card(call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1);
+        assert_eq!((wb["surface"].clone(), wb["mapped"].clone()), (json!("comment"), json!(0)));
+        // A ticket was tried before 10050 was retired, so its values may be sensei's own:
+        // mapping it again is not "in use".
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks SET writeback_tried_at = now() - interval '1 day' WHERE tracker_id = $1::uuid",
+        )
+        .bind(&t)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let in_use = h.factory.serve(
+            &format!("https://{s}"),
+            field_board().with_jql(
+                "cf[10050] is not EMPTY",
+                json!([{"id": "10001", "key": "AUTH-1", "fields": {}}]),
+            ),
+        );
+        let (st, b) = call(
+            &h,
+            "PUT",
+            &uri,
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert!(
+            in_use.jql_calls().is_empty(),
+            "a field the board already has a row for is never refused"
+        );
+        drop(board);
+    }
+
+    #[tokio::test]
+    async fn the_mapping_checks_run_one_at_a_time_and_a_refusal_saves_nothing() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        h.factory.serve(&format!("https://{s}"), field_board());
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let m = |metric: &str, field: &str| json!({"metric": metric, "field_ref": field});
+        let put = |body: Value| {
+            let (h, uri) = (&h, uri.clone());
+            async move { json(&call(h, "PUT", &uri, Some(body), None).await.1) }
+        };
+        // An unknown metric anywhere beats a duplicate earlier on.
+        let b = put(json!({"fields": [m("sessions", "customfield_1"), m("sessions", "customfield_2"), m("nope", "customfield_3")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["metric"].clone()),
+            (json!("unknown_metric"), json!("nope"))
+        );
+        // A missing field beats one that is not a number, whatever their order.
+        let b = put(json!({"fields": [m("sessions", "customfield_10070"), m("api_cost", "customfield_10099")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("field_not_found"), json!("customfield_10099"))
+        );
+        // Nothing was saved by any refusal, nor by a foreign page.
+        put(json!({"fields": [m("sessions", "customfield_10060")]})).await;
+        call(
+            &h,
+            "PUT",
+            &uri,
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            Some("https://evil.example"),
+        )
+        .await;
+        assert_eq!(json(&call(&h, "GET", &uri, None, None).await.1), json!({"fields": []}));
+        // While a pass (or a sync) holds the board, a save waits for it.
+        let held = h.rt.locks.try_lock(t.parse().unwrap()).unwrap();
+        let (st, b) = call(
+            &h,
+            "PUT",
+            &uri,
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            None,
+        )
+        .await;
+        assert_eq!((st, json(&b)["error"].clone()), (StatusCode::CONFLICT, json!("busy")));
+        drop(held);
+        assert_eq!(json(&call(&h, "GET", &uri, None, None).await.1), json!({"fields": []}));
+    }
+
+    #[tokio::test]
+    async fn a_field_already_mapped_is_not_checked_again_and_a_cleared_retired_one_is() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let body = json!({"fields": [{"metric": "sessions", "field_ref": "customfield_10050"}]});
+        h.factory.serve(&format!("https://{s}"), field_board());
+        assert_eq!(call(&h, "PUT", &uri, Some(body.clone()), None).await.0, StatusCode::OK);
+        // Now 10050 has values on the board (sensei's own).
+        let used = || {
+            field_board().with_jql(
+                "cf[10050] is not EMPTY",
+                json!([{"id": "10001", "key": "AUTH-1", "fields": {}}]),
+            )
+        };
+        let again = h.factory.serve(&format!("https://{s}"), used());
+        assert_eq!(call(&h, "PUT", &uri, Some(body.clone()), None).await.0, StatusCode::OK);
+        assert!(again.jql_calls().is_empty(), "a mapped field is never refused as in use");
+        // Unmapped with no ticket ever written: nothing of sensei's is left there, so
+        // the values on the board are someone else's.
+        assert_eq!(
+            call(&h, "PUT", &uri, Some(json!({"fields": []})), None).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            json(&call(&h, "GET", &uri, None, None).await.1),
+            json!({"fields": []}),
+            "retired rows are not listed"
+        );
+        h.factory.serve(&format!("https://{s}"), used());
+        let (st, b) = call(&h, "PUT", &uri, Some(body.clone()), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::UNPROCESSABLE_ENTITY, json!("field_in_use"))
+        );
+        // With a ticket tried before the field was retired, the values may be sensei's: allowed.
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks SET writeback_tried_at = now() - interval '1 day' WHERE tracker_id = $1::uuid",
+        )
+        .bind(&t)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let pending = h.factory.serve(&format!("https://{s}"), used());
+        assert_eq!(call(&h, "PUT", &uri, Some(body), None).await.0, StatusCode::OK);
+        assert!(pending.jql_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failing_field_check_says_why_without_waiting() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let body = json!({"fields": [{"metric": "sessions", "field_ref": "customfield_10050"}]});
+        let limited = h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().fail("/rest/api/3/field", TrackerError::RateLimited),
+        );
+        let (st, b) = call(&h, "PUT", &uri, Some(body.clone()), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::BAD_GATEWAY, json!("rate_limited"))
+        );
+        assert_eq!(limited.calls(), ["/rest/api/3/field"], "one request, no 429 retries");
+        *h.store.fail_get.lock().unwrap() = true;
+        let (st, b) = call(&h, "PUT", &uri, Some(body), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::INTERNAL_SERVER_ERROR, json!("credential_store"))
+        );
+    }
+
+    #[tokio::test]
     async fn a_ticket_lists_its_linked_sessions_by_current_or_former_key() {
         use crate::tracker::test_support::{repo_in, session_with};
         let h = harness().await;
@@ -1090,6 +2265,162 @@ mod tests {
             call(&h, "GET", &format!("/api/workspaces/{unknown}/tracker-tasks/AUTH-3"), None, None)
                 .await;
         assert_eq!(json(&gone.1)["error"], json!("workspace_not_found"));
+    }
+
+    #[tokio::test]
+    async fn ticket_reads_carry_sdlc_figures_with_their_reasons() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let id = tracker(&h, p).await;
+        let (st, body) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{id}/tasks"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let rows = json(&body);
+        let rows = rows.as_array().unwrap();
+        assert!(!rows.is_empty());
+        for r in rows {
+            assert_eq!(r["sdlc"]["worked_minutes"], Value::Null);
+            assert_eq!(r["sdlc"]["reasons"]["worked_minutes"], json!("no_sessions"), "{r}");
+        }
+        // S4: the history run after the first sync is on the tracker's listing. The
+        // standard board has no configuration route, so it shows the failure.
+        let (_, listing) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
+        let history = &json(&listing)[0]["history"];
+        assert!(history["at"].is_string(), "{listing}");
+        assert_eq!(history["error"], json!(TrackerError::NotFound.code()), "{listing}");
+        let key = rows[0]["key"].as_str().unwrap();
+        let (st, body) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/{key}"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(json(&body)["sdlc"]["reasons"]["prompts"], json!("no_sessions"));
+    }
+
+    /// End to end: a linked session's hook events, derived by the pass, become the
+    /// ticket's figures; before the pass they read `not_derived`.
+    #[tokio::test]
+    async fn a_linked_sessions_signals_become_the_tickets_figures() {
+        use crate::tracker::test_support::{repo_in, session_with};
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let repo = repo_in(&h.state.pg, p).await;
+        let sess = session_with(&h.state.pg, Some(repo), &["fix/AUTH-2"], &[]).await;
+        let (client,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT client_session_id FROM activity.sessions WHERE id = $1",
+        )
+        .bind(sess)
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        let t0 = chrono::Utc::now().timestamp_millis() - 3_600_000;
+        for (i, (kind, tool, payload)) in [
+            ("PostToolUse", "Edit", json!({"tool_input": {"file_path": "/r/src/a.rs"}})),
+            ("PostToolUseFailure", "Bash", json!({"tool_use_id": "b1", "tool_input": {"command": "cargo build"}, "error": "Exit code 101"})),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            sqlx_core::query::query(
+                "INSERT INTO activity.assistant_events (session_id, family, event_type, tool_name, ts, payload)
+                 VALUES ($1, 'claude', $2, $3, $4, $5)",
+            )
+            .bind(&client)
+            .bind(kind)
+            .bind(tool)
+            .bind(t0 + i as i64 * 30_000)
+            .bind(payload)
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        }
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{}/tasks", tracker(&h, p).await);
+        let auth2 = |body: &str| {
+            json(body).as_array().unwrap().iter().find(|t| t["key"] == "AUTH-2").unwrap()["sdlc"]
+                .clone()
+        };
+
+        let before = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(before["reasons"]["compile_defects"], json!("not_derived"), "{before}");
+
+        crate::tasks::session_signals::pass(
+            &h.state.pg,
+            chrono::Utc::now().timestamp_millis(),
+            10_000,
+        )
+        .await
+        .unwrap();
+        let after = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(after["compile_defects"], json!(1), "{after}");
+        assert_eq!(after["build_runs"], json!(1));
+        assert_eq!(after["worked_minutes"], json!(0.5));
+        let started = after["work_started_at"].as_str().expect("an RFC 3339 instant");
+        assert!(chrono::DateTime::parse_from_rfc3339(started).is_ok(), "{started}");
+        assert_eq!(after["reasons"]["submitted_at"], json!("not_submitted"));
+
+        // Another ticket is not fed AUTH-2's session.
+        let body = call(&h, "GET", &uri, None, None).await.1;
+        let auth1 = json(&body).as_array().unwrap().iter().find(|t| t["key"] == "AUTH-1").unwrap()
+            ["sdlc"]
+            .clone();
+        assert_eq!(auth1["reasons"]["compile_defects"], json!("no_sessions"), "{auth1}");
+
+        // Each staleness the pass would act on reads as not derived (S6).
+        let stale = |sql: &'static str| {
+            let h = &h;
+            let client = client.clone();
+            async move {
+                sqlx_core::query::query(sql)
+                    .bind(&client)
+                    .bind(sess)
+                    .execute(h.state.pg.pool())
+                    .await
+                    .unwrap();
+            }
+        };
+        stale(
+            "INSERT INTO activity.assistant_events (session_id, family, event_type, ts, payload)
+             SELECT $1, 'claude', 'Stop', (extract(epoch from now()) * 1000)::bigint, '{}'::jsonb
+              WHERE $2::uuid IS NOT NULL",
+        )
+        .await;
+        let new_event = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(new_event["reasons"]["compile_defects"], json!("not_derived"), "a new event");
+
+        crate::tasks::session_signals::pass(
+            &h.state.pg,
+            chrono::Utc::now().timestamp_millis(),
+            10_000,
+        )
+        .await
+        .unwrap();
+        assert_eq!(auth2(&call(&h, "GET", &uri, None, None).await.1)["compile_defects"], json!(1));
+        stale(
+            "UPDATE activity.session_signal_marks SET error = 'x'
+              WHERE session_id = $2 AND $1::text IS NOT NULL",
+        )
+        .await;
+        let failed = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(
+            failed["reasons"]["compile_defects"],
+            json!("derivation_failed"),
+            "a failed mark (A9)"
+        );
+
+        stale(
+            "UPDATE activity.session_signal_marks SET error = NULL, catalogue_hash = 'old'
+              WHERE session_id = $2 AND $1::text IS NOT NULL",
+        )
+        .await;
+        let old = auth2(&call(&h, "GET", &uri, None, None).await.1);
+        assert_eq!(old["reasons"]["compile_defects"], json!("not_derived"), "an old catalogue");
     }
 
     #[tokio::test]
@@ -1175,6 +2506,95 @@ mod tests {
         let foreign =
             call(&h, "GET", &format!("{t}/sprints"), None, Some("https://evil.com")).await;
         assert_eq!(foreign.0, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn sprints_and_the_tracker_carry_their_sdlc_figures() {
+        use crate::tracker::test_support::{repo_in, session_with};
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let pg = &h.state.pg;
+        let repo = repo_in(pg, p).await;
+        let exec = |sql: &'static str, id: uuid::Uuid| async move {
+            sqlx_core::query::query(sql).bind(id).execute(pg.pool()).await.unwrap();
+        };
+        // One session on two tickets: its tokens and prompts count once, over two
+        // tickets. A second, on one of them, has no cache_write count yet.
+        let sess = session_with(pg, Some(repo), &["fix/AUTH-2", "fix/AUTH-3"], &[]).await;
+        let other = session_with(pg, Some(repo), &["fix/AUTH-2"], &[]).await;
+        exec(
+            "UPDATE activity.sessions SET tokens_fresh = 400, cache_read = 300, cache_write = 200,
+                    tokens_out = 100 WHERE id = $1",
+            sess,
+        )
+        .await;
+        exec(
+            "UPDATE activity.sessions SET tokens_fresh = 100, cache_read = 100, tokens_out = 100
+              WHERE id = $1",
+            other,
+        )
+        .await;
+        exec(
+            "INSERT INTO activity.assistant_events (session_id, family, event_type, tool_name, ts, payload)
+             SELECT s.client_session_id, 'claude', e.kind, e.tool,
+                    (extract(epoch from now()) * 1000)::bigint - 3600000 + e.ts, '{}'::jsonb
+               FROM activity.sessions s,
+                    (VALUES ('UserPromptSubmit', NULL, 1000), ('UserPromptSubmit', NULL, 2000),
+                            ('UserPromptSubmit', NULL, 3000), ('Stop', NULL, 4000)) e(kind, tool, ts)
+              WHERE s.id = $1",
+            sess,
+        )
+        .await;
+        connect(&h, p, &s).await;
+        let listed = settled(&h, p).await;
+        let project = &listed[0]["sdlc_project"];
+        assert_eq!(project["tickets_with_sessions"], json!(2), "{listed}");
+        assert_eq!(project["tokens_per_ticket"], Value::Null);
+        assert_eq!(project["reasons"]["tokens_per_ticket"], json!("partial_tokens"));
+        assert_eq!(project["sessions_without_tokens"], json!(1));
+        assert_eq!(project["prompts_per_ticket"], Value::Null, "before the pass");
+        assert_eq!(project["reasons"]["prompts_per_ticket"], json!("not_derived"));
+        assert_eq!(project["reasons"]["predictability"], json!("too_few_sprints"));
+
+        exec("UPDATE activity.sessions SET cache_write = 100 WHERE id = $1", other).await;
+        let rep =
+            crate::tasks::session_signals::pass(pg, chrono::Utc::now().timestamp_millis(), 10_000)
+                .await
+                .unwrap();
+        assert_eq!(rep.failed, 0, "{rep:?}");
+        let (_, listing) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
+        let project = &json(&listing)[0]["sdlc_project"];
+        assert_eq!(project["tokens_per_ticket"], json!(700.0), "(1000 + 400) / 2: {project}");
+        assert_eq!(project["sessions_without_tokens"], json!(0));
+        assert_eq!(project["prompts_per_ticket"], json!(1.5), "3 prompts / 2: {project}");
+
+        // The standard board has no configuration route, so no history was read:
+        // every sprint with a window waits for it rather than replaying today.
+        let t = format!("/api/workspaces/{p}/trackers/{}", tracker(&h, p).await);
+        let (st, b) = call(&h, "GET", &format!("{t}/sprints"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let sprints = json(&b);
+        let registered = crate::sdlc::registered_reasons();
+        for sprint in sprints.as_array().unwrap() {
+            let sdlc = &sprint["sdlc"];
+            assert!(sdlc.is_object(), "every sprint carries its figures: {b}");
+            assert_eq!(sdlc["commitment_reliability"], Value::Null, "{sdlc}");
+            for (key, code) in sdlc["reasons"].as_object().unwrap() {
+                assert!(registered.contains(code.as_str().unwrap()), "{key}: {code}");
+            }
+        }
+        let active = sprints.as_array().unwrap().iter().find(|s| s["state"] == "active").unwrap();
+        assert_eq!(
+            active["sdlc"]["reasons"]["commitment_reliability"],
+            json!("history_pending"),
+            "{b}"
+        );
+        for code in project["reasons"].as_object().unwrap().values() {
+            assert!(registered.contains(code.as_str().unwrap()), "{code}");
+        }
     }
 
     #[tokio::test]

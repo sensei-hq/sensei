@@ -23,6 +23,7 @@
         data.sessions,
         data.range as SessionRange,
         data.error,
+        data.activity,
       ),
   );
   const copy = $derived(sessionsCopy(data.workspace?.name ?? 'workspace'));

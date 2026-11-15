@@ -131,6 +131,28 @@ pub fn is_rejection(status: u16) -> bool {
     matches!(status, 401 | 403)
 }
 
+/// The `error_code` a failure body carried (Supabase's auth errors name one),
+/// read from the JSON after the status — `None` when there is none.
+pub fn error_code_of(error: &str) -> Option<String> {
+    let body = error.strip_prefix("dōjō returned ")?.split_once(": ")?.1;
+    serde_json::from_str::<serde_json::Value>(body).ok()?["error_code"].as_str().map(String::from)
+}
+
+/// Whether a failure says the refresh token is DEAD: a 401/403, or the 400 with
+/// which Supabase answers a refresh token it has no record of (a session from
+/// another dōjō, or one revoked) or one already spent. Any other 400 is a
+/// request the dōjō did not like, and leaves the session alone.
+pub fn is_dead_session(error: &str) -> bool {
+    match status_of(error) {
+        Some(s) if is_rejection(s) => true,
+        Some(400) => matches!(
+            error_code_of(error).as_deref(),
+            Some("refresh_token_not_found" | "refresh_token_already_used")
+        ),
+        _ => false,
+    }
+}
+
 /// Render a failure body without inventing detail.
 fn dojo_error(status: u16, body: &str) -> String {
     let detail = serde_json::from_str::<serde_json::Value>(body)
@@ -141,6 +163,93 @@ fn dojo_error(status: u16, body: &str) -> String {
         format!("dōjō returned {status}")
     } else {
         format!("dōjō returned {status}: {detail}")
+    }
+}
+
+/// A loopback dōjō for tests: answers every request with a canned failure and
+/// counts the hits, so a refusal test can prove no request went out — without
+/// ever touching a real dōjō. Each test starts its own on an ephemeral port.
+#[cfg(test)]
+pub(crate) mod stub {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    /// A dōjō that answers every request with `status` + `body`, on loopback.
+    pub(crate) struct StubDojo {
+        /// The ambient to point at this stub (`http://127.0.0.1:{port}`).
+        pub url: String,
+        hits: Arc<AtomicUsize>,
+    }
+
+    impl StubDojo {
+        /// Start the stub. The serving thread is detached: it lives until the
+        /// test process exits, which is fine for one stub per test.
+        pub fn start(status: u16, body: &str) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("loopback is always bindable");
+            let port = listener.local_addr().expect("bound, so it has a port").port();
+            let response = format!(
+                "HTTP/1.1 {status} Stub\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let hits = Arc::new(AtomicUsize::new(0));
+            let served = Arc::clone(&hits);
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = match stream {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    // Read the request before answering: closing on an unread
+                    // socket resets it, and the client would see a reset
+                    // instead of the canned status.
+                    let mut buf = [0u8; 8192];
+                    let _ = stream.read(&mut buf);
+                    served.fetch_add(1, Ordering::SeqCst);
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            });
+            Self { url: format!("http://127.0.0.1:{port}"), hits }
+        }
+
+        /// Requests received so far.
+        pub fn hits(&self) -> usize {
+            self.hits.load(Ordering::SeqCst)
+        }
+    }
+
+    /// Point the ambient dōjō at `url` until dropped, then restore whatever
+    /// was there (including nothing).
+    ///
+    /// Callers MUST be `#[serial(dojo_url_env)]`: two tests overriding the
+    /// ambient at once would read each other's dōjō.
+    pub(crate) struct TestDojoUrl {
+        prev: Option<String>,
+    }
+
+    impl TestDojoUrl {
+        pub fn set(url: &str) -> Self {
+            let prev = std::env::var("DOJO_URL").ok();
+            // SAFETY: test-only, and `#[serial(dojo_url_env)]` keeps two
+            // overrides from overlapping; the value is restored on drop.
+            unsafe { std::env::set_var("DOJO_URL", url) };
+            Self { prev }
+        }
+    }
+
+    impl Drop for TestDojoUrl {
+        fn drop(&mut self) {
+            // SAFETY: same serial discipline as `set`.
+            unsafe {
+                match self.prev.take() {
+                    Some(v) => std::env::set_var("DOJO_URL", v),
+                    None => std::env::remove_var("DOJO_URL"),
+                }
+            }
+        }
     }
 }
 

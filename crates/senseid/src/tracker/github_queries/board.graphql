@@ -1,0 +1,3 @@
+query Board($id: ID!) {
+  node(id: $id) { ... on ProjectV2 { ...Board } }
+}

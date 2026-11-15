@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (mobile companion · planner)
 **Route:** Relay iOS app · Decisions (no web route)
-**Source mockup:** [`lib/relay/relay-planner.jsx`](../../mockups/Sensei/lib/relay/relay-planner.jsx) → `RelayDecisions`
+**Source mockup:** `lib/relay/relay-planner.jsx` → `RelayDecisions`
 **Data:** _greenfield_ — `GET /api/relay/decisions` (coordinator-published gate prompts): the open `decide`-gates across all projects, each an `eyebrow` (`{project} · phase {n}`), a `question`, an ordered list of 3–4 `options` (`[label, hint]`), and a free-reply slot. `POST /api/relay/decisions/{id}` carries back the chosen option **or** the typed reply.
 **App file:** _greenfield — mobile app not built_
 **Daemon files:** _greenfield — coordinator + planner model not built_

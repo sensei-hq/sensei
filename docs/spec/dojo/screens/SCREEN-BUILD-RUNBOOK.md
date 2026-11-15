@@ -4,7 +4,7 @@
 > Two parts: **(A)** the design-system baseline is configured **once** — you inherit it, you
 > don't re-tune it per screen; **(B)** what to actually do for each screen. Canonical styling
 > rules live in [`../../../architecture/frontend-svelte-guidelines.md`](../../../architecture/frontend-svelte-guidelines.md)
-> and [`../../../mockups/Sensei/CLAUDE.md`](../../../mockups/Sensei/CLAUDE.md); this is the
+> and `../../../mockups/Sensei/CLAUDE.md`; this is the
 > operational "how not to repeat the inbox cycles" layer.
 
 ## The #1 discipline: verify by MEASUREMENT, not by eye

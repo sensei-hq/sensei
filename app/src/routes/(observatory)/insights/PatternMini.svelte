@@ -29,5 +29,5 @@
       <span class="text-xs uppercase tracking-wider text-ink-faint">{pattern.family}</span>
     {/if}
   </div>
-  <p class="text-xs text-ink-soft m-0 leading-normal">{caption}</p>
+  <p class="text-xs text-ink-mute m-0 leading-normal">{caption}</p>
 </article>

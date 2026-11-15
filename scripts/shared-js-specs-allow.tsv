@@ -1,0 +1,5 @@
+# Deliberate spec differences between app/package.json and dojo/package.json,
+# read by scripts/check-shared-js-specs.py. One line per dependency:
+#   <dependency><TAB><why the two must differ>
+# An entry whose two specs agree again, or that one side no longer declares, fails
+# the check, so remove it when its reason goes. None today.

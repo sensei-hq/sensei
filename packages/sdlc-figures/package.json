@@ -1,0 +1,12 @@
+{
+  "name": "@sensei/sdlc-figures",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SDLC figures as sensei shows them — a value in its unit, or its reason's words — shared by the desktop app and the dōjō (tracker-delivery-metrics D2, D5).",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./index.js" }
+  }
+}

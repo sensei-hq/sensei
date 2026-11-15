@@ -4,7 +4,7 @@
 variants of most screens (older/newer, simple/detailed, discarded); picking
 the wrong file wastes work.
 
-The authoritative shell is [`../mockups/Sensei/lib/observatory/observatory.jsx`](../mockups/Sensei/lib/observatory/observatory.jsx) — its
+The authoritative shell is `../mockups/Sensei/lib/observatory/observatory.jsx` — its
 `section === "…"` switch maps a route id to the component that renders it.
 This table is built from that switch (2026-07-07 — rebuilt after the sidebar-
 consistency + Health-tab refactors). If a section is added/removed in
@@ -147,7 +147,7 @@ routes wire today. Both are kept — they are different scopes.
 ## Screen states (empty · loading · error)
 
 Screens take a `state` prop and early-return a scaffold from
-[`lib/shared/screen-states.jsx`](../mockups/Sensei/lib/shared/screen-states.jsx)
+`lib/shared/screen-states.jsx`
 (`ScreenState`): **loading** (spinner + skeleton), **empty** (kanji + what's
 missing + how to get data), **error** (message + Retry). The happy path renders
 when `state="ready"`. Usage: `<ObsTraceability state="loading" />`.
@@ -177,6 +177,6 @@ mount these screens on another page.
 
 ## Design conventions
 
-See [`docs/mockups/Sensei/CLAUDE.md`](../mockups/Sensei/CLAUDE.md) for token / type / spacing rules.
+See `docs/mockups/Sensei/CLAUDE.md` for token / type / spacing rules.
 Every screen wraps in `.sensei` (or `.zs` / `.artboard-shell`) to activate the
 utility classes.

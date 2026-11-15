@@ -1,8 +1,13 @@
-import type { CoChange, Level0, Level1, Level2, Zones } from '@sensei/codemap';
+import type { CoChange, ComplexityTree, Focus, Level0, Level1, Level2, Zones } from '@sensei/codemap';
+
+/** The daemon's Complexity tree: the maintainability reading arrives ungraded
+ *  (the app grades it — codemap-port). */
+export type ComplexityWire = Omit<ComplexityTree, 'maintainability'> & {
+  maintainability: { value: number; date: string } | null;
+};
 import type {
   ServerWorkspace,
   SolutionAnalysis,
-  FunctionMatch,
   LibEntry, LibCapability, LibPage, SessionData, SessionsDigest,
   WorkspaceMemory, DriftItem, PatternEntry, Recommendation,
   WorkspaceListItem,
@@ -16,16 +21,14 @@ import type {
   InsightsBoard, LogRow, ScheduledTask,
   MetricStatusResponse, MetricStatusSummary, MetricActivationOutcome,
   SyncStateResponse,
-  IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
-  StructureLevel, StructurePayload,
-  LayeringLevel, LayeringPayload,
-  NeighbourhoodPayload,
   SchemaPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
   TranscriptSourceConsent,
   TrackerConnection, TrackerLevel, TrackerSyncCounts,
   SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
+  MetricSettings, MetricReason,
+  TrackerFieldMapping,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -198,15 +201,6 @@ export function senseiApi(port: number) {
 
   return {
     // ── Auth ──────────────────────────────────────────────────────────────
-    // Result-based on purpose. A failed read of the credential's standing must
-    // NOT collapse into a fallback body: `{}` is indistinguishable from a
-    // daemon reporting a shape we do not understand, and either way the caller
-    // would be told something about a credential we never asked about.
-    // No persona named → the daemon resolves the DEFAULT identity (#296), the
-    // one owning the global git email; never the literal `default` slot.
-    tryGetAuthStatus: (persona?: string) =>
-      tryGet<Record<string, unknown>>(`/api/auth/status${personaQuery(persona)}`),
-
     /** Every identity and what each one needs. Result-based: a failed read must
      *  not become `[]`, which reads as "you have no identities". */
     tryGetPersonas: () =>
@@ -285,6 +279,8 @@ export function senseiApi(port: number) {
     // One read of the list, typed as the wire carries it: the settings and
     // setup view (`DaemonWorkspace`) and the workspaces-index view (`WorkspaceListItem`).
     tryListWorkspaces: () => tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces'),
+    /** One workspace exactly as the list gives it (folders and icon included). */
+    tryGetWorkspace: (id: string) => tryGet<DaemonWorkspace & WorkspaceListItem>(`/api/workspaces/${enc(id)}`),
     /** The workspaces under a watched root — the ones whose code is current, so
      *  the ones a tool can run in. Repo roots only. */
     tryListWatchedWorkspaces: () =>
@@ -314,7 +310,13 @@ export function senseiApi(port: number) {
     // workspace with no computed metrics yet, so the screen shows an error state
     // rather than an empty grid that hides a broken daemon (no-fabrication).
     getWorkspaceMetrics: (id: string) =>
-      tryGet<{ metrics: WorkspaceMetricRow[]; count: number; narrative?: MetricsNarrative | null }>(
+      tryGet<{
+        metrics: WorkspaceMetricRow[];
+        count: number;
+        narrative?: MetricsNarrative | null;
+        /** Each metric's daily series, dated, for the sparklines. */
+        series?: Record<string, MetricSeriesPoint[]>;
+      }>(
         `/api/workspaces/${enc(id)}/metrics`,
       ),
 
@@ -469,49 +471,21 @@ export function senseiApi(port: number) {
     // consensus for recommendations that carry a reasoning trace or a
     // non-pending verdict. Distinct from the manual `listImpactVerdicts`
     // retrospectives above.
-    /** #205 — the Structure diagram payload.
-     *
-     *  Result-based deliberately. This screen must tell "no edges here" apart
-     *  from "the daemon failed", and the fallback-returning `get` collapses
-     *  both into an empty graph — which is the one thing the spec names as a
-     *  wrong gate, being indistinguishable from an unindexed workspace. */
-    tryGetWorkspaceStructure: (id: string, level: StructureLevel, kinds: string[]) =>
-      tryGet<StructurePayload>(
-        `/api/workspaces/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
-      ),
-
     /** The Code map (M17): L0 modules, one module's files, one file's symbols. */
-    tryGetCodemap: (id: string, groupBy: 'layers' | 'folders') =>
-      tryGet<Level0>(`/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}`),
+    /** L0; a focus narrows it to a module (`focus`) or a group (`segment`) and their neighbours. */
+    tryGetCodemap: (id: string, groupBy: 'layers' | 'folders', focus: Focus | null) =>
+      tryGet<Level0>(
+        `/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}` +
+          (focus ? `&${focus.kind === 'module' ? 'focus' : 'segment'}=${enc(focus.id)}` : ''),
+      ),
     tryGetCodemapModule: (id: string, module: string) =>
       tryGet<Level1>(`/api/workspaces/${enc(id)}/diagrams/codemap/module?id=${enc(module)}`),
     tryGetCodemapFile: (id: string, file: string) =>
       tryGet<Level2>(`/api/workspaces/${enc(id)}/diagrams/codemap/file?id=${enc(file)}`),
     tryGetZones: (id: string) => tryGet<Zones>(`/api/workspaces/${enc(id)}/diagrams/zones`),
     tryGetCochange: (id: string) => tryGet<CoChange>(`/api/workspaces/${enc(id)}/diagrams/codemap/cochange`),
-
-    /** #232 — the Layers/Cycles payload, one request serving both screens.
-     *
-     *  ONE CALL, TWO SCREENS. The layering, the cycles and the coverage all
-     *  come out of a single `analyse` over one read of `structure_edges`, and
-     *  that read is the whole cost (1.5 s to 74 s per workspace). Splitting it
-     *  into a layering endpoint and a cycles endpoint would pay it twice for
-     *  answers that have to agree.
-     *
-     *  Result-based for the reason the Structure one is: this screen must tell
-     *  "no cycles here" apart from "the daemon failed", and an empty canvas
-     *  reads as a clean architecture. */
-    tryGetWorkspaceLayering: (id: string, level: LayeringLevel, kinds: string[]) =>
-      tryGet<LayeringPayload>(
-        `/api/workspaces/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
-      ),
-
-    /** #220 — one symbol, its callers and callees, `depth` rings out.
-     *  `focus` is a node id; a missing one is a 400, never a default symbol. */
-    tryGetWorkspaceNeighbourhood: (id: string, focus: string, depth: number) =>
-      tryGet<NeighbourhoodPayload>(
-        `/api/workspaces/${enc(id)}/diagrams/neighbourhood?focus=${enc(focus)}&depth=${depth}`
-      ),
+    tryGetComplexity: (id: string) =>
+      tryGet<ComplexityWire>(`/api/workspaces/${enc(id)}/diagrams/codemap/complexity`),
 
     /** #221 — the workspace's database structure: tables, keys, views and
      *  routines, and what depends on what (dbd `SchemaModel` v2's ER half).
@@ -562,17 +536,6 @@ export function senseiApi(port: number) {
      *  an error, never the all-quiet empty board). */
     tryGetInsights: (workspace?: string) =>
       tryGet<InsightsBoard>(`/api/insights${workspace ? `?workspace=${enc(workspace)}` : ''}`),
-
-    // ── Front door · Intake ─────────────────────────────────────────────
-    // The guide (frame + axis prompts + catalog) for the intake screen. A
-    // failure is an error the screen shows, not an empty guide (#288).
-    tryGetIntakeGuide: () => tryGet<IntakeGuide>('/api/playbook/guide'),
-
-    // Classify + recommend a playbook. `{ chunk, preview: true }` previews
-    // (no row written); `{ lifecycle, intent, risk, confirm: true }` records
-    // the confirmed run. tryPost so the form can surface errors.
-    recommendPlaybook: (body: Record<string, unknown>) =>
-      tryPost<PlaybookRecommendation>('/api/playbook/recommend', body),
 
     // ── Workspace window · Overview (Slot 4) ──────────────────────────────
     // Server-assembled landing pane: header + top rec + stats + recent
@@ -651,14 +614,6 @@ export function senseiApi(port: number) {
       new EventSource(`${base}/api/index/progress`),
 
     // ── Graph ────────────────────────────────────────────────────────────
-    /** Functions and methods whose name or signature contains `q`.
-     *
-     *  Result-based, unlike the `get(…, [])` it replaces: a picker that shows
-     *  "no matches" when the daemon is down sends the reader looking for a
-     *  symbol that exists. */
-    trySearchFunctions: (repoId: string, q: string) =>
-      tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
-
     // ── Libraries ────────────────────────────────────────────────────────
     /** Every detected library (#288: a failure is an error, not an empty index). */
     tryGetLibs: (params?: { repoId?: string; workspaceId?: string; shared?: boolean }) => {
@@ -763,6 +718,20 @@ export function senseiApi(port: number) {
       ),
     tryDisconnectTracker: (workspaceId: string, trackerId: string) =>
       tryJson<void>('DELETE', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`),
+    // The board's mapped fields (W7): read, and replaced as a whole set.
+    tryGetTrackerFields: (workspaceId: string, trackerId: string) =>
+      tryJson<{ fields: TrackerFieldMapping[] }>(
+        'GET', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/fields`,
+      ),
+    tryPutTrackerFields: (workspaceId: string, trackerId: string, fields: TrackerFieldMapping[]) =>
+      tryJson<{ fields: TrackerFieldMapping[] }>(
+        'PUT', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/fields`, { fields },
+      ),
+    // Switch usage and SDLC write-back on or off (tracker-metrics-writeback W8): the tracker, as listed.
+    trySetTrackerWriteback: (workspaceId: string, trackerId: string, enabled: boolean) =>
+      tryJson<TrackerConnection>(
+        'PATCH', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`, { writeback_enabled: enabled },
+      ),
     // Usage reads (spec R7/R8), one board each (D40). Result-based: a failed read
     // must never pass for "no tracker" or an empty sprint.
     tryListSprints: (workspaceId: string, trackerId: string) =>
@@ -789,6 +758,19 @@ export function senseiApi(port: number) {
         'GET',
         `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
       ),
+    // A reason domain's words (tracker-sdlc-metrics A10): a figure's code is shown
+    // by its summary, so a failed read is an error, never a bare slug.
+    tryGetReasonCodes: (domain: string) =>
+      tryJson<{ domain: string; reasons: Record<string, MetricReason> }>(
+        'GET', `/api/reason-codes/${enc(domain)}`,
+      ),
+    // The workspace's SDLC metric settings (S1): a PUT names any subset; a 400
+    // `invalid_setting` names the bad key in its body.
+    tryGetMetricSettings: (workspaceId: string) =>
+      tryJson<MetricSettings>('GET', `/api/workspaces/${enc(workspaceId)}/metric-settings`),
+    // A value that does not parse travels as typed, so the daemon's 400 names it.
+    tryPutMetricSettings: (workspaceId: string, patch: Record<string, number | string | null>) =>
+      tryJson<MetricSettings>('PUT', `/api/workspaces/${enc(workspaceId)}/metric-settings`, patch),
 
     /** What stops syncing if this root is removed. */
     tryGetRootRepositories: (id: string) =>
@@ -1291,6 +1273,27 @@ export function senseiApi(port: number) {
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     tryStop: () => tryPost<Record<string, unknown>>('/stop', {}),
+
+    // ── Metrics · action items (L3) ──────────────────────────────────────
+    // Both read the daemon's `{ error }` on a refusal, so the person sees why
+    // ("already decided", "a skill named … already exists"), not "Conflict".
+    /** Hide a pending recommendation for `days`; 404 when it is not this
+     *  workspace's, 409 when it is no longer pending. */
+    trySnoozeWorkspaceRecommendation: (id: string, recId: string, days: number) =>
+      tryJson<{ ok: boolean; snoozed_until: string }>(
+        'POST', `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/snooze`, { days },
+      ),
+    /** `tryMaterializeRecommendation`, with the daemon's reason on a refusal. */
+    tryMaterializeRecommendationWithReason: (id: string, recId: string, opts: { gov_scope?: string; enforcement?: string }) =>
+      tryJson<{ ok: boolean; materialized?: unknown }>(
+        'POST', `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
+      ),
+
+    // ── Identities (L4, Settings · Dōjō) ─────────────────────────────────
+    /** Sign one identity out on this machine — its Keychain credential and its
+     *  registry slot. `ok` is false, with `errors`, when either half failed. */
+    trySignOut: (persona: string) =>
+      tryPost<{ ok: boolean; errors?: string[] }>(`/api/auth/signout?persona=${encodeURIComponent(persona)}`, {}),
   };
 }
 

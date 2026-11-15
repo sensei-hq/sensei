@@ -12,6 +12,7 @@
 // the AppShell + NavPane + TabBar consume these directly.
 
 import type { KitNavGroup, KitNavItem } from './components/kit/types';
+import { roleKey } from './chrome';
 
 /* ── personal zone (NAV_YOU) ────────────────────────────────────────────── */
 
@@ -103,9 +104,11 @@ export const K2_ROLE_RANK: Record<string, number> = {
 	admin: 3
 };
 
-/** The rank of a role, flooring an unknown/absent role to contributor (0) — the D1 ladder. */
+/** The rank of a role, flooring an unknown/absent role to contributor (0) — the D1
+ *  ladder. A server LABEL ('Maintainer') and a rank key ('maintainer') rank the
+ *  same: it normalises through `roleKey` here, so no caller has to (rankof-label). */
 export function rankOf(role: string | null | undefined): number {
-	return role != null && K2_ROLE_RANK[role] != null ? K2_ROLE_RANK[role] : 0;
+	return K2_ROLE_RANK[roleKey(role)] ?? 0;
 }
 
 /** The org nav groups visible to a viewer of the given role — additive: a group

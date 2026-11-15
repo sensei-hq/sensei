@@ -114,6 +114,8 @@ describe('relayInboxState · load outcome', () => {
 		expect(relayInboxState.sessions.map((x) => x.id)).toEqual(['a']);
 		expect(relayInboxState.unreachable).toEqual(['two']);
 		expect(relayInboxState.plansMissing).toBe(1);
+		expect(relayInboxState.partialNotice).toMatchObject({ tone: 'refusal', mark: '欠' });
+		expect(relayInboxState.partialNotice?.detail).toContain('two');
 	});
 
 	it('every dōjō unreachable is an error, not an empty inbox', () => {
@@ -121,6 +123,8 @@ describe('relayInboxState · load outcome', () => {
 		relayInboxState.loaded(result({ sessions: [], unreachable: ['one', 'two'] }));
 		expect(relayInboxState.status).toBe('error');
 		expect(relayInboxState.error).toBe('None of your 2 dōjōs could be reached.');
+		expect(relayInboxState.errorNotice).toMatchObject({ tone: 'fault', detail: 'None of your 2 dōjōs could be reached.' });
+		expect(relayInboxState.partialNotice).toBeNull();
 	});
 
 	it('one dōjō unreachable reads in the singular', () => {

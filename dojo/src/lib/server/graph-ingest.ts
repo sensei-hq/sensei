@@ -103,7 +103,7 @@ export async function graphHashes(
 	if (!nonEmpty(repoKey) || !nonEmpty(branch)) throw new AdminError(400, 'repo_key and branch are required');
 	const repositoryId = await myRepository(db, repoKey);
 	const rows = await readAllPages<{ path: string; content_hash: string }>((from, to) =>
-		db.rpc('graph_file_hashes', { p_repository_id: repositoryId, p_branch: branch }).range(from, to)
+		db.rpc('graph_file_hashes', { p_repository_id: repositoryId, p_branch: branch }).order('path').range(from, to)
 	);
 	return { files: Object.fromEntries(rows.map((r) => [r.path, r.content_hash])) };
 }

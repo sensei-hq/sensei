@@ -1,0 +1,208 @@
+-- `relay.leases` — one table for lane liveness and build slots.
+--
+-- WHAT BREAKS THIS TEST: a lane lease naming a resource (or a resource lease
+-- naming none); a second granted lease on one resource — even across users
+-- (the slot is machine-wide); a non-v7 id; a non-owner reading a row.
+--
+-- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
+-- fixtures/relay_apply.ddl relay/relay_leases.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_leases.sql):
+-- the file applies its own DDL in-txn (see below) and rolls back.
+-- with --apply the runner applies the DDL and the file skips its own apply.
+
+begin;
+
+-- The real DDL, in this transaction, rolled back with it.
+\ir ../fixtures/relay_apply.ddl
+
+insert into relay.crews (user_id, id, status) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f401', 'active'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f402', 'active');
+
+insert into relay.lanes (user_id, id, crew_id, code, role, family, repo, token_hash) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f411',
+   '11111111-1111-7000-8000-00000000f401', 'L1', 'coordinator', 'claude-code',
+   'github.com/sensei-hq/sensei', 'x'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f412',
+   '22222222-2222-7000-8000-00000000f402', 'L1', 'coordinator', 'claude-code',
+   'github.com/sensei-hq/other', 'x');
+
+-- S1: U1's lane lease, granted. S2: U1 holds rust-build. S3: U1 queues e2e
+-- (nothing granted yet — granted_at stays null, honestly). S5: U2's lane lease.
+insert into relay.leases (user_id, id, crew_id, lane_id, kind, resource, state, expires_at, granted_at, props) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f421',
+   '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+   'lane', null, 'granted', '2026-11-05T18:00:00Z', '2026-11-05T17:00:00Z', '{}'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f422',
+   '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+   'resource', 'rust-build', 'granted', '2026-11-05T20:00:00Z', '2026-11-05T17:30:00Z',
+   '{"disk_free_gb": 42}'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f423',
+   '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+   'resource', 'e2e', 'queued', null, null, '{}'),
+  ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f425',
+   '22222222-2222-7000-8000-00000000f402', '22222222-2222-7000-8000-00000000f412',
+   'lane', null, 'granted', '2026-11-05T18:00:00Z', '2026-11-05T17:00:00Z', '{}');
+
+do $$
+declare
+  n int;
+  v_json jsonb;
+begin
+  -- A lease roundtrips with its grant facts.
+  select props into v_json from relay.leases where id = '11111111-1111-7000-8000-00000000f422';
+  if v_json is distinct from '{"disk_free_gb": 42}' then
+    raise exception 'lease props should read back, saw %.', v_json;
+  end if;
+
+  -- props default to the empty doc when the row names none.
+  insert into relay.leases (user_id, id, crew_id, lane_id, kind, state) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f426',
+     '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+     'lane', 'queued');
+  select props into v_json from relay.leases where id = '11111111-1111-7000-8000-00000000f426';
+  if v_json is distinct from '{}' then
+    raise exception 'props should default to {}, saw %.', v_json;
+  end if;
+  delete from relay.leases where id = '11111111-1111-7000-8000-00000000f426';
+
+  -- kind and resource agree: a lane lease names no resource, a resource lease must.
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, kind, resource, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f431',
+       '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+       'lane', 'rust-build', 'granted');
+    raise exception 'a lane lease naming a resource was accepted.';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, kind, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f432',
+       '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+       'resource', 'queued');
+    raise exception 'a resource lease naming no resource was accepted.';
+  exception when check_violation then null;
+  end;
+
+  -- One granted lease per resource — and the slot is machine-wide: U2's grant
+  -- on rust-build fails while U1 holds it (the deliberate exception to the
+  -- user_id-on-every-unique rule).
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, kind, resource, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f433',
+       '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+       'resource', 'rust-build', 'granted');
+    raise exception 'a second granted lease on rust-build was accepted.';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, kind, resource, state) values
+      ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f434',
+       '22222222-2222-7000-8000-00000000f402', '22222222-2222-7000-8000-00000000f412',
+       'resource', 'rust-build', 'granted');
+    raise exception 'a cross-user granted lease on rust-build was accepted.';
+  exception when unique_violation then null;
+  end;
+
+  -- ... while any other state on the same resource coexists (history is kept).
+  insert into relay.leases (user_id, id, crew_id, lane_id, kind, resource, state) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f435',
+     '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+     'resource', 'rust-build', 'released'),
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f436',
+     '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+     'resource', 'rust-build', 'expired'),
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f437',
+     '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411',
+     'resource', 'rust-build', 'refused');
+
+  -- lane, kind and state are required.
+  begin
+    insert into relay.leases (user_id, id, crew_id, kind, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f438',
+       '11111111-1111-7000-8000-00000000f401', 'lane', 'queued');
+    raise exception 'a lease with no lane was accepted.';
+  exception when not_null_violation then null;
+  end;
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f439',
+       '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411', 'queued');
+    raise exception 'a lease with no kind was accepted.';
+  exception when not_null_violation then null;
+  end;
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, kind) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f440',
+       '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411', 'lane');
+    raise exception 'a lease with no state was accepted.';
+  exception when not_null_violation then null;
+  end;
+
+  -- Bad crew / lane fail the foreign keys.
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, kind, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f441',
+       '11111111-1111-7000-8000-00000000f499', '11111111-1111-7000-8000-00000000f411', 'lane', 'queued');
+    raise exception 'a lease on a missing crew was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, kind, state) values
+      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f442',
+       '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f499', 'lane', 'queued');
+    raise exception 'a lease on a missing lane was accepted.';
+  exception when foreign_key_violation then null;
+  end;
+
+  -- Ids are v7.
+  begin
+    insert into relay.leases (user_id, id, crew_id, lane_id, kind, state) values
+      ('a1111111-1111-4111-8111-111111111111', '99999999-9999-4999-8999-999999999997',
+       '11111111-1111-7000-8000-00000000f401', '11111111-1111-7000-8000-00000000f411', 'lane', 'queued');
+    raise exception 'a v4 lease id was accepted.';
+  exception when check_violation then null;
+  end;
+
+  -- The daemon owner sees all seven leases.
+  select count(*) into n from relay.leases
+   where user_id in ('a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222');
+  if n <> 7 then
+    raise exception 'the owner should see 7 leases, saw %.', n;
+  end if;
+
+  -- No write grant for the session role (representative: INSERT).
+  if has_table_privilege('authenticated', 'relay.leases', 'INSERT') then
+    raise exception 'authenticated must hold no INSERT grant on leases.';
+  end if;
+end $$;
+
+-- U1 reads their six; U2 reads their one.
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"a1111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from relay.leases;
+  if n <> 6 then
+    raise exception 'U1 should read 6 leases, saw %.', n;
+  end if;
+end $$;
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"a2222222-2222-4222-8222-222222222222","role":"authenticated"}', true);
+do $$
+declare
+  n int;
+begin
+  select count(*) into n from relay.leases;
+  if n <> 1 then
+    raise exception 'U2 should read 1 lease, saw %.', n;
+  end if;
+end $$;
+reset role;
+
+rollback;

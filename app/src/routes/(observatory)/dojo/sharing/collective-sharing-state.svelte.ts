@@ -12,6 +12,7 @@
 // and keep a default branch so an unexpected value degrades rather than throws —
 // mirroring the dojo-connections / dojo-upgrades state modules' discipline.
 
+import { failureNotice } from '@sensei/ui';
 import { isoDay } from '$lib/dates.js';
 import type { SenseiApi } from '$lib/api.js';
 import type {
@@ -214,6 +215,11 @@ export class CollectiveSharing {
   saving = $state(false);
   /** The last save error, or null. Cleared at the start of each save. */
   error = $state<string | null>(null);
+
+  /** Notice props for a save that did not land (packages/ui/notice.js). */
+  get notice() {
+    return failureNotice("Couldn't save your sharing preferences", this.error);
+  }
 
   #api: SenseiApi;
 

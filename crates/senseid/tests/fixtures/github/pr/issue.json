@@ -1,0 +1,34 @@
+{
+  "body": {
+    "data": {
+      "repository": {
+        "issue": null
+      }
+    },
+    "errors": [
+      {
+        "locations": [
+          {
+            "column": 5,
+            "line": 3
+          }
+        ],
+        "message": "scrubbed message",
+        "path": [
+          "repository",
+          "issue"
+        ],
+        "type": "NOT_FOUND"
+      }
+    ]
+  },
+  "operation": "Issue",
+  "status": 200,
+  "variables": {
+    "after": null,
+    "field": "Sprint",
+    "name": "platform",
+    "number": 7,
+    "owner": "acme"
+  }
+}

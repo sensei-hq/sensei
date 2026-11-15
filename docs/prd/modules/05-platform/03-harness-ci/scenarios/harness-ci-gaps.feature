@@ -22,13 +22,14 @@ Feature: Harness & CI — the e2e known reds and release automation gaps
     Then a PR is opened to homebrew-tap with the new version and sha256
     This is unbuilt — currently manual.
 
-  # gap: D-12
+  # resolved: D-12
   NO TEST
   Scenario: @rokkit/* and @kavach/* are not held back by lockfiles
     Given the package.json lockfiles
     When dependencies are updated
     Then rokkit and kavach packages are current
-    This is a lockfile maintenance gap (P3).
+    Closed 2026-11-03 by eefc6c119 — every @kavach/* at 1.3.2, one @rokkit
+    family at 1.14.0 (#191).
 
   # gap: D-13
   NO TEST

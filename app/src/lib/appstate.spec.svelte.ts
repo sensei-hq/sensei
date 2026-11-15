@@ -16,7 +16,8 @@ const apiMock = {
   tryListWorkspaces: vi.fn().mockResolvedValue({ ok: true, data: [] }),
 };
 
-vi.mock('./api.js', () => ({
+vi.mock('./api.js', async (importOriginal) => ({
+  failureReason: (await importOriginal<typeof import('./api.js')>()).failureReason,
   senseiApi: () => apiMock,
 }));
 
@@ -293,16 +294,25 @@ describe('AppState', () => {
     expect(state.loaded).toBe(true);
   });
 
-  it('load falls back to empty config + sets loaded when daemon is unreachable', async () => {
-    // Contract change: load() no longer surfaces daemon failure to callers.
-    // The boot gate (routes/+layout.ts) is the single source of truth for routing decisions;
-    // if health isn't ok it'll bounce to /health. appState just gives every
-    // caller a usable cache so no page ever blocks on a daemon hiccup.
-    apiMock.tryGetConfig.mockResolvedValueOnce({ ok: false, error: { status: 0, message: 'Network error' } });
-    state.config = { stale: 'value' };
-    await state.load();
-    expect(state.loaded).toBe(true);
-    expect(state.config).toEqual({});
+  // A failed read is not an empty config (CLAUDE.md: never fabricate on a failure path).
+  // A daemon restart (make install, brew services) refuses the read for a few seconds;
+  // swapping in {} reset the glyph mode, the name and every preference in that window.
+  it('a failed read keeps the last config, says why, and reads again shortly after', async () => {
+    vi.useFakeTimers();
+    try {
+      state.config = { 'ui.glyphs': 'icon' };
+      apiMock.tryGetConfig.mockResolvedValueOnce({ ok: false, error: { status: 0, message: 'Load failed' } });
+      await state.load();
+      expect(state.loaded).toBe(true);
+      expect(state.config).toEqual({ 'ui.glyphs': 'icon' });
+      expect(state.configError).toMatch(/Load failed/);
+      apiMock.tryGetConfig.mockResolvedValueOnce({ ok: true, data: { 'ui.glyphs': 'kanji' } });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(state.config).toEqual({ 'ui.glyphs': 'kanji' });
+      expect(state.configError).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // ── loadWorkspaceCount ───────────────────────────────────────

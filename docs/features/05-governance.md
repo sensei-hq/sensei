@@ -48,9 +48,9 @@ approved knowledge **distributes** back, routed by scope (more specific wins).
 ## Mockups
 
 - [Dōjō journey](../journeys/dojo.md) — bind · contribute · triage · distribute (business model + open questions)
-- [Developer console](../mockups/Sensei/lib/dojo/dojo-developer.jsx) · [Maintainer console](../mockups/Sensei/lib/dojo/dojo-maintainer.jsx) · [Lead console](../mockups/Sensei/lib/dojo/dojo-lead.jsx) · [Admin console](../mockups/Sensei/lib/dojo/dojo-admin.jsx)
-- [Governance authoring](../mockups/Sensei/lib/dojo/dojo-governance.jsx) · [Identity & SSO](../mockups/Sensei/lib/dojo/dojo-identity.jsx)
-- [In-app touchpoints (join · bind · share · downstream)](../mockups/Sensei/lib/dojo/dojo-inapp.jsx) · [SaaS entry (sign-in · orgs)](../mockups/Sensei/lib/dojo/dojo-saas.jsx)
+- Developer console · Maintainer console · Lead console · Admin console
+- Governance authoring · Identity & SSO
+- In-app touchpoints (join · bind · share · downstream) · SaaS entry (sign-in · orgs)
 
 ## What's involved
 

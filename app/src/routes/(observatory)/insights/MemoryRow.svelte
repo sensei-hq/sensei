@@ -10,10 +10,6 @@
      *  'proposed' = a memory awaiting a keep/retire decision (Soon). */
     variant?: 'settled' | 'proposed';
   } = $props();
-
-  // Strength bar fill width (0–1 fraction → %). Geometry only.
-  const fillWidth = $derived(`${Math.round(memory.strength * 100)}%`);
-  const full = $derived(memory.strength >= 1);
 </script>
 
 {#if variant === 'proposed'}
@@ -37,19 +33,19 @@
   >
     <div
       class="mt-1 h-[3px] w-6 shrink-0 rounded-full bg-paper-mute overflow-hidden"
-      title={`strength ${fillWidth}`}
+      title={`strength ${memory.strength.label}`}
     >
       <div
         class="h-full rounded-full"
-        class:bg-success={full}
-        class:bg-ink-soft={!full}
-        style={`width: ${fillWidth}`}
+        class:bg-success={memory.strength.full}
+        class:bg-ink-mute={!memory.strength.full}
+        style={`width: ${memory.strength.width}`}
         data-strength-fill
       ></div>
     </div>
     <div class="flex-1 min-w-0">
       <p class="text-sm text-ink m-0 leading-snug truncate">{memory.title}</p>
-      <span class="font-mono text-xs text-ink-mute">{memory.scope}</span>
+      <span class="font-mono text-xs text-ink-soft">{memory.scope}</span>
     </div>
   </article>
 {/if}

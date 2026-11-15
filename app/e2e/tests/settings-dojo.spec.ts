@@ -1,5 +1,6 @@
 /**
- * Settings · Dōjō — the credential standing and what has been agreed.
+ * Settings · Dōjō connection — identities first, then each one's dōjōs and what
+ * each has filed (2026-11-03 revamp; failures render through the shared Notice).
  *
  * The unit tests cover the derivations against mocks. What only an e2e proves is
  * that both halves are wired to the real daemon, and — the property this screen
@@ -28,9 +29,9 @@
  *   'repository is private', now(), NULL);
  * ```
  *
- * With those three rows all assertions here run and pass: the failing row renders
- * `failing · last agreed <date>` and the skipped row renders `skipped` without
- * `failing`. The rows are NOT left behind — undeclared fixture state is the
+ * With rows like those (written by the signed-in identity, `persona` set), the
+ * repository rows render under its dōjōs: a failing one carries a FAULT Notice and
+ * a skipped one a REFUSAL Notice — never the other way round. The rows are NOT left behind — undeclared fixture state is the
  * staleness problem #142 is about, and a test passing on data nobody declared is
  * worse than one that skips.
  */
@@ -41,10 +42,10 @@ import { navigateToScreen, DAEMON_URL } from '../helpers';
 interface SyncResponse {
   count: number;
   counts: Record<string, number>;
-  entities: { entity: string; entity_key: string; state: string }[];
+  entities: { entity: string; entity_key: string; state: string; persona: string | null }[];
 }
 interface PersonasResponse {
-  personas: { label: string; connected: boolean }[];
+  personas: { label: string; connected: boolean; sessionSlot: string | null; isDefault?: boolean }[];
 }
 
 /** A live read with the status checked BEFORE the body is parsed — `r.json()` on
@@ -76,92 +77,60 @@ async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   `);
 }
 
-test.describe('Settings · Dōjō', () => {
+test.describe('Settings · Dōjō connection', () => {
   test.beforeEach(async ({ tauriPage }) => {
     test.setTimeout(180_000);
+    await seedSetupComplete(tauriPage);
     await seedSetupComplete(tauriPage);
     await navigateToScreen(tauriPage, '/settings/dojo', '[data-screen="settings-dojo"]');
   });
 
-  test('shows the sync list against the daemon, and empty is not an error', async ({
-    tauriPage,
-  }) => {
+  test('reads both halves from the daemon, and a skip never reads as a failure', async ({ tauriPage }) => {
     const sync = await live<SyncResponse>('/api/dojo/sync-state');
+    await live('/api/dojo/memberships');
 
-    // The load succeeded, so no error state may be showing. `data-screen-state`
-    // is hyphenated — the attribute ScreenState actually emits.
-    await expect(tauriPage.locator('[data-screen-state="error"]')).toHaveCount(0);
+    // Both reads succeeded, so no load-failure Notice may be showing.
+    await expect(tauriPage.locator('[data-load-notices]')).toHaveCount(0);
 
-    if (sync.count === 0) {
-      // Honest-empty in words. "all agreed" over zero entities would report a
-      // healthy sync on an install that has never synced anything.
-      await expect(tauriPage.locator('[data-empty]')).toBeVisible({ timeout: 15_000 });
-      await expect(tauriPage.locator('[data-sync-rows]')).toHaveCount(0);
-      return;
+    // Each repository row the page shows carries the tone its state means.
+    const tones = (await tauriPage.evaluate(
+      `Array.from(document.querySelectorAll('[data-repository]')).map(el => [
+         el.getAttribute('data-state'),
+         el.querySelector('[data-component="notice"]')?.getAttribute('data-tone') ?? null,
+       ])`,
+    )) as [string, string | null][];
+    for (const [state, tone] of tones) {
+      if (state === 'skipped') expect(tone, 'a deliberate skip is a refusal, not a fault').toBe('refusal');
+      if (state === 'error') expect(tone, 'a failing repository says so').toBe('fault');
+      if (state === 'synced') expect(tone).toBeNull();
     }
-
-    const rows = tauriPage.locator('[data-sync-rows] [data-entity]');
-    await expect(rows).toHaveCount(sync.count, { timeout: 15_000 });
-
-    // Every row's state came from the daemon — read through `evaluate`, which is
-    // this harness's way (its locator wrapper has no `evaluateAll`).
-    const states = (await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('[data-sync-rows] [data-entity]'))
-         .map(el => el.getAttribute('data-state'))`,
+    // Every row shown is a repository verdict the daemon reported.
+    const keys = new Set(sync.entities.filter((e) => e.entity === 'repository').map((e) => e.entity_key));
+    const shown = (await tauriPage.evaluate(
+      `Array.from(document.querySelectorAll('[data-repository]')).map(el => el.getAttribute('data-repository'))`,
     )) as string[];
-    expect([...states].sort()).toEqual(sync.entities.map((e) => e.state).sort());
-    await expect(tauriPage.locator('[data-summary]')).toBeVisible();
-
-    // A FAILING row must still show when the two sides last agreed. The writer
-    // preserves `synced_at` through a failure precisely so this can be shown, and
-    // dropping it would make broken-since-Tuesday read as never-synced.
-    const failing = sync.entities.find((e) => e.state === 'error');
-    if (failing) {
-      const line = (await tauriPage.evaluate(
-        `document.querySelector('[data-state="error"] [data-agreement]')?.textContent?.trim()`,
-      )) as string | undefined;
-      expect(line, 'a failing row reports its last agreement').toMatch(/failing/);
-      expect(line, 'and the date it last agreed, not just that it is failing').toMatch(
-        /\d{4}-\d{2}-\d{2}/,
-      );
-    }
-
-    // And a skip must NOT read as a failure.
-    const skipped = sync.entities.find((e) => e.state === 'skipped');
-    if (skipped) {
-      const line = (await tauriPage.evaluate(
-        `document.querySelector('[data-state="skipped"] [data-agreement]')?.textContent?.trim()`,
-      )) as string | undefined;
-      expect(line).toMatch(/skipped/);
-      expect(line, 'a deliberate skip is not a fault').not.toMatch(/failing/);
-    }
+    for (const k of shown) expect(keys.has(k), k).toBe(true);
   });
 
-  test('shows every persona the daemon knows, with a standing line each', async ({
-    tauriPage,
-  }) => {
+  test('shows every identity the daemon knows, with a standing line each, and no actions on the cards', async ({ tauriPage }) => {
     const { personas } = await live<PersonasResponse>('/api/auth/personas');
 
     // A failed registry read must NOT render as "no identities" — that phrasing
     // invites connecting one, which is the wrong action against a registry that
     // is merely unreachable.
-    await expect(tauriPage.locator('[data-persona-error]')).toHaveCount(0);
+    await expect(tauriPage.locator('[data-identities-notice]')).toHaveCount(0);
 
     if (personas.length === 0) {
       await expect(tauriPage.locator('[data-personas-empty]')).toBeVisible({ timeout: 15_000 });
       return;
     }
 
-    const list = tauriPage.locator('[data-personas] [data-persona]');
-    await expect(list).toHaveCount(personas.length, { timeout: 15_000 });
-
-    // The standing line is the whole point of the screen: a credential must never
-    // render as a blank row. Every persona gets a sentence, whatever its state.
+    await expect(tauriPage.locator('[data-identity]')).toHaveCount(personas.length, { timeout: 15_000 });
     for (const p of personas) {
-      const row = tauriPage.locator(`[data-persona="${p.label}"]`);
-      await expect(row.locator('[data-standing]')).not.toHaveText('');
-      // And a tone, so 30-minutes-left does not look like 7-hours-left.
-      await expect(row).toHaveAttribute('data-tone', /idle|ok|warn|dead/);
+      await expect(tauriPage.locator(`[data-identity="${p.label}"] [data-standing]`)).not.toHaveText('');
     }
+    // Every action for the selected identity is in its header — one place to act.
+    await expect(tauriPage.locator('[data-identity] [data-action]')).toHaveCount(0);
+    await expect(tauriPage.locator('[data-identity-header]')).toBeVisible();
   });
 });

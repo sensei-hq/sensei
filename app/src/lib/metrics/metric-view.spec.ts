@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+    grainUnit,
     formatMetricValue,
     metricTrend,
     isLowN,
@@ -12,6 +13,7 @@ import {
     buildSignals,
     pickMovers,
     groupSignals,
+    signalRailItems,
     deterministicHeadline,
     seriesDistribution,
     densifySeries,
@@ -33,6 +35,8 @@ import {
     shortSessionId,
     formatDayLabel,
     type WorkspaceMetricRow,
+    type SignalVM,
+    type SignalGroup,
     type MetricFamily,
     type MetricSeriesPoint,
     type RegistryMetric,
@@ -648,8 +652,8 @@ describe('sessionOneLiner', () => {
             ...over,
         };
     }
-    it('reads a first-try session as "outcome · first-try · N turns"', () => {
-        expect(sessionOneLiner(s())).toBe('completed · first-try · 3 turns');
+    it('reads a first-try session as "outcome · first try · N turns" — the shared session words', () => {
+        expect(sessionOneLiner(s())).toBe('completed · first try · 3 turns');
     });
     it('reads a corrected session as its correction count (pluralized)', () => {
         expect(sessionOneLiner(s({ ftr: false, corrections: 2, turns: 4, outcome: 'corrected' }))).toBe(
@@ -661,7 +665,7 @@ describe('sessionOneLiner', () => {
         expect(sessionOneLiner(s({ ftr: false, corrections: 0 }))).toContain('no corrections');
     });
     it('omits the outcome segment when the outcome is absent', () => {
-        expect(sessionOneLiner(s({ outcome: null }))).toBe('first-try · 3 turns');
+        expect(sessionOneLiner(s({ outcome: null }))).toBe('first try · 3 turns');
     });
 });
 
@@ -812,5 +816,49 @@ describe('historyNote', () => {
             expect(ma[2]).toBeNull(); // the gap stays a gap
             expect(ma[3]).toBe(6); // (6)/1
         });
+    });
+});
+
+// Audit item 15 (2026-10-28): the metric detail spelled the grain's unit inline.
+describe('grainUnit', () => {
+    it('names the period a grain counts in', () => {
+        expect(['daily', 'weekly', 'monthly', 'quarterly'].map(grainUnit)).toEqual(['days', 'weeks', 'months', 'periods']);
+    });
+});
+
+
+describe('signalRailItems', () => {
+    // The drill-down rail is a rokkit List (user, 2026-11-02): its rows are data —
+    // a group per SignalGroup, a link per signal — so the List owns the current
+    // row's shade in both themes instead of a hand-rolled bg-accent-soft.
+    const sig = (key: string, name: string, over: Partial<SignalVM> = {}) =>
+        ({ key, name, trend: null, color: 'ink-faint', ...over }) as SignalVM;
+    const groups: SignalGroup[] = [
+        { id: 'key', label: 'Key signals', signals: [sig('ftr', 'First-try rate', { trend: { label: '+4%' } as SignalVM['trend'], color: 'success' })] },
+        { id: 'usage', label: 'Usage', signals: [sig('tokens_per_day', 'Tokens per day')] },
+    ];
+
+    it('is a group per signal group and a link per signal, valued by its href', () => {
+        const items = signalRailItems(groups, 'w1');
+        expect(items.map((g) => g.text)).toEqual(['Key signals', 'Usage']);
+        expect(items[0].children[0]).toMatchObject({
+            text: 'First-try rate',
+            href: '/workspace/w1/metrics/ftr',
+            value: '/workspace/w1/metrics/ftr',
+            kanji: '果',
+            key: 'ftr',
+        });
+    });
+
+    it('carries the trend label with its tone class, and none for a flat signal', () => {
+        const [ftr] = signalRailItems(groups, 'w1')[0].children;
+        const [tokens] = signalRailItems(groups, 'w1')[1].children;
+        expect([ftr.trend, ftr.trendClass]).toEqual(['+4%', 'text-success']);
+        expect([tokens.trend, tokens.trendClass]).toEqual([null, null]);
+    });
+
+    it('leaves the glyph empty for a metric with no kanji, rather than inventing one', () => {
+        const items = signalRailItems([{ id: 'x', label: 'X', signals: [sig('no_such_metric', 'Nothing')] }], 'w1');
+        expect(items[0].children[0].kanji).toBeNull();
     });
 });

@@ -34,8 +34,8 @@
     .memory-row.selected { border-color: var(--accent); }
     .title-btn { background: none; border: none; padding: 0; margin: 0.25rem 0; font-size: inherit; font-weight: 600; cursor: pointer; text-align: left; display: block; width: 100%; color: var(--ink); }
     .meta { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--paper-mute); color: var(--ink-mute); }
+    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--paper-mute); color: var(--ink-soft); }
     .chip.signal { background: var(--warning-soft); color: var(--warning); }
     .actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
-    .empty { color: var(--ink-mute); padding: 1rem; }
+    .empty { color: var(--ink-soft); padding: 1rem; }
 </style>

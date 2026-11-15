@@ -1,6 +1,6 @@
 /**
  * #288 against the REAL daemon: the last converted reads land — Learnings'
- * active count, the knowledge sources, the intake guide — with no error state.
+ * active count, the knowledge sources, the relay crew — with no error state.
  * Read from the DOM: the sign-in overlay (#283) is modal while it is up.
  * Run: `bun run test:inspect -- last-reads`.
  */
@@ -17,7 +17,6 @@ test('the last converted reads land', async ({ tauriPage }) => {
     active += (await json(`/api/knowledge/memories?status=${status}&limit=500`)).memories.length;
   }
   const sources = (await json('/api/knowledge/sources')).sources.length;
-  const guide = await json('/api/playbook/guide');
   const workspaces: { id: string; name: string }[] = await json('/api/workspaces');
   const sensei = workspaces.find((p) => p.name === 'sensei')!;
 
@@ -33,14 +32,13 @@ test('the last converted reads land', async ({ tauriPage }) => {
   const cards = (await tauriPage.evaluate(`document.querySelectorAll('[data-testid="source-card"]').length`)) as number;
   const know = (await tauriPage.evaluate(`document.querySelectorAll('.text-error').length`)) as number;
 
-  await navigateTo(tauriPage, `/workspace/${sensei.id}/intake`);
-  await expect.poll(() => tauriPage.evaluate(`!!document.querySelector('[data-testid="intake-input"]')`), { timeout: 30_000 }).toBe(true);
-  const frame = (await tauriPage.evaluate(`document.querySelector('[data-testid="intake"]')?.textContent?.includes(${JSON.stringify(guide.frame.slice(0, 40))}) ?? false`)) as boolean;
-  const intake = (await tauriPage.evaluate(errors)) as number;
+  // Relay is the last converted read: the crew and its queue from one view.
+  await navigateTo(tauriPage, `/workspace/${sensei.id}/relay`);
+  await expect.poll(() => tauriPage.evaluate(`!!document.querySelector('[data-screen="relay"]')`), { timeout: 30_000 }).toBe(true);
+  const relay = (await tauriPage.evaluate(errors)) as number;
 
-  console.log(`\n[inspect] learnings active ${shownActive} (daemon ${active}); sources ${cards} (daemon ${sources}); intake frame shown ${frame}; errors ${[learn, know, intake]}`);
-  expect([learn, know, intake]).toEqual([0, 0, 0]);
+  console.log(`\n[inspect] learnings active ${shownActive} (daemon ${active}); sources ${cards} (daemon ${sources}); relay errors ${relay}; errors ${[learn, know, relay]}`);
+  expect([learn, know, relay]).toEqual([0, 0, 0]);
   expect(Number(shownActive)).toBe(active);
   expect(cards).toBe(sources);
-  expect(frame).toBe(true);
 });

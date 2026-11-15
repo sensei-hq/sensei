@@ -18,10 +18,23 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo } from '../helpers';
+import { navigateTo, seedSetupComplete, DAEMON_URL } from '../helpers';
+import { seedSenseiMcp, clearCursorMcpServers } from '../isolated-home';
 
 test.describe('Instruments Playground · execute', () => {
+  // The isolated e2e home has no assistant configured with sensei: declare it, as `sensei init`
+  // would, and let a real discovery scan find it; take it out again after.
+  test.beforeAll(async () => {
+    seedSenseiMcp();
+    expect((await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/refresh`, { method: 'POST' })).ok).toBe(true);
+  });
+  test.afterAll(async () => {
+    clearCursorMcpServers();
+    await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/refresh`, { method: 'POST' });
+  });
+
   test('clicking Query renders the daemon response in the <pre>', async ({ tauriPage }) => {
+    await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/instruments');
     // Give the store's loadCatalog() a chance to hydrate.
     await tauriPage.waitForSelector('[data-testid="playground-body"]', 15_000).catch(() => {});
@@ -33,19 +46,13 @@ test.describe('Instruments Playground · execute', () => {
     await toolRow.click();
     await new Promise((r) => setTimeout(r, 500));
 
-    // The Playground pre-fills tool inputs on click via `pickToolDefaults`
-    // (repoId → activeWorkspace || placeholder; other inputs → placeholder).
-    // Confirm at least one input is populated — a blank form would defeat
-    // the point of the defaulting fix that closed the "execute returns
-    // empty" symptom the user hit.
-    const inputs = tauriPage.locator('input[type="text"], input[type="number"]');
-    const count = await inputs.count();
-    let anyFilled = false;
-    for (let i = 0; i < count; i++) {
-      const val = await inputs.nth(i).inputValue().catch(() => '');
-      if (val && val.length > 0) { anyFilled = true; break; }
-    }
-    expect(anyFilled).toBe(true);
+    // The form is the tool's inputSchema (ef296c15): declared defaults and the active workspace
+    // for a repo id, never an invented value. get_callees declares no default for `name`, so the
+    // field starts empty and the caller supplies it, as an assistant would.
+    const nameInput = tauriPage.locator('[data-testid="tool-input-name"]');
+    await expect(nameInput).toBeVisible();
+    expect(await nameInput.inputValue()).toBe('');
+    await nameInput.fill('main');
 
     // Click the Query/Run button. The button carries data-testid=tool-execute
     // so we don't have to text-match through the tauri-playwright wrapper

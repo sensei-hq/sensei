@@ -5,6 +5,7 @@
 // GitHub. Every act re-reads the list, because what the person may do next
 // depends on what it changed. A failure says why and leaves no stale or
 // invented list on screen.
+import { failureNotice } from '@sensei/ui';
 import { DojoApiError } from './dojo-api';
 import type { IntegrationUnit, IntegrationUnitsView, MapTarget } from './integrations-view';
 
@@ -34,6 +35,23 @@ export class IntegrationsState {
 	/** `'list'` while reading; `'connect'` while re-authorizing; a unit's id while acting on it. */
 	busy = $state<string | null>(null);
 	error = $state<string | null>(null);
+
+	/** The failure as a Notice — what the screen shows. */
+	get errorNotice() {
+		return failureNotice("Couldn't finish with GitHub", this.error, { remedy: 'Reconnect GitHub, then retry.' });
+	}
+
+	/** A partial read — the list is shown, and says it is not complete. */
+	get incompleteNotice() {
+		return this.complete
+			? null
+			: {
+					tone: 'refusal' as const,
+					title: 'This list is not complete',
+					detail: 'GitHub could not read every organization you belong to.',
+					remedy: 'Ask an owner of each missing organization to approve sensei on GitHub, then reload.'
+				};
+	}
 	/** The workspace name typed per unit id. */
 	names = $state<Record<string, string>>({});
 

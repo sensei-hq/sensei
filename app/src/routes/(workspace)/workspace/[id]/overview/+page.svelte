@@ -4,8 +4,9 @@
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { Kanji, Eyebrow, Screen, ScreenState } from '$lib/components';
+  import { Kanji, Eyebrow, Screen } from '$lib/components';
   import { Button } from '@rokkit/ui';
+  import { Notice, StateView } from '@sensei/ui';
   import WorkspacePill from '../../../../(observatory)/workspaces/WorkspacePill.svelte';
   import {
     ftrDisplay,
@@ -16,7 +17,7 @@
     sessionRows,
     hotspotRows,
     patternSnapshot,
-    decideRecommendation,
+    RecommendationDecision,
     type StatBlock,
   } from './overview-view.svelte.js';
 
@@ -43,25 +44,17 @@
   // `deciding`, then re-loads so the next scheduler tick sees the update.
   // Retained through the Slot-4 redesign; the mockup's send-to-acp action sits
   // alongside it and appears only when the rec carries a defaultAcp.
-  let deciding = $state(false);
-  // Why the last decision did not land (#288) — it used to reload as if it had.
-  let decideError = $state<string | null>(null);
-  async function decide(action: 'accept' | 'reject') {
-    if (!rec || !workspaceId || deciding) return;
-    deciding = true;
-    decideError = null;
-    const result = await decideRecommendation(senseiApi(appState.port), workspaceId, rec.id, action, (m) => confirm(m));
-    deciding = false;
-    if (result.error) decideError = result.error;
-    else if (result.done) await invalidateAll();
+  const decision = new RecommendationDecision(senseiApi(appState.port), () => invalidateAll(), (m) => confirm(m));
+  function decide(action: 'accept' | 'reject') {
+    if (rec && workspaceId) void decision.decide(workspaceId, rec.id, action);
   }
 </script>
 
 {#snippet statBlock(s: StatBlock)}
   <div data-component="stat-card" class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-3">
-    <div class="text-xs tracking-wide uppercase text-ink-mute mb-1">{s.label}</div>
+    <div class="text-xs tracking-wide uppercase text-ink-soft mb-1">{s.label}</div>
     <div class="display text-2xl font-normal leading-none {s.toneClass}">{s.value}</div>
-    <div class="text-xs text-ink-mute mt-1">{s.sub}</div>
+    <div class="text-xs text-ink-soft mt-1">{s.sub}</div>
   </div>
 {/snippet}
 
@@ -84,13 +77,13 @@
         </h1>
       </div>
       <div class="text-right shrink-0">
-        <div class="text-xs tracking-wide uppercase text-ink-mute">FTR · 14d</div>
+        <div class="text-xs tracking-wide uppercase text-ink-soft">FTR · 14d</div>
         <div class="flex items-baseline justify-end gap-1 mt-1">
           {#if ftr.pct === null}
-            <span class="display text-2xl font-normal leading-none text-ink-mute">—</span>
+            <span class="display text-2xl font-normal leading-none text-ink-soft">—</span>
           {:else}
             <span class="display text-2xl font-normal leading-none {ftr.toneClass}">{ftr.pct}</span>
-            <span class="text-xs text-ink-mute">%</span>
+            <span class="text-xs text-ink-soft">%</span>
           {/if}
         </div>
       </div>
@@ -99,7 +92,7 @@
   {/snippet}
   <div class="px-10 pb-12 max-w-[900px]" class:pt-8={!data.overview}>
     {#if !data.overview}
-      <ScreenState status="error" error={data.overviewError} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.overviewError} onretry={() => invalidateAll()} />
     {:else}
 
     <!-- Hero — top recommendation, or the all-quiet listening state -->
@@ -109,11 +102,11 @@
     >
       <Kanji char={hero.kanji} size="4xl" tone={hero.quiet ? 'watermark' : 'accent'} />
       <div class="min-w-0">
-        <div class="text-xs tracking-wide uppercase text-ink-mute mb-1">{hero.eyebrow}</div>
+        <div class="text-xs tracking-wide uppercase text-ink-soft mb-1">{hero.eyebrow}</div>
         <p class="display text-xl font-normal leading-snug tracking-tight text-ink m-0 mb-2">
           {hero.headline}
         </p>
-        <p class="text-sm text-ink-soft leading-relaxed m-0">{hero.body}</p>
+        <p class="text-sm text-ink-mute leading-relaxed m-0">{hero.body}</p>
 
         {#if hero.action || hero.meta || rec}
           <div class="flex items-center gap-3 mt-3 flex-wrap">
@@ -125,24 +118,24 @@
                 variant="primary"
                 size="sm"
                 data-testid="rec-accept"
-                disabled={deciding}
+                disabled={decision.deciding}
                 onclick={() => decide('accept')}
-              >{deciding ? 'Working…' : 'Accept'}</Button>
+              >{decision.deciding ? 'Working…' : 'Accept'}</Button>
               <Button
                 variant="secondary"
                 style="outline"
                 size="sm"
                 data-testid="rec-reject"
-                disabled={deciding}
+                disabled={decision.deciding}
                 onclick={() => decide('reject')}
               >Reject</Button>
             {/if}
             {#if hero.meta}
-              <span class="font-mono text-xs text-ink-mute">{hero.meta}</span>
+              <span class="font-mono text-xs text-ink-soft">{hero.meta}</span>
             {/if}
           </div>
-          {#if decideError}
-            <p class="text-xs text-danger mt-2 mb-0" data-testid="rec-decide-error">Could not record that: {decideError}</p>
+          {#if decision.notice}
+            <div class="mt-2"><Notice size="inline" {...decision.notice} expanded data-testid="rec-decide-error" /></div>
           {/if}
         {/if}
       </div>
@@ -159,7 +152,7 @@
     <section>
       <div class="flex items-baseline gap-2 mb-3">
         <Kanji char="今" size="sm" tone="accent" />
-        <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-soft m-0">
+        <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-mute m-0">
           Recent in this workspace
         </h2>
       </div>
@@ -186,7 +179,7 @@
           {/each}
         </div>
       {:else}
-        <p class="text-sm text-ink-soft">No sessions recorded in this workspace yet.</p>
+        <p class="text-sm text-ink-mute">No sessions recorded in this workspace yet.</p>
       {/if}
     </section>
 
@@ -195,20 +188,20 @@
       <section data-testid="overview-hotspots">
         <div class="flex items-baseline gap-2 mb-3">
           <Kanji char="燃" size="sm" tone="accent" />
-          <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-soft m-0">
+          <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-mute m-0">
             Hotspots · 7 days
           </h2>
         </div>
-        {#if data.hotspotsError}
-          <p class="text-sm text-danger m-0" data-overview-error>Could not read hotspots: {data.hotspotsError}</p>
+        {#if data.hotspotsNotice}
+          <Notice size="inline" {...data.hotspotsNotice} expanded data-overview-error />
         {:else if hotspots.length === 0}
-          <p class="text-sm text-ink-soft m-0">No file edited more than once this week.</p>
+          <p class="text-sm text-ink-mute m-0">No file edited more than once this week.</p>
         {:else}
           <ul class="list-none m-0 p-0">
             {#each hotspots as h (h.repo + h.path)}
               <li class="grid grid-cols-[1fr_auto] gap-3 items-baseline py-2 border-b border-paper-edge" data-hotspot={h.path}>
                 <span class="font-mono text-xs text-ink truncate" title={`${h.repo}/${h.path}`}>{h.path}</span>
-                <span class="font-mono text-xs text-ink-mute">{h.edits} edits{#if h.corrections > 0}<span class="text-warning"> · {h.corrections} corrected</span>{/if}</span>
+                <span class="font-mono text-xs text-ink-soft">{h.edits} edits{#if h.corrections > 0}<span class="text-warning"> · {h.corrections} corrected</span>{/if}</span>
               </li>
             {/each}
           </ul>
@@ -218,26 +211,26 @@
       <section data-testid="overview-patterns">
         <div class="flex items-baseline gap-2 mb-3">
           <Kanji char="紋" size="sm" tone="accent" />
-          <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-soft m-0">
+          <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-mute m-0">
             Patterns in use
           </h2>
         </div>
-        {#if data.patternsError}
-          <p class="text-sm text-danger m-0" data-overview-error>Could not read patterns: {data.patternsError}</p>
+        {#if data.patternsNotice}
+          <Notice size="inline" {...data.patternsNotice} expanded data-overview-error />
         {:else if patterns && patterns.followed + patterns.anti > 0}
           <a href={`/workspace/${workspaceId}/patterns`} class="block hover:bg-paper-soft rounded-md -mx-1 px-1 py-1">
             <div class="text-sm text-ink" data-pattern-counts>
               {patterns.followed} followed · <span class={patterns.anti > 0 ? 'text-warning' : ''}>{patterns.anti} anti-patterns</span>
             </div>
             {#if patterns.topFollowed.length > 0}
-              <div class="font-mono text-xs text-ink-mute mt-2 truncate">{patterns.topFollowed.join(' · ')}</div>
+              <div class="font-mono text-xs text-ink-soft mt-2 truncate">{patterns.topFollowed.join(' · ')}</div>
             {/if}
             {#if patterns.topAnti.length > 0}
               <div class="font-mono text-xs text-warning mt-1 truncate">{patterns.topAnti.join(' · ')}</div>
             {/if}
           </a>
         {:else}
-          <p class="text-sm text-ink-soft m-0">No patterns detected yet.</p>
+          <p class="text-sm text-ink-mute m-0">No patterns detected yet.</p>
         {/if}
       </section>
     </div>

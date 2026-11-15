@@ -72,7 +72,7 @@ export function scopeLabel(scope: unknown): string {
  * ≥.70 accent, else warning). `null` reads as unscored (muted).
  */
 export function confidenceToneClass(v: number | null): string {
-	if (v == null) return 'text-ink-mute';
+	if (v == null) return 'text-ink-soft';
 	if (v >= 0.85) return 'text-success';
 	if (v >= 0.7) return 'text-accent';
 	return 'text-warning';
@@ -107,7 +107,7 @@ export function similarityToneClass(v: number | null): string {
 		case 'flagged':
 			return 'text-warning';
 		default:
-			return 'text-ink-mute';
+			return 'text-ink-soft';
 	}
 }
 

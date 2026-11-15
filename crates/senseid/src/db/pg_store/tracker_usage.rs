@@ -40,6 +40,11 @@ pub struct TaskListRow {
     pub issue_type: Option<String>,
     pub status: Option<String>,
     pub removed: bool,
+    /// Whether the token owner is the assignee (W1); NULL while the owner is unknown.
+    pub assigned_to_me: Option<bool>,
+    /// The last write-back outcome (W9), and when a write last landed.
+    pub writeback_status: Option<String>,
+    pub writeback_at: Option<chrono::DateTime<chrono::Utc>>,
     pub current_sprint: Option<(uuid::Uuid, String)>,
     pub sprints: Vec<(uuid::Uuid, String)>,
 }
@@ -100,7 +105,9 @@ impl PgStore {
                         'branch', count(*) FILTER (WHERE EXISTS (SELECT 1 FROM src
                                    WHERE src.g = m.g AND src.session_id = m.sid AND src.source = 'branch')),
                         'prompt', count(*) FILTER (WHERE EXISTS (SELECT 1 FROM src
-                                   WHERE src.g = m.g AND src.session_id = m.sid AND src.source = 'prompt'))),
+                                   WHERE src.g = m.g AND src.session_id = m.sid AND src.source = 'prompt')),
+                        'fetch', count(*) FILTER (WHERE EXISTS (SELECT 1 FROM src
+                                   WHERE src.g = m.g AND src.session_id = m.sid AND src.source = 'fetch'))),
                     'shared', count(*) FILTER (WHERE m.sid IN (SELECT session_id FROM multi)),
                     'active_secs', sum(extract(epoch FROM s.duration))::float8,
                     'active_n', count(s.duration),
@@ -289,6 +296,9 @@ impl PgStore {
             Option<String>,
             Option<String>,
             bool,
+            Option<bool>,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
             Option<uuid::Uuid>,
             Option<String>,
             Vec<uuid::Uuid>,
@@ -296,7 +306,7 @@ impl PgStore {
         );
         let rows = sqlx_core::query_as::query_as::<_, Row>(
             "SELECT t.id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL,
-                    cur.id, cur.name,
+                    t.assigned_to_me, t.writeback_status::text, t.writeback_at, cur.id, cur.name,
                     coalesce(array_agg(sp.id ORDER BY sp.seq) FILTER (WHERE sp.id IS NOT NULL), '{}'),
                     coalesce(array_agg(sp.name ORDER BY sp.seq) FILTER (WHERE sp.id IS NOT NULL), '{}')
                FROM sensei.tracker_tasks t
@@ -330,6 +340,9 @@ impl PgStore {
                     issue_type,
                     status,
                     removed,
+                    assigned_to_me,
+                    writeback_status,
+                    writeback_at,
                     cur_id,
                     cur_name,
                     sp_ids,
@@ -342,6 +355,9 @@ impl PgStore {
                         issue_type,
                         status,
                         removed,
+                        assigned_to_me,
+                        writeback_status,
+                        writeback_at,
                         current_sprint: cur_id.zip(cur_name),
                         sprints: sp_ids.into_iter().zip(sp_names).collect(),
                     }

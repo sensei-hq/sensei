@@ -8,7 +8,7 @@
 	let { role, muted = false }: { role: string; muted?: boolean } = $props();
 
 	const r = $derived(roleTone(role));
-	const toneClass = $derived(muted ? 'text-ink-mute' : 'text-accent');
+	const toneClass = $derived(muted ? 'text-ink-soft' : 'text-accent');
 	const softClass = $derived(muted ? 'bg-paper-mute' : 'bg-accent-soft');
 	const edgeClass = $derived(muted ? 'border-paper-edge' : 'border-accent-soft');
 </script>

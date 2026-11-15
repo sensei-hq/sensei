@@ -1126,6 +1126,8 @@ pub struct SchemaFact {
     pub indexes: Vec<SchemaIndex>,
     /// This object's OUTGOING foreign keys, one per column pair.
     pub refs: Vec<SchemaRef>,
+    /// An enum's values, in declaration order; empty for every other kind.
+    pub enum_values: Vec<String>,
 }
 
 /// dbd SchemaModel v2's `Column`, renamed only where a SQL keyword collides.
@@ -1184,13 +1186,14 @@ macro_rules! schema_vocabulary {
 }
 
 schema_vocabulary! {
-    /// `sensei.schema_object_kind` — the five `declared_type` words.
+    /// `sensei.schema_object_kind` — the `declared_type` words.
     SchemaKind {
         Table => "table",
         View => "view",
         MaterializedView => "materialized_view",
         Function => "function",
         Procedure => "procedure",
+        Enum => "enum",
     }
 }
 

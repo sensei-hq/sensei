@@ -27,6 +27,7 @@ create table if not exists dojo.identities (
 , subject       text             not null
 , email         text
 , display_name  text
+, handle        text
 , created_at    timestamptz      not null default now()
 , last_login_at timestamptz
 , constraint identities_provider_subject_unique unique (provider, subject)
@@ -49,6 +50,8 @@ comment on column dojo.identities.provider
      is 'Which auth method produced this subject: sso, github_oauth, device_code, or azure_devops (an Azure DevOps account read through a Microsoft Entra connect, by its stable id, #308 R5b).';
 comment on column dojo.identities.subject
      is 'The provider''s subject identifier (OIDC/SAML sub, GitHub user id, or device-code enrollment id).';
+comment on column dojo.identities.handle
+     is 'The forge login last seen at sign-in. Renameable: never the identity (that''s subject), refreshed on each sign-in like display_name. Null when the provider supplies no login or the sign-in predates handles — never backfilled, never invented.';
 
 -- RLS: the access matrix's cells for this table. The policies call the access
 -- predicates and so live in policies/dojo/identities.sql (see policies/README.md).

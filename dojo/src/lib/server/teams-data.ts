@@ -12,6 +12,7 @@ export { AdminError };
 export interface TeamMember {
 	principal_id: string;
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 }
 
@@ -53,7 +54,7 @@ export async function listTeams(db: DojoClient, tenantId: string, nameDb: DojoCl
 			.filter((l) => l.team_id === t.id)
 			.map((l) => {
 				const n = names.get(l.principal_id);
-				return { principal_id: l.principal_id, display_name: n?.display_name ?? null, email: n?.email ?? null };
+				return { principal_id: l.principal_id, display_name: n?.display_name ?? null, handle: n?.handle ?? null, email: n?.email ?? null };
 			})
 	}));
 }

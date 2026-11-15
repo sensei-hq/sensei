@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button, Toggle } from '@rokkit/ui';
+	import { Notice } from '@sensei/ui';
 	import { MEMBER_ROLES, MEMBERSHIP_KINDS } from '$lib/admin-view';
 	import type { InviteState, InviteAccess, InviteKind } from '$lib/invite-state.svelte';
 
@@ -35,7 +36,7 @@
 		</div>
 	{:else}
 		<label class="flex flex-col gap-1">
-			<span class="text-ink-mute text-xs">Email</span>
+			<span class="text-ink-soft text-xs">Email</span>
 			<input
 				type="email"
 				autocomplete="off"
@@ -45,7 +46,7 @@
 			/>
 		</label>
 		<div class="flex flex-col gap-1">
-			<span class="text-ink-mute text-xs">Access</span>
+			<span class="text-ink-soft text-xs">Access</span>
 			<Toggle
 				options={ACCESS_OPTS}
 				value={invite.draft.access}
@@ -56,12 +57,12 @@
 		</div>
 		{#if invite.draft.access === 'member'}
 			<div class="flex flex-col gap-1">
-				<span class="text-ink-mute text-xs">Role</span>
+				<span class="text-ink-soft text-xs">Role</span>
 				<Toggle options={ROLE_OPTS} value={invite.draft.role} onchange={(v) => set({ role: v as string })} size="sm" label="Role" />
 			</div>
 		{/if}
 		<div class="flex flex-col gap-1">
-			<span class="text-ink-mute text-xs">Relationship</span>
+			<span class="text-ink-soft text-xs">Relationship</span>
 			<Toggle
 				options={KIND_OPTS}
 				value={invite.draft.kind}
@@ -70,8 +71,8 @@
 				label="Relationship"
 			/>
 		</div>
-		{#if invite.error}
-			<div class="text-danger text-sm" role="alert">{invite.error}</div>
+		{#if invite.errorNotice}
+			<Notice size="inline" expanded {...invite.errorNotice} />
 		{/if}
 		<div class="flex gap-2">
 			<Button variant="primary" size="sm" disabled={invite.sending} onclick={() => invite.submit()}>Send invite</Button>

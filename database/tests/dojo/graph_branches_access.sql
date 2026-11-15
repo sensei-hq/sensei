@@ -7,13 +7,16 @@
 --   no authority yet (no capture)  → object_not_in_prerequisite_state (409)
 --   not configurable_by_me         → insufficient_privilege           (403)
 --   an empty branch name           → invalid_parameter_value          (400)
+-- A label is one of production, testing, development — or none at all. Anything
+-- else is refused by the table's CHECK (23514), and an empty label is stored as
+-- no label rather than as an unknown one.
 -- Tracking is idempotent (a re-track only updates the label); untracking deletes
 -- the branch's row, and with it that branch's graph — and nothing else.
 --
 -- WHAT BREAKS THIS TEST: a contributor of an organisation changing what its
 -- graph tracks; an untrack that leaves the branch's graph behind or takes
--- another branch's; a duplicate row on re-track; a nameless branch; any session
--- write grant on repository_graph_branches.
+-- another branch's; a duplicate row on re-track; a nameless branch; an unknown
+-- label; any session write grant on repository_graph_branches.
 
 begin;
 
@@ -75,7 +78,7 @@ begin
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000152"}', true);
 
     -- ── track: ola's own repository ──────────────────────────────────────────
-    select * into r from dojo.set_graph_branch('github.com/ztest-ola/own', 'production', true, 'prod');
+    select * into r from dojo.set_graph_branch('github.com/ztest-ola/own', 'production', true, 'development');
     if r.tracked is distinct from true or r.branch <> 'production' then
         raise exception 'track: ola should track production on her own repository, got %', r;
     end if;
@@ -92,6 +95,15 @@ begin
          where repository_id = '93000000-0000-4000-8000-000000000002' and branch = 'production')
        is distinct from 'a0000000-0000-4000-8000-000000000152'::uuid then
         raise exception 'track: the row should name ola as who added it';
+    end if;
+    set local role authenticated;
+
+    -- ── label: '' is no label, not an unknown one ────────────────────────────
+    select * into r from dojo.set_graph_branch('github.com/ztest-ola/own', 'qa-branch', true, '  ');
+    reset role;
+    if (select label from dojo.repository_graph_branches
+         where repository_id = '93000000-0000-4000-8000-000000000002' and branch = 'qa-branch') is not null then
+        raise exception 'label: an empty label should be stored as no label';
     end if;
     set local role authenticated;
 
@@ -145,6 +157,11 @@ begin
         perform dojo.set_graph_branch('github.com/ztest-ola/own', '  ', true, null);
         raise exception 'name: a nameless branch was tracked';
     exception when invalid_parameter_value then null;
+    end;
+    begin
+        perform dojo.set_graph_branch('github.com/ztest-ola/own', 'nightly', true, 'nightly');
+        raise exception 'label: an unknown environment label was tracked';
+    exception when check_violation then null;
     end;
     begin
         insert into dojo.repository_graph_branches (repository_id, tenant_id, branch)

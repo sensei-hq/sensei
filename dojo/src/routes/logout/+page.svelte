@@ -29,5 +29,5 @@
 </script>
 
 <div class="flex min-h-screen items-center justify-center">
-	<p class="text-ink-mute text-sm">Signing out…</p>
+	<p class="text-ink-soft text-sm">Signing out…</p>
 </div>

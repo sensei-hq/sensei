@@ -21,7 +21,7 @@
 		<h2 class="display text-ink text-lg font-normal" style="letter-spacing: -0.01em; margin: 16px 0 0">
 			{what} lives inside a Dōjō
 		</h2>
-		<p class="text-ink-soft text-sm" style="line-height: 1.55; margin: 8px 0 0">
+		<p class="text-ink-mute text-sm" style="line-height: 1.55; margin: 8px 0 0">
 			a Dōjō is a shared mind — where a team's sessions consolidate into knowledge everyone draws on.
 			join or create one to see {what} for your team. you can keep working solo as long as you like.
 		</p>

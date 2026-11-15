@@ -21,3 +21,252 @@ describe('Settings · Extensions — a refused toggle', () => {
     expect(box.checked).toBe(true);
   });
 });
+
+const installed = [
+  { name: 'tdd', kind: 'skill', enabled: true },
+  { name: 'plan', kind: 'command', enabled: false },
+];
+
+const rows = (c: HTMLElement) => c.querySelectorAll('[data-testid^="ext-row-"]');
+const toggleBox = (c: HTMLElement, kind: string, name: string) =>
+  c.querySelector(`[data-testid="ext-toggle-${kind}-${name}"]`) as HTMLInputElement;
+const okList = (list: unknown[]) => ({ ok: true, status: 200, json: async () => list });
+
+// L5: the list is the loader's (+page.ts) read. The page renders it and makes no
+// read of its own on mount.
+describe('Settings · Extensions — the loader’s read', () => {
+  it('draws the installed items, without a read of its own', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(okList(installed));
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = mountComponent(Page, { data: { extensions: installed, error: null } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(rows(m.container).length).toBe(2));
+    expect(m.container.textContent).toContain('tdd');
+    expect(m.container.textContent).toContain('plan');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// #288: a list that could not be read is an error with Retry — never "No
+// extensions installed yet.", which is the honest empty.
+describe('Settings · Extensions — a failed read', () => {
+  it('shows the error with a Retry, not the empty copy', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable' }));
+    const m = mountComponent(Page, { data: { extensions: [], error: 'Service Unavailable' } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-screen-state="error"]')?.textContent).toContain('Service Unavailable'),
+    );
+    expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull();
+    expect(m.container.textContent).not.toContain('No extensions installed yet.');
+  });
+});
+
+describe('Settings · Extensions — nothing installed', () => {
+  it('shows the honest empty, not the error state', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okList([])));
+    const m = mountComponent(Page, { data: { extensions: [], error: null } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.textContent).toContain('No extensions installed yet.'));
+    expect(m.container.querySelector('[data-screen-state="error"]')).toBeNull();
+    expect(rows(m.container).length).toBe(0);
+  });
+});
+
+// Busy and error are per row, so a slow or refused toggle never disables or
+// marks its neighbours.
+describe('Settings · Extensions — a refused toggle leaves its neighbour usable', () => {
+  it('keeps the failure on its own row and toggles the other', async () => {
+    const fetchSpy = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/tdd/enabled')) return { ok: false, status: 409, statusText: 'Conflict' };
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = mountComponent(Page, { data: { extensions: installed, error: null } } as never);
+    cleanup.push(m.destroy);
+
+    toggleBox(m.container, 'skill', 'tdd').click();
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-testid="ext-error-skill-tdd"]')?.textContent).toContain('Conflict'),
+    );
+    expect(toggleBox(m.container, 'skill', 'tdd').checked).toBe(true);
+
+    // Wait for the daemon's answer, not the click: a checkbox flips `checked`
+    // on its own, and a row still saving hides any error behind "saving…", so
+    // asserting there would pass even if the error leaked to every row.
+    const planRow = () => m.container.querySelector('[data-testid="ext-row-command-plan"]')!;
+    toggleBox(m.container, 'command', 'plan').click();
+    await vi.waitFor(() => expect(planRow().querySelector('.extension-enabled')?.textContent).toBe('on'));
+    expect(planRow().textContent).not.toContain('saving…');
+    expect(toggleBox(m.container, 'command', 'plan').checked).toBe(true);
+    expect(m.container.querySelector('[data-testid="ext-error-command-plan"]')).toBeNull();
+    expect(m.container.querySelector('[data-testid="ext-error-skill-tdd"]')?.textContent).toContain('Conflict');
+  });
+});
+
+describe('Settings · Extensions — a slow toggle', () => {
+  it('marks only the row being saved', async () => {
+    let answer: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      answer = resolve;
+    });
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending));
+    const m = mountComponent(Page, { data: { extensions: installed, error: null } } as never);
+    cleanup.push(m.destroy);
+    const row = (kind: string, name: string) =>
+      m.container.querySelector(`[data-testid="ext-row-${kind}-${name}"]`)!;
+
+    toggleBox(m.container, 'skill', 'tdd').click();
+    await vi.waitFor(() => expect(row('skill', 'tdd').textContent).toContain('saving…'));
+    expect(toggleBox(m.container, 'skill', 'tdd').disabled).toBe(true);
+    expect(toggleBox(m.container, 'command', 'plan').disabled).toBe(false);
+    expect(row('command', 'plan').textContent).not.toContain('saving…');
+
+    answer({ ok: true, status: 200, json: async () => ({}) });
+    await vi.waitFor(() => expect(row('skill', 'tdd').textContent).not.toContain('saving…'));
+  });
+});
+
+// Phase B: Retry re-reads this page's list through its read, not
+// invalidateAll() — which re-runs every load on the settings route, the
+// libraries/knowledge-sources ruling.
+describe('Settings · Extensions — Retry after a failed read', () => {
+  it('the Retry re-reads the list through its read', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(okList(installed));
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = mountComponent(Page, { data: { extensions: [], error: 'Service Unavailable' } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull());
+
+    (m.container.querySelector('[data-action="retry"]') as HTMLButtonElement).click();
+
+    await vi.waitFor(() => expect(rows(m.container).length).toBe(2));
+    expect(m.container.querySelector('[data-screen-state="error"]')).toBeNull();
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain('/api/install/installed');
+  });
+});
+
+// Phase B: a re-read that fails again is the new reason, not the empty one —
+// the same #288 hazard as the first read.
+describe('Settings · Extensions — Retry that fails again', () => {
+  it('a failed re-read stays the error, never the empty', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 502, statusText: 'Bad Gateway' });
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = mountComponent(Page, { data: { extensions: [], error: 'Service Unavailable' } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull());
+
+    (m.container.querySelector('[data-action="retry"]') as HTMLButtonElement).click();
+
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-screen-state="error"]')?.textContent).toContain('Bad Gateway'),
+    );
+    expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull();
+    expect(m.container.textContent).not.toContain('No extensions installed yet.');
+  });
+});
+
+// L0 ruling on tests r1 (L1): `enabled ?? true` in readExtensions invents a
+// state the daemon did not send (D83). A row that did not say is unknown, and
+// the screen says so instead of drawing it as on.
+describe('Settings · Extensions — an item that did not say whether it is on', () => {
+  it('an item with no `enabled` reads as unknown, never on', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okList([])));
+    const m = mountComponent(Page, {
+      data: { extensions: [{ name: 'tdd', kind: 'skill', enabled: null }], error: null },
+    } as never);
+    cleanup.push(m.destroy);
+    const label = () =>
+      m.container.querySelector('[data-testid="ext-row-skill-tdd"] .extension-enabled')!;
+    await vi.waitFor(() => expect(label().textContent).toBe('unknown'));
+    expect(toggleBox(m.container, 'skill', 'tdd').checked).toBe(false);
+  });
+});
+
+// The empty state's next step (L0 ruling on tests r1): nothing in the app
+// installs an extension, so it is the marketplace's Installation page, as a
+// link, not a button.
+describe('Settings · Extensions — nothing installed offers the install path', () => {
+  it('links the marketplace’s installation section', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okList([])));
+    const m = mountComponent(Page, { data: { extensions: [], skipped: [], error: null } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-component="empty-state"]')).not.toBeNull(),
+    );
+    const link = m.container.querySelector('[data-action="install-docs"]');
+    expect(link?.getAttribute('href')).toContain('github.com/sensei-hq/marketplace');
+  });
+});
+
+// Review impl r1 (L2): a refused toggle on an unknown row puts the box back and
+// keeps the label "unknown" — the refusal is not an answer about its state.
+describe('Settings · Extensions — a refused toggle on an unknown row', () => {
+  it('puts the box back and still says unknown, with the reason on the row', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409, statusText: 'Conflict' }));
+    const m = mountComponent(Page, {
+      data: { extensions: [{ name: 'tdd', kind: 'skill', enabled: null }], error: null },
+    } as never);
+    cleanup.push(m.destroy);
+    const label = () =>
+      m.container.querySelector('[data-testid="ext-row-skill-tdd"] .extension-enabled')!;
+    await vi.waitFor(() => expect(label().textContent).toBe('unknown'));
+
+    toggleBox(m.container, 'skill', 'tdd').click();
+
+    await vi.waitFor(() =>
+      expect(m.container.querySelector('[data-testid="ext-error-skill-tdd"]')?.textContent).toContain('Conflict'),
+    );
+    expect(toggleBox(m.container, 'skill', 'tdd').checked).toBe(false);
+    expect(label().textContent).toBe('unknown');
+    // The wording follows the click's intent, so it asks for "on".
+    expect(m.container.querySelector('[data-testid="ext-error-skill-tdd"]')?.textContent).toContain(
+      "Couldn't switch tdd on",
+    );
+  });
+});
+
+// Review impl r1 (L1): the read in flight is a guard, not decoration — a second
+// press while it is in flight must not start a second read.
+describe('Settings · Extensions — Retry pressed twice', () => {
+  it('two presses in one read are one GET', async () => {
+    let answer: (v: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      answer = resolve;
+    });
+    const fetchSpy = vi.fn().mockReturnValue(pending);
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = mountComponent(Page, { data: { extensions: [], error: 'Service Unavailable' } } as never);
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelector('[data-action="retry"]')).not.toBeNull());
+
+    const retry = m.container.querySelector('[data-action="retry"]') as HTMLButtonElement;
+    retry.click();
+    retry.click();
+
+    answer(okList(installed));
+    await vi.waitFor(() => expect(rows(m.container).length).toBe(2));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// L0 ruling on tests r1 (L2): a row with no kind or name is not a row — say
+// which one was not listed, and why, instead of drawing it as `unknown`.
+describe('Settings · Extensions — items it could not list', () => {
+  it('names them and the reason, and lists none of them', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okList([])));
+    const m = mountComponent(Page, {
+      data: { extensions: [], skipped: [{ name: 'ghost', reason: 'kind not reported' }], error: null },
+    } as never);
+    cleanup.push(m.destroy);
+    const note = () => m.container.querySelector('[data-testid="ext-skipped"]');
+    await vi.waitFor(() => expect(note()?.textContent).toContain('ghost'));
+    expect(note()?.textContent).toContain('kind not reported');
+    expect(rows(m.container).length).toBe(0);
+    expect(m.container.textContent).not.toContain('No extensions installed yet.');
+  });
+});

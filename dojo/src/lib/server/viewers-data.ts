@@ -15,8 +15,12 @@ export { AdminError };
 // a field renamed on one side fails `bun run check` on the other.
 export type { ViewerWorkspaceView as ViewerWorkspace, DojoViewerWire as DojoViewer } from '$lib/viewers-view';
 
-/** The dōjō's viewers, oldest first, each with the dōjō's workspaces granted to them. */
-export async function listDojoViewers(db: DojoClient, tenantId: string): Promise<DojoViewer[]> {
+/** The dōjō's viewers, oldest first, each with the dōjō's workspaces granted to
+ *  them. The rows, workspaces and grants are read as `db` (the caller); the
+ *  names through `nameDb` — the service client, since `principals` admits no
+ *  client reads (the access matrix's `resolveDisplayNames` exception: names
+ *  for ids the caller already read). */
+export async function listDojoViewers(db: DojoClient, tenantId: string, nameDb: DojoClient = db): Promise<DojoViewer[]> {
 	const viewers = await db
 		.from('dojo_viewers')
 		.select('principal_id, joined_at, email')
@@ -30,7 +34,7 @@ export async function listDojoViewers(db: DojoClient, tenantId: string): Promise
 	const [workspaces, grants, names] = await Promise.all([
 		db.from('workspaces').select('id, name').eq('tenant_id', tenantId),
 		db.from('workspace_viewers').select('workspace_id, principal_id').in('principal_id', ids),
-		resolveViewerNames(db, tenantId, ids)
+		resolveViewerNames(nameDb, tenantId, ids)
 	]);
 	if (workspaces.error) throw new AdminError(500, workspaces.error.message);
 	if (grants.error) throw new AdminError(500, grants.error.message);
@@ -49,6 +53,7 @@ export async function listDojoViewers(db: DojoClient, tenantId: string): Promise
 		return {
 			principal_id: r.principal_id,
 			display_name: n?.display_name ?? null,
+			handle: n?.handle ?? null,
 			// The forge identity's email, else the one they were invited at.
 			email: n?.email ?? r.email ?? null,
 			joined_at: r.joined_at,

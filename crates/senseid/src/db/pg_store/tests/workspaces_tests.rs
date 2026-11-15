@@ -127,6 +127,82 @@ async fn workspace_list() {
     s.delete_workspace(&id2).await.unwrap();
 }
 
+/// The Workspaces list's counts (user, 2026-10-28: loading it was slow — four
+/// subqueries per workspace, the repo count through the `folder_workspaces`
+/// view). Pinned before the query was rewritten to aggregate once, and held
+/// after: repos are git/standalone folders only, libraries count every
+/// enablement row, sessions7d is the last seven days, last_session_at the latest.
+#[tokio::test]
+async fn the_workspace_list_counts_repos_libraries_and_sessions() {
+    let s = pg_store().await;
+    let short = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let base = format!("/tmp/_test-wlc-{short}");
+    let root =
+        s.add_watch_root(&base, &format!("wlc-{short}"), &serde_json::json!([])).await.unwrap();
+    let ws = s.ensure_test_workspace(&format!("wlc-{short}")).await.unwrap();
+    for (kind, name) in [("git", "a"), ("standalone", "b"), ("folder", "c")] {
+        let f = s
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root,
+                kind,
+                name,
+                path: name,
+                abs_path: &format!("{base}/{name}"),
+                parent_id: None,
+                workspace_root_id: None,
+            })
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_workspace(
+            &s,
+            &f,
+            &ws,
+            &format!("wlc-{name}-{short}"),
+        )
+        .await
+        .unwrap();
+    }
+    for (i, enabled) in [true, false].iter().enumerate() {
+        let name = format!("_testlib_wlc_{short}_{i}");
+        let lid = s
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &name,
+                ecosystem: "npm",
+                version: None,
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
+            .await
+            .unwrap();
+        s.execute_raw(&format!(
+            "INSERT INTO sensei.library_enablement(library_id, workspace_id, enabled) VALUES('{lid}','{ws}',{enabled})"
+        ))
+        .await
+        .unwrap();
+    }
+    for days_ago in [1, 2, 10] {
+        s.execute_raw(&format!(
+            "INSERT INTO activity.sessions(workspace_id, task, started_at) VALUES('{ws}', 'wlc', now() - interval '{days_ago} days')"
+        ))
+        .await
+        .unwrap();
+    }
+
+    let all = s.list_workspaces_under(None).await.unwrap();
+    let row = all
+        .iter()
+        .find(|w| w["id"].as_str() == Some(&ws.to_string()))
+        .expect("the workspace is listed");
+    assert_eq!(row["repos_count"], 2, "git and standalone folders, not the plain one");
+    assert_eq!(row["libs_count"], 2, "every enablement row, enabled or not");
+    assert_eq!(row["sessions7d"], 2, "the 10-day-old session is outside the window");
+    let last = row["last_session_at"].as_str().expect("a last session");
+    let last = chrono::DateTime::parse_from_rfc3339(last).unwrap();
+    let age = chrono::Utc::now().signed_duration_since(last.with_timezone(&chrono::Utc));
+    assert!(age.num_hours() >= 23 && age.num_hours() <= 25, "the latest session, a day ago: {age}");
+}
+
 #[tokio::test]
 async fn list_workspaces_under_filters_by_folder_path_boundary() {
     // find_workspaces (MCP) needs a folder-scoped view: only workspaces whose

@@ -64,16 +64,16 @@ see exactly what sensei did and whether it worked.*
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Playground call | request / response pair | tool name + raw JSON |
-| Replay timeline | tool call and its response | `Read · 12ms · used` |
-| Verdict | used / partial / ignored | `partial` |
-| Unused signal | no activity in two weeks | `sensei__search — unused 14d` |
-| Warn signal | high failure rate | `sensei__index — 38% failure` |
-| Opportunity | moderate traffic, high errors | `sensei__impact — try first` |
-| Win | high traffic, clean | `sensei__search — clean, 412 calls` |
-| Health grid | per-tool status | servers × tools grid |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Playground call | request / response pair | tool name + raw JSON | fix the arguments and run it again |
+| Replay timeline | tool call and its response | `Read · 12ms · used` | find the call that misled the assistant |
+| Verdict | used / partial / ignored | `partial` | partial or ignored → improve the tool's output or description |
+| Unused signal | no activity in two weeks | `sensei__search — unused 14d` | remove the tool, or teach it in a rule |
+| Warn signal | high failure rate | `sensei__index — 38% failure` | open its failures and fix the tool |
+| Opportunity | moderate traffic, high errors | `sensei__impact — try first` | try it in the Playground first |
+| Win | high traffic, clean | `sensei__search — clean, 412 calls` | none — candidate to cut |
+| Health grid | per-tool status | servers × tools grid | open the red cell's server or tool |
 
 ## Done gate
 

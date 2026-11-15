@@ -8,8 +8,7 @@ import { expect, type TauriPageLike } from './fixtures';
  */
 
 import { execSync, spawn, type ChildProcess } from 'child_process';
-import { existsSync, readFileSync, rmSync } from 'fs';
-import { isUniformPng, PAGE_BAND } from './lib/png-blank';
+import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -199,9 +198,9 @@ function sleep(ms: number): Promise<void> {
  * In both cases a SINGLE navigation lands on the wrong route and the target
  * selector never appears — waiting longer on it can't help (we're elsewhere).
  * Re-navigating once the conditions settle mounts the screen, so we retry the
- * whole navigation. The budget must comfortably exceed the observed cold-boot
- * health-ready time (~50s on a loaded box). Deterministic: polls for a stable
- * selector, no fixed sleeps.
+ * whole navigation — from the page the gate settled on, or after 30s with nothing
+ * moved; never while a slow load is still in flight. The budget must comfortably
+ * exceed the observed cold-boot health-ready time (~50s on a loaded box).
  */
 export async function navigateToScreen(
   tauriPage: {
@@ -213,20 +212,43 @@ export async function navigateToScreen(
   totalMs = 120_000,
 ): Promise<void> {
   const deadline = Date.now() + totalMs;
-  let lastErr: unknown;
-  for (;;) {
-    await navigateTo(tauriPage, route);
-    try {
-      await tauriPage.waitForSelector(screenSelector, 8_000);
-      return;
-    } catch (e) {
-      lastErr = e;
-      if (Date.now() >= deadline) break;
+  const target = route.split(/[?#]/)[0];
+  const sel = JSON.stringify(screenSelector);
+  // Arrival is the path AND the selector: the selector alone can match on the page a
+  // redirect landed on (the boot gate sends an early navigation through /health to Today,
+  // and the rail is on both). The path moves only once the route's loaders finish, so a
+  // slow load is waited out, not re-issued: re-navigating restarts the load, and under a
+  // busy daemon a load slower than the retry interval never landed at all.
+  let origin = (await tauriPage.evaluate('location.pathname')) as string;
+  await navigateTo(tauriPage, route);
+  let issued = Date.now();
+  let at = origin;
+  while (Date.now() < deadline) {
+    const probe = (await tauriPage
+      .evaluate(`JSON.stringify({ at: location.pathname, ready: !!document.querySelector(${sel}) })`)
+      .catch(() => null)) as string | null;
+    if (probe) {
+      const now = JSON.parse(probe) as { at: string; ready: boolean };
+      at = now.at;
+      if (at === target && now.ready) return;
+      const redirected = at !== target && at !== origin;
+      const stalled = at !== target && Date.now() - issued > 30_000;
+      if (redirected || stalled) {
+        // Somewhere else (a gate), or nothing moved: once settled, ask again from there.
+        await new Promise((r) => setTimeout(r, 1_000));
+        origin = at;
+        await navigateTo(tauriPage, route);
+        issued = Date.now();
+        continue;
+      }
     }
+    await new Promise((r) => setTimeout(r, 300));
   }
-  throw lastErr instanceof Error
-    ? lastErr
-    : new Error(`navigateToScreen: '${route}' never mounted '${screenSelector}' within ${totalMs}ms`);
+  throw new Error(
+    at === target
+      ? `navigateToScreen: '${route}' never mounted '${screenSelector}' within ${totalMs}ms`
+      : `navigateToScreen: asked for '${route}', the window is on '${at}'`,
+  );
 }
 
 /** Captured runtime-error buffers from the webview. */
@@ -382,53 +404,7 @@ export async function clickAndExpectNav(
   }
 }
 
-/**
- * Capture the app window to `path`, and say so when the capture is not a
- * picture of the app (#284). Two ways it fails:
- *
- * - `blank`: one flat colour. The window capture needs macOS Screen Recording
- *   permission for Sensei.app, and a rebuilt, re-signed bundle loses it (the
- *   e2e build is signed with a stable identity by `make app-e2e-build`; with
- *   the `sensei-dev` certificate the grant then survives rebuilds).
- * - `unpainted`: the frame and docked devtools paint, the page area does not.
- *
- * Either way the file is removed — a blank PNG left behind reads as evidence —
- * and the cause is logged. The test does not fail on it: its DOM assertions
- * are the evidence; the picture is for a person.
- */
-export async function shot(
-  tauriPage: { screenshot: (o: { path: string }) => Promise<unknown> },
-  path: string,
-): Promise<'ok' | 'blank' | 'unpainted'> {
-  await tauriPage.screenshot({ path });
-  const png = readFileSync(path);
-  const result = isUniformPng(png) ? 'blank' : isUniformPng(png, PAGE_BAND) ? 'unpainted' : 'ok';
-  if (result !== 'ok') {
-    rmSync(path);
-    console.warn(
-      result === 'blank'
-        ? `[shot] ${path}: the capture is blank — grant Sensei.app Screen Recording in System Settings › Privacy & Security (#284)`
-        : `[shot] ${path}: the page area did not paint in the capture (#284)`,
-    );
-  }
-  return result;
-}
-
-/** Close the sign-in overlay if it opened itself (an identity needing the
- *  user, e.g. #283's keychain approval): it is modal and covers the page. */
-export async function dismissSignIn(tauriPage: TauriPageLike) {
-  const state = await tauriPage.evaluate(`(function () {
-    var b = document.querySelector('[data-component="sign-in-overlay"] footer button');
-    if (!b) return 'absent';
-    b.click(); return 'closed';
-  })()`);
-  console.log(`[inspect] sign-in overlay: ${state}`);
-  await expect
-    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-component="sign-in-overlay"]')`), {
-      timeout: 5_000,
-    })
-    .toBe(false);
-}
+export { shot } from './lib/shot';
 
 /**
  * Record what the browser console would show as an error (user, 2026-10-27:

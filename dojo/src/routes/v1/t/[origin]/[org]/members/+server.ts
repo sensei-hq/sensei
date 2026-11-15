@@ -8,6 +8,7 @@
 import type { RequestHandler } from './$types';
 import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { dojoDb } from '$lib/server/dojo-supabase';
 import { listMembers, AdminError } from '$lib/server/admin-data';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
@@ -19,7 +20,10 @@ export const GET: RequestHandler = async ({ params, request, locals }) => {
 			locals,
 			ACCESS.admin
 		);
-		const members = await listMembers(callerDb(caller), caller.tenantId);
+		// Rows as the caller; names through the service client (`principals`
+		// admits no client reads — the access matrix's resolveDisplayNames
+		// exception: names for ids the caller already read).
+		const members = await listMembers(callerDb(caller), caller.tenantId, dojoDb());
 		return Response.json({ members });
 	} catch (e) {
 		if (e instanceof Response) return e;

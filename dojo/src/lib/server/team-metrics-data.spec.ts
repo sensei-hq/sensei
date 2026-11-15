@@ -45,6 +45,7 @@ function db(over: Record<string, FakeTable> = {}) {
 				{ principal_id: 'mo', display_name: 'Mo', email: null, last_login_at: null }
 			]
 		},
+		principals: { rows: [] },
 		'rpc:team_member_metrics': {
 			rows: [
 				{ principal_id: 'mo', metric_key: 'throughput', total: 12, weighted: null, days: 4, repositories: 2, last_on: '2026-10-21' },
@@ -167,6 +168,7 @@ describe('readTeamMetrics — failures', () => {
 		const view = await readTeamMetrics(caller, db(), lead, opts);
 		expect(view.teams[1].members.map((m) => m.display_name)).toEqual(['Lena', 'Mo']);
 		expect(caller.tables.identities.reads).toBe(0);
+		expect(caller.tables.principals.reads).toBe(0);
 	});
 });
 

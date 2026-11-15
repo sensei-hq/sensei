@@ -13,6 +13,8 @@
 //!   - `activity.transcript_turns` — by client_session_id (text, no FK)
 //!   - `activity.assistant_events` — by client_session_id AND session-less
 //!     orphans by ts
+//!   - `activity.transcript_raw` — by `last_seen_at`, on its own
+//!     `activity.transcript_raw_retention_days` (default 90)
 //!
 //! What is NOT pruned:
 //!   - `inference.detected_patterns` / `recommendations` / `reasoning_traces`
@@ -23,6 +25,7 @@
 use std::sync::Arc;
 
 use crate::db::pg_store::PgStore;
+use crate::tasks::retention::setting;
 use crate::tasks::ticker;
 
 /// Prune daily by default.
@@ -45,6 +48,11 @@ const DEFAULT_EXECUTION_RETENTION_DAYS: i32 = 14;
 /// they are rare enough to be free (32,664 of 4.8M — 0.7%).
 const DEFAULT_EXECUTION_FAILED_RETENTION_DAYS: i32 = 90;
 
+/// Keep a rotated transcript's raw bytes for 90 days past its last sighting —
+/// the same window as the activity it guards, on its own knob so the two can
+/// move independently.
+const DEFAULT_TRANSCRIPT_RAW_RETENTION_DAYS: i32 = 90;
+
 /// Positive-integer config with a default — shared by the two execution-retention
 /// knobs so neither can drift from the other's parsing rules.
 fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
@@ -53,6 +61,10 @@ fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
 
 fn parse_retention(cfg: Option<String>) -> i32 {
     parse_positive(cfg, DEFAULT_RETENTION_DAYS)
+}
+
+fn parse_raw_retention(cfg: Option<String>) -> i32 {
+    parse_positive(cfg, DEFAULT_TRANSCRIPT_RAW_RETENTION_DAYS)
 }
 
 /// The capture-before-reclaim backstop: a session older than this is reclaimed
@@ -93,14 +105,16 @@ async fn run(pg: Arc<PgStore>) {
 /// only WHEN it happens.
 ///
 /// Every config value is re-read per pass, so a retention change takes effect
-/// without a restart. Individual failures are logged and swallowed — a
-/// task-execution rollup failure must not stop the activity prune that follows
+/// without a restart. A setting that cannot be read stops the pass before it
+/// deletes anything (D83 batch A). After that, a task-execution rollup failure
+/// is logged and swallowed — it must not stop the activity prune that follows
 /// it — and the pass reports Err only if the main prune failed, which is what
 /// the schedule row records.
 async fn prune_once(pg: &PgStore) -> Result<(), String> {
-    let days = parse_retention(pg.get_config("activity.retention_days").await.ok().flatten());
-    let backstop =
-        parse_backstop(pg.get_config("activity.capture_backstop_days").await.ok().flatten(), days);
+    let days = setting(pg.get_config("activity.retention_days").await, parse_retention)?;
+    let backstop = setting(pg.get_config("activity.capture_backstop_days").await, |v| {
+        parse_backstop(v, days)
+    })?;
 
     // Task-execution history rides the same pass rather than getting its own
     // pruner: it is the same concern (reclaim captured activity) on the same
@@ -112,14 +126,13 @@ async fn prune_once(pg: &PgStore) -> Result<(), String> {
     // collapses into a daily count once it succeeds. Failures keep their own,
     // longer window — the error message is the whole point of the log, and they
     // are ~0.7% of rows.
-    let exec_days = parse_positive(
-        pg.get_config("tasks.execution_retention_days").await.ok().flatten(),
-        DEFAULT_EXECUTION_RETENTION_DAYS,
-    );
-    let exec_failed_days = parse_positive(
-        pg.get_config("tasks.execution_failed_retention_days").await.ok().flatten(),
-        DEFAULT_EXECUTION_FAILED_RETENTION_DAYS,
-    );
+    let exec_days = setting(pg.get_config("tasks.execution_retention_days").await, |v| {
+        parse_positive(v, DEFAULT_EXECUTION_RETENTION_DAYS)
+    })?;
+    let exec_failed_days =
+        setting(pg.get_config("tasks.execution_failed_retention_days").await, |v| {
+            parse_positive(v, DEFAULT_EXECUTION_FAILED_RETENTION_DAYS)
+        })?;
     match pg.rollup_and_prune_task_executions(exec_days, exec_failed_days).await {
         Ok((rolled, pruned)) if pruned > 0 => tracing::info!(
             rolled,
@@ -129,6 +142,23 @@ async fn prune_once(pg: &PgStore) -> Result<(), String> {
         ),
         Ok(_) => {}
         Err(e) => tracing::warn!(error = %e, "activity_pruner: task_execution rollup failed"),
+    }
+
+    // Raw transcript backups ride the same pass on their own retention: the same
+    // concern (reclaim captured activity) on the same schedule, a separate
+    // window. A failure is logged and swallowed like the rollup's — it must
+    // not stop the activity prune that follows it.
+    let raw_days = setting(
+        pg.get_config("activity.transcript_raw_retention_days").await,
+        parse_raw_retention,
+    )?;
+    match pg.prune_transcript_raw(raw_days).await {
+        Ok(n) if n > 0 => tracing::info!(
+            pruned = n,
+            "activity_pruner: reclaimed raw transcript backups older than {raw_days}d",
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "activity_pruner: transcript_raw prune failed"),
     }
 
     // The capture-before-reclaim guard (I20) is scoped inside prune_activity to
@@ -164,6 +194,59 @@ async fn prune_once(pg: &PgStore) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D83 batch A, rows 148-151 (review F4): a retention setting that cannot be
+    /// read stops the pass, and a session past every window stays. The second
+    /// half proves the session is in the pass's reach once the read works.
+    #[tokio::test]
+    async fn a_failed_retention_read_stops_the_pass_and_deletes_nothing() {
+        let pg = PgStore::test_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;
+        let sid =
+            crate::tasks::test_support::seed_repo_ai_start(&pg, &fid, &pid, "2000-01-01T00:00:00Z")
+                .await;
+        // Analyzed and in its folder, past every window: the pass's to delete.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET analyzed_at = now(), folder_id = $2, client_session_id = coalesce(client_session_id, id::text) WHERE id = $1",
+        )
+        .bind(sid)
+        .bind(fid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let rename = |sql: &'static str| sqlx_core::query::query(sql);
+        let kept = |pg: &PgStore| {
+            let pool = pg.pool().clone();
+            async move {
+                let (n,): (i64,) = sqlx_core::query_as::query_as(
+                    "SELECT count(*) FROM activity.sessions WHERE id = $1",
+                )
+                .bind(sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                n
+            }
+        };
+
+        rename("ALTER TABLE sensei.config RENAME TO config_unreadable")
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let failed = prune_once(&pg).await;
+        let after_failed = kept(&pg).await;
+        rename("ALTER TABLE sensei.config_unreadable RENAME TO config")
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        prune_once(&pg).await.unwrap();
+        let after_ok = kept(&pg).await;
+
+        assert!(failed.is_err(), "a failed read is the pass's error: {failed:?}");
+        assert_eq!((after_failed, after_ok), (1, 0), "kept on a failed read; pruned once it reads");
+    }
 
     #[test]
     fn parse_retention_falls_back_on_missing_invalid_or_nonpositive() {
@@ -204,5 +287,17 @@ mod tests {
         // A valid explicit override wins outright.
         assert_eq!(parse_backstop(Some("200".into()), 30), 200);
         assert_eq!(parse_backstop(Some(" 45 ".into()), 30), 45);
+    }
+
+    #[test]
+    fn parse_raw_retention_defaults_to_90_days() {
+        assert_eq!(
+            DEFAULT_TRANSCRIPT_RAW_RETENTION_DAYS, 90,
+            "raw transcript backups keep the 90-day activity window unless configured"
+        );
+        assert_eq!(parse_raw_retention(None), 90);
+        assert_eq!(parse_raw_retention(Some("x".into())), 90);
+        assert_eq!(parse_raw_retention(Some("0".into())), 90);
+        assert_eq!(parse_raw_retention(Some("30".into())), 30);
     }
 }

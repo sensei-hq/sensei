@@ -5,6 +5,7 @@ import {
   workspaceIcon,
   lastSessionLabel,
   isWarning,
+  workspaceDotView,
   baseWorkspace,
   withQuality,
   type EnrichedWorkspace, WORKSPACE_ICON } from './buckets.js';
@@ -237,5 +238,17 @@ describe('withQuality', () => {
   it('a failed FTR read is an error, not a blank rate', () => {
     const p = withQuality(base, down, ok(calm));
     expect([p.ftr14d, p.readError]).toEqual([null, 'Bad Gateway']);
+  });
+});
+
+// Audit item 6 (2026-10-28): the dot beside a workspace bands its FTR the way
+// every other screen does (lib/ftr), and a live warning still wins.
+describe('workspaceDotView', () => {
+  it('is the shared FTR band, unless a live warning wins', () => {
+    expect(workspaceDotView(0.9, false)).toEqual({ dot: 'bg-success', label: 'healthy' });
+    expect(workspaceDotView(0.7, false)).toEqual({ dot: 'bg-ink-soft', label: 'ok' });
+    expect(workspaceDotView(0.3, false)).toEqual({ dot: 'bg-warning', label: 'needs attention' });
+    expect(workspaceDotView(null, false)).toEqual({ dot: 'bg-ink-faint', label: 'no ftr data' });
+    expect(workspaceDotView(0.9, true)).toEqual({ dot: 'bg-warning', label: 'needs attention' });
   });
 });

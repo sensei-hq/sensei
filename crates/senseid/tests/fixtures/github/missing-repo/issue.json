@@ -1,0 +1,31 @@
+{
+  "body": {
+    "data": {
+      "repository": null
+    },
+    "errors": [
+      {
+        "locations": [
+          {
+            "column": 3,
+            "line": 2
+          }
+        ],
+        "message": "scrubbed message",
+        "path": [
+          "repository"
+        ],
+        "type": "NOT_FOUND"
+      }
+    ]
+  },
+  "operation": "Issue",
+  "status": 200,
+  "variables": {
+    "after": null,
+    "field": "Sprint",
+    "name": "missing",
+    "number": 8,
+    "owner": "acme"
+  }
+}

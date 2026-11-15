@@ -43,3 +43,13 @@ describe('ExtensionsState', () => {
     expect(s.extensions).toHaveLength(1);
   });
 });
+
+describe('toggleNotice — through the shared Notice', () => {
+  it('names the extension and what it was switching to; the reason is the detail', async () => {
+    const s = new ExtensionsState({ extensions: [ext('tdd')], error: null });
+    const e = s.extensions[0];
+    await s.toggle({ setInstalledItemEnabled: async () => ({ ok: false as const, error: { status: 409, message: 'Conflict' } }) } as never, e, !e.enabled);
+    expect(s.toggleNotice(e)).toMatchObject({ tone: 'fault', detail: expect.stringContaining('Conflict') });
+    expect(s.toggleNotice(e)!.title).toMatch(/^Couldn't switch tdd (on|off)$/);
+  });
+});

@@ -356,6 +356,21 @@ mod menu_tests {
         assert_eq!(menu_route("shortcuts"), Some("/help"));
     }
 
+    /// Sign-in opens the system browser from Settings › Dōjō (#300), so the
+    /// settings window needs the opener — it had no capability at all, and every
+    /// Sign in there failed as "could not open your browser" (2026-11-03).
+    #[test]
+    fn the_settings_window_may_open_the_browser() {
+        let caps: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let windows: Vec<&str> =
+            caps["windows"].as_array().unwrap().iter().filter_map(|w| w.as_str()).collect();
+        let permissions: Vec<&str> =
+            caps["permissions"].as_array().unwrap().iter().filter_map(|p| p.as_str()).collect();
+        assert!(windows.contains(&super::SETTINGS_WINDOW.0), "windows: {windows:?}");
+        assert!(permissions.contains(&"opener:default"));
+    }
+
     /// Preferences… opens Settings as its own window (user, 2026-10-27: as in a
     /// Mac app), at General, with the standard ⌘, shortcut.
     #[test]

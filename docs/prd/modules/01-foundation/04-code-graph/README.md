@@ -129,14 +129,14 @@ modules. A pair with a static edge between the two modules is not hidden couplin
 
 ## Signals shown
 
-| Element | Value | Meaning |
-|---|---|---|
-| Graph layout | nodes + edges (calls/imports/extends/implements) | structural map; community colour shows clusters |
-| `community_id` per node | returned in the node projection | membership drives the cluster view |
-| `/tree` hierarchy | folder → file → class → method → doc section | docs-vs-code and module nesting |
-| Communities panel | live membership counts, per-community description/god-nodes | no more stale `node_count` sizing |
-| `is_exported` | `pub`/`export`/`__all__` per adapter | exports populate everywhere |
-| `git-subtree-dir` | `git log --grep='git-subtree-dir:'` prefixes | marketplace/homebrew scope dropdown shows them |
+| Element | Value | Meaning | Decision it drives / next step |
+|---|---|---|---|
+| Graph layout | nodes + edges (calls/imports/extends/implements) | structural map; community colour shows clusters | open the Code map at the cluster you need to read or change |
+| `community_id` per node | returned in the node projection | membership drives the cluster view | none — candidate to cut (an internal field; the cluster view carries the decision) |
+| `/tree` hierarchy | folder → file → class → method → doc section | docs-vs-code and module nesting | open a module's docs or code from its place in the tree |
+| Communities panel | live membership counts, per-community description/god-nodes | no more stale `node_count` sizing | inspect a god node and decide whether to split it |
+| `is_exported` | `pub`/`export`/`__all__` per adapter | exports populate everywhere | none — candidate to cut (a correctness property, not a signal) |
+| `git-subtree-dir` | `git log --grep='git-subtree-dir:'` prefixes | marketplace/homebrew scope dropdown shows them | scope the view to one subtree |
 
 ## Done gate
 

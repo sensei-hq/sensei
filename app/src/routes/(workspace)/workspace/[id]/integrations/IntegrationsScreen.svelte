@@ -3,18 +3,19 @@
   // PRESENTATIONAL: every decision, word and request is integrations-state's;
   // this renders it and reports clicks.
   import { PageHeader, Screen } from '$lib/components';
+  import { Button } from '@rokkit/ui';
+  import { Notice } from '@sensei/ui';
+  import { TRACKER_NAME } from '$lib/tracker-errors.js';
   import ModalShell from '$lib/components/ModalShell.svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { CREATE_TOKEN_URL, LEVELS, type TrackerIntegration } from './integrations-state.svelte.js';
+  import { CREATE_TOKEN_URL, LEVELS, METRICS, type TrackerIntegration } from './integrations-state.svelte.js';
 
   let { screen }: { screen: TrackerIntegration } = $props();
 
   const ALERT_ID = 'tracker-alert';
-  let alertEl = $state<HTMLElement | null>(null);
-
   // A failure takes focus, so it is read out and acted on at once.
   $effect(() => {
-    if (screen.alertSeq > 0 && alertEl) alertEl.focus();
+    if (screen.alertSeq > 0) document.getElementById(ALERT_ID)?.focus();
   });
 
   /** The alert describes the field it concerns; otherwise the field's own help. */
@@ -26,16 +27,17 @@
     e.preventDefault();
     void openUrl(href).catch(() => window.open(href, '_blank', 'noopener'));
   }
+  function openLink(href: string) {
+    void openUrl(href).catch(() => window.open(href, '_blank', 'noopener'));
+  }
 
-  const button =
-    'rounded-md border border-paper-edge px-3 py-1.5 text-sm text-ink hover:bg-paper-mute disabled:opacity-50';
   const input =
     'w-full px-3 py-2 border border-paper-edge rounded-md bg-paper-mute text-ink text-sm outline-none focus:border-focus-ring';
 </script>
 
 {#snippet field(
   id: string,
-  name: 'board_url' | 'email' | 'token' | 'site_url' | 'board_id',
+  name: 'board_url' | 'confirm_host' | 'email' | 'token' | 'site_url' | 'board_id' | 'iteration_field',
   label: string,
   type: string,
   value: string,
@@ -56,7 +58,7 @@
       oninput={(e) => set((e.currentTarget as HTMLInputElement).value)}
     />
     {#if help}
-      <p id="{id}-help" class="m-0 text-xs text-ink-soft">{help}</p>
+      <p id="{id}-help" class="m-0 text-xs text-ink-mute">{help}</p>
     {/if}
   </div>
 {/snippet}
@@ -68,45 +70,35 @@
       icon="i-solar-link-bold-duotone"
       eyebrow="Integrations"
       title="Issue trackers"
-      description="Connect this workspace’s Jira boards, each at a level, so sensei can link AI sessions to tickets and report time and tokens per ticket. Read-only: sensei never changes anything in Jira."
+      description="Connect this workspace’s Jira, GitLab or GitHub boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map (GitLab and GitHub boards are read-only for now)."
     />
   {/snippet}
 <section data-screen="integrations" class="flex flex-col">
 
   <div class="flex max-w-[640px] flex-col gap-5 px-6 py-6">
-    <p role="status" aria-live="polite" class="m-0 min-h-[1lh] text-sm text-ink-soft">{screen.statusText}</p>
+    <p role="status" aria-live="polite" class="m-0 min-h-[1lh] text-sm text-ink-mute">{screen.statusText}</p>
 
-    {#if screen.alert}
-      <div
+    {#if screen.alertNotice}
+      <Notice
+        size="panel"
+        {...screen.alertNotice}
         id={ALERT_ID}
-        bind:this={alertEl}
-        role="alert"
-        tabindex="-1"
-        class="rounded-md border border-danger bg-danger-soft px-3 py-2 text-sm text-ink outline-none"
-      >
-        {screen.alert.text}
-        {#if screen.alert.link}
-          {#if screen.alert.link.href.startsWith('https://')}
-            <a
-              href={screen.alert.link.href}
-              class="text-primary underline"
-              onclick={(e) => external(e, screen.alert!.link!.href)}>{screen.alert.link.label}</a
-            >
-          {:else}
-            <a href={screen.alert.link.href} class="text-primary underline">{screen.alert.link.label}</a>
-          {/if}
-        {/if}
-      </div>
+        tabindex={-1}
+        secondary={screen.alert?.link
+          ? screen.alert.link.href.startsWith('https://')
+            ? { label: screen.alert.link.label, onclick: () => openLink(screen.alert!.link!.href) }
+            : { label: screen.alert.link.label, href: screen.alert.link.href }
+          : undefined}
+      />
     {/if}
 
     {#if screen.view === 'loading'}
-      <p class="m-0 text-sm text-ink-soft">Reading the connection…</p>
+      <p class="m-0 text-sm text-ink-mute">Reading the connection…</p>
     {:else if screen.view === 'daemon_error'}
-      <div data-view="daemon_error" class="flex flex-col gap-3 rounded-md border border-paper-edge bg-paper-soft p-4">
-        <p class="m-0 text-sm text-danger">{screen.loadError}</p>
-        <div>
-          <button type="button" class={button} data-action="retry" onclick={() => screen.load()}>Retry</button>
-        </div>
+      <div data-view="daemon_error">
+        {#if screen.loadNotice}
+          <Notice size="panel" {...screen.loadNotice} primary={{ label: 'Retry', onclick: () => screen.load(), name: 'retry' }} />
+        {/if}
       </div>
     {:else}
       {#each screen.groups as group (group.level)}
@@ -115,7 +107,13 @@
           {#each group.trackers as tracker (tracker.id)}
             <div data-tracker={tracker.id} class="flex flex-col gap-3 rounded-lg border border-paper-edge bg-paper-soft p-4">
               <p class="m-0 text-sm text-ink">{screen.cardTitle(tracker)}</p>
-              <p class="m-0 flex items-center gap-2 text-xs text-ink-mute" data-status={tracker.status}>
+              {#if screen.sprintsLine(tracker)}
+                <p class="m-0 text-xs text-ink-soft" data-sprint-source={tracker.sprint_source}>{screen.sprintsLine(tracker)}</p>
+              {/if}
+              {#if screen.sourceChangeNotice(tracker)}
+                <p class="m-0 text-xs text-ink" role="note" data-notice="sprint-source">{screen.sourceChangeNotice(tracker)}</p>
+              {/if}
+              <p class="m-0 flex items-center gap-2 text-xs text-ink-soft" data-status={tracker.status}>
                 <span
                   aria-hidden="true"
                   class="inline-block size-2 rounded-full"
@@ -125,34 +123,121 @@
                 ></span>
                 {screen.cardStatus(tracker)}
               </p>
+              {#if tracker.kind === 'jira'}
+              <div class="flex flex-wrap items-center gap-3">
+                <label class="flex items-center gap-2 text-sm text-ink">
+                  <input
+                    type="checkbox"
+                    data-action="writeback"
+                    checked={tracker.writeback.enabled}
+                    disabled={screen.busy !== null}
+                    onclick={(e) => {
+                      // The daemon's answer decides the state; never the click alone.
+                      e.preventDefault();
+                      void screen.toggleWriteback(tracker);
+                    }}
+                  />
+                  Write back to Jira
+                </label>
+                <p class="m-0 text-xs text-ink-mute" data-writeback-state={tracker.writeback.state}>
+                  {screen.writebackLine(tracker)}
+                </p>
+              </div>
+              <div class="flex flex-col gap-2">
+                <div class="self-start">
+                  <Button
+                    style="outline"
+                    size="sm"
+                    data-action="fields"
+                    aria-expanded={screen.editingFields === tracker.id}
+                    disabled={screen.busy !== null}
+                    onclick={() => screen.openFields(tracker)}
+                    label="Fields ({tracker.writeback.mapped} mapped)"
+                  />
+                </div>
+                {#if screen.editingFields === tracker.id}
+                  <div data-section="fields" class="flex flex-col gap-2 rounded-md border border-paper-edge p-3">
+                    {#each screen.fieldRows as row, i (i)}
+                      <div data-field-row={i} class="flex flex-col gap-1">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <label class="flex items-center gap-1 text-xs text-ink">
+                            Metric
+                            <select data-field-metric bind:value={row.metric} class="rounded border border-paper-edge bg-paper p-1 text-sm">
+                              {#each METRICS as m (m.metric)}
+                                <option value={m.metric}>{m.label}</option>
+                              {/each}
+                            </select>
+                          </label>
+                          <label class="flex items-center gap-1 text-xs text-ink">
+                            Jira field id
+                            <input
+                              data-field-ref
+                              bind:value={row.field_ref}
+                              placeholder="customfield_10050"
+                              aria-invalid={screen.fieldError?.row === i}
+                              class="rounded border border-paper-edge bg-paper p-1 text-sm"
+                            />
+                          </label>
+                          <Button style="outline" size="sm" data-action="remove-field" onclick={() => screen.removeFieldRow(i)} label="Remove" />
+                        </div>
+                        {#if screen.fieldError?.row === i}
+                          <div data-field-error><Notice size="inline" bare expanded {...screen.fieldNotice!} /></div>
+                        {/if}
+                      </div>
+                    {/each}
+                    <p class="m-0 text-xs text-ink-mute">
+                      Each ticket counts its own sessions in full; don’t sum these fields across tickets.
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                      <Button style="outline" size="sm" data-action="add-field" onclick={() => screen.addFieldRow()} label="Add a field" />
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        data-action="save-fields"
+                        disabled={screen.busy !== null}
+                        onclick={() => screen.saveFields()}
+                        label={screen.busy === 'fields' ? 'Saving…' : 'Save fields'}
+                      />
+                    </div>
+                  </div>
+                {/if}
+              </div>
+              {:else}
+                <p class="m-0 text-xs text-ink-mute" data-writeback="unsupported">
+                  Write-back: not available for {TRACKER_NAME[tracker.kind]} yet
+                </p>
+              {/if}
               <div class="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  class={button}
+                <Button
+                  style="outline"
+                  size="sm"
                   data-action="sync"
                   disabled={screen.busy !== null}
                   onclick={() => screen.sync(tracker.id)}
-                  >{screen.busy === 'sync' && screen.busyTracker === tracker.id ? 'Syncing…' : 'Sync now'}</button
-                >
-                <button
-                  type="button"
-                  class={button}
+                  label={screen.busy === 'sync' && screen.busyTracker === tracker.id ? 'Syncing…' : 'Sync now'}
+                />
+                <Button
+                  style="outline"
+                  size="sm"
                   data-action="replace"
                   disabled={screen.busy !== null}
-                  onclick={() => screen.startReplace(tracker)}>Replace token</button
-                >
-                <button
-                  type="button"
-                  class="{button} text-danger"
+                  onclick={() => screen.startReplace(tracker)}
+                  label="Replace token"
+                />
+                <Button
+                  variant="danger"
+                  style="outline"
+                  size="sm"
                   data-action="disconnect"
                   disabled={screen.busy !== null}
-                  onclick={(e) => {
+                  onclick={(e: MouseEvent) => {
                     // Focus it first so closing the dialog returns here, also where a
                     // click does not focus buttons (WebKit).
                     (e.currentTarget as HTMLElement).focus();
                     screen.askDisconnect(tracker);
-                  }}>Disconnect</button
-                >
+                  }}
+                  label="Disconnect"
+                />
               </div>
             </div>
           {/each}
@@ -161,7 +246,7 @@
 
       {#if screen.view === 'connected' && !screen.showForm}
         <div>
-          <button type="button" class={button} data-action="add" onclick={() => screen.startAdd()}>Add a board</button>
+          <Button style="outline" size="sm" data-action="add" onclick={() => screen.startAdd()} label="Add a board" />
         </div>
       {/if}
 
@@ -188,7 +273,7 @@
                   checked={screen.level === l.level}
                   onchange={() => (screen.level = l.level)}
                 />
-                <span>{l.label} <span class="text-xs text-ink-soft">· {l.help}</span></span>
+                <span>{l.label} <span class="text-xs text-ink-mute">· {l.help}</span></span>
               </label>
             {/each}
           </fieldset>
@@ -196,14 +281,109 @@
           <fieldset class="m-0 flex gap-4 border-0 p-0">
             <legend class="mb-1 text-sm text-ink">Tracker</legend>
             <label class="flex items-center gap-2 text-sm text-ink" data-tracker="jira">
-              <input type="radio" name="tracker" value="jira" checked /> Jira
+              <input
+                type="radio"
+                name="tracker"
+                value="jira"
+                checked={screen.kind === 'jira'}
+                disabled={screen.replacing !== null}
+                onchange={() => (screen.kind = 'jira')}
+              /> Jira
             </label>
-            <span class="flex items-center gap-2 text-sm text-ink-faint" data-tracker="gitlab" aria-disabled="true">
-              GitLab, coming soon
-            </span>
+            <label class="flex items-center gap-2 text-sm text-ink" data-tracker="gitlab">
+              <input
+                type="radio"
+                name="tracker"
+                value="gitlab"
+                checked={screen.kind === 'gitlab'}
+                disabled={screen.replacing !== null}
+                onchange={() => (screen.kind = 'gitlab')}
+              /> GitLab
+            </label>
+            <label class="flex items-center gap-2 text-sm text-ink" data-tracker="github">
+              <input
+                type="radio"
+                name="tracker"
+                value="github"
+                checked={screen.kind === 'github'}
+                disabled={screen.replacing !== null}
+                onchange={() => (screen.kind = 'github')}
+              /> GitHub
+            </label>
           </fieldset>
 
-          {#if !screen.advanced}
+          {#if screen.kind === 'github'}
+            {@render field(
+              'tracker-board-url',
+              'board_url',
+              'Project URL',
+              'text',
+              screen.boardUrl,
+              (v) => (screen.boardUrl = v),
+              'Open the project on GitHub and copy the address bar, e.g. https://github.com/orgs/acme/projects/3.',
+            )}
+            {@render field(
+              'tracker-token',
+              'token',
+              'Access token',
+              'password',
+              screen.token,
+              (v) => (screen.token = v),
+              'Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project’s repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can’t read shows as not found.',
+            )}
+            {@render field(
+              'tracker-iteration-field',
+              'iteration_field',
+              'Iteration field (optional)',
+              'text',
+              screen.iterationField,
+              (v) => (screen.iterationField = v),
+              'Only when the project has more than one Iteration field: its name, as the project shows it.',
+            )}
+            {#if screen.iterationFields.length > 0}
+              <div class="flex flex-wrap items-center gap-2 text-sm text-ink" data-github-choices>
+                <span class="text-ink-mute">This project’s Iteration fields:</span>
+                {#each screen.iterationFields as name (name)}
+                  <Button
+                    style="outline"
+                    size="sm"
+                    label={name}
+                    onclick={() => (screen.iterationField = name)}
+                  />
+                {/each}
+              </div>
+            {/if}
+          {:else if screen.kind === 'gitlab'}
+            {@render field(
+              'tracker-board-url',
+              'board_url',
+              'Group or project URL',
+              'text',
+              screen.boardUrl,
+              (v) => (screen.boardUrl = v),
+              'Open the group or project in GitLab and copy the address bar, e.g. https://gitlab.example.com/acme/platform. https only, on the standard port.',
+            )}
+            {#if screen.needsConfirmHost}
+              {@render field(
+                'tracker-confirm-host',
+                'confirm_host',
+                'Confirm the host',
+                'text',
+                screen.confirmHost,
+                (v) => (screen.confirmHost = v),
+                'Type the host from the URL again (e.g. gitlab.example.com). sensei sends your token only to this host.',
+              )}
+            {/if}
+            {@render field(
+              'tracker-token',
+              'token',
+              'Access token',
+              'password',
+              screen.token,
+              (v) => (screen.token = v),
+              'In GitLab, create a personal or group access token with the read_api scope, and paste it here.',
+            )}
+          {:else if !screen.advanced}
             {@render field(
               'tracker-board-url',
               'board_url',
@@ -215,15 +395,18 @@
             )}
           {/if}
 
+          {#if screen.kind === 'jira'}
           <div class="flex flex-col gap-3">
-            <button
-              type="button"
-              class="self-start bg-transparent p-0 text-xs text-ink-soft underline"
-              aria-expanded={screen.advanced}
-              aria-controls="tracker-advanced"
-              onclick={() => (screen.advanced = !screen.advanced)}
-              >{screen.advanced ? 'Use a board URL instead' : 'Advanced ▸'}</button
-            >
+            <div>
+              <Button
+                style="link"
+                size="sm"
+                aria-expanded={screen.advanced}
+                aria-controls="tracker-advanced"
+                onclick={() => (screen.advanced = !screen.advanced)}
+                label={screen.advanced ? 'Use a board URL instead' : 'Advanced ▸'}
+              />
+            </div>
             {#if screen.advanced}
               <div id="tracker-advanced" class="flex flex-col gap-3">
                 {@render field(
@@ -264,32 +447,29 @@
             class="self-start text-sm text-primary underline"
             onclick={(e) => external(e, CREATE_TOKEN_URL)}>Create an API token</a
           >
+          {/if}
 
-          <p class="m-0 text-xs text-ink-soft">
+          <p class="m-0 text-xs text-ink-mute">
             Your token is stored in your system keychain, not in sensei’s database.
           </p>
 
           <div class="flex gap-2">
-            <button
+            <Button
               type="submit"
-              class="rounded-md bg-primary px-3 py-1.5 text-sm text-on-primary disabled:opacity-50"
+              variant="primary"
+              size="sm"
               data-action="connect"
               disabled={!screen.canConnect || screen.busy !== null}
-            >
-              {screen.busy === 'connect'
+              label={screen.busy === 'connect'
                 ? 'Checking credentials and board…'
                 : screen.replacing !== null
                   ? 'Replace token'
                   : 'Connect'}
-            </button>
+            />
             {#if screen.replacing !== null}
-              <button type="button" class={button} data-action="cancel-replace" onclick={() => screen.cancelReplace()}
-                >Cancel</button
-              >
+              <Button style="outline" size="sm" data-action="cancel-replace" onclick={() => screen.cancelReplace()} label="Cancel" />
             {:else if screen.adding}
-              <button type="button" class={button} data-action="cancel-add" onclick={() => screen.cancelAdd()}
-                >Cancel</button
-              >
+              <Button style="outline" size="sm" data-action="cancel-add" onclick={() => screen.cancelAdd()} label="Cancel" />
             {/if}
           </div>
         </form>
@@ -308,18 +488,11 @@
   <h2 id="disconnect-title" class="m-0 font-heading text-base text-ink">
     Disconnect board #{screen.confirmingDisconnect?.board_ref}?
   </h2>
-  <p class="m-0 text-sm text-ink-soft">
-    This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and Jira itself is not changed.
+  <p class="m-0 text-sm text-ink-mute">
+    This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and the tracker itself is not changed.
   </p>
   <div class="flex justify-end gap-2">
-    <button type="button" class={button} data-action="cancel-disconnect" onclick={() => screen.cancelDisconnect()}
-      >Cancel</button
-    >
-    <button
-      type="button"
-      class="rounded-md bg-danger px-3 py-1.5 text-sm text-on-primary"
-      data-action="confirm-disconnect"
-      onclick={() => screen.confirmDisconnect()}>Disconnect</button
-    >
+    <Button style="outline" size="sm" data-action="cancel-disconnect" onclick={() => screen.cancelDisconnect()} label="Cancel" />
+    <Button variant="danger" size="sm" data-action="confirm-disconnect" onclick={() => screen.confirmDisconnect()} label="Disconnect" />
   </div>
 </ModalShell>

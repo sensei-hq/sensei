@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, EmptyState } from '$lib/components/kit';
+	import { Screen, EmptyState } from '@sensei/ui';
+	import { SectionHead } from '$lib/components/kit';
 
 	// A "coming in the rebuild" placeholder for every dojo nav destination not yet
 	// ported (chunk 1). It keeps the two-nav complete — nothing 404s — while the

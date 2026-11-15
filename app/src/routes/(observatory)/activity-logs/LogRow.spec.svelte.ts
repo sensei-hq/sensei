@@ -50,7 +50,7 @@ describe('LogRow', () => {
     const m = mountComponent(LogRowHarness, { row: makeRow({ level: 'error' }), now: NOW });
     cleanup.push(m.destroy);
     const chip = m.container.querySelector('[data-log-level-chip]') as HTMLElement;
-    expect(chip.className).toContain('text-error');
+    expect(chip.className).toContain('text-on-error-soft');
     expect(chip.className).toContain('bg-error-soft');
   });
 

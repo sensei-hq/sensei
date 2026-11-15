@@ -1,0 +1,2 @@
+file	line	severity	anchor
+crates/demo/src/lib.rs	17	LOW	let text = resp.text().await.unwrap_or_default(); // expect: R1 allowed

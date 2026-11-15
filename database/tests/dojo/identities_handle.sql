@@ -1,0 +1,160 @@
+-- `dojo.identities.handle` — the forge login last seen at sign-in, stored so a
+-- member with no profile name still reads as a handle instead of words (F4a).
+-- Renameable: never the identity (that's `subject`), refreshed on each
+-- sign-in like `display_name`. Null when the provider supplies no login
+-- (Azure) or the sign-in predates handles — never backfilled, never invented.
+--
+-- WHAT BREAKS THIS TEST: the column missing, renamed, non-nullable, or
+-- carrying a default; the comment dropped; the handle escaping its
+-- read policy (self, tenant admin) or gaining a session write path.
+--
+-- Run with the fixture ALTER applied first (`run.sh --apply dojo
+-- fixtures/identities_handle.ddl ../ddl/table/dojo/identities.ddl
+-- dojo/identities_handle.sql` — the DDL file alone cannot land on a table
+-- that predates the column), or against a database the DDL has deployed
+-- to: opens its own transaction, asserts, rolls back.
+
+begin;
+
+-- The column until L0 converges it (F5): the fixture ALTER runs inside
+-- this transaction and rolls back with it. `if not exists` keeps this
+-- green when the ALTER is also passed as an `--apply` arg, and after
+-- converge.
+\ir ../fixtures/identities_handle.ddl
+
+insert into dojo.principals (id, auth_user_id, display_name) values
+  ('f1111111-1111-1111-1111-111111111111', 'f2222222-2222-2222-2222-222222222222', null),
+  ('f5555555-5555-5555-5555-555555555555', 'f6666666-6666-6666-6666-666666666666', 'ada'),
+  ('f7777777-7777-7777-7777-777777777777', 'f8888888-8888-8888-8888-888888888888', null),
+  ('f9999999-9999-9999-9999-999999999999', 'faaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', null);
+
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
+  ('f3333333-3333-3333-3333-333333333333', 'organization/ztest-handle', 'organization', 'ztest-handle',
+   'Handle', 'dojo.sensei-hq.org/organization/ztest-handle'),
+  ('f4444444-4444-4444-4444-444444444444', 'organization/ztest-other', 'organization', 'ztest-other',
+   'Other', 'dojo.sensei-hq.org/organization/ztest-other');
+
+-- M is T's plain member (the identity under test); A admins T; P is T's
+-- other plain member; O admins only T2.
+insert into dojo.memberships (id, tenant_id, user_id, role, kind, authenticated_via) values
+  ('fb111111-1111-1111-1111-111111111111', 'f3333333-3333-3333-3333-333333333333',
+   'f1111111-1111-1111-1111-111111111111', 'contributor', 'employer', 'github_oauth'),
+  ('fc111111-1111-1111-1111-111111111111', 'f3333333-3333-3333-3333-333333333333',
+   'f5555555-5555-5555-5555-555555555555', 'admin', 'employer', 'github_oauth'),
+  ('fd111111-1111-1111-1111-111111111111', 'f3333333-3333-3333-3333-333333333333',
+   'f7777777-7777-7777-7777-777777777777', 'contributor', 'employer', 'github_oauth'),
+  ('fe111111-1111-1111-1111-111111111111', 'f4444444-4444-4444-4444-444444444444',
+   'f9999999-9999-9999-9999-999999999999', 'admin', 'employer', 'github_oauth');
+
+insert into dojo.identities (principal_id, provider, subject, email, display_name, handle) values
+  ('f1111111-1111-1111-1111-111111111111', 'github_oauth', '4242', null, null, 'octocat');
+
+insert into dojo.identities (principal_id, provider, subject) values
+  ('f1111111-1111-1111-1111-111111111111', 'sso', 'sso-sub-1');
+
+do $$
+declare
+  v_handle text;
+  v_null text;
+  n int;
+begin
+  -- 1. The column exists, nullable, no default.
+  select count(*) into n
+    from information_schema.columns
+   where table_schema = 'dojo' and table_name = 'identities'
+     and column_name = 'handle' and data_type = 'text'
+     and is_nullable = 'YES' and column_default is null;
+  if n <> 1 then
+    raise exception 'identities.handle must be a nullable text with no default.';
+  end if;
+
+  -- 2. Roundtrip: what provisioning wrote reads back.
+  select handle into v_handle
+    from dojo.identities
+   where provider = 'github_oauth' and subject = '4242';
+  if v_handle is distinct from 'octocat' then
+    raise exception 'handle should read octocat, saw %.', v_handle;
+  end if;
+
+  -- 3. No handle written, no handle invented.
+  select handle into v_null
+    from dojo.identities
+   where provider = 'sso' and subject = 'sso-sub-1';
+  if v_null is not null then
+    raise exception 'an identity without a handle must read NULL, saw %.', v_null;
+  end if;
+
+  -- 4. The column carries its comment.
+  select count(*) into n
+    from pg_catalog.pg_description d
+    join pg_catalog.pg_class c on c.oid = d.objoid
+    join pg_catalog.pg_namespace s on s.oid = c.relnamespace
+    join pg_catalog.pg_attribute a on a.attrelid = c.oid and a.attnum = d.objsubid
+   where s.nspname = 'dojo' and c.relname = 'identities' and a.attname = 'handle'
+     and d.description is not null;
+  if n <> 1 then
+    raise exception 'identities.handle must carry a comment.';
+  end if;
+end $$;
+
+-- 5. The handle keeps the row's read policy: self and the tenant admin see
+-- it; a plain member and another tenant's admin see no row at all. Nobody
+-- writes one from their session.
+set local role authenticated;
+
+do $$
+declare
+  v_handle text;
+  n int;
+begin
+  -- A (admin of T) reads M's handle.
+  perform set_config('request.jwt.claims',
+    '{"sub":"f6666666-6666-6666-6666-666666666666","role":"authenticated"}', true);
+  select handle into v_handle from dojo.identities
+   where principal_id = 'f1111111-1111-1111-1111-111111111111'
+     and provider = 'github_oauth' and subject = '4242';
+  if v_handle is distinct from 'octocat' then
+    raise exception 'the tenant admin should read the handle, saw %.', v_handle;
+  end if;
+
+  -- M reads their own.
+  perform set_config('request.jwt.claims',
+    '{"sub":"f2222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+  select handle into v_handle from dojo.identities
+   where principal_id = 'f1111111-1111-1111-1111-111111111111'
+     and provider = 'github_oauth' and subject = '4242';
+  if v_handle is distinct from 'octocat' then
+    raise exception 'self should read the handle, saw %.', v_handle;
+  end if;
+
+  -- P (T's other plain member) sees no row.
+  perform set_config('request.jwt.claims',
+    '{"sub":"f8888888-8888-8888-8888-888888888888","role":"authenticated"}', true);
+  select count(*) into n from dojo.identities
+   where principal_id = 'f1111111-1111-1111-1111-111111111111';
+  if n <> 0 then
+    raise exception 'a plain member must see no row, saw %.', n;
+  end if;
+
+  -- O (admin of only T2) sees no row.
+  perform set_config('request.jwt.claims',
+    '{"sub":"faaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","role":"authenticated"}', true);
+  select count(*) into n from dojo.identities
+   where principal_id = 'f1111111-1111-1111-1111-111111111111';
+  if n <> 0 then
+    raise exception 'another tenant''s admin must see no row, saw %.', n;
+  end if;
+
+  -- M cannot rewrite their own handle: binding needs the forge's proof.
+  perform set_config('request.jwt.claims',
+    '{"sub":"f2222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+  begin
+    update dojo.identities set handle = 'hacked'
+     where principal_id = 'f1111111-1111-1111-1111-111111111111';
+    raise exception 'a session write to identities was allowed';
+  exception when insufficient_privilege then
+    -- expected: select-only grant, no write policy
+  end;
+end $$;
+
+rollback;

@@ -1,4 +1,4 @@
-Feature: Relay — the three relay drivers and the unbuilt screens
+Feature: Relay — the three relay drivers and the unbuilt desktop screen
 
   # pinned: plan_update_maps_entries_to_segments_with_state
   Scenario: a plan update maps entries to segments with state
@@ -186,12 +186,14 @@ Feature: Relay — the three relay drivers and the unbuilt screens
     When the driver factory runs
     Then the driver carries the cmd
 
+  # built in the dōjō, unverified in production (D27)
   NO TEST
-  Scenario: the mobile relay screen shows live drive progress
+  Scenario: the mobile relay shows live drive progress
     Given a running drive
-    When the mobile relay screen opens
+    When the dōjō's run detail opens
     Then it shows heartbeats, progress, gates and nudges in real time
-    This is greenfield — unbuilt, no test.
+    Built at (app)/you/(inbox)/runs/[run_id] over v1/…/relay/session; no
+    production run has been observed yet.
 
   NO TEST
   Scenario: the desktop relay screen shows the plan and live drive

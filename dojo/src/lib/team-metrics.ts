@@ -47,6 +47,7 @@ export interface TeamTotal extends TeamMetricValue {
 export interface TeamMemberMetrics {
 	principal_id: string;
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 	/** The caller themselves. */
 	you: boolean;

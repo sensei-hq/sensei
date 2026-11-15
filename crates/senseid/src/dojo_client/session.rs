@@ -156,6 +156,22 @@ pub fn store_refresh_token(
     update_credentials_with(&Keychain, persona, |c| c.refresh_token = Some(token.to_string()))
 }
 
+/// Record a fresh sign-in: the refresh token plus the registry that minted it.
+///
+/// A sign-in at B over an item minted at A replaces A — a stale minter would
+/// otherwise make every new session "foreign".
+pub(crate) fn store_signed_in_session(
+    store: &impl SlotStore,
+    persona: &str,
+    refresh_token: &str,
+    registry: &str,
+) -> Result<(), crate::gateway_keys::KeychainError> {
+    update_credentials_with(store, persona, |c| {
+        c.refresh_token = Some(refresh_token.to_string());
+        c.minted_registry = Some(registry.to_string());
+    })
+}
+
 /// The single un-namespaced slot used before sessions became per-persona.
 const LEGACY_ACCOUNT: &str = "refresh_token";
 
@@ -177,12 +193,35 @@ pub struct Credentials {
     /// GitHub's token, when the sign-in captured one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_token: Option<String>,
+    /// The registry that minted these tokens (M1): a session token is
+    /// presented only to its own registry. `None` on items stored before
+    /// registries were recorded — legacy items fail closed (fresh sign-in),
+    /// never sent anywhere. Stored at exchange time in phase B; read by
+    /// `live_session` and `TenantCredential::of`. Metadata, not a
+    /// credential: it does not count for `is_empty`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minted_registry: Option<String>,
 }
 
 impl Credentials {
     fn is_empty(&self) -> bool {
         self.refresh_token.is_none() && self.provider_token.is_none()
     }
+}
+
+/// Store a full credential item for tests (M1 reds): refresh token plus the
+/// registry that minted it. Real keychain — callers gate on macOS and clear
+/// the persona afterwards.
+#[cfg(test)]
+pub(crate) fn store_test_credentials(
+    persona: &str,
+    refresh_token: &str,
+    minted_registry: Option<&str>,
+) -> Result<(), KeychainError> {
+    update_credentials_with(&Keychain, persona, |c| {
+        c.refresh_token = Some(refresh_token.to_string());
+        c.minted_registry = minted_registry.map(str::to_string);
+    })
 }
 
 /// The account holding a persona's [`Credentials`].
@@ -192,14 +231,14 @@ fn credentials_account_for(persona: &str) -> String {
 
 /// The keychain, as the session code sees it — a seam so the migration and its
 /// never-drop-a-credential rules are testable without one.
-trait SlotStore {
+pub(crate) trait SlotStore {
     fn get(&self, account: &str) -> Result<String, KeychainError>;
     fn set(&self, account: &str, secret: &str) -> Result<(), KeychainError>;
     fn delete(&self, account: &str) -> Result<(), KeychainError>;
 }
 
 /// The OS keychain under [`KEYCHAIN_SERVICE`].
-struct Keychain;
+pub(crate) struct Keychain;
 
 impl SlotStore for Keychain {
     fn get(&self, account: &str) -> Result<String, KeychainError> {
@@ -249,7 +288,9 @@ fn load_credentials_with(
         None => read_optional(store, LEGACY_ACCOUNT)?,
     };
     let provider_token = read_optional(store, &provider_account_for(persona))?;
-    let creds = Credentials { refresh_token, provider_token };
+    // Migrated from pre-registry slots: no minter recorded, so legacy — fail
+    // closed, never sent anywhere until a fresh sign-in records one.
+    let creds = Credentials { refresh_token, provider_token, minted_registry: None };
     if creds.is_empty() {
         return Err(KeychainError::NotFound);
     }
@@ -377,7 +418,14 @@ pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::Key
 /// combined record keeps GitHub's token without the rejected one.
 fn clear_refresh_token_in(store: &impl SlotStore, persona: &str) -> Result<(), KeychainError> {
     let old = clear_refresh_token_with(persona, |a| store.delete(a));
-    let record = update_credentials_with(store, persona, |c| c.refresh_token = None);
+    // The minter dies with the token: it describes the refresh token's
+    // origin, and a dead token has no origin worth remembering. Without a
+    // refresh token the minted check never runs, so a kept minter would be
+    // dead metadata.
+    let record = update_credentials_with(store, persona, |c| {
+        c.refresh_token = None;
+        c.minted_registry = None;
+    });
     old.and(record)
 }
 
@@ -747,6 +795,97 @@ mod tests {
         let c = load_credentials_with(&store, "p").unwrap();
         assert_eq!(c.refresh_token.as_deref(), Some("sb_rotated"));
         assert_eq!(c.provider_token.as_deref(), Some("gho_token"));
+    }
+
+    // F-C(1): a sign-in records the registry that minted it. Without the
+    // record every fresh sign-in fails closed, forever — a total sync outage
+    // with a green suite.
+    #[test]
+    fn a_sign_in_records_the_registry_that_minted_it() {
+        let store = MemStore::default();
+        store_signed_in_session(&store, "p", "sb_new", "https://a.invalid").expect("stored");
+        let c = load_credentials_with(&store, "p").unwrap();
+        assert_eq!(c.refresh_token.as_deref(), Some("sb_new"));
+        assert_eq!(
+            c.minted_registry.as_deref(),
+            Some("https://a.invalid"),
+            "the minter must be recorded at sign-in"
+        );
+    }
+
+    // F-C(2): a sign-in at B over an item minted at A replaces A. A stale A
+    // would otherwise make every new session "foreign".
+    #[test]
+    fn a_sign_in_at_b_over_an_item_minted_at_a_replaces_a() {
+        let store = MemStore::default();
+        update_credentials_with(&store, "p", |c| {
+            c.refresh_token = Some("sb_a".into());
+            c.minted_registry = Some("https://a.invalid".into());
+        })
+        .expect("seeded");
+        store_signed_in_session(&store, "p", "sb_b", "https://b.invalid").expect("stored");
+        let c = load_credentials_with(&store, "p").unwrap();
+        assert_eq!(c.refresh_token.as_deref(), Some("sb_b"));
+        assert_eq!(
+            c.minted_registry.as_deref(),
+            Some("https://b.invalid"),
+            "the new minter replaces the old one, got {:?}",
+            c.minted_registry
+        );
+    }
+
+    // F-C(3a): rotation keeps the minter — the session is the same one, with a
+    // newer token. Green before and after: the rotation write only touches the
+    // token. (Replicates `live_session`'s rotation write on the in-memory
+    // store; the write itself is one field.)
+    #[test]
+    fn a_rotated_session_keeps_its_minter() {
+        let store = MemStore::default();
+        update_credentials_with(&store, "p", |c| {
+            c.refresh_token = Some("sb_old".into());
+            c.minted_registry = Some("https://a.invalid".into());
+        })
+        .expect("seeded");
+        update_credentials_with(&store, "p", |c| c.refresh_token = Some("sb_rotated".into()))
+            .expect("rotated");
+        let c = load_credentials_with(&store, "p").unwrap();
+        assert_eq!(c.refresh_token.as_deref(), Some("sb_rotated"));
+        assert_eq!(c.minted_registry.as_deref(), Some("https://a.invalid"));
+    }
+
+    // F-C(3b): a rejection clear takes the minter with the token. The minter
+    // describes the refresh token's origin; the token is dead, so the origin
+    // is moot — and without a refresh token the minted check never runs, so a
+    // kept minter would be dead metadata. (Uniform with `is_empty`, which
+    // already does not count the minter: a minter-only item deletes itself.)
+    #[test]
+    fn a_rejection_clear_takes_the_minter_with_the_token() {
+        // With a surviving provider token the item lives — the minter must
+        // still go.
+        let store = MemStore::default();
+        update_credentials_with(&store, "p", |c| {
+            c.refresh_token = Some("sb_dead".into());
+            c.provider_token = Some("gho_token".into());
+            c.minted_registry = Some("https://a.invalid".into());
+        })
+        .expect("seeded");
+        clear_refresh_token_in(&store, "p").expect("cleared");
+        let c = load_credentials_with(&store, "p").unwrap();
+        assert_eq!(c.provider_token.as_deref(), Some("gho_token"), "the provider token survives");
+        assert!(
+            c.minted_registry.is_none(),
+            "a cleared session keeps no minter, got {:?}",
+            c.minted_registry
+        );
+        // Without one the item deletes itself, minter with it — already true.
+        let bare = MemStore::default();
+        update_credentials_with(&bare, "p", |c| {
+            c.refresh_token = Some("sb_dead".into());
+            c.minted_registry = Some("https://a.invalid".into());
+        })
+        .expect("seeded");
+        clear_refresh_token_in(&bare, "p").expect("cleared");
+        assert!(!bare.has(&credentials_account_for("p")), "the emptied item is gone");
     }
 
     #[test]

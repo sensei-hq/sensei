@@ -39,7 +39,7 @@ export function ftrChip(ftr: ObservatoryFtr): FtrChip {
   const direction: FtrDirection = delta == null || delta === 0 ? 'flat' : delta > 0 ? 'up' : 'down';
   const arrow = delta == null ? '' : direction === 'up' ? '↑' : direction === 'down' ? '↓' : '→';
   const toneClass =
-    direction === 'up' ? 'text-success' : direction === 'down' ? 'text-warning' : 'text-ink-soft';
+    direction === 'up' ? 'text-success' : direction === 'down' ? 'text-warning' : 'text-ink-mute';
   return { value, delta, direction, arrow, toneClass };
 }
 
@@ -67,10 +67,10 @@ export function insightToneClasses(tone: ObservatoryInsight['tone']): InsightTon
     case 'good':
       return { glyph: 'text-success', tag: 'bg-paper-mute text-success border border-success' };
     default:
-      // 'mute' → ink-mute is the named token for intentionally suppressed
-      // content (matches the card body's text-ink-mute); ink-soft is for
+      // 'mute' → ink-soft is the named token for intentionally suppressed
+      // content (matches the card body's text-ink-soft); ink-mute is for
       // secondary text and would render the muted glyph lighter than its body.
-      return { glyph: 'text-ink-mute', tag: 'bg-paper-mute text-ink-mute' };
+      return { glyph: 'text-ink-soft', tag: 'bg-paper-mute text-ink-soft' };
   }
 }
 

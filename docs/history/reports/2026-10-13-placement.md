@@ -96,7 +96,7 @@ Every remaining miss carries its root cause (`sensei.reason_codes`):
 - **`macro_expansion`** (Rust, 25 edges) — uses of declarations a declarative
   macro generates (`schema_vocabulary! { SchemaSource { … } }`); the walk
   reads the invocation as text and does not expand it. A refusal, stated.
-- **`dynamic_dispatch`** (1) — `this[event.action](…)`: a member chosen at
+- **`dynamic_dispatch`** (1) — `thisevent.action`: a member chosen at
   run time.
 - **`compiler_no_symbol`** (Rust, 9) — type annotations on `let` bindings
   inside `#[tokio::test]` bodies and fn-local types (`Site`, `Check`) where

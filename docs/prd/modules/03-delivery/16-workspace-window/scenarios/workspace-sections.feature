@@ -55,10 +55,10 @@ Feature: Workspace Window — the section panes, membership, patterns, libraries
     Then folders, sessions and memories move and the source is deleted
 
   NO TEST
-  Scenario: the solution-track roll-up spans several workspaces
-    Given a desktop solution spanning several workspaces
+  Scenario: the workspace roll-up spans its repositories
+    Given a workspace spanning several repositories
     When the roll-up renders
-    Then each workspace's status is summarised without reading code
+    Then each repository's status is summarised without reading code
 
   NO TEST
   Scenario: the Tasks section renders the workspace's plan

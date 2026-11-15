@@ -5,6 +5,8 @@ import { orgBySlug } from '$lib/chrome';
 import { listWorkspaces } from '$lib/client-data';
 import { toKitWorkspaces } from '$lib/workspaces-map';
 import { loadWorkspaceConstitution } from '$lib/workspace-constitution';
+import { getWorkspaceMetrics } from '$lib/workspace-metrics-data';
+import { toWorkspaceMetricsView, type WorkspaceMetricsView } from '$lib/workspace-metrics-view';
 import type { KitWorkspace } from '$lib/components/kit/types';
 
 // The org workspace-constitution preview drill-in loader (mockup ScrWorkspacePreview
@@ -31,5 +33,26 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	if (!workspace) redirect(307, back);
 
 	const { ladder, conflicts, error } = await loadWorkspaceConstitution(workspace.id, { fetch, accessToken });
-	return { slug: params.slug, orgName: org.name, workspace, ladder, conflicts, constitutionError: error };
+
+	// The workspace's metrics (WP5): per-repository charts from the WP4 read.
+	// A failure is carried SEPARATELY from an empty window — "nothing sent" and
+	// "could not ask" are different answers (F1, #109).
+	let metricsView: WorkspaceMetricsView | null = null;
+	let metricsError: string | null = null;
+	try {
+		metricsView = toWorkspaceMetricsView(await getWorkspaceMetrics(org.url, workspace.id, { fetch, accessToken }));
+	} catch (e) {
+		metricsError = e instanceof Error ? e.message : 'the request failed';
+	}
+
+	return {
+		slug: params.slug,
+		orgName: org.name,
+		workspace,
+		ladder,
+		conflicts,
+		constitutionError: error,
+		metricsView,
+		metricsError
+	};
 };

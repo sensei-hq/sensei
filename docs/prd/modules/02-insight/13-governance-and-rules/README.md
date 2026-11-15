@@ -7,9 +7,7 @@ team developer ([persona 2](../../../03-personas.md#2--team-developer--the-inher
 ## Purpose
 
 Governance is how the pair (developer + assistants) agrees on the **rules of
-engagement**. Rules are not a flat list: each concern (security, architecture,
-testing, style) is its own **priority ladder**; when two rules conflict the higher
-rung wins regardless of scope, with scope riding along as a tag — not the structure.
+engagement**. When two rules conflict, the **stronger enforcement wins** (mandatory > required > recommended > advisory, and a mandatory rule is never overridden); between rules of equal enforcement, the **most specific scope wins** (general → user → dōjō → workspace → repository), as `governance.rs` orders them (D57).
 The assistant loads the resolved rules at session start and is *re-grounded* after
 context compaction, so guidance sticks on long runs; the verifier blocks risky
 actions that violate a P0 mandatory rule — no silent bypass. A solo user's rules come
@@ -29,8 +27,8 @@ rules are the Team plane on top of the same primitives. The user feels this modu
 
 ## In scope / out of scope
 
-- In: the rules model and resolution (priority ladders, tighter-scope tiebreak,
-  mandatory-lock, and the **one canonical resolution order** —
+- In: the rules model and resolution (stronger enforcement first, then most-specific scope — D57;
+  the longer statement is
   [design/governance.md §Resolution order](../../../../design/governance.md#resolution-order-the-one-order));
   the personal rules file (`~/.sensei/rules.md`, hot-reloaded);
   promotion paths into rules (from memories · patterns · chosen options · derived);
@@ -45,7 +43,7 @@ rules are the Team plane on top of the same primitives. The user feels this modu
   live in [T2 §Stance](../../04-team/02-dojo-consoles/README.md#stance--three-dials-and-a-fixed-floor))
   and **tier-aware rule injection** — delivered and kept sticky per
   [Instruction delivery & stickiness](#instruction-delivery--stickiness); the
-  solution-scope rule cascade.
+  the multi-repository rule cascade.
 - Out: the Dōjō share plane — triage, distribution, tenant consoles, identity/SSO,
   leak-guard, Collective commons (T1–T6, shares the same rule primitives up-stream);
   the MCP `get_rules`/`get_layered_context` *consumer* surfaces in the assistant
@@ -93,11 +91,11 @@ rules are the Team plane on top of the same primitives. The user feels this modu
   `origin = 'authored'` memories; hot-reloaded by the M3 root-watcher within the
   debounce window. (`memory_scope` has no `user` rung today — user-level rules land as
   global / `namespace_id`-scoped rows; see `G-MEM-SCOPE`.)
-- **Priority + scope, never scope alone.** Within a ladder: `P0 > P1 > P2 > P3`,
-  then impact (`critical > … > low`); same priority+impact contradiction → tighter
-  scope wins (`global | workspace | stack | task_type | module`) — no `user`/`org` rung
-  exists in `memory_scope` today (same caveat as M9). `memory_scope` is the legacy
-  surfacing axis; governance resolution orders by the `sensei.scopes` ladder above.
+- **Priority orders the legacy surfacing axis only.** On `memory_scope`
+  (`global | workspace | stack | task_type | module` — no `user`/`org` rung today, same
+  caveat as M9) rows surface by `P0 > P1 > P2 > P3`, then impact (`critical > … > low`).
+  Governance resolution does not use it: it follows D57 on the `sensei.scopes` ladder
+  above (stronger enforcement first, then the most specific scope).
 - **Enforcement.** Checker (on capture events, writes `sensei.rule_check_runs` with
   `verdict` + `output_tail` — the only enforcement table that ships today); Resolver
   (effective ruleset for the context); Verifier (**hard gate by default** — P0
@@ -110,9 +108,10 @@ rules are the Team plane on top of the same primitives. The user feels this modu
 - **Sources of rule rows** are recorded in `origin` and the promotion provenance
   (`promoted:memory:{id}`, `promoted:pattern:{id}`, `chosen:option:{category}`,
   `derived`, `dojo:{org}:{artifact}`, `user_added`, `remote`).
-- **Solution cascade** (multi-repo): global → org → solution → workspace → module,
-  walk-merged by the resolver; solution rules may not be overridden by member
-  workspaces when `mandatory`.
+- **Multi-repository cascade:** general → dōjō → workspace → repository, walk-merged
+  by the resolver under D57. A workspace's `mandatory` rules may not be overridden by
+  its repositories. ("Solution" was the earlier name for a workspace, "org" for the
+  dōjō, "module" for the repository.)
 - **Stance is authored elsewhere, resolved here.** The dials (autonomy · sharing
   · review) and the non-authorable anonymization floor are specified in
   [T2 §Stance](../../04-team/02-dojo-consoles/README.md#stance--three-dials-and-a-fixed-floor);
@@ -169,16 +168,16 @@ so guidance sticks on long runs" — this is that requirement, made testable.
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| `get_rules(project=X)` | effective merged list, ladder-ordered | 3 Security P0 · 1 Testing P1 · 2 Style advisory |
-| Violation card | rule check against captured behaviour | "echo suppressed lint on auth.rs — P0 bypass flagged" |
-| Verify result | allow/block with specific reason | block: "commit violates P0 'no secrets in commits'" |
-| Override row *(not built)* | audit trail with expiry | "--no-verify accepted; expires tomorrow, approver: you" |
-| Ladder panel | per-concern rules with mandatory flags | Preferences → Rules |
-| Pushed tier | what is always in context from turn 0 (no `get_rules` call) | `4 mandatory · 2 required pushed at session start` |
-| Re-assert | the tier re-injected at compaction | `full mandatory tier re-injected — not the refocus summary` |
-| Drift re-inject | the mandatory tier re-emitted when drift fires | `drift at 12 untouched tool calls → mandatory tier re-emitted` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| `get_rules()` | effective merged list, ladder-ordered | 3 Security P0 · 1 Testing P1 · 2 Style advisory | retire a stale rule, or raise one the session keeps missing |
+| Violation card | rule check against captured behaviour | "echo suppressed lint on auth.rs — P0 bypass flagged" | fix the behaviour, or challenge the rule |
+| Verify result | allow/block with specific reason | block: "commit violates P0 'no secrets in commits'" | fix the commit, or record a reasoned bypass |
+| Override row *(not built)* | audit trail with expiry | "--no-verify accepted; expires tomorrow, approver: you" | renew the override, or let it expire |
+| Ladder panel | per-concern rules with mandatory flags | Preferences → Rules | raise, lower or retire a rule's enforcement |
+| Pushed tier | what is always in context from turn 0 (no `get_rules` call) | `4 mandatory · 2 required pushed at session start` | demote a rule to advisory when the pushed tier outgrows its budget |
+| Re-assert | the tier re-injected at compaction | `full mandatory tier re-injected — not the refocus summary` | none — candidate to cut (a confirmation; no choice is offered) |
+| Drift re-inject | the mandatory tier re-emitted when drift fires | `drift at 12 untouched tool calls → mandatory tier re-emitted` | none — candidate to cut (a confirmation; no choice is offered) |
 
 ## Done gate
 
@@ -272,7 +271,7 @@ psql -A -t -c "select max(modified_at) from sensei.memories
 ## Related
 
 - [spec/pipeline/governance](../../../../spec/pipeline/governance.md) — ladders,
-  enforcement, solution cascade (legacy depth, folds here; see design doc for the
+  enforcement, the multi-repository cascade (legacy depth, folds here; see design doc for the
   shipped model).
 - [design/governance](../../../../design/governance.md) — the shipped rule-model
   (rule = memory + 3 columns), tier-1/tier-2 resolution, the **one canonical

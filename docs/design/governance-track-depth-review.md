@@ -240,4 +240,4 @@ specification work, not design work.
 - [`../spec/pipeline/governance.md`](../spec/pipeline/governance.md) — legacy pipeline depth (ladders, enforcement, solution cascade).
 - [`../features/05-governance.md`](../features/05-governance.md) — the Dōjō plane dossier (folds into T1–T4).
 - [`../prd/modules/02-insight/13-governance-and-rules/README.md`](../prd/modules/02-insight/13-governance-and-rules/README.md) · [`../prd/modules/04-team/02-dojo-consoles/README.md`](../prd/modules/04-team/02-dojo-consoles/README.md).
-- [`../mockups/Sensei/lib/dojo/dojo-governance.jsx`](../mockups/Sensei/lib/dojo/dojo-governance.jsx) — the authoring surface (visual source, never edited).
+- `../mockups/Sensei/lib/dojo/dojo-governance.jsx` — the authoring surface (visual source, never edited).

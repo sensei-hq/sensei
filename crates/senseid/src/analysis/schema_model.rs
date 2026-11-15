@@ -11,13 +11,15 @@
 
 use std::collections::HashMap;
 
-use dbd_core::schema_model::{Column, DepEdge, EntityNode, Index, NodeRef, Ref, RefEnd, TableNode};
+use dbd_core::schema_model::{
+    Column, DepEdge, EntityNode, EnumNode, Index, NodeRef, Ref, RefEnd, TableNode,
+};
 use serde::Serialize;
 
 use crate::db::pg_store::{StoredDep, StoredSchemaEntity};
 
-/// The `SchemaModel` version these parts are shaped after.
-pub const MODEL_VERSION: u32 = 2;
+/// The `SchemaModel` version these parts are shaped after — v3 for `enums`.
+pub const MODEL_VERSION: u32 = 3;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct SchemaPayload {
@@ -26,6 +28,8 @@ pub struct SchemaPayload {
     pub refs: Vec<Ref>,
     pub entities: Vec<EntityNode>,
     pub deps: Vec<DepEdge>,
+    /// The design's enums and their values (v3).
+    pub enums: Vec<EnumNode>,
 }
 
 /// Assemble the payload. An fqn that names no described object, or an
@@ -49,7 +53,19 @@ pub fn assemble(
     let mut tables = Vec::new();
     let mut objects = Vec::new();
     let mut refs = Vec::new();
+    let mut enums = Vec::new();
     for e in entities {
+        if e.kind == "enum" {
+            enums.push(EnumNode {
+                schema: e.db_schema.clone(),
+                name: e.name.clone(),
+                values: e.enum_values.clone(),
+                note: e.note.clone(),
+                note_md: e.note_md.clone(),
+                module: None,
+            });
+            continue;
+        }
         if e.kind != "table" {
             objects.push(EntityNode {
                 schema: e.db_schema.clone(),
@@ -151,7 +167,14 @@ pub fn assemble(
         });
     }
 
-    Ok(SchemaPayload { version: MODEL_VERSION, tables, refs, entities: objects, deps: edges })
+    Ok(SchemaPayload {
+        version: MODEL_VERSION,
+        tables,
+        refs,
+        entities: objects,
+        deps: edges,
+        enums,
+    })
 }
 
 #[cfg(test)]
@@ -173,7 +196,23 @@ mod tests {
             columns: vec![],
             indexes: vec![],
             refs: vec![],
+            enum_values: Vec::new(),
         }
+    }
+
+    /// An enum is served as dbd's v3 `enums` — its values in order — not as a
+    /// generic entity, so the viewer's Overview counts it and its page lists them.
+    #[test]
+    fn an_enum_is_served_as_dbd_enums_with_its_values() {
+        let mut status = entity("app", "order_status", "enum");
+        status.enum_values = vec!["pending".into(), "paid".into()];
+        let p = assemble(&[status, entity("app", "orders", "table")], &[]).unwrap();
+        assert_eq!(p.version, 3);
+        assert!(p.entities.is_empty(), "an enum is not a generic entity");
+        assert_eq!(
+            serde_json::to_value(&p).unwrap()["enums"],
+            serde_json::json!([{ "schema": "app", "name": "order_status", "values": ["pending", "paid"] }])
+        );
     }
 
     fn column(name: &str, pk: bool) -> SchemaColumn {
@@ -220,7 +259,7 @@ mod tests {
     #[test]
     fn tables_carry_dbds_column_spelling_and_views_are_entities() {
         let payload = assemble(&corpus(), &[]).unwrap();
-        assert_eq!(payload.version, 2);
+        assert_eq!(payload.version, 3);
         let names: Vec<&str> = payload.tables.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, ["customers", "orders"]);
         let orders = &payload.tables[1];

@@ -4,20 +4,18 @@
 
 	// Shared run-status pill for Relay (run list + run detail). Renders the same
 	// DojoChip-style rounded pill the run list drew inline — statusBadge(status)
-	// gives the plain-language label + tone class — so nothing regresses. When the
-	// run is 'running' a small accent-toned dot pulses ahead of the label; every
-	// other status shows no dot, keeping the surface calm. Pure/presentational.
+	// gives the plain-language label, tone class and — for a live run — a pulsing
+	// dot in the run's own tone. Pure/presentational.
 	let { status }: { status: RelayRunStatus } = $props();
 
 	const badge = $derived(statusBadge(status));
-	const running = $derived(status === 'running');
 </script>
 
 <span
 	class="mono border-paper-edge inline-flex items-center rounded-full border {badge.toneClass} text-xs" style="padding: 4px 8px; letter-spacing: 0.02em; gap: 5px"
 >
-	{#if running}
-		<span class="pulse-dot bg-accent" aria-hidden="true"></span>
+	{#if badge.pulseClass}
+		<span class="pulse-dot {badge.pulseClass}" aria-hidden="true"></span>
 	{/if}
 	{badge.label}
 </span>

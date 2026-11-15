@@ -25,6 +25,7 @@
 //   - the row's own `deactivated` (the local mirror) lags until the next sync,
 //     which the screen says rather than papering over.
 
+import { failureNotice } from '@sensei/ui';
 import type {
   MetricReason,
   MetricStatusResponse,
@@ -207,28 +208,6 @@ export function isConfigurable(repoKey: string | null): boolean {
   return repoKey !== null && repoKey !== '';
 }
 
-/**
- * The Keychain session slot to sign the activation write with, or null.
- *
- * `PersonaWire.sessionSlot` is the slot; `label` is a display string and
- * explicitly NOT it. Signing against the label addresses a different credential
- * or none, so the daemon answers 401 and the screen would report a permissions
- * problem for what is really a wrong-field bug.
- *
- * `sessionSlot` is null until a persona has connected, so null here means nobody
- * is signed in — a real state the caller must show, not a reason to fall back to
- * `'default'` and let the write fail at the daemon.
- *
- * Takes the first persona that HAS a slot. An install with several signed-in
- * personas will need a picker; until then the first is the honest choice and the
- * screen names which one it used.
- */
-export function signedInSlot(
-  personas: readonly { sessionSlot: string | null }[],
-): string | null {
-  return personas.find((p) => p.sessionSlot !== null)?.sessionSlot ?? null;
-}
-
 /** One repository in the rail, with the line that says how it is doing. */
 export interface RepoEntry extends MetricStatusSummaryRow {
   worst: MetricReason | null;
@@ -274,6 +253,13 @@ export class MetricSettings {
   saving = $state(false);
   /** The last read or write error, or null. Cleared at the start of each. */
   error = $state<string | null>(null);
+
+  /** Notice props for a change that did not happen. A local refusal (no remote
+   *  key, no signed-in identity) is a refusal, not a fault: nothing broke. */
+  get notice() {
+    const n = failureNotice("That metric didn't change", this.error);
+    return n && this.error === this.blockedReason ? { ...n, tone: 'refusal' as const } : n;
+  }
   /**
    * Bumped whenever a write is REFUSED. The template keys each switch on it.
    *
@@ -298,7 +284,7 @@ export class MetricSettings {
   #persona = $state<string | null>(null);
 
   /** `persona` is the Keychain session slot, or null when nobody is signed in —
-   *  see [`signedInSlot`]. Null is carried through rather than defaulted, so the
+   *  see `PersonaList.writeSlot`. Null is carried through rather than defaulted, so the
    *  screen can say "sign in" instead of showing a 401 as a permissions refusal. */
   constructor(
     summary: MetricStatusSummary,
@@ -444,3 +430,10 @@ export class MetricSettings {
     };
   }
 }
+
+/** A reason's colour: a fault needs attention, a refusal is somebody's
+ *  decision, a normal reason reads as plain text. */
+export function reasonKindClass(kind: string): string {
+  return kind === 'fault' ? 'text-danger' : kind === 'refusal' ? 'text-warning' : 'text-ink-soft';
+}
+

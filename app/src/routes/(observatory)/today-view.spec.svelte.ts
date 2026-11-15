@@ -42,7 +42,7 @@ describe('ftrChip', () => {
     expect(chip.delta).toBe(0);
     expect(chip.direction).toBe('flat');
     expect(chip.arrow).toBe('→');
-    expect(chip.toneClass).toBe('text-ink-soft');
+    expect(chip.toneClass).toBe('text-ink-mute');
   });
 
   it('yields a null value (render "—") when there is no FTR data — never a fabricated 0', () => {
@@ -80,7 +80,7 @@ describe('insightToneClasses', () => {
   });
 
   it('maps mute to neutral ink tokens', () => {
-    expect(insightToneClasses('mute')).toEqual({ glyph: 'text-ink-mute', tag: 'bg-paper-mute text-ink-mute' });
+    expect(insightToneClasses('mute')).toEqual({ glyph: 'text-ink-soft', tag: 'bg-paper-mute text-ink-soft' });
   });
 });
 

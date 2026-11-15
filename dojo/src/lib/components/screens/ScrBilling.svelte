@@ -1,183 +1,236 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Chip, KanjiToken, StatBadge, ListSection, LoadError } from '$lib/components/kit';
+	import { Card, Button } from '@rokkit/ui';
+	import { ScreenShell } from '@rokkit/app';
+	import { Notice, Mark } from '@sensei/ui';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Chip, ListSection } from '$lib/components/kit';
 	import type { KitBilling } from '$lib/components/kit/types';
-	import { monthlyTotal, relayTone, tierCtaLabel } from '$lib/billing-view';
+	import { tierAction, currentTier, attachNotice, SEAT_COPY, hiddenCountLine, hiddenReturnLine } from '$lib/billing-view';
+	import type { BillingHiddenOrg } from '$lib/billing-hidden';
+	import { NAV_ORG_BASE } from '$lib/nav';
+	import { glyphs } from '$lib/glyphs.svelte';
+	import { panelsFor, savePanels } from '$lib/view-states.svelte';
 
-	// The admin Plan & billing screen (mockup ScrBilling) — the business model
-	// made legible: free where public or personal, paid where private and shared.
-	// A plan summary row (current plan · billable seats · live monthly total), the
-	// three tiers side by side (Enterprise on a dark field), the relay
-	// free-vs-paid breakdown, and the invoice history. Presentational: the page
-	// supplies the billing state from the live `…/billing` read; a figure the
-	// billing plane does not have (no account, no price, no invoices before a
-	// payment provider) is shown as absent, never filled in (#106).
+	// The admin Plan & billing screen, as the approved mockup draws it
+	// (coord/mockups/L4-billing-r3): one notice that says what state the account is
+	// in and the next step, the two plans with the current one tagged, why the plan
+	// buttons cannot run yet, the seats with who is counted, and the invoices.
+	// Free: an organization's public repositories and its members' personal dōjōs.
+	// Pro: its private repositories too, billed per seat; the price is to be
+	// announced (D46, D52, D59, D75, D86). On rokkit's ScreenShell (D87, view
+	// `dojo.org.billing`): search narrows "Who is counted" and opens it; the bands
+	// remember how the user left them (view-states). The org's private repositories
+	// the plan hides are listed here, for admins only — members are told nothing
+	// on Sharing (user ruling 2026-11-05).
+	//
+	// Presentational: the page supplies the billing state from the live `…/billing`
+	// read; the copy and actions come from billing-map and billing-view. A failed
+	// read shows the error and claims no plan — never "Free" (D83, WP8).
 	let {
 		orgName,
 		billing,
-		error = null
+		error = null,
+		hidden = null,
+		hiddenError = null
 	}: {
 		orgName: string;
 		billing: KitBilling;
-		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		/** A failed read — shown in place of the plan (#335). */
+		error?: ReadError | string | null;
+		/** The org's repositories the plan hides (`billing_hidden`), or `null` when none is. */
+		hidden?: BillingHiddenOrg | null;
+		/** A failed read of them — said in their section, never "none hidden". */
+		hiddenError?: ReadError | string | null;
 	} = $props();
 
-	const monthly = $derived(monthlyTotal(billing));
+	const VIEW = 'dojo.org.billing';
+	const nav = NAV_ORG_BASE.flatMap((g) => g.items).find((i) => i.id === 'billing');
+	let panels = $state(panelsFor(VIEW));
+	let filter = $state<{ values: Record<string, unknown>; stat?: string | null }>({ values: {}, stat: null });
+	const query = $derived(String(filter.values.q ?? '').trim().toLowerCase());
+	// "Who is counted" is the user's to open; a search opens it, and clearing the
+	// search gives it back as they left it.
+	let whoOpen = $state(false);
+
+	const current = $derived(currentTier(billing));
+	// The hidden list is for an account that had Pro and lost it; `null` = no list.
+	const hiddenLine = $derived(hiddenReturnLine(billing));
+	const notice = $derived(current ? attachNotice(current) : null);
+	const offered = $derived(billing.tiers.some((t) => tierAction(t.id, current) !== null));
+	const context = $derived(error || !billing.badge ? orgName : `${orgName} · ${billing.badge}`);
+	const counted = $derived(
+		query
+			? billing.seats.filter((s) => s.name.toLowerCase().includes(query) || s.workspaces.toLowerCase().includes(query))
+			: billing.seats
+	);
+	// The first-session info band: what the tab is for, how to read it, the seat count.
+	// None over a failed read: there is nothing to read it against.
+	const info = $derived(
+		error
+			? undefined
+			: [
+					{ label: 'What it’s for', kanji: nav?.kanji ?? '', title: 'The plan decides which of this organization’s repositories the dōjō holds.' },
+					{
+						label: 'How to read it',
+						steps: [
+							{ kanji: '記', title: 'The notice says what state the account is in, and what to do.' },
+							{ kanji: '札', title: 'Your plan carries its tag; the other card says what it adds.' },
+							{ kanji: '群', title: 'Seats count people with a relay session on a private workspace.' }
+						]
+					},
+					{ label: 'Seats', value: billing.seatsActive ?? '—' }
+				]
+	);
 </script>
 
-<Screen>
-	{#snippet header()}
-		<div class="px-4 pt-4 md:px-8 md:pt-8">
-			<SectionHead
-				kanji="円" eyebrow={orgName + ' · plan & billing'} title="Plan & billing"
-				description="Free where public or personal; paid where private and shared. Seats bill per active contributor. The desktop app, the global collective, bring-your-own-key inference, and read-only membership are always free — you pay to coordinate a group, never for tokens."
-			>
-				{#snippet right()}
-					{#if billing.plan}
-						<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
-							>{billing.plan}</Chip
-						>
-					{/if}
-				{/snippet}
-			</SectionHead>
-		</div>
-	{/snippet}
+<ScreenShell
+	viewId={VIEW}
+	mark={{ kanji: nav?.kanji ?? '', icon: nav?.icon }}
+	glyphs={glyphs.mode === 'icon' ? 'icon' : 'text'}
+	title="Plan & billing"
+	{context}
+	description="Public repositories and personal dōjōs are free, and targets that warn are free everywhere. An organization's private repositories sync on Pro, with blocking targets — billed by the seats who work on them."
+	search={{ placeholder: 'Search who is counted' }}
+	{info}
+	bind:filter
+	bind:panels
+	onpanels={(next) => savePanels(VIEW, next)}
+>
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="billing" {error} />
+			<Notice size="panel" {...dojoLoadNotice('billing', error)} data-load-error />
 		{:else}
-			<!-- Plan summary — current plan · billable seats · live monthly total. -->
-			<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
-				<div class="bg-paper-soft border-accent rounded-lg border" style="padding: 16px">
-					<div class="text-ink-mute mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
-						Current plan
-					</div>
-					<div class="display text-2xl font-light" style="letter-spacing: -0.01em">
-						{billing.plan ?? 'No billing account yet'}
-					</div>
-					{#if billing.renews || billing.perSeat !== null}
-						<div class="text-ink-mute text-sm" style="margin-top: 2px">
-							{#if billing.renews}Renews {billing.renews}{/if}
-							{#if billing.renews && billing.perSeat !== null}·{/if}
-							{#if billing.perSeat !== null}<span class="mono">${billing.perSeat}</span>/contributor/mo{/if}
-						</div>
-					{/if}
-				</div>
-				<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
-					<div class="text-ink-mute mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
-						Billable seats
-					</div>
-					<StatBadge
-						n={billing.seatsActive ?? '—'}
-						label="active contributors"
-						sub={billing.seatsReadonly === null ? undefined : billing.seatsReadonly + ' read-only free'}
-					/>
-				</div>
-				<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 16px">
-					<div class="text-ink-mute mb-1 text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
-						This month
-					</div>
-					{#if monthly === null}
-						<StatBadge n="—" label="no seat price is set yet" />
-					{:else}
-						<StatBadge
-							n={'$' + monthly}
-							label={billing.seatsActive + ' × $' + billing.perSeat}
-							sub="updated live"
-							toneClass="text-accent"
-						/>
-					{/if}
-				</div>
-			</div>
+			{#if billing.problem}
+				<div data-billing-problem><Notice size="panel" {...billing.problem} /></div>
+			{/if}
 
-			<!-- The three tiers — Enterprise on a dark ink field. -->
-			<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
-				{#each billing.tiers as t (t.id)}
-					<div
-						class="flex flex-col gap-2 rounded-lg border {t.dark
-							? 'bg-ink border-transparent'
-							: t.current
-								? 'bg-paper-soft border-accent'
-								: 'bg-paper-soft border-paper-edge'}"
-						style="padding: 16px"
-					>
-						<div class="flex items-center gap-2">
-							<KanjiToken
-								char={t.kanji}
-								size="lg"
-								toneClass={t.dark || t.current ? 'text-accent' : 'text-ink-mute'}
-							/>
-							<span class="text-sm font-semibold {t.dark ? 'text-on-primary' : 'text-ink'}">{t.name}</span>
-							{#if t.current}
-								<span class="ml-auto">
-									<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
-										>current</Chip
-									>
-								</span>
-							{/if}
-						</div>
-						<div>
-							<span class="display text-xl font-light {t.dark ? 'text-on-primary' : 'text-ink'}"
-								>{t.price}</span
-							>
-							<span
-								class="mono text-xs {t.dark ? 'text-on-primary opacity-60' : 'text-ink-faint'}"
-								style="margin-left: 4px">{t.sub}</span
-							>
-						</div>
-						<div class="flex flex-col gap-1">
-							{#each t.lines as l (l)}
-								<div
-									class="flex gap-2 text-xs {t.dark ? 'text-on-primary opacity-80' : 'text-ink-soft'}"
-									style="line-height: 1.45"
-								>
-									<span class="text-accent flex-shrink-0">·</span>{l}
+			<!-- The org's private repositories the plan hides, for every user (D88);
+			     listed only after Pro was lost (past due or lapsed). -->
+			{#if !hiddenLine}
+				<!-- Free, never subscribed, unclaimed or unknown: no list. -->
+			{:else if hiddenError}
+				<section data-billing-hidden aria-labelledby="billing-hidden-h" class="border-line flex flex-col gap-2 rounded border p-4">
+					<h2 id="billing-hidden-h" class="text-ink-mute m-0 text-xs font-medium uppercase tracking-widest">Hidden private repositories</h2>
+					<Notice size="inline" {...dojoLoadNotice('the hidden repositories', hiddenError)} data-load-error />
+				</section>
+			{:else if hidden}
+				<section data-billing-hidden aria-labelledby="billing-hidden-h" class="border-line flex flex-col gap-2 rounded border p-4">
+					<h2 id="billing-hidden-h" class="text-ink-mute m-0 text-xs font-medium uppercase tracking-widest">Hidden private repositories</h2>
+					<p class="text-ink m-0 text-sm">{hiddenCountLine(hidden.count)}</p>
+					<ul class="m-0 flex flex-col gap-1 pl-4 text-sm">
+						{#each hidden.repos as name, i (i)}
+							<li class="text-ink">{name}</li>
+						{/each}
+					</ul>
+					<p class="text-ink-mute m-0 text-xs">{hiddenLine}</p>
+				</section>
+			{/if}
+
+			{#if billing.showPlans}
+				<!-- The two plans; the current one carries its tag. -->
+				<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+					{#each billing.tiers as t (t.id)}
+						{@const action = tierAction(t.id, current)}
+						<Card class={t.current ? 'border-primary' : undefined}>
+							<div class="flex h-full flex-col gap-3" data-tier={t.id}>
+								<div class="flex items-center gap-2">
+									<Mark char={t.kanji} class="text-lg {t.current ? 'text-primary' : 'text-ink-soft'}" />
+									<span class="text-ink text-sm font-semibold">{t.name}</span>
+									{#if t.current && billing.tag}
+										<span data-plan-tag class="bg-primary text-on-primary ml-auto rounded-full px-2 py-0.5 text-xs">{billing.tag}</span>
+									{/if}
 								</div>
-							{/each}
-						</div>
-						{#if billing.plan && !t.current}
-							<button
-								type="button"
-								class="bg-paper border-paper-edge text-ink hover:bg-paper-mute mt-auto inline-flex cursor-pointer items-center justify-center rounded border text-sm font-medium"
-								style="padding: 6px 12px">{tierCtaLabel(t.id)}</button
-							>
-						{/if}
-					</div>
-				{/each}
-			</div>
+								<div class="flex flex-wrap items-baseline gap-1">
+									<span class="display text-ink text-xl font-light">{t.price}</span>
+									<span class="text-ink-mute text-xs">{t.sub}</span>
+								</div>
+								<ul class="m-0 flex list-none flex-col gap-1 p-0">
+									{#each t.lines as l (l)}
+										<li class="text-ink-mute flex gap-2 text-xs">
+											<span class="text-primary flex-shrink-0" aria-hidden="true">·</span>{l}
+										</li>
+									{/each}
+								</ul>
+								{#if action}
+									<div class="mt-auto">
+										<Button
+											variant={action.primary ? 'primary' : 'default'}
+											style={action.primary ? 'default' : 'outline'}
+											disabled
+											aria-describedby="attach-note"
+											data-action={t.id === 'pro' ? 'attach-pro' : 'move-free'}
+											label={action.label}
+										/>
+									</div>
+								{/if}
+							</div>
+						</Card>
+					{/each}
+				</div>
 
-			<!-- Relay — free for individuals, paid where it's shared. -->
-			<ListSection icon="chat-round-line" title="Relay — free for individuals, paid where it's shared">
-				{#each billing.relayRows as r (r.label)}
-					{@const tone = relayTone(r.free)}
-					<div class="border-paper-edge flex items-center gap-3 border-b" style="padding: 12px 16px">
-						<span class="text-ink-soft flex-1 text-sm">{r.label}</span>
-						<Chip toneClass={tone.text} softClass={tone.soft} edgeClass={tone.edge}>{tone.label}</Chip>
-					</div>
-				{/each}
-			</ListSection>
-
-			<!-- Invoice history. -->
-			<ListSection icon="bill-list" title="Invoices" count={billing.invoices.length}>
-				{#if billing.invoices.length === 0}
-					<div class="text-ink-mute text-sm" style="padding: 12px 16px">
-						No invoices — no payment provider is connected.
+				<!-- Why the plan buttons can't run yet (M6); the buttons point here. -->
+				{#if offered && notice}
+					<div data-attach-notice id="attach-note">
+						<Notice size="inline" expanded {...notice} />
 					</div>
 				{/if}
-				{#each billing.invoices as iv (iv.d)}
-					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-						<span class="mono text-ink-soft flex-1 text-xs">{iv.d}</span>
-						<span class="mono text-ink text-sm">{iv.amt}</span>
-						<Chip
-							icon="check-circle"
-							toneClass="text-success"
-							softClass="bg-success-soft"
-							edgeClass="border-success-soft">{iv.s}</Chip
-						>
+
+				<!-- Seats: what is counted today, on its real basis, and who. -->
+				<section data-billing-seats aria-labelledby="billing-seats-h" class="border-line flex flex-col gap-3 rounded border p-4">
+					<h2 id="billing-seats-h" class="text-ink-mute m-0 text-xs font-medium uppercase tracking-widest">Seats</h2>
+					<div class="flex flex-wrap gap-6">
+						<div class="flex min-w-0 flex-1 flex-col gap-1">
+							<span class="display text-ink text-3xl font-light">{billing.seatsActive ?? '—'}</span>
+							<span class="text-ink text-sm">{SEAT_COPY.label}</span>
+							<span class="text-ink-mute text-xs">{SEAT_COPY.basis}</span>
+							<details
+								data-billing-counted
+								class="mt-2 text-sm"
+								open={query ? true : whoOpen}
+								ontoggle={(e) => {
+									if (!query) whoOpen = e.currentTarget.open;
+								}}
+							>
+								<summary class="text-ink-mute cursor-pointer">Who is counted</summary>
+								{#if billing.seats.length === 0}
+									<p class="text-ink-mute m-0 mt-2">No one has a seat on a private workspace.</p>
+								{:else if counted.length === 0}
+									<p class="text-ink-mute m-0 mt-2">No one counted matches “{filter.values.q}”.</p>
+								{:else}
+									<ul class="m-0 mt-2 flex flex-col gap-1 pl-4">
+										{#each counted as s, i (i)}
+											<li class="text-ink">{s.name} — {s.workspaces}</li>
+										{/each}
+									</ul>
+								{/if}
+								<p class="text-ink-mute m-0 mt-2 text-xs">{SEAT_COPY.remedy}</p>
+							</details>
+						</div>
+						<div data-billing-seats-proposed class="border-line flex min-w-0 flex-1 flex-col gap-1 rounded border border-dashed p-3">
+							<span class="display text-ink-mute text-3xl font-light">—</span>
+							<span class="text-ink text-sm">{SEAT_COPY.proposed.label}</span>
+							<span class="text-ink-mute text-xs">{SEAT_COPY.proposed.note}</span>
+						</div>
 					</div>
-				{/each}
-			</ListSection>
+				</section>
+
+				<!-- Invoices: none until a payment provider is connected. -->
+				<ListSection icon="bill-list" title="Invoices" count={billing.invoices.length}>
+					{#if billing.invoices.length === 0}
+						<div class="text-ink-soft px-4 py-3 text-sm">No invoices — no payment provider is connected.</div>
+					{/if}
+					{#each billing.invoices as iv (iv.d)}
+						<div class="border-paper-edge flex items-center gap-4 border-b px-4 py-3">
+							<span class="mono text-ink-mute flex-1 text-xs">{iv.d}</span>
+							<span class="mono text-ink text-sm">{iv.amt}</span>
+							<Chip icon="check-circle" toneClass="text-on-success-soft" softClass="bg-success-soft" edgeClass="border-success-soft"
+								>{iv.s}</Chip
+							>
+						</div>
+					{/each}
+				</ListSection>
+			{/if}
 		{/if}
 	</div>
-</Screen>
+</ScreenShell>

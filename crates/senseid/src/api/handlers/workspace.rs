@@ -331,11 +331,8 @@ pub(crate) async fn sync_readme_frontmatter(
     let repo = std::path::Path::new(&body.folder);
     let readme = crate::tasks::processors::metadata::find_readme(repo)
         .unwrap_or_else(|| repo.join("README.md"));
-    let existing = std::fs::read_to_string(&readme).unwrap_or_default();
-    let merged = crate::tasks::processors::metadata::merge_frontmatter(&existing, &fm);
-    std::fs::write(&readme, &merged).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("write {}: {e}", readme.display()))
-    })?;
+    crate::tasks::processors::metadata::write_frontmatter(&readme, &fm)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     // Echo-loop guard: update the stored frontmatter snapshot so the watcher's
     // reconcile_repo_metadata (DB-only — it never writes the README) sees no change

@@ -7,11 +7,11 @@
 >
 > Consolidates and supersedes the earlier `relay-personal-beta.md` +
 > `autonomous-run-engine.md` drafts. Grounds in
-> [architecture/dojo → Relay](../architecture/dojo.md#relay--through-the-dōjō),
-> [journeys/dojo → Relay](../journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō),
-> and the manual [`spec/EXECUTION-PLAN.md`](../spec/EXECUTION-PLAN.md) (the 5-day
+> [architecture/dojo → Relay](../../architecture/dojo.md#relay--through-the-dōjō),
+> [journeys/dojo → Relay](../../journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō),
+> and the manual [`spec/EXECUTION-PLAN.md`](../../spec/EXECUTION-PLAN.md) (the 5-day
 > vacation run this rebuilds). Direction set 2026-07-16. Feeds
-> [plan/README → Phase 5](README.md#phase-5--relay-new-surface--ws-g).
+> [plan/README → Phase 5](../README.md#phase-5--relay-new-surface--ws-g).
 
 ---
 
@@ -137,7 +137,7 @@ All DDL is full-file (no `alters`), applied with `dbd`; RLS = user owns their
 ## 4.5 Learnings — the 5-day run (what broke → the fix)
 
 Every stop/degradation observed in the manual run
-([`spec/EXECUTION-PLAN.md`](../spec/EXECUTION-PLAN.md)), and where it's now handled:
+([`spec/EXECUTION-PLAN.md`](../../spec/EXECUTION-PLAN.md)), and where it's now handled:
 
 | Observed | Fix |
 |---|---|
@@ -261,8 +261,8 @@ Asking is rare only if the plan is deep. A **pre-flight depth gate** (§8 agents
 requires, per feature: observable acceptance criteria · inputs/outputs/deps defined ·
 no `TBD` · ambiguities pre-answered · explicit scope. Gaps surface **before** the run.
 These automated-work guidelines are candidates for a **governance ruleset**
-([governance](../architecture/concepts/governance.md),
-[default-constitution](../spec/governance/default-constitution.md)) so every run
+([governance](../../architecture/concepts/governance.md),
+default-constitution) so every run
 inherits them.
 
 **Goal-anchored (D13).** The plan's **objective travels with the run** (in `run` +
@@ -470,7 +470,7 @@ flowchart LR
 | **P3** | The daemon-owned run engine | `run`/`run_event`; `AdvanceRun` tick; spawn+supervise Claude headless per feature; gated loop; commit/push per feature; **limit → pause→auto-resume**; watchdog + **crashed** recovery; **progress-over-asking**; **depth-bar pre-flight** (`plan-depth-reviewer`) | a deep multi-phase plan runs overnight autonomously, pauses/auto-resumes on limits, survives a crash, halts only on hard-blocks — watched from the phone |
 | **P4** | Away-from-keyboard hardening | Web Push (VAPID) + service worker; `push_subscriptions` live; **realtime swap** (phone subscribes Supabase Realtime); offline/session-ended/reconnect; "what's blocked on me" home | backgrounded phone gets a push → answers → engine proceeds; graceful offline/reconnect |
 | **P5** | Multi-assistant | adapter layer behind `assistants/trait_def.rs`; ACP host (Zed + adopters); fallback ladder (aider/Codex); Capability Registry; uniform `Execution → Segment` | a run driven on a non-Claude assistant surfaces the same feed + gates |
-| **P6** | Team relay | real join flow **replaces** the P0 seed; shared inbox/presence; per-seat metering; attributed team decisions | a teammate supervises + approves a shared run — folds into [Dōjō Phase 4](README.md#phase-4--dōjō-live-activation) |
+| **P6** | Team relay | real join flow **replaces** the P0 seed; shared inbox/presence; per-seat metering; attributed team decisions | a teammate supervises + approves a shared run — folds into [Dōjō Phase 4](../README.md#phase-4--dōjō-live-activation) |
 
 ---
 
@@ -515,9 +515,9 @@ flowchart LR
 
 ## 11. Related
 
-- [architecture/dojo → Relay](../architecture/dojo.md#relay--through-the-dōjō) · [journeys/dojo → Relay](../journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō)
-- [spec/EXECUTION-PLAN.md](../spec/EXECUTION-PLAN.md) — the manual 5-day run this rebuilds
-- [decisions.md](decisions.md) — ADRs · [plan/README](README.md) — the roadmap
+- [architecture/dojo → Relay](../../architecture/dojo.md#relay--through-the-dōjō) · [journeys/dojo → Relay](../../journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō)
+- [spec/EXECUTION-PLAN.md](../../spec/EXECUTION-PLAN.md) — the manual 5-day run this rebuilds
+- [decisions.md](decisions.md) — ADRs · [plan/README](../README.md) — the roadmap
 
 ## How this stays honest
 

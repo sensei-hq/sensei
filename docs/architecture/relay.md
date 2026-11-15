@@ -31,3 +31,17 @@ superseded:
 The **planner model** (project → plan → phase → {feature · checkpoint · gate},
 non-blocking auto mode, approve/decide gates) is unchanged and belongs with the
 [daemon](daemon.md) coordinator + the [app](app.md) plan-authoring surface.
+
+## Local crews — the autonomous queue (2026-11-12)
+
+Beside the Dōjō line, the daemon brokers **local crews of assistant sessions** (the lanes model,
+[`../prd/modules/03-delivery/21-relay/lanes.md`](../prd/modules/03-delivery/21-relay/lanes.md),
+data model in [`lanes-data.md`](../prd/modules/03-delivery/21-relay/lanes-data.md)). Work is a queue, never a
+hand-off: the lane loop is `relay_claim_next` → work → `relay_checkpoint_task` → `relay_report_task` (the report
+floats for a peer) → `relay_submit_review`, and the broker's deterministic gate (`crates/senseid/src/relay/gate.rs`)
+merges what a peer approved. The person's loop is register lanes → **Create sprint** on the Relay screen
+(`POST /relay/runs`; Task 0 plans, a peer approves, the plan unpacks) → watch the band. The sweeper
+(`crates/senseid/src/tasks/relay_lease_sweep.rs`) expires leases, re-offers, ends pauses, releases abandoned review
+claims, nudges about floating reviews and runs the gate. Design and deviations:
+[`../design/relay-autonomous-queue-and-planning.md`](../design/relay-autonomous-queue-and-planning.md),
+plan [`../plan/2026-11-10-relay-autonomous-queue/README.md`](../plan/2026-11-10-relay-autonomous-queue/README.md).

@@ -1,3 +1,4 @@
+import { failureNotice } from '@sensei/ui';
 import type { PageLoad } from './$types.js';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
@@ -19,6 +20,7 @@ export const load: PageLoad = async ({ params, parent }) => {
     workspace,
     repos: repos.ok ? (repos.data.repos ?? []) : [],
     reposError: repos.ok ? null : repos.error.message,
+    reposNotice: failureNotice("Couldn't read this workspace's repositories", repos.ok ? null : repos.error.message),
     suggestion: suggestion.ok ? suggestion.data.suggestion : null,
     memberships: memberships.ok ? memberships.data : [],
     bindingError: !suggestion.ok

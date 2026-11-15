@@ -1,0 +1,68 @@
+{
+  "body": {
+    "data": {
+      "repository": {
+        "issue": {
+          "assignees": {
+            "nodes": []
+          },
+          "body": "Body of issue 2",
+          "createdAt": "2026-08-28T08:45:12Z",
+          "databaseId": 1002,
+          "issueType": null,
+          "number": 2,
+          "projectItems": {
+            "nodes": [
+              {
+                "fieldValueByName": null,
+                "isArchived": false,
+                "project": {
+                  "id": "PVT_2"
+                }
+              },
+              {
+                "fieldValueByName": {
+                  "__typename": "ProjectV2ItemFieldIterationValue",
+                  "iterationId": "it1",
+                  "title": "Iteration 1"
+                },
+                "isArchived": false,
+                "project": {
+                  "id": "PVT_1"
+                }
+              },
+              {
+                "fieldValueByName": null,
+                "isArchived": false,
+                "project": {
+                  "id": "PVT_3"
+                }
+              }
+            ],
+            "pageInfo": {
+              "endCursor": "c2",
+              "hasNextPage": false
+            }
+          },
+          "repository": {
+            "nameWithOwner": "acme/platform",
+            "url": "https://github.com/acme/platform"
+          },
+          "state": "OPEN",
+          "title": "Issue 2",
+          "updatedAt": "2026-08-28T08:45:12Z",
+          "url": "https://github.com/acme/platform/issues/2"
+        }
+      }
+    }
+  },
+  "operation": "Issue",
+  "status": 200,
+  "variables": {
+    "after": null,
+    "field": "Sprint",
+    "name": "platform",
+    "number": 2,
+    "owner": "acme"
+  }
+}

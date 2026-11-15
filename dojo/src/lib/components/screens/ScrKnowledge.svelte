@@ -1,4 +1,6 @@
 <script lang="ts" module>
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
 	// Catalog kind → row icon (mockup `K2_EXT_ICON`). A screen-local map because
 	// the catalog's agent/command/skill glyphs only appear here.
 	const EXT_ICON: Record<string, string> = {
@@ -9,8 +11,8 @@
 </script>
 
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, Chip, Icon, ListSection, KanjiToken, LoadError } from '$lib/components/kit';
+	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead, Btn, Chip, Icon, ListSection, KanjiToken } from '$lib/components/kit';
 	import type { KitKnowledge } from '$lib/components/kit/types';
 
 	// The maintainer knowledge library (mockup ScrKnowledge) — the published
@@ -26,7 +28,7 @@
 		orgName: string;
 		knowledge: KitKnowledge;
 		/** A failed read — shown in place of the empty state (#335). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 </script>
 
@@ -42,8 +44,8 @@
 						class="bg-paper border-paper-edge inline-flex items-center gap-1 rounded-lg border"
 						style="padding: 6px 10px"
 					>
-						<Icon name="alt-arrow-down" size={14} toneClass="text-ink-mute" />
-						<span class="text-ink-soft text-sm whitespace-nowrap">{knowledge.prunePolicy}</span>
+						<Icon name="alt-arrow-down" size={14} toneClass="text-ink-soft" />
+						<span class="text-ink-mute text-sm whitespace-nowrap">{knowledge.prunePolicy}</span>
 					</div>
 				{/snippet}
 			</SectionHead>
@@ -51,7 +53,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<LoadError what="the knowledge library" {error} />
+			<Notice size="panel" {...dojoLoadNotice("the knowledge library", error)} data-load-error />
 		{:else}
 			<ListSection
 				icon="check-circle"
@@ -80,9 +82,9 @@
 			>
 				{#each knowledge.pending as r (r.title)}
 					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-						<KanjiToken char={r.kanji} size="lg" toneClass="text-ink-mute" w={22} />
+						<KanjiToken char={r.kanji} size="lg" toneClass="text-ink-soft" w={22} />
 						<div class="flex-1" style="min-width: 0">
-							<div class="text-ink-soft text-sm">{r.title}</div>
+							<div class="text-ink-mute text-sm">{r.title}</div>
 							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{r.scope} · {r.age}</div>
 						</div>
 						<Btn size="sm" variant="ghost" icon="restart">Keep</Btn>
@@ -98,7 +100,7 @@
 							<div class="text-ink text-sm">{c.title}</div>
 							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{c.scope}</div>
 						</div>
-						<Chip mono toneClass="text-ink-mute">{c.kind}</Chip>
+						<Chip mono toneClass="text-ink-soft">{c.kind}</Chip>
 					</div>
 				{/each}
 			</ListSection>

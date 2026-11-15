@@ -58,7 +58,7 @@ export function statusMeta(status: string | null | undefined): StatusMeta {
 export function toneClass(tone: ConsolidationTone, kind: 'text' | 'bg' | 'border' = 'text'): string {
   if (tone === 'success') return `${kind}-success`;
   if (tone === 'accent') return `${kind}-accent`;
-  return `${kind}-ink-mute`;
+  return `${kind}-ink-soft`;
 }
 
 /** One rendered section of the merged markdown, split on top-level `#`/`##`

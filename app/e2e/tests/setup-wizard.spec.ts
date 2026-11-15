@@ -82,7 +82,7 @@ async function driveToScan(tauriPage: TauriPageLike, corpusPath: string): Promis
   await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
   await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
   await tauriPage.locator('.folder-input').fill(corpusPath);
-  await tauriPage.click('.btn-solid'); // Add folder
+  await tauriPage.click('[data-testid="root-add"]'); // Add folder
   // Adding a root is async; Continue gates on roots.length > 0. Wait for it to
   // enable before clicking, or the click lands while disabled and we're stuck.
   await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 10_000 });
@@ -155,7 +155,7 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
 
     await expect(tauriPage.locator('[data-action="next"]')).toBeDisabled();
     await tauriPage.locator('.folder-input').fill(EMPTY_CORPUS);
-    await tauriPage.click('.btn-solid');
+    await tauriPage.click('[data-testid="root-add"]');
     await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled();
   });
 
@@ -169,7 +169,7 @@ test.describe('Setup Wizard — Flow A: empty corpus', () => {
     await tauriPage.locator('.folder-input').press('Enter');
     await expect(rootPath).toBeVisible();
     await tauriPage.locator('.folder-input').fill(EMPTY_CORPUS);
-    await tauriPage.click('.btn-solid');
+    await tauriPage.click('[data-testid="root-add"]');
     await expect(rootPath).toHaveCount(1);
   });
 

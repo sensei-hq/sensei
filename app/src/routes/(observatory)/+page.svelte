@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { StateView } from '@sensei/ui';
   import { invalidateAll } from '$app/navigation';
-  import { Eyebrow, FtrStrip, Kanji, Screen, ScreenState } from '$lib/components';
+  import { Eyebrow, FtrStrip, Kanji, Screen } from '$lib/components';
   import RecentSessions from './RecentSessions.svelte';
   import HeroKoan from './HeroKoan.svelte';
   import InsightCard from './InsightCard.svelte';
@@ -39,12 +40,12 @@
               {#if !chip}
                 <span data-ftr-error title={data.ftrError} class="text-sm text-danger">{FTR_UNAVAILABLE}</span>
               {:else if chip.value === null}
-                <span class="display text-3xl font-normal text-ink-mute">—</span>
+                <span class="display text-3xl font-normal text-ink-soft">—</span>
               {:else}
                 <span
-                  class={['display text-3xl font-normal', { 'text-ink': mode === 'mature', 'text-ink-mute': mode === 'early' }]}
+                  class={['display text-3xl font-normal', { 'text-ink': mode === 'mature', 'text-ink-soft': mode === 'early' }]}
                 >{chip.value}</span>
-                <span class="text-xs text-ink-soft">%</span>
+                <span class="text-xs text-ink-mute">%</span>
                 {#if chip.delta !== null}
                   <span data-ftr-arrow={chip.direction} class="font-mono text-xs {chip.toneClass}">
                     {chip.arrow} {Math.abs(chip.delta)}%
@@ -62,7 +63,7 @@
   {/snippet}
   {#if !home}
     <div class="max-w-[1060px] mx-auto px-7 py-6 pb-16">
-      <ScreenState status="error" error={data.todayError} onretry={() => invalidateAll()} />
+      <StateView status="error" error={data.todayError} onretry={() => invalidateAll()} />
     </div>
   {:else}
   <div class="max-w-[1060px] mx-auto px-7 pt-4 pb-16" data-mode={mode}>
@@ -106,7 +107,7 @@
             class="py-5 px-4 text-center border border-dashed border-paper-edge rounded-lg"
           >
             <span class="block mb-2"><Kanji char="空" size="2xl" tone="muted" /></span>
-            <p class="text-sm text-ink-soft leading-snug m-0">
+            <p class="text-sm text-ink-mute leading-snug m-0">
               No teachings adopted yet.<br />
               sensei needs a few more sessions to be confident.
             </p>
@@ -124,6 +125,6 @@
 {#snippet sectionHead(title: string, href: string, linkText: string)}
   <div class="flex items-baseline justify-between mb-4">
     <h2 class="display text-lg font-normal m-0 tracking-tight">{title}</h2>
-    <a {href} class="text-xs text-ink-soft hover:text-ink">{linkText}</a>
+    <a {href} class="text-xs text-ink-mute hover:text-ink">{linkText}</a>
   </div>
 {/snippet}

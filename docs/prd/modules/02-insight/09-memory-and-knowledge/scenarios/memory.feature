@@ -69,11 +69,10 @@ Feature: Memory & Knowledge — formation, scoping, lifecycle, retrieval
     Then only the matching memories are returned
 
   # pinned: assemble_context_blends_three_scopes
-  Scenario: retrieval blends workspace, user and org scopes with the tighter one winning
-    Given memories at workspace, user and org scope
+  Scenario: retrieval blends workspace, stack and global memories
+    Given memories at workspace, stack and global scope
     When the session context is assembled
     Then each scope contributes
-    And the tighter scope wins on a signature conflict
 
   # pinned: assemble_context_leads_with_slot_anchored_memory
   Scenario: slot-anchored memory leads the context
@@ -100,7 +99,7 @@ Feature: Memory & Knowledge — formation, scoping, lifecycle, retrieval
     Then followed and skipped are counted
     And violations are not treated as skips
 
-  # pinned: project_learned_convention_scopes_to_its_own_project_not_general
+  # pinned: workspace_learned_convention_scopes_to_its_own_workspace_not_general
   Scenario: a workspace-scoped memory never leaks to another workspace
     Given a learned convention in one workspace
     When another workspace's context is assembled
@@ -119,9 +118,9 @@ Feature: Memory & Knowledge — formation, scoping, lifecycle, retrieval
     When it is reviewed, accepted and its outcome reported
     Then the lifecycle completes end to end
 
-  # pinned: promote_memory_prefers_project_over_cwd_folder
-  Scenario: an explicit promotion resolves to the workspace scope
-    Given a promotion request from a session
+  # pinned: promote_memory_prefers_workspace_over_cwd_folder
+  Scenario: an explicit share (promote_memory) resolves to the workspace scope
+    Given a share request from a session
     When it is routed
     Then the workspace scope is preferred over the working folder
 
@@ -149,3 +148,34 @@ Feature: Memory & Knowledge — formation, scoping, lifecycle, retrieval
     Given a continuity memory from a long session end
     When seven days pass
     Then it decays and is never promoted to a rule
+
+  NO TEST
+  Scenario: Share moves a memory one step outward on the promotion path
+    Given a memory at the user step that has helped
+    When the user shares it
+    Then a proposed copy lands at the repository step
+    And it never takes precedence over a repository rule or memory
+    This is unbuilt — memory_scope has no user, repository or dojo step (G-MEM-SCOPE, D56).
+
+  NO TEST
+  Scenario: leaving a dōjō for global shared needs three contributors
+    Given a dōjō-step memory backed by two distinct contributors
+    When it is shared to global shared
+    Then it is held until a third contributor stands behind it
+    The dōjō side enforces K_ANONYMITY_MIN_CONTRIBUTORS = 3 (D26, T1); no daemon-side test.
+
+  NO TEST
+  Scenario: two misses of a blocking target on the same cause propose a memory
+    Given a blocking target missed twice on the same cause
+    When the second miss is recorded
+    Then a proposed memory lands at the user step
+    And it is offered for sharing once a positive verdict shows it helps
+    This is unbuilt (D66).
+
+  NO TEST
+  Scenario: the assistant reports which loaded memories it followed, skipped or violated
+    Given memories loaded for a session
+    When the assistant calls report_memory_use at session end
+    Then followed reinforces, violated challenges, and skipped is recorded only
+    And ids never loaded for that session are dropped
+    This is unbuilt — no report_memory_use tool (G-MEM-FEEDBACK).

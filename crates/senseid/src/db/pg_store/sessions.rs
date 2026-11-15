@@ -22,76 +22,91 @@ impl PgStore {
         // `duration` is the gap-aware active-work interval (seconds, so the UI need
         // not parse a Postgres interval); tokens_in/out + provider/model come from the
         // transcript capture (NULL when the source carried none — never a fabricated 0).
-        type SessionRow = (
-            uuid::Uuid,
-            Option<String>,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<bool>,
-            i32,
-            i32,
-            chrono::DateTime<chrono::Utc>,
-            Option<chrono::DateTime<chrono::Utc>>,
-            Option<String>,
-            Option<i64>,
-            Option<i64>,
-            Option<f64>,
-            Option<String>,
-            Option<String>,
-        );
-        let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
+        // Read by column, not as a tuple: sqlx caps tuple `FromRow` at 16 columns, and the
+        // digest carries 17. `activeByHour` is the R12 split filed by the hour it happened
+        // (`[[epoch hour, claude ms, user ms], …]`), NULL until the session is analysed.
+        use sqlx_core::row::Row;
+        let rows = sqlx_core::query::query(
             "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns, s.corrections,
                     s.started_at, s.completed_at, s.acp_id,
-                    s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
+                    s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model,
+                    s.active_by_hour
              FROM activity.sessions s
              LEFT JOIN sensei.workspaces p ON p.id = s.workspace_id
              WHERE ($2::int IS NULL OR coalesce(s.completed_at, s.started_at) >= now() - make_interval(days => $2::int))
                AND ($3::uuid IS NULL OR s.workspace_id = $3)
              ORDER BY coalesce(s.completed_at, s.started_at) DESC LIMIT $1"
         ).bind(limit).bind(range_days).bind(workspace).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    workspace,
-                    task,
-                    summary,
-                    outcome,
-                    ftr,
-                    turns,
-                    corrections,
-                    started,
-                    completed,
-                    agent,
-                    tokens_in,
-                    tokens_out,
-                    duration_secs,
-                    provider,
-                    model,
-                )| {
-                    serde_json::json!({
-                        "id": id,
-                        "workspace": workspace,
-                        "task": task,
-                        "summary": summary,
-                        "outcome": outcome,
-                        "ftr": ftr,
-                        "turns": turns,
-                        "corrections": corrections,
-                        "startedAt": started.to_rfc3339(),
-                        "completedAt": completed.map(|c| c.to_rfc3339()),
-                        "agent": agent,
-                        "tokensIn": tokens_in,
-                        "tokensOut": tokens_out,
-                        "durationSecs": duration_secs,
-                        "provider": provider,
-                        "model": model,
-                    })
-                },
-            )
-            .collect())
+        rows.iter()
+            .map(|r| -> Result<serde_json::Value, sqlx_core::error::Error> {
+                let started: chrono::DateTime<chrono::Utc> = r.try_get(8)?;
+                let completed: Option<chrono::DateTime<chrono::Utc>> = r.try_get(9)?;
+                Ok(serde_json::json!({
+                    "id": r.try_get::<uuid::Uuid, _>(0)?,
+                    "workspace": r.try_get::<Option<String>, _>(1)?,
+                    "task": r.try_get::<String, _>(2)?,
+                    "summary": r.try_get::<Option<String>, _>(3)?,
+                    "outcome": r.try_get::<Option<String>, _>(4)?,
+                    "ftr": r.try_get::<Option<bool>, _>(5)?,
+                    "turns": r.try_get::<i32, _>(6)?,
+                    "corrections": r.try_get::<i32, _>(7)?,
+                    "startedAt": started.to_rfc3339(),
+                    "completedAt": completed.map(|c| c.to_rfc3339()),
+                    "agent": r.try_get::<Option<String>, _>(10)?,
+                    "tokensIn": r.try_get::<Option<i64>, _>(11)?,
+                    "tokensOut": r.try_get::<Option<i64>, _>(12)?,
+                    "durationSecs": r.try_get::<Option<f64>, _>(13)?,
+                    "provider": r.try_get::<Option<String>, _>(14)?,
+                    "model": r.try_get::<Option<String>, _>(15)?,
+                    "activeByHour": r.try_get::<Option<serde_json::Value>, _>(16)?,
+                }))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Work by the hour it happened, for the Sessions charts (user, 2026-10-29): per hour
+    /// (ms since the epoch ÷ 3600000), `[hour, turns, corrected turns, tokens in, tokens out]`
+    /// from the turns themselves, so a session that ran for days counts on every day it
+    /// ran. Turns and corrections are yours: an automated prompt's turn (a `/loop` tick,
+    /// a peer message) is left out, an unlabelled one counted. Tokens are every turn's,
+    /// NULL in an hour no transcript turn was captured for — unknown, never 0. Scoped like [`Self::list_all_sessions`]: `range_days` back from now, and
+    /// the session's workspace.
+    pub async fn activity_by_hour(
+        &self,
+        range_days: Option<i64>,
+        workspace: Option<&uuid::Uuid>,
+    ) -> Result<serde_json::Value, String> {
+        let rows: Vec<(i64, i64, i64, Option<i64>, Option<i64>)> = sqlx_core::query_as::query_as(
+            "WITH t AS (
+                SELECT floor(extract(epoch FROM t.started_at) / 3600)::bigint AS h,
+                       count(*) AS turns, count(*) FILTER (WHERE t.is_correction) AS corrections
+                  FROM activity.turns t JOIN activity.sessions s ON s.id = t.session_id
+                 WHERE ($1::int IS NULL OR t.started_at >= now() - make_interval(days => $1::int))
+                   AND ($2::uuid IS NULL OR s.workspace_id = $2)
+                   AND coalesce(t.origin, 'human') = 'human'
+                 GROUP BY 1),
+             k AS (
+                SELECT floor(extract(epoch FROM tt.started_at) / 3600)::bigint AS h,
+                       sum(tt.tokens_in)::bigint AS tokens_in, sum(tt.tokens_out)::bigint AS tokens_out
+                  FROM activity.transcript_turns tt JOIN activity.sessions s ON s.client_session_id = tt.session_id
+                 WHERE ($1::int IS NULL OR tt.started_at >= now() - make_interval(days => $1::int))
+                   AND ($2::uuid IS NULL OR s.workspace_id = $2)
+                 GROUP BY 1)
+             SELECT coalesce(t.h, k.h), coalesce(t.turns, 0), coalesce(t.corrections, 0), k.tokens_in, k.tokens_out
+               FROM t FULL JOIN k ON k.h = t.h
+              ORDER BY 1",
+        )
+        .bind(range_days)
+        .bind(workspace)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(serde_json::Value::Array(
+            rows.into_iter()
+                .map(|(h, turns, corr, tin, tout)| serde_json::json!([h, turns, corr, tin, tout]))
+                .collect(),
+        ))
     }
 
     // ── Extensions ────────────────────────────────────────────────────
@@ -908,7 +923,7 @@ impl PgStore {
 
     /// `(session uuid, client_session_id)` for a workspace's sessions that NEED
     /// (re)enrichment — never analyzed (`analyzed_at IS NULL`), or with
-    /// assistant_events newer than the last analysis. Lets the scheduler skip
+    /// assistant_events or transcript turns newer than the last analysis. Lets the scheduler skip
     /// unchanged sessions so enrichment cost scales with NEW activity, not total
     /// history (#67 incremental).
     pub async fn get_workspace_sessions_needing_enrichment(
@@ -923,9 +938,13 @@ impl PgStore {
              WHERE s.workspace_id = $1 AND s.client_session_id IS NOT NULL
                AND (s.analyzed_at IS NULL
                     OR (s.duration IS NOT NULL AND s.claude_time IS NULL)
+                    OR (s.duration IS NOT NULL AND s.active_by_hour IS NULL)
                     OR EXISTS (SELECT 1 FROM activity.assistant_events e
                                WHERE e.session_id = s.client_session_id
-                                 AND to_timestamp(e.ts / 1000.0) > s.analyzed_at))"
+                                 AND to_timestamp(e.ts / 1000.0) > s.analyzed_at)
+                    OR EXISTS (SELECT 1 FROM activity.transcript_turns tt
+                               WHERE tt.session_id = s.client_session_id
+                                 AND tt.created_at > s.analyzed_at))"
         ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
@@ -1030,13 +1049,20 @@ impl PgStore {
 
     /// `(workspace_id, latest_session_activity)` for every workspace with attributed
     /// sessions — drives the analyzer scheduler's "what changed since last run"
-    /// check (#67).
+    /// check (#67). A session's activity is its start, its end, and the last of its
+    /// transcript turns to land: a transcript (re-)read changes what analysis derives
+    /// without any new session.
     pub async fn get_workspaces_with_session_activity(
         &self,
     ) -> Result<Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)>, String> {
         let rows: Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
-            "SELECT workspace_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
-             FROM activity.sessions WHERE workspace_id IS NOT NULL GROUP BY workspace_id",
+            "SELECT s.workspace_id, max(GREATEST(s.started_at, s.completed_at, t.landed))
+               FROM activity.sessions s
+               LEFT JOIN (SELECT session_id, max(created_at) AS landed
+                            FROM activity.transcript_turns GROUP BY session_id) t
+                      ON t.session_id = s.client_session_id
+              WHERE s.workspace_id IS NOT NULL
+              GROUP BY s.workspace_id",
         )
         .fetch_all(&self.pool)
         .await
@@ -1485,6 +1511,7 @@ impl PgStore {
             duration_ms,
             claude_ms,
             user_ms,
+            active_by_hour,
             module,
             tool_usage,
         } = row;
@@ -1495,7 +1522,8 @@ impl PgStore {
                     module = $7, analyzed_at = now(),
                     props = props || jsonb_build_object('tool_usage', $8::jsonb),
                     claude_time = make_interval(secs => $9::float8 / 1000.0),
-                    user_time = make_interval(secs => $10::float8 / 1000.0)
+                    user_time = make_interval(secs => $10::float8 / 1000.0),
+                    active_by_hour = $11::jsonb
               WHERE id = $1",
         )
         .bind(session_id)
@@ -1508,6 +1536,7 @@ impl PgStore {
         .bind(tool_usage)
         .bind(claude_ms)
         .bind(user_ms)
+        .bind(active_by_hour)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1561,12 +1590,12 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
         sqlx_core::query::query(
             "INSERT INTO activity.turns
-               (session_id, turn_number, segment, started_at, ended_at, duration, is_correction, triage_signal, tool_calls)
+               (session_id, turn_number, segment, started_at, ended_at, duration, is_correction, triage_signal, tool_calls, origin)
              SELECT $1, (t->>'turn_number')::int, (t->>'segment')::int,
                     to_timestamp((t->>'started_ms')::bigint / 1000.0),
                     to_timestamp((t->>'ended_ms')::bigint / 1000.0),
                     make_interval(secs => (t->>'duration_ms')::bigint / 1000.0),
-                    (t->>'is_correction')::bool, t->>'triage_signal', (t->>'tool_calls')::int
+                    (t->>'is_correction')::bool, t->>'triage_signal', (t->>'tool_calls')::int, t->>'origin'
              FROM jsonb_array_elements($2::jsonb) t"
         ).bind(session_id).bind(turns).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())

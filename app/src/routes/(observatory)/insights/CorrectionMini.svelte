@@ -13,5 +13,5 @@
 >
   <Kanji char="直" size="inherit" tone="inherit" class="text-xs text-warning" />
   <span class="flex-1 min-w-0 text-xs text-ink leading-snug truncate">{correction.text}</span>
-  <span class="font-mono text-xs text-ink-soft" data-correction-count>{correction.count}×</span>
+  <span class="font-mono text-xs text-ink-mute" data-correction-count>{correction.count}×</span>
 </article>

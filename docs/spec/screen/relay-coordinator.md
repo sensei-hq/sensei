@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (Observatory desktop)
 **Route:** `/relay` (new Observatory rail item)
-**Source mockup:** [`lib/relay/relay-desktop.jsx`](../../mockups/Sensei/lib/relay/relay-desktop.jsx) → `RelayCoordinator`
+**Source mockup:** `lib/relay/relay-desktop.jsx` → `RelayCoordinator`
 **Data:** _greenfield — the coordinator supervises local agent CLIs, tracks paired devices, publishes the filtered event stream, and holds pending gates; shapes proposed below_
 **App file:** _greenfield — not built_ (the Observatory rail item `app/src/routes/(observatory)/relay/+page.svelte`)
 **Daemon files:** _greenfield — coordinator not built_ (grows `crates/senseid`; new `coordinator` module + relay transport)

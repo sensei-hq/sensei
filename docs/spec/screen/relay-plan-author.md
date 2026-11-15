@@ -2,7 +2,7 @@
 
 **Segment:** 05 · Relay (Observatory desktop)
 **Route:** `/relay/plan` (under the Relay Observatory rail item) — the plan-authoring view
-**Source mockup:** [`lib/relay/relay-desktop.jsx`](../../mockups/Sensei/lib/relay/relay-desktop.jsx) → `RelayPlanAuthor`
+**Source mockup:** `lib/relay/relay-desktop.jsx` → `RelayPlanAuthor`
 **Data:** _greenfield — a project's one active plan (phases → features · checkpoints · gates); each step carries an auto|gate mode; shapes proposed below_
 **App file:** _greenfield — not built_ (`app/src/routes/(observatory)/relay/plan/+page.svelte`)
 **Daemon files:** _greenfield — planner model not built_ (grows `crates/senseid`; new `plan` module — see [architecture/relay](../../architecture/relay.md) "the planner model")

@@ -1,0 +1,69 @@
+name: DeepSource coverage report
+description: >
+  Sends one lcov report to DeepSource over the workflow's OIDC token (no DSN
+  secret; the job needs `id-token: write`). The CLI is a pinned release tarball
+  verified against its published sha256 — never a remote install script piped
+  into a shell. Run from the repository root so the report's paths resolve;
+  several reports under one key merge on DeepSource's side.
+
+inputs:
+  key:
+    description: The DeepSource test-coverage key (rust, javascript, …)
+    required: true
+  file:
+    description: The lcov report, relative to the repository root
+    required: true
+  prefix:
+    description: >
+      A directory to prefix every SF entry with, for a report whose paths are
+      relative to a package rather than the repository (e.g. "app"). Empty = none.
+    required: false
+    default: ''
+  skip-missing:
+    description: When "true", a missing report is a warning and nothing is sent; otherwise a failure.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch the pinned DeepSource CLI
+      shell: bash
+      env:
+        # Bump both together: the tarball's sha256 is the one its release publishes
+        # in checksums.txt (https://github.com/DeepSourceCorp/cli/releases).
+        VERSION: 0.10.2
+        SHA256: 031efbf3326b26af63bbb962a093f4d532fa1a096aa9fd4b08095f2aa85042a8
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/deepsource-cli"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/cli.tar.gz" \
+          "https://github.com/DeepSourceCorp/cli/releases/download/v${VERSION}/deepsource_${VERSION}_linux_amd64.tar.gz"
+        echo "${SHA256}  ${dir}/cli.tar.gz" | sha256sum -c -
+        tar -xzf "$dir/cli.tar.gz" -C "$dir" deepsource
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: Report
+      shell: bash
+      env:
+        KEY: ${{ inputs.key }}
+        FILE: ${{ inputs.file }}
+        PREFIX: ${{ inputs.prefix }}
+        SKIP_MISSING: ${{ inputs.skip-missing }}
+      run: |
+        set -euo pipefail
+        if [ ! -f "$FILE" ]; then
+          if [ "$SKIP_MISSING" = "true" ]; then
+            echo "::warning::no coverage report at $FILE — nothing sent to DeepSource for key $KEY"
+            exit 0
+          fi
+          echo "::error::no coverage report at $FILE"
+          exit 1
+        fi
+        report="$FILE"
+        if [ -n "$PREFIX" ]; then
+          report="$RUNNER_TEMP/deepsource-${KEY}-$(basename "$FILE")"
+          sed "s|^SF:|SF:${PREFIX}/|" "$FILE" > "$report"
+        fi
+        deepsource report --analyzer test-coverage --key "$KEY" --value-file "$report" --use-oidc

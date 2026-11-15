@@ -14,6 +14,13 @@ describe('readPreferences', () => {
     const d = await readPreferences({ tryGetConfig: async () => ok({ 'setup.preferences': JSON.stringify(saved) }) });
     expect([d.error, d.prefs?.showWelcome]).toEqual([null, saved.showWelcome]);
   });
+  // D83 batch A, audit row 73: corrupt stored preferences read as the defaults,
+  // and the page's auto-save wrote them over the real values.
+  it('corrupt stored preferences are an error naming them, and no form (D83 batch A)', async () => {
+    const d = await readPreferences({ tryGetConfig: async () => ok({ 'setup.preferences': '{not json' }) });
+    expect(d.prefs).toBeNull();
+    expect(d.error).toMatch(/stored preferences/i);
+  });
   it('a failed read is an error and no form — never the defaults', async () => {
     expect(await readPreferences({ tryGetConfig: async () => down })).toEqual({ prefs: null, error: 'Service Unavailable', prefilled: false });
   });
@@ -56,5 +63,38 @@ describe('readExtensions', () => {
   });
   it('a failed read is an error, not "none installed"', async () => {
     expect(await readExtensions({ tryGetInstalledItems: async () => down })).toEqual({ extensions: [], error: 'Service Unavailable' });
+  });
+
+  // D83, L0 ruling on L5 settings/extensions tests r1: `enabled ?? true` draws
+  // a row the daemon never reported as on, and the toggle would then write that
+  // invented state back. Unknown is not a state to guess.
+  it('a row with no `enabled` is unknown, never on', async () => {
+    const d = await readExtensions({ tryGetInstalledItems: async () => ok([{ name: 'tdd', kind: 'skill', path: '/x' }]) });
+    expect(d.extensions[0]?.name).toBe('tdd');
+    expect(d.extensions[0]?.enabled ?? null).toBeNull();
+  });
+
+  // L0 ruling on tests r1 (L2): a row can be neither drawn nor toggled without
+  // a kind and a name — the URL would say `…/unknown/enabled`. Skipped with the
+  // reason, never invented.
+  it('skips a row that reports no kind, with the reason', async () => {
+    const d = await readExtensions({
+      tryGetInstalledItems: async () => ok([{ name: 'ghost', path: '/x', enabled: true }, { name: 'tdd', kind: 'skill', path: '/y', enabled: true }]),
+    });
+    expect(d.extensions.map((e) => e.name)).toEqual(['tdd']);
+    expect(d.skipped).toEqual([{ name: 'ghost', reason: 'kind not reported' }]);
+  });
+
+  it('skips a row that reports no name, with the reason', async () => {
+    const d = await readExtensions({ tryGetInstalledItems: async () => ok([{ kind: 'skill', path: '/x', enabled: false }]) });
+    expect(d.extensions).toEqual([]);
+    expect(d.skipped).toEqual([{ name: '', reason: 'name not reported' }]);
+  });
+
+  // Review r1, N1: both missing is one reason, not "kind" alone.
+  it('names both when the row reports neither', async () => {
+    const d = await readExtensions({ tryGetInstalledItems: async () => ok([{ path: '/x', enabled: true }]) });
+    expect(d.extensions).toEqual([]);
+    expect(d.skipped).toEqual([{ name: '', reason: 'name and kind not reported' }]);
   });
 });

@@ -7,7 +7,7 @@ purpose: keep us on target — never re-litigate a settled pivot; remember why w
 
 # Design journey — what we tried, what stuck, what didn't
 
-The crisp locked answers are in [`../decisions.md`](../decisions.md). **This is the *why*** —
+The crisp locked answers are in [`../decisions.md`](../../decisions.md). **This is the *why*** —
 the approaches we circled through and the evidence that settled each. Read this before
 re-opening a "should we instead…" question.
 

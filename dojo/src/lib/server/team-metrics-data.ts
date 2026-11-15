@@ -131,6 +131,7 @@ export async function readTeamMetrics(
 				? t.members.map((m) => ({
 						principal_id: m.principal_id,
 						display_name: m.display_name,
+						handle: m.handle,
 						email: m.email,
 						you: m.principal_id === caller.userId,
 						metrics: people.get(m.principal_id) ?? {}

@@ -28,18 +28,18 @@ describe('MemoryChip', () => {
     it('uses the success token pair for the success tone', () => {
         const el = mount('success', 'generalised: yes');
         expect(el.className).toContain('bg-success-soft');
-        expect(el.className).toContain('text-success');
+        expect(el.className).toContain('text-on-success-soft');
     });
 
     it('uses a muted paper/ink pair for the neutral tone', () => {
         const el = mount('neutral', 'generalised: no');
         expect(el.className).toContain('bg-paper-mute');
-        expect(el.className).toContain('text-ink-mute');
+        expect(el.className).toContain('text-ink-soft');
     });
 
     it('uses the accent token pair for the accent tone', () => {
         const el = mount('accent', 'ready');
         expect(el.className).toContain('bg-accent-soft');
-        expect(el.className).toContain('text-accent');
+        expect(el.className).toContain('text-on-accent-soft');
     });
 });

@@ -1,6 +1,6 @@
 [package]
 name = "sensei-cli"
-version = "0.21.1"
+version = "0.22.0"
 edition = "2024"
 description = "Sensei CLI — initialize and manage sensei for AI coding"
 
@@ -9,14 +9,14 @@ name = "sensei"
 path = "src/main.rs"
 
 [dependencies]
-chrono = "0.4"
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
-sensei-bootstrap = { path = "../bootstrap" }
-tracing = "0.1"
+chrono = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true, features = ["blocking"] }
+sensei-bootstrap = { workspace = true }
+tracing = { workspace = true }
 owo-colors = { version = "4", features = ["supports-colors"] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }

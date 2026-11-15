@@ -25,7 +25,7 @@
 </script>
 
 {#if viewers.length === 0}
-	<div class="bg-paper-soft border-paper-edge text-ink-mute rounded-lg border p-4 text-sm">
+	<div class="bg-paper-soft border-paper-edge text-ink-soft rounded-lg border p-4 text-sm">
 		No viewers yet. Invite a manager or client as a viewer, then grant them the workspaces they should see.
 	</div>
 {:else}
@@ -43,7 +43,7 @@
 					{#if onRemove}
 						<button
 							type="button"
-							class="text-ink-mute hover:text-danger cursor-pointer text-xs"
+							class="text-ink-soft hover:text-danger cursor-pointer text-xs"
 							aria-label={'Remove ' + label}
 							onclick={() => onRemove?.(v)}>Remove</button
 						>

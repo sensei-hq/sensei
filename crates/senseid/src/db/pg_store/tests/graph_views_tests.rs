@@ -583,6 +583,95 @@ async fn structure_level_module_groups_by_the_modules_top_segment() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// ABSTRACTNESS IS WHAT A MODULE DECLARES: interfaces and traits (M17 Zones,
+/// "how much of it is interfaces and traits"). It was "a type something implements
+/// or extends", and TypeScript interfaces are structural — nothing `implements`
+/// them — so 743 of sensei's 756 counted as concrete and every depended-on
+/// TypeScript module fell into the zone of pain (2026-10-30).
+///
+/// Mutation that must break it: count a type as abstract only when implemented.
+#[tokio::test]
+async fn an_interface_is_abstract_by_declaration() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_workspace_and_folder(&s, &format!("zones_{uniq}")).await;
+    for (fqn, kind, name) in [
+        ("typescript·pkg·shapes·Shape·item", "interface", "Shape"),
+        ("typescript·pkg·shapes·Circle·item", "struct", "Circle"),
+    ] {
+        s.seed_node_by_fqn(
+            &fid,
+            fqn,
+            kind,
+            name,
+            Some("typescript"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: "src/shapes.ts",
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    let zones = s.component_zones(&pid).await.unwrap();
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+    let shapes = zones.iter().find(|z| z.component == "pkg/shapes").expect("the module is placed");
+    assert_eq!(
+        (shapes.types, shapes.abstract_types),
+        (2, 1),
+        "the interface is abstract, the struct is not"
+    );
+    assert_eq!(shapes.abstractness, Some(0.5));
+}
+
+/// Every file of the workspace with the module the map files it under — what L0
+/// counts by role (M17). Grouped by the same top segment as `structure_nodes`.
+#[tokio::test]
+async fn codemap_module_paths_names_each_files_module() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_workspace_and_folder(&s, &format!("paths_{uniq}")).await;
+    for (fqn, path) in [
+        ("rust·pkg·tasks::alpha·run·item", "src/tasks/alpha.rs"),
+        ("rust·pkg·tasks::alpha_test·run·item", "src/tasks/tests/alpha_test.rs"),
+        ("rust·pkg·api::handler·run·item", "src/api/handler.rs"),
+    ] {
+        s.seed_node_by_fqn(
+            &fid,
+            fqn,
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: path,
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    let mut paths = s.codemap_module_paths(&pid).await.unwrap();
+    paths.sort();
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+    assert_eq!(
+        paths,
+        [
+            ("pkg/api", "src/api/handler.rs"),
+            ("pkg/tasks", "src/tasks/alpha.rs"),
+            ("pkg/tasks", "src/tasks/tests/alpha_test.rs"),
+        ]
+        .map(|(m, p)| (m.to_string(), p.to_string()))
+    );
+}
+
 /// COVERAGE COUNTS WHAT COULD NOT BE PLACED, not every edge there is.
 ///
 /// The first version of this asked `graph_placement` for
@@ -878,6 +967,51 @@ async fn only_rows_provably_the_persons_are_pushable_user_metrics() {
         4,
         "pushed + held = every user row in play: the window and the count see one population"
     );
+}
+
+/// F-E: the user window skips a row whose backoff has not elapsed — a waiting
+/// row holds no share of the push limit — and offers it again once the backoff
+/// elapses. The held-back count does NOT count waiting rows: it counts rows
+/// that are not provably the person's, and a waiting row may be perfectly
+/// provable. (So during a backoff pushed + held + waiting = every user row in
+/// play, not pushed + held.)
+#[tokio::test]
+async fn the_user_window_skips_a_row_in_backoff_and_reoffers_it_after() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture_at(&s, &uniq, "private").await; // one no-identity user row
+    let key = format!("test/bare-{uniq}");
+    let persona = s.upsert_persona(&format!("_test:userbackoff:{uniq}"), true).await.unwrap();
+    // Backoff: not yet elapsed.
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics SET next_attempt_at = now() + interval '1 hour' \
+          WHERE repository_id = $1",
+    )
+    .bind(rid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let waiting = s.unpushed_user_metric_rows(&persona, &[&key], &[&key], 500).await.unwrap();
+    let held = s.unprovable_user_metric_count(&persona, &[&key], &[&key]).await.unwrap();
+    assert!(waiting.is_empty(), "a row in backoff waits its turn, offered: {waiting:?}");
+    assert_eq!(held, 0, "a waiting-but-provable row is not held back as unprovable");
+    // The backoff elapses: the row is offered again.
+    sqlx_core::query::query(
+        "UPDATE sensei.repository_metrics SET next_attempt_at = now() - interval '1 minute' \
+          WHERE repository_id = $1",
+    )
+    .bind(rid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let offered = s.unpushed_user_metric_rows(&persona, &[&key], &[&key], 500).await.unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(persona)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+    assert_eq!(offered.len(), 1, "elapsed backoff re-offers the user row");
 }
 
 /// #290: a workspace's file count is the distinct files its nodes sit in. It

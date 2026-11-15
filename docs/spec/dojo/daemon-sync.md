@@ -17,7 +17,7 @@
 | sensei ⇄ dōjō | **two-way** | workspaces and their repositories, teams, roles, integration connections — authored on either side, mirrored to the other; **the dōjō wins on conflict** and sensei says when a local change lost; `origin` marks where a row was authored so nothing loops |
 | sensei → dōjō | one-way (as today) | repository registration, metrics, the code graph, contributions, relay sessions and segments |
 | dōjō → sensei | one-way (as today) | the sync plan, memberships, resolved rules, relay replies — and, new, the mirrored tickets, deployments, release-gate results and DORA keys |
-| external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads; nothing writes back |
+| external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads and never writes to a tracker; the local daemon writes usage and SDLC metrics to tickets assigned to its token owner (`spec/daemon/tracker-metrics-writeback.md`) |
 
 **Branch scope (user, 2026-10-21; target — not in code).** Code graphs are tagged by branch and the
 latest push per branch wins. Sensei syncs only the branches mapped to the three environments —
@@ -95,6 +95,15 @@ mechanism as everything else).
 
 Private-repo sharing is where billing enters (phase 2 of the parent spec: claim, seat, billing).
 Until then a private repository stays local-only regardless of configuration.
+
+**Superseded 2026-11-02 ([D46](../../roadmap/09-dojo-expansion.md), user decision).** An
+organisation's public repositories sync automatically — members have no toggle; an admin may turn
+one off as org policy. A personal dōjō is free, private repositories included: its repositories, public and private,
+are the person's to choose, all by default, and an opt-out holds. Only an organisation's private
+repositories need a subscription, taken by its admin or owner; until there is one they are hidden
+from the organisation's repository lists, which say private repositories are supported on paid plans and link to
+Settings › Plan & billing. The dōjō's per-repository election is the one authority: gate 1 below
+(`sensei.repositories.visibility`) is retired. Local sensei works in full on any plan.
 
 **Verification order, which is also the done gate.** Start from the real initial state and change
 one thing at a time, so each step's effect is observable:
@@ -761,6 +770,9 @@ cannot tell a user which one they are in.
   and would have hosted every personal private repo free — the common case, since
   no personal tenant carries a billing row. **Entitlement keys on visibility, not
   on owner.**
+  **Reversed 2026-11-02 (D46, revised):** a personal dōjō is free, private
+  repositories included. A2 is entitled (✅); only an organisation's private
+  repositories need a subscription.
 - **B/C — election still governs.** C matters: a *public* personal repo is
   entitled for free and still does not sync unelected. Public means *free to
   host*, never *automatically shared*.

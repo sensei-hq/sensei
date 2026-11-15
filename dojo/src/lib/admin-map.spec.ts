@@ -27,15 +27,16 @@ function member(over: Partial<Membership> = {}): Membership {
 		disabled_at: null,
 		created_at: '2026-01-01T00:00:00Z',
 		display_name: null,
+		handle: null,
 		email: null,
 		...over
 	};
 }
 
 describe('toKitMember / toKitMembers', () => {
-	it('maps the row, name falls back to a short user id', () => {
+	it('maps the row, an unnamed member reads as words', () => {
 		const k = toKitMember(member(), { now: NOW });
-		expect(k.name).toBe('aaaaaaaa');
+		expect(k.name).toBe('Name not shared yet');
 		expect(k.userId).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
 		expect(k.git).toBe('GitHub');
 		expect(k.role).toBe('maintainer');
@@ -45,6 +46,27 @@ describe('toKitMember / toKitMembers', () => {
 	});
 	it('uses the resolved display name when present (WS-1)', () => {
 		expect(toKitMember(member({ display_name: 'Ada Lovelace' }), { now: NOW }).name).toBe('Ada Lovelace');
+	});
+	it('L4 member-names — an unnamed member reads as words, never an id fragment', () => {
+		const k = toKitMember(member(), { now: NOW });
+		expect(k.name).toBe('Name not shared yet');
+		expect(k.name).not.toContain('aaaaaaaa');
+	});
+	it('L4 member-names — email shows when the name is missing', () => {
+		expect(toKitMember(member({ display_name: null, email: 'a@x.co' }), { now: NOW }).name).toBe('a@x.co');
+	});
+	it('L4 forge-handle — the handle shows when the name is missing', () => {
+		expect(toKitMember(member({ display_name: null, handle: 'octocat', email: null }), { now: NOW }).name).toBe(
+			'octocat'
+		);
+	});
+	it('L4 forge-handle — the handle loses to a name and beats an email', () => {
+		expect(toKitMember(member({ display_name: 'Ada', handle: 'octocat', email: 'a@x.co' }), { now: NOW }).name).toBe(
+			'Ada'
+		);
+		expect(toKitMember(member({ display_name: null, handle: 'octocat', email: 'a@x.co' }), { now: NOW }).name).toBe(
+			'octocat'
+		);
 	});
 	it('marks the viewer row with you', () => {
 		const k = toKitMember(member(), { self: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', now: NOW });
@@ -56,7 +78,7 @@ describe('toKitMember / toKitMembers', () => {
 	});
 	it('maps a list preserving order', () => {
 		const out = toKitMembers([member({ user_id: '11111111-x' }), member({ user_id: '22222222-y' })], { now: NOW });
-		expect(out.map((m) => m.name)).toEqual(['11111111', '22222222']);
+		expect(out.map((m) => m.name)).toEqual(['Name not shared yet', 'Name not shared yet']);
 	});
 });
 

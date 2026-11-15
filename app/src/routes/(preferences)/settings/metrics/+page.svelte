@@ -1,12 +1,13 @@
 <script lang="ts">
+  import { Notice, StateView } from '@sensei/ui';
     import { railIcon } from "../settings-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, ScreenState, Switch } from '$lib/components';
+  import { PageHeader, Screen, Switch } from '$lib/components';
   import { personaList } from '$lib/personas.svelte.js';
-  import { MetricSettings, signedInSlot } from './metric-status-state.svelte.js';
+  import { MetricSettings, reasonKindClass } from './metric-status-state.svelte.js';
 
   let { data } = $props();
 
@@ -24,19 +25,16 @@
     ? new MetricSettings(summary, senseiApi(appState.port), null)
     : null;
 
-  // The write credential is the KEYCHAIN SESSION SLOT, and `signedInSlot` takes
-  // it from `sessionSlot` — never from `label`, which is a display string.
+  // The write credential is the identity state's decision (`writeSlot`): the
+  // default identity while it is usable, never a dead or substituted one. It
+  // follows the state, so an expiry seen in the overlay reaches this screen too.
   $effect(() => {
-    void personaList.load().then(() => {
-      state?.setPersona(signedInSlot(personaList.personas));
-    });
+    void personaList.load();
+  });
+  $effect(() => {
+    state?.setPersona(personaList.writeSlot);
   });
 
-  // The reason kinds map to three treatments, and the mapping is the registry's,
-  // not this screen's: `normal` clears itself so it reads as plain text; a
-  // `refusal` is somebody's decision; a `fault` needs attention.
-  const kindClass = (kind: string) =>
-    kind === 'fault' ? 'text-danger' : kind === 'refusal' ? 'text-warning' : 'text-ink-mute';
 </script>
 
 <Screen>
@@ -51,7 +49,7 @@
 
     {#if data.error || !state}
       <div class="max-w-[1060px] mx-auto px-7 pb-10">
-        <ScreenState
+        <StateView
           status="error"
           error={data.error ?? 'Failed to load metric status'}
           onretry={invalidateAll}
@@ -68,7 +66,7 @@
              intrinsic height, so rendering it empty beside "choose a repository"
              shows an invisible list and an instruction that cannot be followed. The
              load succeeded — there is genuinely nothing yet. -->
-        <p class="text-sm text-ink-mute m-0" data-empty>
+        <p class="text-sm text-ink-soft m-0" data-empty>
           No repositories are registered yet, so there is nothing to compute metrics
           for. Add a root under Settings · Roots and let a scan finish.
         </p>
@@ -88,7 +86,7 @@
               >
                 <span class="block text-sm text-ink truncate">{entry.name}</span>
                 {#if entry.worst}
-                  <span class="block text-xs mt-0.5 {kindClass(entry.worst.kind)}">
+                  <span class="block text-xs mt-0.5 {reasonKindClass(entry.worst.kind)}">
                     {entry.worst.summary}
                   </span>
                 {/if}
@@ -103,26 +101,26 @@
 
           <section>
             {#if state.loading}
-              <ScreenState status="loading" />
+              <StateView status="loading" />
             {:else if state.error && state.rows.length === 0}
-              <ScreenState
+              <StateView
                 status="error"
                 error={state.error}
                 onretry={() => state.selected && state.select(state.selected)}
               />
             {:else if !state.selected}
-              <p class="text-sm text-ink-mute m-0">Choose a repository to see its metrics.</p>
+              <p class="text-sm text-ink-soft m-0">Choose a repository to see its metrics.</p>
             {:else}
-              {#if state.error}
+              {#if state.notice}
                 <!-- A write error, with the rows still shown: the reason the switch
                      did not move is more useful beside the switch than in place of it. -->
-                <p class="text-xs text-danger mb-3 mt-0" data-write-error>{state.error}</p>
+                <div class="mb-3"><Notice size="inline" expanded {...state.notice} data-write-error /></div>
               {/if}
               {#if state.blockedReason}
                 <!-- The controller distinguishes the two causes — no remote vs nobody
                      signed in — because one is a fact about the repository and the
                      other is actionable by the reader. -->
-                <p class="text-xs text-ink-mute mb-3 mt-0" data-not-configurable>
+                <p class="text-xs text-ink-soft mb-3 mt-0" data-not-configurable>
                   {state.blockedReason}
                 </p>
               {/if}
@@ -137,7 +135,7 @@
                   >
                     <div>
                       <div class="text-sm text-ink">{row.metric}</div>
-                      <div class="text-xs mt-0.5 {kindClass(row.reason.kind)}" data-reason-summary>
+                      <div class="text-xs mt-0.5 {reasonKindClass(row.reason.kind)}" data-reason-summary>
                         {row.reason.summary}
                       </div>
                       <div class="text-xs text-ink-faint mt-0.5">
@@ -146,7 +144,7 @@
                       {#if row.reason.remedy}
                         <!-- Only a refusal or a fault carries one — a `normal` code has
                              no remedy by DDL invariant, so nothing is invented here. -->
-                        <div class="text-xs text-ink-soft mt-1" data-remedy>{row.reason.remedy}</div>
+                        <div class="text-xs text-ink-mute mt-1" data-remedy>{row.reason.remedy}</div>
                       {/if}
                     </div>
                     <!-- Keyed on the controller's revision so a REFUSED write remounts

@@ -14,7 +14,7 @@ function days(n: number, gaps: number[] = []): MetricSeriesPoint[] {
 
 function data(over: Partial<MetricDetailData> = {}): MetricDetailData {
   return {
-    rows: [], registry: [], narrative: null, selectedKey: 'ftr', grain: 'daily',
+    workspaceId: 'w1', rows: [], registry: [], narrative: null, selectedKey: 'ftr', grain: 'daily',
     series: days(20), formula: null, recommendations: [],
     ...over,
   } as MetricDetailData;

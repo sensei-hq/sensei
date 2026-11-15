@@ -126,7 +126,7 @@ comment on column folders.workspace_root_id
 - Refreshed on every scan, so a folder that leaves the member list stops
   reading as a member.
 - NULL means nothing declares it. A real and common state, not "unknown":
-  `marketplace/`, `app/`, `dojo/` and `website/` here are all genuine build
+  `marketplace/`, `app/` and `dojo/` here are all genuine build
   units that no workspace lists.
 - KNOWN GAP, named rather than silent: only the REPO ROOT''s manifest is read
   today, so a nested workspace root is not detected and its members resolve as

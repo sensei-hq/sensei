@@ -558,6 +558,16 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // the decision says asking is worth it) and the only thing that turns a
     // silently-dead token into a fact the UI can act on.
     crate::tasks::forge_token_check::spawn(Arc::new(state.pg.clone()));
+    // Relay lanes: expire lapsed lane leases, suspend their work, re-offer
+    // past the grace, end limit pauses, release abandoned review claims,
+    // nudge about floating reviews, and run the merge gate for approved
+    // branches. The `relay_lease` schedule owns the cadence; a
+    // not-yet-converged relay schema warns, never fatals.
+    crate::tasks::relay_lease_sweep::spawn(
+        Arc::new(state.pg.clone()),
+        state.event_tx.clone(),
+        Arc::new(crate::relay::gate::GitGateRunner),
+    );
     // Tracker integrations: mirror connected boards, drain removed credentials.
     crate::tasks::tracker_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
 
@@ -599,6 +609,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // activity.assistant_events so analysis isn't missing them; runs on boot +
     // every tick of the `capture_drain` schedule (seeded 300s).
     crate::tasks::capture_drain::spawn(Arc::new(state.pg.clone()), crate::paths::sensei_dir());
+    crate::tasks::session_signals::spawn(Arc::new(state.pg.clone()));
 
     // Transcript ingestion: a boot pass, then the `ingest_captures` cadence.
     // Beside capture_drain because the two are halves of one story — that one
@@ -751,7 +762,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Dōjō sync: establishes repository IDENTITY (which tenant) and ENTITLEMENT
     // (what may sync) for every signed-in persona. Pushes no metrics yet — see
     // the module docs for why that is a separate slice.
-    crate::tasks::dojo_sync::spawn(Arc::new(state.pg.clone()));
+    crate::tasks::dojo_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
 
     // Capture watchdog: hourly sweep over configured ACP adapters. Auto-resolves
     // config-side failures (reinstall), trips a per-adapter breaker on give-up,

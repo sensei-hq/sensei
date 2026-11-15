@@ -19,7 +19,7 @@
 			aria-pressed={on}
 			class="inline-flex items-center gap-1 rounded-full text-xs {on
 				? 'bg-paper text-ink font-semibold'
-				: 'text-ink-mute font-normal'}"
+				: 'text-ink-soft font-normal'}"
 			style="padding: 2px 8px; border: none; cursor: pointer; font-family: inherit"
 		>
 			<KanjiToken

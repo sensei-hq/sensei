@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { EmptyState, StateView } from '@sensei/ui';
     import { railIcon } from "../../observatory-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, EmptyState, Kanji, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, Kanji } from '$lib/components';
   import type { DojoMembership } from '$lib/types.js';
   import {
     boundWorkspacesSummary,
@@ -33,13 +34,13 @@
           <span class="text-sm text-ink truncate">{c.tenant_key}</span>
           {@render chip(pill.label, pill.bg, pill.text)}
         </div>
-        <div class="font-mono text-xs text-ink-mute mt-0.5 truncate">{c.dojo_url}</div>
+        <div class="font-mono text-xs text-ink-soft mt-0.5 truncate">{c.dojo_url}</div>
       </div>
       {@render chip(sync.label, sync.bg, sync.text)}
     </div>
 
     <div
-      class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-paper-edge text-xs text-ink-mute"
+      class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-paper-edge text-xs text-ink-soft"
     >
       <span>role · {c.role}</span>
       <span>attribution · {c.attribution_default}</span>
@@ -48,7 +49,7 @@
         <span class="flex flex-wrap items-center gap-1.5" data-testid="membership-orgs">
           orgs ·
           {#each c.org_slugs as slug (slug)}
-            {@render chip(slug, 'bg-paper-mute', 'text-ink-mute')}
+            {@render chip(slug, 'bg-paper-mute', 'text-ink-soft')}
           {/each}
         </span>
       {/if}
@@ -57,7 +58,7 @@
     {#if c.bound_workspaces.length > 0}
       <div class="flex flex-wrap gap-1.5 mt-2">
         {#each c.bound_workspaces as p (p.id)}
-          {@render chip(p.name, 'bg-paper-mute', 'text-ink-mute')}
+          {@render chip(p.name, 'bg-paper-mute', 'text-ink-soft')}
         {/each}
       </div>
     {/if}
@@ -76,7 +77,7 @@
         <a
           href="/settings/dojo"
           data-sign-in
-          class="px-3 py-2 rounded-md border border-paper-edge bg-transparent text-sm text-ink-soft no-underline"
+          class="px-3 py-2 rounded-md border border-paper-edge bg-transparent text-sm text-ink-mute no-underline"
         >Sign in to a Dōjō</a>
       {/snippet}
     </PageHeader>
@@ -84,15 +85,15 @@
 
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-connections-total={data.connections.length}>
       {#if data.error}
-        <ScreenState status="error" error={data.error} onretry={invalidateAll} />
+        <StateView status="error" error={data.error} failure={data.failure} onretry={invalidateAll} />
       {:else if data.connections.length === 0}
-        <EmptyState
+        <EmptyState size="screen"
           kanji="連"
           title="no dōjō yet"
           description="Sign in under Settings → Dōjō: each Dōjō you belong to joins here on the next sync. Employer, client, and community Dōjōs each keep their own scopes."
         />
       {:else}
-        <p class="text-sm text-ink-soft mb-6" data-connections-summary>
+        <p class="text-sm text-ink-mute mb-6" data-connections-summary>
           {connectionsHeadline(data.connections)}
         </p>
         {#each data.connections as c (c.id)}

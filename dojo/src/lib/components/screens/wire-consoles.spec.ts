@@ -55,6 +55,7 @@ const wireMember: Membership = {
 	disabled_at: null,
 	created_at: '2026-01-01T00:00:00Z',
 	display_name: null,
+	handle: null,
 	email: null
 };
 
@@ -134,7 +135,7 @@ describe('ScrRoleSurfaces — wired members / audit', () => {
 				audit: toKitAuditThread([wireAudit], NOW)
 			}
 		});
-		expect(getByText('aaaaaaaa')).toBeTruthy(); // short-id fallback name
+		expect(getByText('Name not shared yet')).toBeTruthy(); // honest words, never an id fragment
 	});
 
 	it('renders the audit thread on the audit tab', () => {

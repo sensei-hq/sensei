@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Component } from '$lib/health-types.js';
   import StatusIndicator from './StatusIndicator.svelte';
+  import { componentStatusView } from '$lib/health-status';
 
   interface Props {
     gate: Component;
@@ -8,16 +9,8 @@
   }
   let { gate, numeral }: Props = $props();
 
-  const numeralTone = $derived(
-    gate.status === 'ready'                                ? 'text-success'
-    : gate.status === 'failed'                              ? 'text-accent'
-    : gate.status === 'checking' || gate.status === 'installing' ? 'text-ink-mute'
-    :                                                          'text-ink-faint',
-  );
-
-  const indicatorLabel = $derived(
-    gate.status === 'installing' ? gate.installingVerb : undefined,
-  );
+  // The numeral's colour, the label and the dimming are componentStatusView's.
+  const view = $derived(componentStatusView(gate.status, gate.installingVerb));
 </script>
 
 <div
@@ -25,12 +18,12 @@
   data-gate-id={gate.id}
   data-gate-status={gate.status}
   class="gate-row border-b border-paper-edge py-2.5"
-  style="opacity: {gate.status === 'pending' ? 0.65 : 1};"
+  style="opacity: {view.dim ? 0.65 : 1};"
 >
   <div class="grid grid-cols-[22px_1fr_auto] items-center gap-3">
     <span
       data-component="gate-row-numeral"
-      class="font-kanji text-lg text-center leading-none {numeralTone}"
+      class="font-kanji text-lg text-center leading-none {view.text}"
     >{numeral}</span>
 
     <div class="min-w-0 flex flex-col gap-1">
@@ -40,15 +33,15 @@
           <span class="text-xs text-ink-faint">· {gate.detail}</span>
         {/if}
         {#if gate.version}
-          <span class="font-mono text-xs text-ink-mute">{gate.version}</span>
+          <span class="font-mono text-xs text-ink-soft">{gate.version}</span>
         {/if}
       </div>
       <div
         data-component="gate-row-description"
-        class="italic text-xs text-ink-soft leading-snug"
+        class="italic text-xs text-ink-mute leading-snug"
       >{gate.description}</div>
     </div>
 
-    <StatusIndicator status={gate.status} label={indicatorLabel} />
+    <StatusIndicator status={gate.status} label={gate.installingVerb} />
   </div>
 </div>

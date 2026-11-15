@@ -1,0 +1,3852 @@
+{
+  "body": [
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/44/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/44/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/44"
+      },
+      "assignee": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "assignees": [
+        {
+          "avatar_url": null,
+          "id": 2,
+          "locked": false,
+          "name": "Person 1",
+          "public_email": null,
+          "state": "active",
+          "username": "person1",
+          "web_url": "https://gitlab.example.com/person1"
+        }
+      ],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-09-01T03:43:31.555Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 9416,
+      "iid": 44,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#44",
+        "relative": "#44",
+        "short": "#44"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 44",
+      "type": "ISSUE",
+      "updated_at": "2026-09-01T03:43:31.555Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/44"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/43/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/43/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/43"
+      },
+      "assignee": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "assignees": [
+        {
+          "avatar_url": null,
+          "id": 2,
+          "locked": false,
+          "name": "Person 1",
+          "public_email": null,
+          "state": "active",
+          "username": "person1",
+          "web_url": "https://gitlab.example.com/person1"
+        }
+      ],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-09-01T03:43:16.436Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 9415,
+      "iid": 43,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#43",
+        "relative": "#43",
+        "short": "#43"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 43",
+      "type": "ISSUE",
+      "updated_at": "2026-09-01T03:43:16.436Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/43"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/42/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/42/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/42"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-12T04:24:32.774Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-10T08:20:04.202Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8714,
+      "iid": 42,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#42",
+        "relative": "#42",
+        "short": "#42"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 42",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:07.002Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/42"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/41/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/41/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/41"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-06-08T04:41:00.699Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8694,
+      "iid": 41,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3"
+      ],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#41",
+        "relative": "#41",
+        "short": "#41"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 41",
+      "type": "ISSUE",
+      "updated_at": "2026-06-08T04:41:00.699Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/41"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/40/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/40/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/40"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-08T06:53:27.304Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-08T04:35:07.785Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8693,
+      "iid": 40,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3",
+        "label-4"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#40",
+        "relative": "#40",
+        "short": "#40"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 40",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:07.873Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/40"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/39/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/39/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/39"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-10T08:37:02.940Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-05T09:15:37.680Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8683,
+      "iid": 39,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3",
+        "label-4"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#39",
+        "relative": "#39",
+        "short": "#39"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 39",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:09.031Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/39"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/38/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/38/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/38"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-08T04:12:21.473Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-05T08:29:40.928Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8682,
+      "iid": 38,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#38",
+        "relative": "#38",
+        "short": "#38"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 38",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:10.901Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/38"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/37/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/37/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/37"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-05T08:24:39.507Z",
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-06-05T08:22:03.769Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8681,
+      "iid": 37,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#37",
+        "relative": "#37",
+        "short": "#37"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 37",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:11.525Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/37"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/36/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/36/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/36"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-09T07:46:51.405Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-05T08:21:54.854Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8680,
+      "iid": 36,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3",
+        "label-4"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#36",
+        "relative": "#36",
+        "short": "#36"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 36",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:12.118Z",
+      "upvotes": 0,
+      "user_notes_count": 2,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/36"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/35/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/35/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/35"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-05T08:20:13.736Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-04T15:14:09.577Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8675,
+      "iid": 35,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#35",
+        "relative": "#35",
+        "short": "#35"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 35",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:12.798Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/35"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/34/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/34/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/34"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-05T04:34:34.317Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-04T15:03:22.868Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8673,
+      "iid": 34,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3",
+        "label-4"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#34",
+        "relative": "#34",
+        "short": "#34"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 34",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:13.655Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/34"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/33/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/33/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/33"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T15:40:11.578Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-04T07:26:35.185Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8670,
+      "iid": 33,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3",
+        "label-4"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#33",
+        "relative": "#33",
+        "short": "#33"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 33",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:14.241Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/33"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/32/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/32/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/32"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T11:21:56.634Z",
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-06-04T07:10:12.615Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8668,
+      "iid": 32,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3",
+        "label-4"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#32",
+        "relative": "#32",
+        "short": "#32"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 32",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:14.927Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/32"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/31/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/31/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/31"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-06-04T07:04:49.326Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8667,
+      "iid": 31,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#31",
+        "relative": "#31",
+        "short": "#31"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 31",
+      "type": "ISSUE",
+      "updated_at": "2026-06-04T07:04:49.326Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/31"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/30/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/30/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/30"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T06:55:59.599Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-04T06:07:16.907Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8666,
+      "iid": 30,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#30",
+        "relative": "#30",
+        "short": "#30"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 30",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:15.579Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/30"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/29/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/29/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/29"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T09:17:56.214Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-04T04:41:27.399Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8664,
+      "iid": 29,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3",
+        "label-4"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#29",
+        "relative": "#29",
+        "short": "#29"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 29",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:16.572Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/29"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/28/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/28/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/28"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T10:15:54.845Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-04T04:15:56.871Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8663,
+      "iid": 28,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#28",
+        "relative": "#28",
+        "short": "#28"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 28",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:17.985Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/28"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/27/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/27/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/27"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 26,
+        "locked": false,
+        "name": "Person 2",
+        "public_email": null,
+        "state": "active",
+        "username": "person2",
+        "web_url": "https://gitlab.example.com/person2"
+      },
+      "closed_at": "2026-06-04T03:31:23.545Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-03T11:38:08.094Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8655,
+      "iid": 27,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#27",
+        "relative": "#27",
+        "short": "#27"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 27",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:19.081Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/27"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/26/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/26/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/26"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-03T17:37:19.066Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-03T10:40:57.698Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8654,
+      "iid": 26,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3",
+        "label-4"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#26",
+        "relative": "#26",
+        "short": "#26"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 26",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:19.563Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/26"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/25/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/25/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/25"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T08:36:13.891Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-06-03T06:47:13.401Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8651,
+      "iid": 25,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2",
+        "label-3"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#25",
+        "relative": "#25",
+        "short": "#25"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 25",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:20.356Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/25"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/24/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/24/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/24"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-05-29T14:10:07.686Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:08:52.514Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8607,
+      "iid": 24,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#24",
+        "relative": "#24",
+        "short": "#24"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 24",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:20.929Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/24"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/23/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/23/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/23"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-29T07:08:43.939Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8606,
+      "iid": 23,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#23",
+        "relative": "#23",
+        "short": "#23"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 23",
+      "type": "ISSUE",
+      "updated_at": "2026-06-04T07:17:55.545Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/23"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/22/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/22/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/22"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T07:20:01.016Z",
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-29T07:08:36.388Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8605,
+      "iid": 22,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#22",
+        "relative": "#22",
+        "short": "#22"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 22",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:21.801Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/22"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/21/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/21/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/21"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-29T07:08:25.369Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8604,
+      "iid": 21,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#21",
+        "relative": "#21",
+        "short": "#21"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 21",
+      "type": "ISSUE",
+      "updated_at": "2026-05-29T07:08:25.369Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/21"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/20/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/20/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/20"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T03:33:41.129Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:08:03.833Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8603,
+      "iid": 20,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#20",
+        "relative": "#20",
+        "short": "#20"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 20",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:29.661Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/20"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/19/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/19/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/19"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T04:53:58.349Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:07:53.958Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8602,
+      "iid": 19,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#19",
+        "relative": "#19",
+        "short": "#19"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 19",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:31.764Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/19"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/18/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/18/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/18"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T06:16:39.674Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:07:41.101Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8601,
+      "iid": 18,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#18",
+        "relative": "#18",
+        "short": "#18"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 18",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:32.245Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/18"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/17/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/17/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/17"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-03T06:39:51.355Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:07:28.750Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8600,
+      "iid": 17,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#17",
+        "relative": "#17",
+        "short": "#17"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 17",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:33.192Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/17"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/16/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/16/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/16"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T03:33:23.601Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:07:12.161Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8599,
+      "iid": 16,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#16",
+        "relative": "#16",
+        "short": "#16"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 16",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:34.534Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/16"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/15/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/15/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/15"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T03:33:11.428Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:07:00.595Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8598,
+      "iid": 15,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#15",
+        "relative": "#15",
+        "short": "#15"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 15",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:35.520Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/15"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/14/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/14/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/14"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-01T08:50:10.124Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:06:46.480Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8597,
+      "iid": 14,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#14",
+        "relative": "#14",
+        "short": "#14"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 14",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:36.103Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/14"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/13/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/13/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/13"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-29T07:06:39.479Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8596,
+      "iid": 13,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#13",
+        "relative": "#13",
+        "short": "#13"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 13",
+      "type": "ISSUE",
+      "updated_at": "2026-05-29T07:06:39.479Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/13"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/12/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/12/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/12"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-29T07:06:22.173Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8595,
+      "iid": 12,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#12",
+        "relative": "#12",
+        "short": "#12"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 12",
+      "type": "ISSUE",
+      "updated_at": "2026-05-29T07:06:22.173Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/12"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/11/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/11/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/11"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-06-04T07:18:09.682Z",
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-29T07:06:16.039Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8594,
+      "iid": 11,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#11",
+        "relative": "#11",
+        "short": "#11"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 11",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:36.603Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/11"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/10/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/10/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/10"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-29T07:06:15.454Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8593,
+      "iid": 10,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#10",
+        "relative": "#10",
+        "short": "#10"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 10",
+      "type": "ISSUE",
+      "updated_at": "2026-06-04T07:00:57.654Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/10"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/9/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/9/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/9"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-05-29T09:55:22.388Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-29T07:06:14.922Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8592,
+      "iid": 9,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1",
+        "label-2"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#9",
+        "relative": "#9",
+        "short": "#9"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 9",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:37.018Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/9"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/8/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/8/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/8"
+      },
+      "assignee": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "assignees": [
+        {
+          "avatar_url": null,
+          "id": 2,
+          "locked": false,
+          "name": "Person 1",
+          "public_email": null,
+          "state": "active",
+          "username": "person1",
+          "web_url": "https://gitlab.example.com/person1"
+        }
+      ],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-27T06:02:18.376Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8579,
+      "iid": 8,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#8",
+        "relative": "#8",
+        "short": "#8"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 8",
+      "type": "ISSUE",
+      "updated_at": "2026-05-27T06:02:18.376Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/8"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/7/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/7/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/7"
+      },
+      "assignee": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "assignees": [
+        {
+          "avatar_url": null,
+          "id": 2,
+          "locked": false,
+          "name": "Person 1",
+          "public_email": null,
+          "state": "active",
+          "username": "person1",
+          "web_url": "https://gitlab.example.com/person1"
+        }
+      ],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-05-27T15:00:34.952Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-27T05:11:23.098Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8578,
+      "iid": 7,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#7",
+        "relative": "#7",
+        "short": "#7"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 7",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:37.476Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/7"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/6/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/6/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/6"
+      },
+      "assignee": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "assignees": [
+        {
+          "avatar_url": null,
+          "id": 2,
+          "locked": false,
+          "name": "Person 1",
+          "public_email": null,
+          "state": "active",
+          "username": "person1",
+          "web_url": "https://gitlab.example.com/person1"
+        }
+      ],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-05-27T09:10:57.343Z",
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-26T14:35:47.862Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8572,
+      "iid": 6,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#6",
+        "relative": "#6",
+        "short": "#6"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 6",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:37.935Z",
+      "upvotes": 0,
+      "user_notes_count": 1,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/6"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/5/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/5/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/5"
+      },
+      "assignee": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "assignees": [
+        {
+          "avatar_url": null,
+          "id": 2,
+          "locked": false,
+          "name": "Person 1",
+          "public_email": null,
+          "state": "active",
+          "username": "person1",
+          "web_url": "https://gitlab.example.com/person1"
+        }
+      ],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-26T14:33:12.904Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8571,
+      "iid": 5,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#5",
+        "relative": "#5",
+        "short": "#5"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 5",
+      "type": "ISSUE",
+      "updated_at": "2026-05-27T03:23:32.955Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/5"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/4/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/4/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/4"
+      },
+      "assignee": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "assignees": [
+        {
+          "avatar_url": null,
+          "id": 2,
+          "locked": false,
+          "name": "Person 1",
+          "public_email": null,
+          "state": "active",
+          "username": "person1",
+          "web_url": "https://gitlab.example.com/person1"
+        }
+      ],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-05-27T07:16:19.408Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-26T10:19:52.191Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8567,
+      "iid": 4,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#4",
+        "relative": "#4",
+        "short": "#4"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": "1h",
+        "time_estimate": 0,
+        "total_time_spent": 3600
+      },
+      "title": "Issue 4",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:38.401Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/4"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/3/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/3/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/3"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-05-27T06:13:59.572Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-26T09:46:56.173Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8566,
+      "iid": 3,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [],
+      "merge_requests_count": 1,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#3",
+        "relative": "#3",
+        "short": "#3"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": "30m",
+        "time_estimate": 0,
+        "total_time_spent": 1800
+      },
+      "title": "Issue 3",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:38.873Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/3"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/2/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/2/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/2"
+      },
+      "assignee": null,
+      "assignees": [],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": null,
+      "closed_by": null,
+      "confidential": false,
+      "created_at": "2026-05-26T07:38:15.809Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8565,
+      "iid": 2,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [],
+      "merge_requests_count": 0,
+      "milestone": null,
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#2",
+        "relative": "#2",
+        "short": "#2"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "opened",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": null,
+        "time_estimate": 0,
+        "total_time_spent": 0
+      },
+      "title": "Issue 2",
+      "type": "ISSUE",
+      "updated_at": "2026-05-26T07:38:15.809Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/2"
+    },
+    {
+      "_links": {
+        "award_emoji": "https://gitlab.example.com/api/v4/projects/424/issues/1/award_emoji",
+        "closed_as_duplicate_of": null,
+        "notes": "https://gitlab.example.com/api/v4/projects/424/issues/1/notes",
+        "project": "https://gitlab.example.com/api/v4/projects/424",
+        "self": "https://gitlab.example.com/api/v4/projects/424/issues/1"
+      },
+      "assignee": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "assignees": [
+        {
+          "avatar_url": null,
+          "id": 2,
+          "locked": false,
+          "name": "Person 1",
+          "public_email": null,
+          "state": "active",
+          "username": "person1",
+          "web_url": "https://gitlab.example.com/person1"
+        }
+      ],
+      "author": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "closed_at": "2026-05-27T07:17:24.422Z",
+      "closed_by": {
+        "avatar_url": null,
+        "id": 2,
+        "locked": false,
+        "name": "Person 1",
+        "public_email": null,
+        "state": "active",
+        "username": "person1",
+        "web_url": "https://gitlab.example.com/person1"
+      },
+      "confidential": false,
+      "created_at": "2026-05-26T06:51:41.067Z",
+      "description": null,
+      "discussion_locked": null,
+      "downvotes": 0,
+      "due_date": null,
+      "has_tasks": true,
+      "id": 8563,
+      "iid": 1,
+      "imported": false,
+      "imported_from": "none",
+      "issue_type": "issue",
+      "labels": [
+        "label-1"
+      ],
+      "merge_requests_count": 0,
+      "milestone": {
+        "created_at": "2026-11-07T05:51:04.159Z",
+        "description": null,
+        "due_date": "2026-06-14",
+        "expired": true,
+        "group_id": 857,
+        "id": 214,
+        "iid": 1,
+        "start_date": "2026-05-26",
+        "state": "closed",
+        "title": "Milestone 1",
+        "updated_at": "2026-11-07T05:51:39.781Z",
+        "web_url": "https://gitlab.example.com/groups/acme/-/milestones/1"
+      },
+      "moved_to_id": null,
+      "project_id": 424,
+      "references": {
+        "full": "acme/backend#1",
+        "relative": "#1",
+        "short": "#1"
+      },
+      "service_desk_reply_to": null,
+      "severity": "UNKNOWN",
+      "start_date": null,
+      "state": "closed",
+      "task_completion_status": {
+        "completed_count": 0,
+        "count": 0
+      },
+      "task_status": "0 of 0 checklist items completed",
+      "time_stats": {
+        "human_time_estimate": null,
+        "human_total_time_spent": "3h",
+        "time_estimate": 0,
+        "total_time_spent": 10800
+      },
+      "title": "Issue 1",
+      "type": "ISSUE",
+      "updated_at": "2026-11-07T05:51:39.366Z",
+      "upvotes": 0,
+      "user_notes_count": 0,
+      "web_url": "https://gitlab.example.com/acme/backend/-/work_items/1"
+    }
+  ],
+  "headers": {
+    "x-next-page": "",
+    "x-page": "1",
+    "x-per-page": "100",
+    "x-total": "44",
+    "x-total-pages": "1"
+  },
+  "request": "projects/424/issues?state=all&per_page=100&page=1",
+  "status": 200
+}

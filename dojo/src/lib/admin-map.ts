@@ -23,11 +23,6 @@ import type {
 	KitHealthWeek
 } from './components/kit/types';
 
-/** A short, stable display handle for a bare uuid (first 8 chars). */
-function shortId(id: string | null | undefined): string {
-	return id ? id.slice(0, 8) : '—';
-}
-
 /** The git-access line the role derived from (the wire carries the auth method,
  *  not a git-permission string, so this reads the method honestly). */
 function accessLine(authenticatedVia: string): string {
@@ -46,9 +41,9 @@ function accessLine(authenticatedVia: string): string {
 /**
  * Membership → KitMember. `name` is the display name resolved from the member's
  * identity row (WS-1: `listMembers` enriches each row via `resolveDisplayNames`),
- * falling back to a short user-id when the member has no named identity (honest
- * label, never a fabricated name); `git` is the authentication method the role
- * derived from; `scopes` is "—" (per-scope ownership is a separate read);
+ * then their email, then honest words when nothing names them (never an id
+ * fragment, never a fabricated name); `git` is the authentication method the
+ * role derived from; `scopes` is "—" (per-scope ownership is a separate read);
  * `active` is the relative last-heartbeat; a disabled member reads "disabled". Pure.
  */
 export function toKitMember(
@@ -62,7 +57,7 @@ export function toKitMember(
 			? relativeAge(m.last_heartbeat_at, now)
 			: 'never';
 	const member: KitMember = {
-		name: m.display_name ?? shortId(m.user_id),
+		name: m.display_name ?? m.handle ?? m.email ?? 'Name not shared yet',
 		userId: m.user_id,
 		git: accessLine(m.authenticated_via),
 		role: m.role,

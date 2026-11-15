@@ -15,10 +15,23 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, DAEMON_URL } from '../helpers';
+import { navigateTo, seedSetupComplete, DAEMON_URL } from '../helpers';
+import { seedSenseiMcp, clearCursorMcpServers } from '../isolated-home';
 
 test.describe('Observatory Instruments', () => {
+  // The isolated e2e home has no assistant configured with sensei: declare it, as `sensei init`
+  // would, and let a real discovery scan find it; take it out again after.
+  test.beforeAll(async () => {
+    seedSenseiMcp();
+    expect((await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/refresh`, { method: 'POST' })).ok).toBe(true);
+  });
+  test.afterAll(async () => {
+    clearCursorMcpServers();
+    await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/refresh`, { method: 'POST' });
+  });
+
   test.beforeEach(async ({ tauriPage }) => {
+    await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/instruments');
     // Give the server list and sensei's tools a chance to load.
     await tauriPage.waitForSelector('[data-testid="playground-body"]', 15_000).catch(() => {});

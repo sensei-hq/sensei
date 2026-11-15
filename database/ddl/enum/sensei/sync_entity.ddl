@@ -28,4 +28,8 @@ create type sync_entity as enum (
     -- when the daemon last asked the dōjō to mirror that member's repository roles
     -- from their forge token, and whether it could.
   , 'forge_mirror'
+    -- One tracker board's delivery facts for one dōjō tenant (#352), keyed on the
+    -- board_key (sha256 of the board's canonical connection, never its URL): pushed,
+    -- refused, or why it was skipped (not shared, ambiguous, too large).
+  , 'tracker_board'
 );

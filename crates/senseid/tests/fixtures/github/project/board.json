@@ -1,0 +1,97 @@
+{
+  "body": {
+    "data": {
+      "node": {
+        "closed": false,
+        "fields": {
+          "nodes": [
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2SingleSelectField"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2Field"
+            },
+            {
+              "__typename": "ProjectV2IterationField",
+              "configuration": {
+                "completedIterations": [
+                  {
+                    "duration": 14,
+                    "id": "it3",
+                    "startDate": "2026-08-17",
+                    "title": "Iteration 3"
+                  }
+                ],
+                "iterations": [
+                  {
+                    "duration": 14,
+                    "id": "it1",
+                    "startDate": "2026-08-31",
+                    "title": "Iteration 1"
+                  },
+                  {
+                    "duration": 14,
+                    "id": "it2",
+                    "startDate": "2026-09-14",
+                    "title": "Iteration 2"
+                  }
+                ]
+              },
+              "id": "PVTIF_1",
+              "name": "Sprint"
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false
+          }
+        },
+        "id": "PVT_1",
+        "number": 2,
+        "owner": {
+          "__typename": "Organization",
+          "login": "acme"
+        },
+        "title": "Project 2",
+        "url": "https://github.com/orgs/acme/projects/2"
+      }
+    }
+  },
+  "operation": "Board",
+  "status": 200,
+  "variables": {
+    "id": "PVT_1"
+  }
+}

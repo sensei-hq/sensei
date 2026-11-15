@@ -33,7 +33,7 @@
 		</div>
 	</div>
 	{#if (dojo.needs ?? 0) > 0}
-		<Chip icon="bell" toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+		<Chip icon="bell" toneClass="text-on-accent-soft" softClass="bg-accent-soft" edgeClass="border-accent-soft"
 			>{dojo.needs} need you</Chip
 		>
 	{/if}

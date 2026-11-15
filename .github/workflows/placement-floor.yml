@@ -35,7 +35,7 @@ jobs:
       # dependencies installed, exactly as a developer's checkout has them.
       - name: Install the front ends' dependencies
         run: |
-          for package in app dojo website crates/senseid/ts-driver; do
+          for package in app dojo crates/senseid/ts-driver; do
             (cd "$package" && bun install --frozen-lockfile)
           done
       - name: Install the TypeScript engine's packages

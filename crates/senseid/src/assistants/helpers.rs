@@ -130,15 +130,16 @@ pub(crate) fn upsert_sensei_in_json(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let raw = if path.exists() {
-        std::fs::read_to_string(path).map_err(|e| e.to_string())?
-    } else {
-        String::new()
-    };
-    let mut config: serde_json::Value = if raw.is_empty() {
+    let raw = sensei_bootstrap::config::read_existing(path)
+        .map_err(|e| format!("read {}: {e}", path.display()))?
+        .unwrap_or_default();
+    // A config that does not parse is refused and left as it is (D83 batch A,
+    // row 45) — never replaced by `{}` and written back over the user's settings.
+    let mut config: serde_json::Value = if raw.trim().is_empty() {
         serde_json::json!({})
     } else {
-        json5::from_str::<serde_json::Value>(&raw).unwrap_or(serde_json::json!({}))
+        json5::from_str::<serde_json::Value>(&raw)
+            .map_err(|e| format!("parse {}: {e}", path.display()))?
     };
 
     config
@@ -151,7 +152,7 @@ pub(crate) fn upsert_sensei_in_json(
         .insert(MCP_REGISTRY_KEY.into(), entry);
 
     let prefix = leading_jsonc_prefix(&raw);
-    let body = serde_json::to_string_pretty(&config).unwrap();
+    let body = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     let out = format!("{prefix}{body}");
     std::fs::write(path, out).map_err(|e| e.to_string())
 }
@@ -159,6 +160,18 @@ pub(crate) fn upsert_sensei_in_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D83 batch A, audit row 45: an assistant config that does not parse was
+    /// replaced by `{}` plus sensei's entry and written back — the user's settings gone.
+    #[test]
+    fn an_unparseable_assistant_config_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "// mine\n{ \"theme\": \"dark\", \"mcp\": { oops").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(upsert_sensei_in_json(&path, "mcp", serde_json::json!({"command": "x"})).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
 
     #[test]
     fn leading_prefix_captures_line_comments_and_ws() {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '@rokkit/ui';
+	import { Notice, Banner } from '@sensei/ui';
 	import Icon from './Icon.svelte';
 	import ListSection from './ListSection.svelte';
 	import { AZURE_REQUIRED_SCOPES, memberSetLine, tokenLine, writeScopesLine } from '$lib/azure-view';
@@ -32,13 +33,13 @@
 			>
 		{/if}
 	</div>
-	{#if intro}<p class="text-ink-mute text-xs">{intro}</p>{/if}
+	{#if intro}<p class="text-ink-soft text-xs">{intro}</p>{/if}
 
 	{#if state.configured === false}
-		<div class="text-ink-mute text-sm">Azure DevOps is not configured on this dōjō</div>
+		<div class="text-ink-soft text-sm">Azure DevOps is not configured on this dōjō</div>
 	{:else}
 		<div class="flex flex-col gap-1">
-			<span class="text-ink-mute text-xs"
+			<span class="text-ink-soft text-xs"
 				>You sign in with a Microsoft work or school account. Personal Microsoft accounts cannot connect Azure DevOps.
 				The dōjō asks only to read:</span
 			>
@@ -50,8 +51,8 @@
 		</div>
 	{/if}
 
-	{#if state.error}
-		<div class="bg-danger-soft border-danger-soft text-ink rounded-lg border p-3 text-sm" role="alert">{state.error}</div>
+	{#if state.errorNotice}
+		<Notice size="inline" expanded {...state.errorNotice} />
 	{/if}
 	{#if state.message}
 		<div class="text-ink text-sm" role="status">{state.message}</div>
@@ -59,10 +60,10 @@
 
 	{#if state.grant}
 		{#if warning}
-			<div class="bg-warning-soft border-warning-soft text-ink rounded-lg border p-3 text-sm">{warning}</div>
+			<Banner tone="refusal" detail={warning} data-write-scopes />
 		{/if}
 		{#if !state.grant.complete}
-			<div class="text-ink-mute text-xs">Azure DevOps could not list every organization you belong to.</div>
+			<div class="text-ink-soft text-xs">Azure DevOps could not list every organization you belong to.</div>
 		{/if}
 		<ListSection icon="buildings-2" title="Organizations to import" count={state.grant.organizations.length}>
 			{#each state.grant.organizations as o (o.id)}
@@ -78,7 +79,7 @@
 					>
 				</div>
 			{:else}
-				<div class="text-ink-mute p-4 text-sm">Your Microsoft account belongs to no Azure DevOps organization.</div>
+				<div class="text-ink-soft p-4 text-sm">Your Microsoft account belongs to no Azure DevOps organization.</div>
 			{/each}
 		</ListSection>
 		<span class="text-ink-faint text-xs">{where}</span>
@@ -90,8 +91,8 @@
 				<div class="border-paper-edge flex flex-col gap-2 border-b px-4 py-3 md:flex-row md:items-center">
 					<div class="flex min-w-0 flex-1 flex-col gap-1">
 						<span class="text-ink text-sm font-medium">{c.name}</span>
-						<span class={c.token === 'ok' ? 'text-ink-mute text-xs' : 'text-warning text-xs'}>{tokenLine(c)}</span>
-						<span class={c.memberSetStale ? 'text-warning text-xs' : 'text-ink-mute text-xs'}>{memberSetLine(c)}</span>
+						<span class={c.token === 'ok' ? 'text-ink-soft text-xs' : 'text-warning text-xs'}>{tokenLine(c)}</span>
+						<span class={c.memberSetStale ? 'text-warning text-xs' : 'text-ink-soft text-xs'}>{memberSetLine(c)}</span>
 					</div>
 					<div class="flex flex-wrap items-center gap-2">
 						<Button

@@ -10,7 +10,7 @@
 </script>
 
 <div
-	class="bg-paper-mute text-ink-soft border-paper-edge inline-flex flex-shrink-0 items-center justify-center rounded-full border font-medium"
+	class="bg-paper-mute text-ink-mute border-paper-edge inline-flex flex-shrink-0 items-center justify-center rounded-full border font-medium"
 	style="width: {size}px; height: {size}px; font-size: {Math.round(size * 0.45)}px"
 	aria-hidden="true"
 >

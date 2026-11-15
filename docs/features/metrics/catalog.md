@@ -508,6 +508,50 @@ describe only the part of the graph that resolved.
   A symbol with no recorded span is excluded, never counted as zero.
 - **Status:** live — ~630 readings across 64 repos.
 
+The five below (#156) are module-level, per repository, read through the same analysis the code map's
+lenses draw. Each is computed on the repository's own modules; a dependency on another repository's
+module is not followed, and props count the links left out. A repository whose index is incomplete
+writes no reading. Read `graph_confidence` first: module edges resolve fully for Rust only (#275).
+
+### Dependency cycles `dependency_cycles`
+- **Facets:** architecture · count (cycles) · ▼ · weight 1
+- **Definition:** module dependency cycles in the repository, as the Cycles lens draws them.
+- **Calculation:** strongly-connected components of size > 1 in `layering::analyse` over the module
+  dependencies (calls, imports). Props: each cycle's sorted members, `largest`, `cross_repository_deps`.
+- **How to read:** cut the weakest link the Cycles lens names. A target judges cycles by member set.
+- **Status:** new.
+
+### Upward dependencies `layer_up_edges`
+- **Facets:** architecture · count (edges) · ▼ · weight 1
+- **Definition:** module dependencies that run up the layering.
+- **Calculation:** dependencies `layering::analyse` classifies `Up`. Props: `up_edges` (`source→target`),
+  `cross_repository_deps`.
+- **How to read:** a target judges the change in the count; which edge is "up" in a loop can shift under
+  an unrelated edit. Put an interface below, or move the code down to the layer that uses it.
+- **Status:** new.
+
+### Zone of pain `zone_of_pain_modules`
+- **Facets:** architecture · count (modules) · ▼ · weight 1
+- **Definition:** modules the Zones lens places in the zone of pain (concrete and depended on).
+- **Calculation:** `component_zones` points with zone `pain`. Props: `modules`.
+- **How to read:** add an abstraction in front of each, or reduce what depends on it.
+- **Status:** new.
+
+### Hidden coupling `hidden_coupling_pairs`
+- **Facets:** architecture · count (pairs) · ▼ · weight 1
+- **Definition:** module pairs that change together with no dependency between them.
+- **Calculation:** every hidden-coupling pair at the code map's threshold (5+ commits together; commits
+  touching more than 20 modules excluded) with both modules in the repository — not only the 40 the lens draws.
+- **How to read:** make the dependency explicit, or split the change so the two stop moving together.
+- **Status:** new.
+
+### Complexity outliers `complexity_outlier_modules`
+- **Facets:** architecture · count (modules) · ▼ · weight 1
+- **Definition:** modules with over a fifth of their functions above cyclomatic 10.
+- **Calculation:** modules whose `Complexity::tier` is `danger` — the rule the Complexity lens colours by.
+- **How to read:** split the most complex functions the Complexity lens lists, highest cyclomatic first.
+- **Status:** new.
+
 ## Retired
 
 Both remain in `sensei.metrics` with an `effective_until` in the past, so they are
@@ -551,13 +595,13 @@ reader who encounters an old row or an old chart can find out what it was.
 | Autonomy | interruption_rate | | false_crash_rate (never computed) |
 | Knowledge | memory_promotion (≈0 = the signal) | | recall-hit, repeat-mistake, guidance-adherence — all unregistered |
 | Composite | workspace health (via `workspace_health_score` view) | | coverage gating ([#155](https://github.com/sensei-hq/sensei/issues/155)) |
-| Architecture | graph_confidence, public_surface_ratio, symbol_size_p95 | | module-level coupling, cohesion, cycles — see below |
+| Architecture | graph_confidence, public_surface_ratio, symbol_size_p95 | dependency_cycles, layer_up_edges, zone_of_pain_modules, hidden_coupling_pairs, complexity_outlier_modules (new) | cohesion, fan-in/fan-out, instability — see below |
 
 ### The architecture gap
 
-Three graph metrics are live (graph confidence, public surface, symbol size — above). There is
-still no coupling, cohesion, fan-in/fan-out, dependency-cycle, layering-violation or instability
-metric; `module_quality` sounds architectural but is a project-level qlty smell density. The
+Three graph metrics are live (graph confidence, public surface, symbol size — above), and five
+module-level ones are new (cycles, upward dependencies, zone of pain, hidden coupling, complexity
+outliers — #156). There is still no cohesion, fan-in/fan-out or instability metric; `module_quality` sounds architectural but is a project-level qlty smell density. The
 module-level ones were **blocked on
 edge resolution**, not on metric design. As of 2026-10-19 Rust calls resolve at 100%,
 TypeScript at 52.9% and C# at 8.9%, so module-level metrics are sound for Rust repositories

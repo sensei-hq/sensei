@@ -17,6 +17,7 @@ import {
   requiresConfirm,
   shareStateChip,
   shippableCount,
+  itemNotice,
 } from './share-review-state.svelte.js';
 
 const item = (over: Partial<ShareReviewItem> = {}): ShareReviewItem => ({
@@ -78,19 +79,19 @@ describe('shareStateChip', () => {
   it('queued reads info', () =>
     expect(shareStateChip('queued')).toEqual({
       bg: 'bg-info-soft',
-      text: 'text-info',
+      text: 'text-on-info-soft',
       label: 'queued',
     }));
   it('held reads warning', () =>
     expect(shareStateChip('held')).toEqual({
       bg: 'bg-warning-soft',
-      text: 'text-warning',
+      text: 'text-on-warning-soft',
       label: 'held',
     }));
   it('degrades an unexpected state to muted ink, still labelled with the raw value', () =>
     expect(shareStateChip('weird')).toEqual({
       bg: 'bg-paper-mute',
-      text: 'text-ink-mute',
+      text: 'text-ink-soft',
       label: 'weird',
     }));
 });
@@ -139,25 +140,25 @@ describe('requiresConfirm', () => {
 
 describe('publishResultChip', () => {
   it('published reads success', () =>
-    expect(publishResultChip('published')).toMatchObject({ text: 'text-success', label: 'published' }));
+    expect(publishResultChip('published')).toMatchObject({ text: 'text-on-success-soft', label: 'published' }));
   it('held_residual_risk reads warning and labels held', () =>
     expect(publishResultChip('held_residual_risk')).toMatchObject({
-      text: 'text-warning',
+      text: 'text-on-warning-soft',
       label: 'held',
     }));
   it('error reads danger', () =>
-    expect(publishResultChip('error')).toMatchObject({ text: 'text-danger', label: 'error' }));
+    expect(publishResultChip('error')).toMatchObject({ text: 'text-on-danger-soft', label: 'error' }));
   it('queued_retry reads info with a human label', () =>
     expect(publishResultChip('queued_retry')).toMatchObject({
-      text: 'text-info',
+      text: 'text-on-info-soft',
       label: 'queued for retry',
     }));
   it('no_destination reads warning', () =>
-    expect(publishResultChip('no_destination')).toMatchObject({ text: 'text-warning' }));
+    expect(publishResultChip('no_destination')).toMatchObject({ text: 'text-on-warning-soft' }));
   it('degrades an unknown result to muted ink echoing the raw tag', () =>
     expect(publishResultChip('teleported')).toEqual({
       bg: 'bg-paper-mute',
-      text: 'text-ink-mute',
+      text: 'text-ink-soft',
       label: 'teleported',
     }));
 });
@@ -235,5 +236,26 @@ describe('PublishBatchAction', () => {
     resolveCall({ ok: true, data: outcome() });
     await pending;
     expect(actions.busy).toBe(false);
+  });
+});
+
+describe('itemNotice — one item\'s publish message, through the shared Notice', () => {
+  it('an error is a fault; a hold is a refusal (a decision); anything else a note', () => {
+    expect(itemNotice({ result: 'error', message: 'dōjō refused' })).toEqual({ tone: 'fault', title: 'dōjō refused', code: 'error', remedy: 'Retry. If it keeps failing, reload the page.' });
+    expect(itemNotice({ result: 'held_residual_risk', message: 'residual risk' })!.tone).toBe('refusal');
+    expect(itemNotice({ result: 'no_destination', message: 'no dōjō' })!.tone).toBe('refusal');
+    expect(itemNotice({ result: 'staged', message: 'later' })!.tone).toBe('normal');
+  });
+
+  it('no message, no notice', () => {
+    expect(itemNotice({ result: 'published', message: null })).toBeNull();
+  });
+});
+
+describe('PublishBatchAction.notice', () => {
+  it('a publish that did not go through names what failed', () => {
+    const a = new PublishBatchAction(mockApi({}), async () => {});
+    a.error = 'Bad Gateway';
+    expect(a.notice).toEqual({ tone: 'fault', title: "Couldn't publish the batch", detail: 'Bad Gateway', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

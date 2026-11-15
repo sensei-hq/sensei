@@ -1,0 +1,5 @@
+-- A test file that ends the wrapper transaction with top-level END (= COMMIT).
+-- --apply must turn the commit into an abort and fail naming the refusal
+-- (L-a). Run with noop.ddl, which persists nothing even unguarded.
+select 1;
+end;

@@ -5,21 +5,23 @@ type Ftr = { ftr14d: number | null; ftr14dPrev: number | null; ftrTrend: number[
 
 /** The reads the workspace window's layout makes — injected so a spec can fail them. */
 export interface WorkspaceLayoutApi<P extends { id: string }> {
-  tryListWorkspaces: () => Promise<ApiResult<P[]>>;
+  tryGetWorkspace: (id: string) => Promise<ApiResult<P>>;
   tryGetWorkspaceFtr: (id: string) => Promise<ApiResult<Ftr>>;
 }
 
 /**
- * The workspace window's shell data. A list that could not be read is that
- * failure, with its status — not "workspace not found", which is what an empty
- * fallback list made it (#288). A workspace the daemon does not list is a 404.
- * The FTR is carried beside it, or why it could not be read.
+ * The workspace window's shell data: its one workspace (not the whole list, every
+ * workspace and a folder tree each, to show one). A read that failed is that
+ * failure, with its status — not "workspace not found" (#288); a workspace the
+ * daemon does not have is a 404. The FTR is carried beside it, or why it could
+ * not be read.
  */
 export async function loadWorkspaceLayout<P extends { id: string }>(api: WorkspaceLayoutApi<P>, id: string) {
-  const [list, ftr] = await Promise.all([api.tryListWorkspaces(), api.tryGetWorkspaceFtr(id)]);
-  if (!list.ok) error(list.error.status || 503, `Could not read the workspaces: ${failureReason(list.error)}`);
-  const workspace = list.data.find((p) => p.id === id);
-  if (!workspace) error(404, `Workspace ${id} not found`);
+  const [read, ftr] = await Promise.all([api.tryGetWorkspace(id), api.tryGetWorkspaceFtr(id)]);
+  if (!read.ok) {
+    if (read.error.status === 404) error(404, `Workspace ${id} not found`);
+    error(read.error.status || 503, `Could not read the workspace: ${failureReason(read.error)}`);
+  }
   const f = readOutcome(ftr);
-  return { workspace, ftrMetrics: f.data, ftrError: f.error, workspaceId: id };
+  return { workspace: read.data, ftrMetrics: f.data, ftrError: f.error, workspaceId: id };
 }

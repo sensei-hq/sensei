@@ -113,7 +113,8 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         }
     };
 
-    task_logger.info("task_started", None).await;
+    // #339: no `task_started` public.logs row — `task_executions` (above)
+    // already records every execution start; the row duplicated it.
 
     // Dispatch to the handler under a watchdog: a wedged handler (e.g. a stalled
     // network/DB call that never returns) would otherwise hold its worker
@@ -185,7 +186,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     let duration_ms = start.elapsed().as_millis() as i32;
 
-    // Update task_executions + log to public.logs
+    // Update task_executions. Only terminal failures log to public.logs (#194).
     match &result {
         Ok(items) => {
             if let Some(eid) = &exec_id
@@ -194,15 +195,8 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             {
                 tracing::warn!(error = %e, task_id = task.id, kind = %task.kind, "failed to record task_execution completion");
             }
-            task_logger
-                .info(
-                    "task_completed",
-                    Some(serde_json::json!({
-                        "duration_ms": duration_ms,
-                        "items_processed": items,
-                    })),
-                )
-                .await;
+            // #339: no `task_completed` public.logs row — `complete_task_execution`
+            // (above) already records duration + items; the row duplicated it.
         }
         Err(e) => {
             if let Some(eid) = &exec_id
@@ -272,6 +266,72 @@ mod tests {
         let task = Task::new(TaskKind::DeleteFile, "repo", "/some/file.rs");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_ok());
+    }
+
+    /// [`make_ctx`] with the production DB logger instead of the noop: the
+    /// #339 pins must observe `public.logs` rows.
+    async fn ctx_with_db_logger() -> Arc<TaskContext> {
+        let base = make_ctx().await;
+        Arc::new(TaskContext {
+            queue: base.queue.clone(),
+            app_state: base.app_state.clone(),
+            _graph_path: None,
+            logger: sensei_logger::Logger::new(
+                sensei_logger::LogWriter::pg(base.pg().pool().clone()),
+                sensei_logger::LogLevel::Info,
+                "daemon",
+                "tasks",
+            ),
+        })
+    }
+
+    /// Count `public.logs` rows for one message predicate.
+    async fn log_count(ctx: &TaskContext, pred: &str) -> i64 {
+        sqlx_core::query_scalar::query_scalar(&format!(
+            "select count(*) from public.logs where {pred}"
+        ))
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap()
+    }
+
+    /// The DB logger is fire-and-forget (`tokio::spawn` per write), so a
+    /// count taken the instant `execute_task` returns can miss in-flight
+    /// rows. Presence assertions poll; absence assertions settle first.
+    async fn settle() {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+
+    #[tokio::test]
+    async fn execute_task_writes_no_start_or_completed_rows_339() {
+        // #339: `task_executions` already records every execution — the
+        // `task_started`/`task_completed` public.logs rows duplicated it
+        // (~31.7M rows/month). A succeeding execution writes neither; the
+        // breadcrumb goes to the file log at debug if anywhere.
+        let ctx = ctx_with_db_logger().await;
+        let task = Task::new(TaskKind::DeleteFile, "repo", "/some/file.rs");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok());
+        settle().await;
+        assert_eq!(log_count(&ctx, "message in ('task_started', 'task_completed')").await, 0);
+    }
+
+    #[tokio::test]
+    async fn execute_task_terminal_failure_still_logs_task_failed_339() {
+        // #339 guard: removing the duplicates must not touch the #194 rule —
+        // a terminal failure still logs `task_failed` to public.logs.
+        let ctx = ctx_with_db_logger().await;
+        let mut task = Task::new(TaskKind::ScanRoot, "", "/nonexistent/path");
+        task.retry_number = 999;
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_err());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while log_count(&ctx, "message = 'task_failed'").await != 1 {
+            assert!(std::time::Instant::now() < deadline, "task_failed row never landed");
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        settle().await;
+        assert_eq!(log_count(&ctx, "message in ('task_started', 'task_completed')").await, 0);
     }
 
     #[tokio::test]

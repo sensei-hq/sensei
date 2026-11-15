@@ -14,7 +14,7 @@
 			style="padding: var(--space-3) var(--space-4)"
 		>
 			<Icon name={e.icon} size={16} toneClass={e.toneClass} />
-			<span class="text-ink-soft min-w-0 flex-1 text-sm">{e.text}</span>
+			<span class="text-ink-mute min-w-0 flex-1 text-sm">{e.text}</span>
 			<span class="mono text-ink-faint text-xs">{e.at}</span>
 		</div>
 	{/each}

@@ -44,3 +44,4 @@ crates/senseid/ts-driver/node_modules/
 # Nix / direnv
 .direnv/
 result
+.creds/

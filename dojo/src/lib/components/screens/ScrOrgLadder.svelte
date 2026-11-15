@@ -1,13 +1,8 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import {
-		SectionHead,
-		Btn,
-		Icon,
-		Chip,
-		KanjiToken,
-		RuleRow,
-		RuleEditor, LoadError } from '$lib/components/kit';
+	import { dojoLoadNotice } from '$lib/dojo-notices';
+	import type { ReadError } from '$lib/read-error';
+	import { Screen, Notice } from '@sensei/ui';
+	import { SectionHead, Btn, Icon, Chip, KanjiToken, RuleRow, RuleEditor } from '$lib/components/kit';
 	import type { KitConstitutionSection, KitRule } from '$lib/components/kit/types';
 	import { createOrgLadder } from '$lib/org-ladder-state.svelte';
 	import { untrack } from 'svelte';
@@ -31,7 +26,7 @@
 		orgName: string;
 		sections: KitConstitutionSection[];
 		/** A failed rules read — shown instead of an empty constitution (#106). */
-		error?: string | null;
+		error?: ReadError | string | null;
 	} = $props();
 
 	// Seed the authoring store ONCE from the props — a different org re-mounts this
@@ -63,9 +58,9 @@
 	<div class="relative">
 		<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 			{#if error}
-				<LoadError what="the dōjō's rules" {error} />
+				<Notice size="panel" {...dojoLoadNotice("the dōjō's rules", error)} data-load-error />
 			{:else if sections.length === 0}
-				<p class="text-ink-mute text-sm m-0">This dōjō has no published rules yet.</p>
+				<p class="text-ink-soft text-sm m-0">This dōjō has no published rules yet.</p>
 			{:else}
 				<div
 					class="grid gap-4 items-start grid-cols-1 md:grid-cols-[252px_1fr]"
@@ -75,7 +70,7 @@
 						{#each ladder.groups as g (g.group)}
 							<div>
 								<div
-									class="text-ink-mute text-xs font-semibold uppercase"
+									class="text-ink-soft text-xs font-semibold uppercase"
 									style="letter-spacing: 0.18em; padding: 0 8px; margin-bottom: 8px"
 								>
 									{g.group}
@@ -95,12 +90,12 @@
 											<KanjiToken
 												char={s.kanji}
 												size="lg"
-												toneClass={on ? 'text-accent' : 'text-ink-soft'}
+												toneClass={on ? 'text-accent' : 'text-ink-mute'}
 												w={24}
 											/>
 											<div class="flex-1" style="min-width: 0">
 												<div class="text-ink truncate text-sm font-medium">{s.scope}</div>
-												<div class="mono text-ink-mute text-xs">
+												<div class="mono text-ink-soft text-xs">
 													{(s.rules ?? []).length} rules{s.packs && s.packs.length
 														? ' · ' + s.packs.length + ' pack'
 														: ''}
@@ -146,7 +141,7 @@
 										</div>
 									{/each}
 								{:else}
-									<div class="mono text-ink-mute text-xs" style="padding: 12px 16px">
+									<div class="mono text-ink-soft text-xs" style="padding: 12px 16px">
 										No pack adopted — this scope runs on its own rules and the dōjō baseline.
 									</div>
 								{/if}
@@ -168,12 +163,12 @@
 									<button
 										type="button"
 										onclick={ladder.toggleShowExcluded}
-										class="mono text-ink-mute inline-flex cursor-pointer items-center gap-1 bg-transparent text-xs"
+										class="mono text-ink-soft inline-flex cursor-pointer items-center gap-1 bg-transparent text-xs"
 									>
 										<Icon
 											name={ladder.showExcluded ? 'eye-closed' : 'eye'}
 											size={14}
-											toneClass="text-ink-mute"
+											toneClass="text-ink-soft"
 										/>{ladder.showExcluded ? 'Hide' : 'Show'}
 										{ladder.excluded} excluded
 									</button>
@@ -192,7 +187,7 @@
 							{/each}
 							{#if !ladder.showExcluded && ladder.excluded > 0}
 								<div
-									class="bg-paper mono text-ink-mute text-xs"
+									class="bg-paper mono text-ink-soft text-xs"
 									style="padding: 8px 16px"
 								>
 									{ladder.excluded} excluded rule{ladder.excluded > 1 ? 's' : ''} hidden · consolidated view

@@ -33,12 +33,15 @@ asked to make.
    shipped · gate needed · paused until <T>. No code, no diffs.
 4. **Decide (HITL).** Approve or decline a gate; nudge to steer or unstick
    (retry · skip · resume · force-advance).
+5. **Run a sprint with a local crew.** Register assistant sessions as lanes, pick
+   backlog items, create a sprint: Task 0 plans, a peer approves, lanes claim and
+   review each other's work, the gate merges — the person watches the band.
 
 ## Mockups
 
-- [Phone — run dashboard · detail · gate · nudge](../mockups/Sensei/lib/relay/relay.jsx) · [phone planner](../mockups/Sensei/lib/relay/relay-planner.jsx)
-- [Desktop — relay coordinator + plan author](../mockups/Sensei/lib/relay/relay-desktop.jsx)
-- [Console — inbox · watch · PR-review · nudge](../mockups/Sensei/lib/dojo/dojo-relay.jsx)
+- Phone — run dashboard · detail · gate · nudge · phone planner
+- Desktop — relay coordinator + plan author
+- Console — inbox · watch · PR-review · nudge
 - Design: [`plan/relay-engine.md`](../history/plan/relay-engine.md) · journey: [`journeys/relay.md`](../journeys/relay.md)
 
 ## What's involved
@@ -93,4 +96,5 @@ asked to make.
 | Live-session gates (hook) | Partial | built, off / not registered by default |
 | Multi-assistant (beyond Claude) | Not started | future |
 | Team relay (shared inbox / presence) | Not started | folds into a later dōjō phase |
+| Local crews — autonomous queue (FCFS claims, floating reviews, sprint runs with Task 0, deterministic merge gate) | Done (2026-11-12) | daemon + `relay_*` MCP tools + Relay screen sprint band; [`../prd/modules/03-delivery/21-relay/lanes.md`](../prd/modules/03-delivery/21-relay/lanes.md) |
 </content>

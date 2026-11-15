@@ -22,12 +22,8 @@ import type { DojoBoundWorkspace, DojoMembership } from '$lib/types.js';
  *  surface rather than drop (never a status colour). */
 export type SyncTone = 'success' | 'warning' | 'danger' | 'info' | 'ink';
 
-/** Named-token utility classes for a chip, plus the label to print. */
-export interface ChipClasses {
-  bg: string;
-  text: string;
-  label: string;
-}
+import type { ChipClasses } from '$lib/dojo-artifacts.js';
+export type { ChipClasses };
 
 /** A kind chip — kanji glyph + label + named-token classes. */
 export interface KindPill {
@@ -62,15 +58,15 @@ export function syncTone(status: string): SyncTone {
 export function syncChip(status: string): ChipClasses {
   switch (syncTone(status)) {
     case 'success':
-      return { bg: 'bg-success-soft', text: 'text-success', label: status };
+      return { bg: 'bg-success-soft', text: 'text-on-success-soft', label: status };
     case 'warning':
-      return { bg: 'bg-warning-soft', text: 'text-warning', label: status };
+      return { bg: 'bg-warning-soft', text: 'text-on-warning-soft', label: status };
     case 'danger':
-      return { bg: 'bg-danger-soft', text: 'text-danger', label: status };
+      return { bg: 'bg-danger-soft', text: 'text-on-danger-soft', label: status };
     case 'info':
-      return { bg: 'bg-info-soft', text: 'text-info', label: status };
+      return { bg: 'bg-info-soft', text: 'text-on-info-soft', label: status };
     default:
-      return { bg: 'bg-paper-mute', text: 'text-ink-mute', label: status };
+      return { bg: 'bg-paper-mute', text: 'text-ink-soft', label: status };
   }
 }
 
@@ -80,15 +76,15 @@ export function syncChip(status: string): ChipClasses {
 export function kindPill(kind: string): KindPill {
   switch (kind) {
     case 'employer':
-      return { kanji: '社', label: 'employer', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { kanji: '社', label: 'employer', bg: 'bg-paper-mute', text: 'text-ink-soft' };
     case 'client':
-      return { kanji: '客', label: 'client', bg: 'bg-accent-soft', text: 'text-accent' };
+      return { kanji: '客', label: 'client', bg: 'bg-accent-soft', text: 'text-on-accent-soft' };
     case 'community':
-      return { kanji: '群', label: 'community', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { kanji: '群', label: 'community', bg: 'bg-paper-mute', text: 'text-ink-soft' };
     case 'personal':
-      return { kanji: '己', label: 'personal', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { kanji: '己', label: 'personal', bg: 'bg-paper-mute', text: 'text-ink-soft' };
     default:
-      return { kanji: '結', label: kind || 'unknown', bg: 'bg-paper-mute', text: 'text-ink-mute' };
+      return { kanji: '結', label: kind || 'unknown', bg: 'bg-paper-mute', text: 'text-ink-soft' };
   }
 }
 

@@ -12,6 +12,6 @@ import { appState } from '$lib/appstate.svelte.js';
  */
 export const load: PageLoad = async () => {
   const res = await senseiApi(appState.port).tryGetConsolidatedRuleset();
-  if (!res.ok) return { ruleset: null, error: res.error.message };
-  return { ruleset: res.data, error: null };
+  if (!res.ok) return { ruleset: null, error: res.error.message, failure: res.error };
+  return { ruleset: res.data, error: null, failure: null };
 };

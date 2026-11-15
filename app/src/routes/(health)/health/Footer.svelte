@@ -16,8 +16,8 @@
   const displayVersion = $derived(version || 'dev');
 </script>
 
-<div class="flex items-center gap-2 text-xs text-ink-mute font-mono tracking-tight">
+<div class="flex items-center gap-2 text-xs text-ink-soft font-mono tracking-tight">
   <span>sensei {displayVersion}</span>
-  <span class="w-[3px] h-[3px] rounded-full bg-ink-mute"></span>
+  <span class="w-[3px] h-[3px] rounded-full bg-ink-soft"></span>
   <span>{PLATFORM_LABEL[platform]}</span>
 </div>

@@ -40,13 +40,13 @@ previewed: nothing is shared without a confirmation.
 
 ## Mockups
 
-- [Sensei Journey Map](../mockups/Sensei/Sensei%20Journey%20Map.html) — the reference journey (segments · the daily loop · module lifecycles)
-- [Observatory shell — the rail + section switch](../mockups/Sensei/lib/observatory/observatory.jsx)
-- [Today](../mockups/Sensei/lib/observatory/observatory-today.jsx) · [Intake](../mockups/Sensei/lib/observatory/intake.jsx)
-- [Insights](../mockups/Sensei/lib/observatory/learnings-v2.jsx) · [Memories](../mockups/Sensei/lib/observatory/learnings-anatomy-v2.jsx)
-- [Impact](../mockups/Sensei/lib/observatory/impact.jsx) · [Traceability](../mockups/Sensei/lib/observatory/traceability.jsx)
-- [Sessions](../mockups/Sensei/lib/observatory/sessions-zen.jsx) · [Libraries](../mockups/Sensei/lib/observatory/libraries.jsx) · [Instruments](../mockups/Sensei/lib/observatory/instruments-simple.jsx)
-- [Dōjō touchpoints — connections · sharing · upgrades](../mockups/Sensei/lib/dojo/dojo-inapp.jsx) · [Sharing settings](../mockups/Sensei/lib/observatory/collective-settings.jsx)
+- Sensei Journey Map — the reference journey (segments · the daily loop · module lifecycles)
+- Observatory shell — the rail + section switch
+- Today · Intake
+- Insights · Memories
+- Impact · Traceability
+- Sessions · Libraries · Instruments
+- Dōjō touchpoints — connections · sharing · upgrades · Sharing settings
 
 ## What's involved
 

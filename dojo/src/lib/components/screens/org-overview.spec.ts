@@ -97,7 +97,7 @@ describe('ScrOrgLadder — dōjō authors its own constitution by scope', () => 
 		const { getByRole, queryByText } = render(ScrOrgLadder, {
 			props: { orgName: 'sensei-hq', sections: [], error: 'forbidden' }
 		});
-		expect(getByRole('alert').textContent).toContain("Could not load the dōjō's rules — forbidden");
+		expect(getByRole('alert').textContent).toMatch(/Couldn't load the dōjō's rules[\s\S]*forbidden/);
 		expect(queryByText('This dōjō has no published rules yet.')).toBeNull();
 	});
 

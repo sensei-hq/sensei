@@ -1,6 +1,5 @@
 // app/src/lib/glyphs.ts
 
-import { getContext, setContext } from 'svelte';
 //
 // Kanji or icons across the app (#133): one preference, and the one place the
 // rokkit `fields` mapping is derived from it, so no component decides for
@@ -41,17 +40,9 @@ export function isSolarBoldDuotone(icon: string, solar: Set<string>): boolean {
   return m !== null && solar.has(m[1]);
 }
 
-const GLYPH_CONTEXT = Symbol('glyph-mode');
-
-/** Provide the glyph mode to every component below (#133). The root layout
- *  calls this once with a getter over the config, so a mark follows the
- *  preference without each screen passing it down. */
-export function setGlyphMode(get: () => GlyphMode): void {
-  setContext(GLYPH_CONTEXT, get);
-}
-
-/** The mode provided above, or kanji when nothing provides one. Call during
- *  component init; the returned getter stays reactive. */
-export function useGlyphMode(): () => GlyphMode {
-  return getContext<(() => GlyphMode) | undefined>(GLYPH_CONTEXT) ?? (() => 'kanji');
-}
+// The context itself is shared with the dōjō (packages/ui/glyph-mode.js), so a
+// shared component (Notice) follows the same preference in both apps. The root
+// layout calls `setGlyphMode` once with a getter over the config, so a mark
+// follows the preference without each screen passing it down; `useGlyphMode`
+// returns the provided mode, kanji when nothing provides one.
+export { setGlyphMode, useGlyphMode } from '@sensei/ui';

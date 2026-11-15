@@ -3,6 +3,7 @@
 // header's first-try rate. The tool catalogue lives on the mcp store; this
 // holds only what the screen owns. Every read is the daemon's answer or why
 // it failed (#288).
+import { failureNotice } from '@sensei/ui';
 import { failureReason, readOutcome, type ApiResult } from '$lib/api.js';
 import type { McpToolCallResult, ObservatoryFtr, SessionData, SessionReplayCall, ToolHealthSource } from '$lib/types.js';
 import { loadReplaySessions, type ReplaySession } from './replay-sessions';
@@ -76,6 +77,24 @@ export class InstrumentsState {
   sessionSummary = $state<ReplaySummary>({ ...NO_CALLS });
   replayDetailError = $state<string | null>(null);
   selectedCall = $state<SessionReplayCall | null>(null);
+
+  // The failures above, through the shared Notice (packages/ui/notice.js): the
+  // state names what failed; the reason it holds is the detail.
+  get toolNotice() {
+    return failureNotice("The call didn't go through", this.toolError);
+  }
+  get workspacesNotice() {
+    return failureNotice("Couldn't list the workspaces to run in", this.workspacesError);
+  }
+  get serversNotice() {
+    return failureNotice("That server change didn't go through", this.serversError);
+  }
+  get serverFormNotice() {
+    return failureNotice("Couldn't add that server", this.serverFormError);
+  }
+  get replayDetailNotice() {
+    return failureNotice("Couldn't read this session's tool calls", this.replayDetailError);
+  }
 
   // Health — the L1 grid or one source's L2 drill, and the KPI header's rate.
   activeSource = $state<ToolHealthSource | null>(null);
@@ -186,3 +205,11 @@ export class InstrumentsState {
     this.holisticFtr = readOutcome(await api.tryGetObservatoryFtr());
   }
 }
+
+/** The discovered-servers read failed (`mcp.mcpServersStatus === 'error'`). */
+export const SERVERS_UNREADABLE = {
+  tone: 'fault' as const,
+  title: "Couldn't read the discovered servers",
+  detail: 'The daemon did not answer the server list.',
+  remedy: 'Check that the sensei daemon is running, then refresh.',
+};

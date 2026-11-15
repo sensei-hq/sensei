@@ -128,19 +128,29 @@ Feature: Insights & Impact — the verdict engine, narration and model insight
     Then the keys differ
 
   # NO TEST (real test: reinforce_source_memory_for_rec_bumps_promotes_and_is_idempotent): positive_verdict_idempotently_promotes_reinforce_memory
-  Scenario: a positive verdict idempotently promotes a reinforce memory
+  Scenario: a positive verdict reinforces its source memory once
     Given a positive verdict with a source memory
     When MeasureVerdicts runs twice
-    Then exactly one reinforce memory is promoted
+    Then exactly one applied outcome is recorded on the source memory
 
   # NO TEST (real test: measure_regressed_rec_challenges_source_memory_once): negative_verdict_idempotently_promotes_challenge_memory_with_revision
-  Scenario: a negative verdict idempotently promotes a challenge memory with revision
+  Scenario: a negative verdict challenges its source memory once, retiring it when weak
     Given a negative verdict with a suggested revision
     When MeasureVerdicts runs twice
-    Then exactly one challenge memory with that revision is promoted
+    Then exactly one violated outcome is recorded on the source memory
+    And the memory is challenged, or archived (retired) once its strength falls below 1.0
 
   # NO TEST (no test exists — neutral verdict promotes nothing): neutral_verdict_promotes_no_memory
-  Scenario: a neutral verdict promotes no memory
+  Scenario: a neutral verdict records no outcome
     Given a neutral verdict
     When MeasureVerdicts runs
-    Then no memory is promoted
+    Then no outcome is recorded on the source memory
+
+  NO TEST
+  Scenario: every verdict on the Impact pane offers its next step
+    Given a positive, a negative and a neutral verdict
+    When the Impact pane renders them
+    Then the positive one offers Reinforce
+    And the negative one offers Retire, beside its revision
+    And the neutral one offers Retire with keep as the default
+    This is unbuilt (D65) — the pane has no Reinforce or Retire control.

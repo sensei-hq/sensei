@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
 import { DaemonHealth } from './daemon-health.svelte.js';
 
 describe('DaemonHealth', () => {
@@ -54,6 +54,12 @@ describe('DaemonHealth', () => {
 // #288: a poll reads the daemon's mode, or — when /health cannot be read —
 // leaves it unknown (no banner) rather than reading a mode from a default.
 describe('DaemonHealth.poll', () => {
+  // poll() lazy-imports the API and the app state. Load them once, outside any
+  // test's time limit: under a full parallel run the first import alone can pass
+  // the 5s a test gets, and the first poll test failed on the import, not the poll.
+  beforeAll(async () => {
+    await Promise.all([import('./api.js'), import('./appstate.svelte.js')]);
+  }, 60_000);
   afterEach(() => vi.unstubAllGlobals());
 
   it('takes the mode the daemon reports', async () => {

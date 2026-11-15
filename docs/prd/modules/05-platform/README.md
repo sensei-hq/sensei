@@ -20,7 +20,7 @@ Linux/Windows story (tarball matrix, `crates/bootstrap/health/platforms/windows.
 exist — the service layer and data-directory assumptions do not.
 
 P2: the marketing site as a **P2 module** — it must only claim what is built;
-reorg §12 tracks the claims that already slipped (D-11, D-12).
+reorg §12 tracks the claims that already slipped (D-11).
 
 P3: what CI must enforce before anything merges.
 
@@ -38,5 +38,5 @@ acceptance is platform-truthful: the reorg's platform matrix
 ## Legacy sources
 
 `architecture/{cli,app,website}`, `Makefile` (dev convenience, not the install
-path), `homebrew/` (Formula + tap), `.github/` + `.qlty/` (CI), the existing
-`website/` (SvelteKit marketing site).
+path), `homebrew/` (Formula + tap), `.github/` + `.qlty/` (CI), the SvelteKit
+marketing site (the sibling repository `sensei-hq/website`, #346).

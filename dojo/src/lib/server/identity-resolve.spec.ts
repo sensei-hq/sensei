@@ -2,26 +2,27 @@
 // best-identity pick and the tenant-scoped `resolveDisplayNames` DB wrapper
 // (dedup, grouping, fail-closed on error, no-fabrication on a miss).
 import { describe, it, expect } from 'vitest';
-import { pickBestIdentity, resolveDisplayNames, type IdentityNameRow } from './identity-resolve';
+import { pickBestIdentity, resolveDisplayNames, resolveViewerNames, type IdentityNameRow } from './identity-resolve';
 import { AdminError, type DojoClient } from './admin-data';
 
 function row(over: Partial<IdentityNameRow> = {}): IdentityNameRow {
-	return { principal_id: 'u1', display_name: null, email: null, last_login_at: null, ...over };
+	return { principal_id: 'u1', display_name: null, handle: null, email: null, last_login_at: null, ...over };
 }
 
 describe('pickBestIdentity', () => {
 	it('returns null/null for no rows', () => {
-		expect(pickBestIdentity([])).toEqual({ display_name: null, email: null });
+		expect(pickBestIdentity([])).toEqual({ display_name: null, handle: null, email: null });
 	});
 	it('returns the name + email of a single row', () => {
 		expect(pickBestIdentity([row({ display_name: 'Ada', email: 'ada@x.co' })])).toEqual({
 			display_name: 'Ada',
+			handle: null,
 			email: 'ada@x.co'
 		});
 	});
 	it('prefers a named row over an email-only row over a bare row', () => {
 		const rows = [row({ email: 'only@x.co' }), row({}), row({ display_name: 'Grace', email: 'g@x.co' })];
-		expect(pickBestIdentity(rows)).toEqual({ display_name: 'Grace', email: 'g@x.co' });
+		expect(pickBestIdentity(rows)).toEqual({ display_name: 'Grace', handle: null, email: 'g@x.co' });
 	});
 	it('within the same tier, the most recent last_login_at wins', () => {
 		const rows = [
@@ -40,11 +41,34 @@ describe('pickBestIdentity', () => {
 	it('treats a whitespace-only display_name as absent (falls back to email)', () => {
 		expect(pickBestIdentity([row({ display_name: '   ', email: 'e@x.co' })])).toEqual({
 			display_name: null,
+			handle: null,
 			email: 'e@x.co'
 		});
 	});
 	it('returns null/null when every row is bare', () => {
-		expect(pickBestIdentity([row({}), row({})])).toEqual({ display_name: null, email: null });
+		expect(pickBestIdentity([row({}), row({})])).toEqual({ display_name: null, handle: null, email: null });
+	});
+	it('prefers a named row over a handle-only row', () => {
+		const rows = [row({ handle: 'octocat' }), row({ display_name: 'Ada', email: 'ada@x.co' })];
+		expect(pickBestIdentity(rows)).toEqual({ display_name: 'Ada', handle: null, email: 'ada@x.co' });
+	});
+	it('treats a whitespace-only handle as absent', () => {
+		expect(pickBestIdentity([row({ handle: '   ' })])).toEqual({
+			display_name: null,
+			handle: null,
+			email: null
+		});
+	});
+	it('L4 forge-handle — a handle-only row beats an email-only row', () => {
+		const rows = [row({ email: 'only@x.co' }), row({ handle: 'octocat' })];
+		expect(pickBestIdentity(rows)).toEqual({ display_name: null, handle: 'octocat', email: null });
+	});
+	it('L4 forge-handle — the best row carries its handle too', () => {
+		expect(pickBestIdentity([row({ display_name: 'Ada', handle: 'ada-l', email: 'ada@x.co' })])).toEqual({
+			display_name: 'Ada',
+			handle: 'ada-l',
+			email: 'ada@x.co'
+		});
 	});
 });
 
@@ -75,22 +99,36 @@ describe('resolveDisplayNames', () => {
 		expect(captured.ids).toEqual(['u1', 'u2']); // deduped + blanks dropped
 	});
 	it('groups multiple identity rows per principal and picks the best', async () => {
-		const { db } = makeDb({
-			data: [
+		const { db } = makeTableDb({
+			memberships: [
+				{ tenant_id: 't1', user_id: 'u1' },
+				{ tenant_id: 't1', user_id: 'u2' }
+			],
+			identities: [
 				{ principal_id: 'u1', display_name: null, email: 'u1@x.co', last_login_at: null },
 				{ principal_id: 'u1', display_name: 'Ada', email: null, last_login_at: '2026-07-01T00:00:00Z' },
 				{ principal_id: 'u2', display_name: 'Bob', email: 'bob@x.co', last_login_at: null }
 			],
-			error: null
+			principals: []
 		});
 		const map = await resolveDisplayNames(db, 't1', ['u1', 'u2']);
-		expect(map.get('u1')).toEqual({ display_name: 'Ada', email: null });
-		expect(map.get('u2')).toEqual({ display_name: 'Bob', email: 'bob@x.co' });
+		expect(map.get('u1')).toEqual({ display_name: 'Ada', handle: null, email: null });
+		expect(map.get('u2')).toEqual({ display_name: 'Bob', handle: null, email: 'bob@x.co' });
 	});
-	it('omits users with no identity row (caller falls back to shortId)', async () => {
-		const { db } = makeDb({ data: [{ principal_id: 'u1', display_name: 'Ada', email: null, last_login_at: null }], error: null });
+	it('reads null/null for a scoped id nothing names (the mapper says so in words)', async () => {
+		const { db } = makeTableDb({
+			memberships: [
+				{ tenant_id: 't1', user_id: 'u1' },
+				{ tenant_id: 't1', user_id: 'ghost' }
+			],
+			identities: [
+				{ principal_id: 'u1', display_name: 'Ada', email: null, last_login_at: null }
+			],
+			principals: []
+		});
 		const map = await resolveDisplayNames(db, 't1', ['u1', 'ghost']);
-		expect(map.has('ghost')).toBe(false);
+		expect(map.get('u1')).toEqual({ display_name: 'Ada', handle: null, email: null });
+		expect(map.get('ghost')).toEqual({ display_name: null, handle: null, email: null });
 	});
 	it('treats null data as no identities', async () => {
 		const { db } = makeDb({ data: null, error: null });
@@ -99,6 +137,16 @@ describe('resolveDisplayNames', () => {
 	it('throws AdminError(500) on a query error (fail-closed, no fabrication)', async () => {
 		const { db } = makeDb({ data: null, error: { message: 'boom' } });
 		await expect(resolveDisplayNames(db, 't1', ['u1'])).rejects.toBeInstanceOf(AdminError);
+	});
+	it('L4 forge-handle — the identity read selects the handle column', async () => {
+		const { db, calls } = makeTableDb({
+			memberships: [{ tenant_id: 't1', user_id: 'u1' }],
+			identities: [],
+			principals: []
+		});
+		await resolveDisplayNames(db, 't1', ['u1']);
+		const identityRead = calls.find((c) => c.table === 'identities' && c.op === 'select');
+		expect(identityRead?.args[0], 'handle is selected').toContain('handle');
 	});
 });
 
@@ -149,5 +197,44 @@ describe('resolveDisplayNames is scoped to the tenant', () => {
 		expect([...names.keys()]).toEqual(['member']);
 		const identityRead = calls.find((c) => c.table === 'identities' && c.op === 'in');
 		expect(identityRead?.args[1], 'only members are looked up').toEqual(['member']);
+	});
+	it('L4 member-names — the principals fallback reads tenant members only, never requested outsiders', async () => {
+		const { db, calls } = makeTableDb({
+			memberships: [
+				{ tenant_id: 't1', user_id: 'member' },
+				{ tenant_id: 't2', user_id: 'outsider' }
+			],
+			identities: [
+				{ principal_id: 'member', display_name: null, email: 'ada@x.co', last_login_at: null },
+				{ principal_id: 'outsider', display_name: 'Eve', email: 'eve@y.co', last_login_at: null }
+			],
+			principals: [
+				{ id: 'member', display_name: 'Ada P' },
+				{ id: 'outsider', display_name: 'Eve' }
+			]
+		});
+		const names = await resolveDisplayNames(db, 't1', ['member', 'outsider']);
+		// F1: `principals` is global with no tenant column and service_role
+		// bypasses RLS, so the ids asked for ARE the access rule. A fallback
+		// that reads the requested ids would name Eve the outsider.
+		const principalsRead = calls.find((c) => c.table === 'principals' && c.op === 'in');
+		expect(principalsRead?.args[1], 'principals fallback is tenant-scoped').toEqual(['member']);
+		expect(names.get('outsider')).toBeUndefined();
+	});
+	it('L4 member-names — viewers share the principals fallback, viewer-scoped', async () => {
+		const { db } = makeTableDb({
+			dojo_viewers: [
+				{ tenant_id: 't1', principal_id: 'viewer' },
+				{ tenant_id: 't2', principal_id: 'stranger' }
+			],
+			identities: [],
+			principals: [
+				{ id: 'viewer', display_name: 'Vera' },
+				{ id: 'stranger', display_name: 'Mallory' }
+			]
+		});
+		const names = await resolveViewerNames(db, 't1', ['viewer', 'stranger']);
+		expect(names.get('viewer')).toMatchObject({ display_name: 'Vera' });
+		expect(names.get('stranger')).toBeUndefined();
 	});
 });

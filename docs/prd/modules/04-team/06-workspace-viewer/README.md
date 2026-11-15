@@ -33,6 +33,13 @@ next release held and why — without asking the team for a status deck.*
   the organization (the relationship enum); the viewer shell is to be built (D15).
 - **D10.** Aggregates over one contributor are shown, and so is a per-repository split when one
   person works on that repository.
+- **D54, D58.** Who reads what: **viewers read aggregates only** (D8); **leads** are members,
+  not viewers, and read results per person across the workspaces they can read (D38, D58).
+  A member manager is a maintainer or lead; an outside manager or a client is a viewer.
+  **Who sets the targets a viewer reads:** dōjō and workspace targets — admin; repository
+  targets — maintainer or above on that repository; sprint, task-type and task targets —
+  maintainer or above on any repository in the workspace. A lead sets targets only if also
+  a maintainer. A viewer sets none.
 - **V1–V12 (2026-10-21)** — under *Decisions taken* below.
 
 ## In scope / out of scope
@@ -46,7 +53,7 @@ next release held and why — without asking the team for a status deck.*
   **PDF export** for internal viewers.
 - Out: anything a viewer can change; per-person numbers (D6); code, diffs, file or module
   paths, branch names, ticket keys and titles; session transcripts; AI usage per person (one
-  workspace-total line only, never gated); export for invited outsiders (V9).
+  workspace-total line only, never a target); export for invited outsiders (V9).
 
 ## Surfaces
 
@@ -86,24 +93,24 @@ next release held and why — without asking the team for a status deck.*
 
 ## Signals shown
 
-| Signal | Means | Example |
-|---|---|---|
-| Quality headline | share of the workspace's gated targets met this sprint, against **the workspace's own goal line** (V2) | `86% met · goal 80%` |
-| Target result | met / missed, with the mode (`block` / `warn`) | `Coverage ≥ 80% — missed · blocks close` |
-| Ratchet baseline | the workspace's own baseline; advances when the **trailing 3-sprint median** beats it (V3) | `coverage baseline 78% → 80% at sprint 22` |
-| DORA key | a T5 key over trailing 30 / 90 days, with its count | `6% · 1 of 18 deploys` |
-| Threshold | over / within the **workspace's stability-guardrail threshold** (V5); deployment frequency and lead time carry no threshold | `change failure rate 17% · over 15%` |
-| Low sample | fewer than **5 deploys** in the window (V6) | `0% · 0 of 2 deploys · low sample` |
-| Release gate | T5's three parts: targets over the change set · readiness · stability guardrail | `held · 1 blocking target missed` |
-| Partial | a repository still indexing; its index-derived targets are **not evaluated** (V12) | `partial · 62% indexed` |
-| Sources | where each number comes from and when it was pulled | `deploys from GitHub Actions · git tags as fallback · pulled 14m ago` |
+| Signal | Means | Example | Decision it drives / next step |
+|---|---|---|---|
+| Quality headline | share of the workspace's targets met this sprint, against **the workspace's own goal line** (V2) | `86% met · goal 80%` | below the goal line → open the missed targets |
+| Target result | met / missed, with the mode (`block` / `warn`) | `Coverage ≥ 80% — missed · blocks close` | missed (blocking) → ask the team when it will be met (a viewer changes nothing) |
+| Ratchet baseline | the workspace's own baseline; advances when the **trailing 3-sprint median** beats it (V3) | `coverage baseline 78% → 80% at sprint 22` | judge whether quality is improving sprint over sprint |
+| DORA key | a T5 key over trailing 30 / 90 days, with its count | `6% · 1 of 18 deploys` | a key moving the wrong way → ask the team why |
+| Threshold | over / within the **workspace's stability-guardrail threshold** (V5); deployment frequency and lead time carry no threshold | `change failure rate 17% · over 15%` | over → ask what will hold the next release |
+| Low sample | fewer than **5 deploys** in the window (V6) | `0% · 0 of 2 deploys · low sample` | don't act on the rate until more deploys land |
+| Release gate | T5's three parts: targets over the change set · readiness · stability guardrail | `held · 1 blocking target missed` | held → read which blocking target holds it |
+| Partial | a repository still indexing; its index-derived targets are **not evaluated** (V12) | `partial · 62% indexed` | wait for indexing to finish before reading quality |
+| Sources | where each number comes from and when it was pulled | `deploys from GitHub Actions · git tags as fallback · pulled 14m ago` | *not measured* → ask an admin to connect the missing source |
 
 ## Decisions taken (2026-10-21)
 
 | # | Question | Decision |
 |---|---|---|
 | V1 | Where is the viewer specified? | This module, T6. |
-| V2 | Quality headline? | Share of gated targets met per sprint, against a goal line **the workspace sets** (no dōjō-wide default). |
+| V2 | Quality headline? | Share of targets met per sprint, against a goal line **the workspace sets** (no dōjō-wide default). |
 | V3 | When does a ratchet baseline advance? | When the **trailing 3-sprint median** beats it. |
 | V4 | Which targets ratchet? | Coverage on guarded paths, changed functions over complexity 10, modules in the zone of pain. The others stay delta-scoped at 0. |
 | V5 | DORA bands? | No benchmark bands. Change failure rate, time to restore and rework rate show over / within the workspace's **stability-guardrail threshold** (T5). |

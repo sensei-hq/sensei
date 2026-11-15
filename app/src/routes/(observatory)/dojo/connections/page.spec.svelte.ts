@@ -16,8 +16,8 @@ afterEach(() => {
   cleanup = [];
 });
 
-async function mount(connections: DojoMembership[], error: string | null = null) {
-  const m = mountComponent(Page, { data: { connections, error } });
+async function mount(connections: DojoMembership[], error: string | null = null, failure: { status: number; message: string } | null = null) {
+  const m = mountComponent(Page, { data: { connections, error, failure } });
   cleanup.push(m.destroy);
   await tick();
   return m.container;
@@ -44,5 +44,14 @@ describe('/dojo/connections', () => {
     const page = await mount([], 'daemon unreachable');
     expect(page.textContent).toContain('daemon unreachable');
     expect(page.textContent).not.toMatch(/no dōjō yet/i);
+  });
+
+  // M1 (r1): the status reaches the screen, so a refusal reads as one.
+  it('a 403 is a refusal that says who to ask, not "check the daemon"', async () => {
+    const page = await mount([], 'forbidden', { status: 403, message: 'forbidden' });
+    const n = page.querySelector('[data-screen-state="error"]') as HTMLElement;
+    expect(n.dataset.tone).toBe('refusal');
+    expect(n.textContent).toContain('Ask an admin for access.');
+    expect(n.textContent).not.toMatch(/daemon is running/);
   });
 });

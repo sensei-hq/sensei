@@ -29,7 +29,8 @@ export interface ForgeUser {
 	/** The forge's stable user id, as text — `dojo.identities.subject`. Never the
 	 *  login, which is renameable. */
 	id: string;
-	/** The forge's handle. Used only to propose a personal-dōjō slug. */
+	/** The forge's handle: persisted as `dojo.identities.handle` at sign-in, and
+	 *  used to propose a personal-dōjō slug. */
 	login: string;
 	name: string | null;
 	email: string | null;

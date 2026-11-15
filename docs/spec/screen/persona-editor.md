@@ -2,7 +2,7 @@
 
 **Segment:** 02 · Preferences / Extensions
 **Route:** `/settings/extensions/personas/[id]`  (drill-down from the Extensions browser at `/settings/extensions`, kind filter `貌 Personas`)
-**Source mockup:** [`lib/observatory/agent-persona-editors.jsx`](../../mockups/Sensei/lib/observatory/agent-persona-editors.jsx) → `PersonaEditor`
+**Source mockup:** `lib/observatory/agent-persona-editors.jsx` → `PersonaEditor`
 **Data:** reads/writes a persona file at `.sensei/personas/<name>.md` (YAML frontmatter: `name`, `description`, `goals`, `pain_points`, `validates`; freeform body). The **evidence trail** reads live from sensei's memory store (`sensei.memories`) linked by rule → session.
 **App file:** _greenfield_
 **Daemon files:** _greenfield_ — no HTTP handler for persona files exists; only the CLI references `.sensei/personas/` (`crates/cli/src/main.rs`). The `/sensei:persona` command authors these files today.

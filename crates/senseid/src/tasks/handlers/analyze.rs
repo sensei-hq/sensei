@@ -55,6 +55,8 @@ pub struct HookEvent {
     /// `command_invoked.payload.action` (e.g. `"resume"`) — the in-session marker
     /// that a session was reopened/continued (Phase B). `None` for other events.
     pub action: Option<String>,
+    /// A `UserPromptSubmit`'s `prompt_id` — the transcript's `promptId` for the same prompt.
+    pub prompt_id: Option<String>,
 }
 
 /// One turn: a `UserPromptSubmit` and the work until the next prompt.
@@ -68,6 +70,9 @@ pub struct Turn {
     pub is_correction: bool,
     pub triage_signal: Option<&'static str>,
     pub tool_calls: i32,
+    /// Who started the turn, from the transcript turn with the same prompt id:
+    /// `human` or an automated origin. `None` when the transcript has no such prompt.
+    pub origin: Option<String>,
 }
 
 /// Derived per-session metrics written to `activity.sessions` (+ the per-turn
@@ -93,6 +98,8 @@ pub struct SessionMetrics {
     /// The parts of `duration_ms` Claude was working and spent on you (R12).
     pub claude_ms: Option<i64>,
     pub user_ms: Option<i64>,
+    /// That split by the hour it happened: `[[epoch hour, claude ms, user ms], …]`.
+    pub active_by_hour: Option<serde_json::Value>,
     pub module: Option<String>,
     pub tool_usage: serde_json::Value, // { "<tool>": { "pre", "post", "failed" } }
 }
@@ -234,16 +241,28 @@ fn counted_gap(from: &HookEvent, to: &HookEvent, idle_ms: i64) -> i64 {
     if gap > 0 && gap <= idle_ms { gap } else { 0 }
 }
 
-/// Active time split by whom the session was waiting on (spec R12):
-/// `(claude_ms, user_ms)`, summing to [`active_duration_ms`]. A gap is Claude's
-/// from a prompt until `Stop`, except after a `Notification` (an approval or a
-/// question) until Claude's next tool event; every other gap is yours. `None`
-/// with no events: nothing was seen, so nothing is known.
-fn active_split_ms(events: &[HookEvent], idle_ms: i64) -> Option<(i64, i64)> {
+/// The R12 split's totals: `(claude_ms, user_ms)`, summing to [`active_duration_ms`].
+/// A gap is Claude's from a prompt until `Stop`, except after a `Notification` (an
+/// approval or a question) until Claude's next tool event; every other gap is yours.
+/// Summed from [`active_split_by_hour`], so the totals and the hours never disagree.
+fn split_totals(hours: &std::collections::BTreeMap<i64, (i64, i64)>) -> (i64, i64) {
+    hours.values().fold((0, 0), |(c, u), (hc, hu)| (c + hc, u + hu))
+}
+
+/// One hour, in ms since the epoch.
+const HOUR_MS: i64 = 60 * 60 * 1000;
+
+/// The R12 split filed under the hour (ms since the epoch ÷ [`HOUR_MS`]) each part of it
+/// happened in — the activity hotspots the app charts by local day. A gap that crosses an
+/// hour is split at the boundary. `None` with no events.
+fn active_split_by_hour(
+    events: &[HookEvent],
+    idle_ms: i64,
+) -> Option<std::collections::BTreeMap<i64, (i64, i64)>> {
     if events.is_empty() {
         return None;
     }
-    let (mut claude, mut user) = (0, 0);
+    let mut hours: std::collections::BTreeMap<i64, (i64, i64)> = std::collections::BTreeMap::new();
     let mut in_turn = false;
     let mut on_claude = false;
     for w in events.windows(2) {
@@ -254,10 +273,24 @@ fn active_split_ms(events: &[HookEvent], idle_ms: i64) -> Option<(i64, i64)> {
             "PreToolUse" | "PostToolUse" => on_claude = in_turn,
             _ => {}
         }
-        let gap = counted_gap(&w[0], &w[1], idle_ms);
-        if on_claude { claude += gap } else { user += gap }
+        if counted_gap(&w[0], &w[1], idle_ms) == 0 {
+            continue;
+        }
+        // Walk the gap hour by hour, so each hour holds only what happened in it.
+        let mut at = w[0].ts;
+        while at < w[1].ts {
+            let hour = at.div_euclid(HOUR_MS);
+            let until = ((hour + 1) * HOUR_MS).min(w[1].ts);
+            let slot = hours.entry(hour).or_default();
+            if on_claude {
+                slot.0 += until - at
+            } else {
+                slot.1 += until - at
+            }
+            at = until;
+        }
     }
-    Some((claude, user))
+    Some(hours)
 }
 
 /// Split a session's events into turns at `UserPromptSubmit` boundaries and
@@ -287,6 +320,7 @@ fn split_into_turns(events: &[HookEvent], idle_ms: i64) -> Vec<Turn> {
                 is_correction: triage_signal.is_some(),
                 triage_signal,
                 tool_calls: slice.iter().filter(|e| e.event_type == "PostToolUse").count() as i32,
+                origin: None,
             }
         })
         .collect();
@@ -351,6 +385,7 @@ fn derive_outcome(
         && !has_end
         && transcript
             .iter()
+            .filter(|t| t.origin == "human")
             .any(|t| abandonment_signal(t.user_text.as_deref().unwrap_or(""), &t.assistant_text));
     if abandoned {
         return "abandoned";
@@ -424,23 +459,34 @@ pub fn derive_session_metrics(
         return None;
     }
     // Hook-derived per-turn detail (timings, tool calls) — supplementary rows.
-    let turns = split_into_turns(events, IDLE_GAP_MS);
+    let mut turns = split_into_turns(events, IDLE_GAP_MS);
+    label_origins(&mut turns, events, transcript);
     // Transcript-first turn count + corrections; hooks are the fallback only when
     // no transcript exists. Corrections reuse `correction_signal` over the real
     // `user_text`, so `792d7ce4` reads its 94 turns rather than the hooks' 1.
     let (turn_count, corrections) = if transcript.is_empty() {
         (turns.len() as i32, turns.iter().filter(|t| t.is_correction).count() as i32)
     } else {
-        let c = transcript
+        // Scheduled, peer and other automated prompts are turns of their own, but
+        // not yours: they neither count as a turn nor can correct one.
+        let yours: Vec<&TranscriptTurn> =
+            transcript.iter().filter(|t| t.origin == "human").collect();
+        let c = yours
             .iter()
             .filter(|t| t.user_text.as_deref().is_some_and(|u| correction_signal(u).is_some()))
             .count() as i32;
-        (transcript.len() as i32, c)
+        (yours.len() as i32, c)
     };
     let real_turns = (turn_count as usize).max(turns.len());
     let resumed = was_resumed(events);
-    let split = active_split_ms(events, IDLE_GAP_MS);
+    let hours = active_split_by_hour(events, IDLE_GAP_MS);
+    let split = hours.as_ref().map(split_totals);
     Some(SessionMetrics {
+        active_by_hour: hours.map(|h| {
+            serde_json::Value::Array(
+                h.into_iter().map(|(hour, (c, u))| serde_json::json!([hour, c, u])).collect(),
+            )
+        }),
         outcome: derive_outcome(events, transcript, real_turns, corrections, resumed),
         ftr: corrections == 0,
         duration_ms: split.map(|(c, u)| c + u),
@@ -453,6 +499,19 @@ pub fn derive_session_metrics(
         turns,
         resumed,
     })
+}
+
+/// Label each hook turn with the origin of the transcript turn its prompt started.
+fn label_origins(turns: &mut [Turn], events: &[HookEvent], transcript: &[TranscriptTurn]) {
+    let by_prompt: std::collections::HashMap<&str, &str> = transcript
+        .iter()
+        .filter_map(|t| Some((t.prompt_id.as_deref()?, t.origin.as_str())))
+        .collect();
+    let prompts = events.iter().filter(|e| e.event_type == "UserPromptSubmit");
+    for (turn, prompt) in turns.iter_mut().zip(prompts) {
+        turn.origin =
+            prompt.prompt_id.as_deref().and_then(|p| by_prompt.get(p)).map(|o| o.to_string());
+    }
 }
 
 /// Serialize turns to the JSON array shape `replace_session_turns` expands into
@@ -471,6 +530,7 @@ fn turns_to_json(turns: &[Turn]) -> serde_json::Value {
                     "is_correction": t.is_correction,
                     "triage_signal": t.triage_signal,
                     "tool_calls": t.tool_calls,
+                    "origin": t.origin,
                 })
             })
             .collect(),
@@ -484,6 +544,7 @@ fn hook_event_from_row(row: &serde_json::Value) -> HookEvent {
     let payload = row.get("payload").cloned().unwrap_or(serde_json::Value::Null);
     let prompt = payload.get("prompt").and_then(|v| v.as_str()).map(str::to_string);
     let action = payload.get("action").and_then(|v| v.as_str()).map(str::to_string);
+    let prompt_id = payload.get("prompt_id").and_then(|v| v.as_str()).map(str::to_string);
     let file_path = payload
         .get("file_path")
         .and_then(|v| v.as_str())
@@ -505,6 +566,7 @@ fn hook_event_from_row(row: &serde_json::Value) -> HookEvent {
         file_path,
         tool_failed,
         action,
+        prompt_id,
     }
 }
 
@@ -699,6 +761,7 @@ pub async fn enrich_session(
                     duration_ms: m.duration_ms,
                     claude_ms: m.claude_ms,
                     user_ms: m.user_ms,
+                    active_by_hour: m.active_by_hour.as_ref(),
                     module: m.module.as_deref(),
                     tool_usage: &m.tool_usage,
                 })
@@ -1003,6 +1066,7 @@ mod tests {
             file_path: None,
             tool_failed: false,
             action: None,
+            prompt_id: None,
         }
     }
     /// A `command_invoked` event carrying an action (e.g. a resume marker).
@@ -1263,6 +1327,69 @@ mod tests {
         assert!(clean.is_null(), "a clean session is not a trouble case");
     }
 
+    /// A transcript turn started by `origin` under the transcript's `promptId`.
+    fn tt_from(idx: i32, origin: &str, prompt_id: &str, user: &str) -> TranscriptTurn {
+        TranscriptTurn {
+            origin: origin.into(),
+            prompt_id: Some(prompt_id.into()),
+            ..tt(idx, user, "done")
+        }
+    }
+
+    #[test]
+    fn automated_turns_count_neither_as_turns_nor_as_corrections() {
+        let transcript = vec![
+            tt_from(0, "human", "p1", "implement the parser"),
+            tt_from(1, "scheduled", "p2", "actually, that's wrong — check the build again"),
+            tt_from(2, "peer", "p3", "no, revert that"),
+            tt_from(3, "human", "p4", "actually, that's wrong — revert it"),
+        ];
+        let m = derive_session_metrics(&[], &transcript).unwrap();
+        assert_eq!(m.turn_count, 2, "only the turns you started are turns");
+        assert_eq!(m.corrections, 1, "an automated prompt is never your correction");
+    }
+
+    #[test]
+    fn an_automated_prompt_giving_up_does_not_abandon_your_session() {
+        let transcript = vec![
+            tt_from(0, "human", "p1", "implement the parser"),
+            tt_from(1, "peer", "p2", "i give up on this, forget it"),
+        ];
+        let m = derive_session_metrics(&[], &transcript).unwrap();
+        assert_ne!(m.outcome, "abandoned", "only you can abandon your session");
+        let yours = vec![tt_from(0, "human", "p1", "i give up on this, forget it")];
+        assert_eq!(derive_session_metrics(&[], &yours).unwrap().outcome, "abandoned");
+    }
+
+    #[test]
+    fn each_hook_turn_takes_the_origin_of_its_transcript_prompt() {
+        let prompt = |text: &str, pid: &str, ts: i64| HookEvent {
+            prompt_id: Some(pid.into()),
+            ..prompt_ev(text, ts)
+        };
+        let events = vec![
+            prompt("go", "p1", 0),
+            prompt("tick", "p2", MIN),
+            prompt("unseen", "p9", 2 * MIN),
+            prompt_ev("no id", 3 * MIN),
+        ];
+        let transcript =
+            vec![tt_from(0, "human", "p1", "go"), tt_from(1, "scheduled", "p2", "tick")];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        let origins: Vec<Option<&str>> = m.turns.iter().map(|t| t.origin.as_deref()).collect();
+        assert_eq!(origins, vec![Some("human"), Some("scheduled"), None, None]);
+        assert_eq!(turns_to_json(&m.turns)[1]["origin"], "scheduled");
+    }
+
+    #[test]
+    fn a_hook_prompt_reads_its_prompt_id() {
+        let row = serde_json::json!({
+            "event_type": "UserPromptSubmit", "ts": 5,
+            "payload": {"prompt": "hi", "prompt_id": "abc"}
+        });
+        assert_eq!(hook_event_from_row(&row).prompt_id.as_deref(), Some("abc"));
+    }
+
     #[test]
     fn corrections_come_from_transcript_user_text() {
         let events = vec![prompt_ev("noise", 1000)]; // the hook prompt is not a correction
@@ -1317,6 +1444,39 @@ mod tests {
         let m = derive_session_metrics(&events, &[]).unwrap();
         assert_eq!((m.claude_ms, m.user_ms), (Some(15 * MIN), Some(7 * MIN)));
         assert_eq!(m.duration_ms, Some(22 * MIN), "active = Claude + you");
+    }
+
+    // Hotspots (user, 2026-10-28): active time is filed under the hour it happened, so the
+    // app can chart each local day; a gap that crosses an hour is split at the boundary,
+    // and the hours add up to the session's split exactly.
+    #[test]
+    fn active_time_is_filed_by_the_hour_it_happened() {
+        const HOUR: i64 = 60 * MIN;
+        let t0 = 10 * HOUR + 50 * MIN; // 10:50
+        let events = vec![
+            prompt_ev("a", t0), // Claude 10:50 → 11:10
+            ev("Stop", t0 + 20 * MIN),
+            prompt_ev("b", t0 + 25 * MIN), // 11:10 → 11:15 yours
+            ev("Stop", t0 + 30 * MIN),     // 11:15 → 11:20 Claude
+            prompt_ev("c", t0 + 30 * MIN + 2 * HOUR), // a two-hour gap: nobody's
+            ev("Stop", t0 + 35 * MIN + 2 * HOUR), // 13:20 → 13:25 Claude
+        ];
+        let by_hour = active_split_by_hour(&events, IDLE_GAP_MS).unwrap();
+        assert_eq!(
+            by_hour,
+            std::collections::BTreeMap::from([
+                (10, (10 * MIN, 0)),
+                (11, (15 * MIN, 5 * MIN)),
+                (13, (5 * MIN, 0))
+            ])
+        );
+        let m = derive_session_metrics(&events, &[]).unwrap();
+        let claude: i64 = by_hour.values().map(|v| v.0).sum();
+        let user: i64 = by_hour.values().map(|v| v.1).sum();
+        assert_eq!(m.claude_ms, Some(claude), "the hours hold all of Claude's time");
+        assert_eq!(m.user_ms, Some(user), "and all of yours");
+        assert_eq!(m.duration_ms, Some(claude + user), "and the session's active time");
+        assert_eq!(active_split_by_hour(&[], IDLE_GAP_MS), None, "no events: nothing is known");
     }
 
     #[test]
@@ -1574,6 +1734,23 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(split, (Some(2000.0), Some(0.0)));
+        // Hotspots: the same split, filed by the hour it happened, is stored beside it and
+        // adds up to it.
+        let hours: Option<serde_json::Value> = sqlx_core::query_scalar::query_scalar(
+            "SELECT active_by_hour FROM activity.sessions WHERE id = $1",
+        )
+        .bind(sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        let hours = hours.expect("the hours are stored");
+        let total: i64 = hours
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h[1].as_i64().unwrap() + h[2].as_i64().unwrap())
+            .sum();
+        assert_eq!(total, 2000);
 
         // retrospective summary persisted by enrichment. The test gateway has no
         // narration-cache chain, so `generate_and_cache` misses → the deterministic
@@ -1846,6 +2023,82 @@ mod tests {
         assert_eq!((reset, due), (1, vec![sid]));
     }
 
+    /// The transcript is ground truth for a session's turns, so a transcript turn that
+    /// landed after the session was analysed makes it due again — as a newer hook event
+    /// does. That is also how re-reading transcripts under a new rule (automated prompts
+    /// as turns, 2026-10-29) reaches sessions analysed under the old one.
+    #[tokio::test]
+    async fn a_transcript_turn_newer_than_the_analysis_makes_the_session_due() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg
+            .create_workspace(&format!("_test:tx-{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(
+            pg,
+            &format!("tx-{}", uuid::Uuid::new_v4()),
+        )
+        .await;
+        let mut ids = Vec::new();
+        let mut csids = Vec::new();
+        for landed in ["now()", "now() - interval '2 hours'"] {
+            let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+            let sid = pg
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &csid,
+                    folder_id: &fid,
+                    workspace_id: Some(&pid),
+                    family: "claude",
+                    is_end: true,
+                })
+                .await
+                .unwrap();
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET analyzed_at = now() - interval '1 hour' WHERE id = $1",
+            )
+            .bind(sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            sqlx_core::query::query(&format!(
+                "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index, created_at)
+                 VALUES ('test', $1, 'claude', 0, {landed})"
+            ))
+            .bind(&csid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            ids.push(sid);
+            csids.push(csid);
+        }
+        let due: Vec<uuid::Uuid> = pg
+            .get_workspace_sessions_needing_enrichment(&pid)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        for (sid, csid) in ids.iter().zip(&csids) {
+            sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+                .bind(csid)
+                .execute(pg.pool())
+                .await
+                .ok();
+            sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+                .bind(sid)
+                .execute(pg.pool())
+                .await
+                .ok();
+        }
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .ok();
+        assert_eq!(due, vec![ids[0]], "only the session whose transcript grew since");
+    }
+
     /// R12: a session analysed before the split (active time, no split) is due
     /// again, once; one with the split, or with no active time at all, is not.
     #[tokio::test]
@@ -1864,8 +2117,10 @@ mod tests {
         let mut ids = Vec::new();
         for set in [
             "duration = interval '20 min', claude_time = NULL, user_time = NULL",
-            "duration = interval '20 min', claude_time = interval '15 min', user_time = interval '5 min'",
+            "duration = interval '20 min', claude_time = interval '15 min', user_time = interval '5 min', active_by_hour = '[[490000, 900000, 300000]]'",
             "duration = NULL, claude_time = NULL, user_time = NULL",
+            // Hotspots: the split without its hours is due again, once, to file them.
+            "duration = interval '20 min', claude_time = interval '15 min', user_time = interval '5 min', active_by_hour = NULL",
         ] {
             let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
             let sid = pg
@@ -1906,7 +2161,11 @@ mod tests {
             .execute(pg.pool())
             .await
             .ok();
-        assert_eq!(due, vec![ids[0]]);
+        let mut due = due;
+        due.sort();
+        let mut want = vec![ids[0], ids[3]];
+        want.sort();
+        assert_eq!(due, want);
     }
 
     #[tokio::test]

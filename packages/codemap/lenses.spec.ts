@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { complexityShare, couplingBands, cycleBands, matrix, zonesView } from './lenses';
+import { complexityShare, couplingBands, cycleBands, inZoneFilter, matrix, zonesView } from './lenses';
 import type { Band, Block, Level0, ZonePoint } from './types';
 
 const block = (id: string, group: string, symbols = 1): Block => ({
@@ -27,6 +27,21 @@ describe('lenses', () => {
     const [i, j] = [m.ids.indexOf('base'), m.ids.indexOf('top')];
     expect([m.weight[i][j], m.upward[i][j], i > j]).toEqual([3, true, true]);
     expect(m.max).toBe(3);
+  });
+
+  // The Matrix is the dependency-issue facet (user, 2026-11-02): each cell says what
+  // is wrong with it, if anything — a pair that depends both ways, an upward cell,
+  // a layer skip — and the counts lead the legend.
+  it('marks each cell with its issue: mutual over upward over skip; healthy cells none', () => {
+    const withSkip = { ...l0, bands: [...l0.bands, band('top', 'base', 'skip', 2)] };
+    const m = matrix(withSkip);
+    const at = (s: string, t: string) => m.issue[m.ids.indexOf(s)][m.ids.indexOf(t)];
+    expect([at('a', 'b'), at('b', 'a'), at('base', 'top'), at('top', 'base'), at('top', 'a'), at('a', 'top')])
+      .toEqual(['mutual', 'mutual', 'mutual', 'mutual', null, null]);
+    expect(m.issues).toEqual({ mutual: 2, up: 0, skip: 0 });
+    const plain = matrix(l0);
+    expect(plain.issue[plain.ids.indexOf('base')][plain.ids.indexOf('top')]).toBe('up');
+    expect(plain.issues).toEqual({ mutual: 1, up: 1, skip: 0 });
   });
 });
 
@@ -65,5 +80,17 @@ describe('complexityShare', () => {
     expect(complexityShare({ ...block('a', 'L0'), complexity: { functions: 0, complex: 0 } })).toBe(0);
     expect(complexityShare({ ...block('a', 'L0'), complexity: null })).toBeNull();
     expect(complexityShare(block('a', 'L0'))).toBeNull();
+  });
+});
+
+// Zones is the pain-and-uselessness facet (user, 2026-11-02): its default filter is
+// both of them; any single zone, or all, can still be explored.
+describe('inZoneFilter', () => {
+  it('"issues" is pain and uselessness; a zone is itself; all is everything placed', () => {
+    const zones = ['pain', 'useless', 'risk', 'main'] as const;
+    expect(zones.filter((z) => inZoneFilter(z, 'issues'))).toEqual(['pain', 'useless']);
+    expect(zones.filter((z) => inZoneFilter(z, 'risk'))).toEqual(['risk']);
+    expect(zones.filter((z) => inZoneFilter(z, 'all'))).toEqual([...zones]);
+    expect(inZoneFilter(null, 'all')).toBe(false);
   });
 });

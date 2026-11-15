@@ -22,7 +22,7 @@
     {
       'border-l-success': tone === 'success',
       'border-l-warning': tone === 'warning',
-      'border-l-ink-mute': tone === 'ink',
+      'border-l-ink-soft': tone === 'ink',
     },
   ]}
   data-testid="impact-moe-panel"
@@ -30,7 +30,7 @@
   <!-- Header row: 議 + eyebrow -->
   <div class="flex items-center gap-2 mb-2">
     <Kanji char="議" size="inherit" tone="inherit" class="text-sm text-accent" />
-    <span class="text-xs uppercase tracking-wider text-ink-soft">impact reasoning</span>
+    <span class="text-xs uppercase tracking-wider text-ink-mute">impact reasoning</span>
   </div>
 
   <!-- Headline — the sharpest single sentence -->
@@ -42,7 +42,7 @@
 
   <!-- Body — a 2-3 sentence explanation -->
   {#if reasoning.body}
-    <p class="text-sm text-ink-mute leading-relaxed m-0 mb-3" data-testid="impact-moe-body">
+    <p class="text-sm text-ink-soft leading-relaxed m-0 mb-3" data-testid="impact-moe-body">
       {reasoning.body}
     </p>
   {/if}
@@ -51,7 +51,7 @@
        the names: there is one verdict, so no per-model role/note breakdown. -->
   {#if modelsUsed.length > 0}
     <div class="flex flex-wrap items-center gap-2 pt-3 border-t border-paper-edge" data-testid="impact-moe-models">
-      <span class="text-xs uppercase tracking-wider text-ink-soft">models used</span>
+      <span class="text-xs uppercase tracking-wider text-ink-mute">models used</span>
       {#each modelsUsed as name (name)}
         <span class="font-mono text-xs text-ink px-1.5 py-0.5 rounded bg-paper border border-paper-edge" data-testid={`impact-moe-model-${name}`}>
           {name}
@@ -64,7 +64,7 @@
   {#if reasoning.suggestedRevision}
     <div class="mt-3 py-2 px-3 rounded bg-paper border border-paper-edge" data-testid="impact-moe-revision">
       <div class="text-xs uppercase tracking-wider text-accent mb-1">Suggested revision</div>
-      <p class="text-xs text-ink-mute leading-relaxed m-0">{reasoning.suggestedRevision}</p>
+      <p class="text-xs text-ink-soft leading-relaxed m-0">{reasoning.suggestedRevision}</p>
     </div>
   {/if}
 </div>

@@ -67,9 +67,9 @@ and where the code lives. Full end-to-end spec: `docs/history/plan/relay-engine.
 - Liveness = three signals, not just a status flag: `relay_sessions` presence
   heartbeat, "last progress N min ago" from the newest `run_event`, and the
   watchdog's `stalled` signal.
-- Mockups: [`relay.jsx`](../mockups/Sensei/lib/relay/relay.jsx) (phone run
-  dashboard/detail/gate/nudge), [`relay-planner.jsx`](../mockups/Sensei/lib/relay/relay-planner.jsx),
-  [`relay-desktop.jsx`](../mockups/Sensei/lib/relay/relay-desktop.jsx).
+- Mockups: `relay.jsx` (phone run
+  dashboard/detail/gate/nudge), `relay-planner.jsx`,
+  `relay-desktop.jsx`.
 
 ## Gates + nudges
 

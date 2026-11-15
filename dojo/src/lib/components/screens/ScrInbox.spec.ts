@@ -51,4 +51,11 @@ describe('ScrInbox', () => {
 			false
 		);
 	});
+
+	// L1 (r1): a failed read is never also an empty one.
+	it('with an error and nothing loaded, shows the error and no "Nothing in flight."', () => {
+		const { queryByText, container } = render(ScrInbox, { inbox: [], error: 'timeout', onOpen: () => {} });
+		expect(container.querySelector('[data-component="notice"]')).not.toBeNull();
+		expect(queryByText('Nothing in flight.')).toBeNull();
+	});
 });

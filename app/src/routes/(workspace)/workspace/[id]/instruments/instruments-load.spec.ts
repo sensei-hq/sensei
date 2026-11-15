@@ -30,5 +30,6 @@ describe('loadWorkspaceInstruments', () => {
   it('a failed tool-usage read is its own error', async () => {
     const d = await loadWorkspaceInstruments(api({ tryGetWorkspaceTools: async () => down }), 'p1');
     expect([d.error, d.toolUsage, d.toolUsageError]).toEqual([null, [], 'Service Unavailable']);
+    expect(d.toolUsageNotice).toEqual({ tone: 'fault', title: "Couldn't read which tools were used", detail: 'Service Unavailable', remedy: 'Retry. If it keeps failing, reload the page.' });
   });
 });

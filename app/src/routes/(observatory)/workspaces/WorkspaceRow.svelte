@@ -57,7 +57,7 @@
       {/if}
     </div>
     {#if p.vision}
-      <div data-vision class="text-xs text-ink-mute leading-snug mt-0.5 truncate">{p.vision}</div>
+      <div data-vision class="text-xs text-ink-soft leading-snug mt-0.5 truncate">{p.vision}</div>
     {/if}
   </div>
 
@@ -68,7 +68,7 @@
         <!-- The quality reads failed (#288): said so, never a blank rate. -->
         <span data-ftr-unavailable title={p.readError} class="text-danger">{FTR_UNAVAILABLE} ftr</span>
       {:else}
-        <span class={p.warn ? 'text-warning' : 'text-ink-soft'}>{ftrLabel} ftr</span>
+        <span class={p.warn ? 'text-warning' : 'text-ink-mute'}>{ftrLabel} ftr</span>
       {/if}
     {:else}
       <span class="text-ink-faint">last · {lastSessionLabel(p.last_session_at)}</span>

@@ -8,7 +8,7 @@
  * Run: `bun run test:inspect -- glyphs`.
  */
 import { expect, test } from '../fixtures';
-import { DAEMON_URL, dismissSignIn, navigateToScreen, shot } from '../helpers';
+import { DAEMON_URL, navigateToScreen, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -51,7 +51,6 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
   const before = await storedGlyphs();
   try {
     await navigateToScreen(tauriPage, '/settings/general', '[data-testid="pref-glyphs"]');
-    await dismissSignIn(tauriPage);
 
     await choose(tauriPage, 'Icons');
     await tauriPage.waitForSelector('[data-component="settings-sidebar"] [data-item-icon]', 10_000);
@@ -95,8 +94,11 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     }
 
     // Slice 4b: screens whose marks were bare kanji spans now paint icons in
-    // their main content (outside the header and rails).
-    const MAIN = '[data-component="observatory-main"] [data-component="glyph-icon"]';
+    // their main content (outside the header and rails). A screen on rokkit's
+    // shell (D87) draws its mark as `[data-screen-mark]` instead — same claim:
+    // it paints the icon, and it is not a bare kanji span.
+    const MAIN =
+      '[data-component="observatory-main"] [data-component="glyph-icon"], [data-screen-mark]';
     for (const route of ['/impact', '/activity-logs', '/consolidation', '/workspaces']) {
       await navigateToScreen(tauriPage, route, MAIN, 20_000);
       const marks = (await tauriPage.evaluate(painted(MAIN))) as { cls: string; painted: boolean }[];

@@ -1,0 +1,5 @@
+-- A test file that manages its own transaction. --apply must refuse it (exit 2
+-- with a named message): the commit would persist the applied DDL. Run with
+-- noop.ddl, which persists nothing even unguarded (F5).
+select 1;
+commit;

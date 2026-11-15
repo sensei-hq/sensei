@@ -7,12 +7,13 @@ export { DEFAULT_PREFERENCES };
 
 /** Pure: parse the daemon's config map into a preferences form. The wizard
  *  writes prefs as a JSON blob under `setup.preferences` PLUS a plain
- *  `user_name` for the greeting. Corrupt JSON falls back to the defaults
- *  (rather than throwing) so the settings page always renders. */
+ *  `user_name` for the greeting. Nothing stored is the defaults; stored JSON
+ *  that does not parse throws (D83 batch A, audit row 73) — never the defaults,
+ *  which the page's auto-save would write over the real values. */
 export function toPreferencesForm(config: Record<string, string>): PreferencesData {
   const raw = config['setup.preferences'];
-  const parsed = raw ? safeJsonParse<Partial<PreferencesData>>(raw) : undefined;
-  const merged: PreferencesData = { ...DEFAULT_PREFERENCES, ...(parsed ?? {}) };
+  const parsed = raw ? (JSON.parse(raw) as Partial<PreferencesData>) : {};
+  const merged: PreferencesData = { ...DEFAULT_PREFERENCES, ...parsed };
   // `user_name` is authoritative for displayName when both exist — the
   // wizard writes it as the ground truth for downstream greeters.
   if (config['user_name']) merged.displayName = config['user_name'];
@@ -31,8 +32,4 @@ export function fromPreferencesForm(form: PreferencesData): Record<string, strin
     'user_name': form.displayName,
     [GLYPHS_KEY]: form.glyphs,
   };
-}
-
-function safeJsonParse<T>(raw: string): T | undefined {
-  try { return JSON.parse(raw) as T; } catch { return undefined; }
 }

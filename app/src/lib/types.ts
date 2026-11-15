@@ -350,21 +350,6 @@ export interface InferredRole {
 // ─── Graph Queries ───────────────────────────────────────────────────────────
 
 /**
- * One function or method, as `/api/graph/functions` returns it.
- *
- * Was `FunctionDetail` with `file`/`line`/`complexity`, none of which the daemon
- * sends — the same mistyping `CallNeighbour` below records. It had no caller, so
- * nothing ever read the `undefined`s; the Neighbourhood picker is the first.
- */
-export interface FunctionMatch {
-  id: string;
-  name: string;
-  file_path: string;
-  signature: string | null;
-  line_start: number | null;
-}
-
-/**
  * One end of a `calls` edge, as `/api/graph/callers` and `/api/graph/callees`
  * return it.
  *
@@ -487,7 +472,7 @@ export interface SessionData {
     id: string; task: string; workspace: string | null; startedAt: string;
     completedAt?: string; outcome?: string; summary?: string;
     cost?: number; tokensIn?: number; tokensOut?: number; ftr?: number | null;
-    // First-try-right feed carries a rework count (0 ⇒ first-try, N ⇒ N× rework).
+    // First-try-right feed carries a rework count (rendered by lib/ftr correctionsView).
     // Optional on the wire so pre-fix daemons still parse.
     corrections?: number;
   }>;
@@ -529,10 +514,19 @@ export interface SessionRow {
   durationSecs?: number | null;
   provider?: string | null;
   model?: string | null;
+  /** Active time filed by the hour it happened: `[epoch hour, agent ms, user ms]`.
+   *  null until the session is analysed — unknown, never an empty day. */
+  activeByHour?: [number, number, number][] | null;
 }
+
+/** Work in one hour: `[epoch hour, turns, corrected turns, tokens in, tokens out]`;
+ *  tokens are null where no transcript turn was captured (unknown, not 0). */
+export type HourActivity = [number, number, number, number | null, number | null];
 
 export interface SessionsDigest {
   sessions: SessionRow[];
+  /** The work by the hour it happened — what the day charts file by local day. */
+  activity: HourActivity[];
 }
 
 // ── Observatory · Today (home screen) ──────────────────────────────────────
@@ -677,6 +671,11 @@ export interface Recommendation {
   current_ftr?: number | null;
   acted_at?: string | null;
   measured_at?: string | null;
+  /** What the recommendation asks for (`revise_rule`, `write_skill`, `audit_stale`, …). */
+  actionType?: string | null;
+  /** The absolute path of the file a rework hotspot is about; null when it is not
+   *  about one file, or the file could not be resolved. */
+  file?: string | null;
 }
 
 // ── Observatory · Insights (Learnings triage) ──────────────────────────────
@@ -752,53 +751,6 @@ export interface InsightsBoard {
   memories: InsightMemory[];
   patterns: InsightPattern[];
   corrections: InsightCorrection[];
-}
-
-// ─── Front door · Intake ──────────────────────────────────────────────────
-
-/** One playbook in the front-door catalog (from GET /api/playbook/guide). */
-export interface IntakePlaybook {
-  name: string;
-  title: string;
-  when_to_use: string;
-  opening_tone: string;
-  method_ref: string | null;
-}
-
-/** One per-axis prompt in the intake guide (kind === "axis"). */
-export interface IntakeAxisGuide {
-  kind: string;
-  axis: string | null;
-  prompt: string;
-  help: string | null;
-}
-
-/** GET /api/playbook/guide — the front-door frame + axis prompts + catalog. */
-export interface IntakeGuide {
-  frame: string;
-  axes: IntakeAxisGuide[];
-  playbooks: IntakePlaybook[];
-}
-
-/** Proven FTR history for the recommended combo (drives the auto-select badge). */
-export interface PlaybookTrust {
-  n: number;
-  ftr: number;
-}
-
-/** POST /api/playbook/recommend — the classified axes + the chosen playbook. */
-export interface PlaybookRecommendation {
-  playbook: string;
-  rationale: string;
-  lifecycle: string;
-  intent: string;
-  risk: string;
-  rule: string;
-  defaulted: boolean;
-  opening_tone: string;
-  when_to_use: string;
-  auto_select: boolean;
-  trust: PlaybookTrust;
 }
 
 export interface WorkspaceSession {
@@ -925,6 +877,10 @@ export interface DojoMembership {
   last_heartbeat_at: string | null;
   enabled: boolean;
   bound_workspaces: DojoBoundWorkspace[];
+  /** The session slot of the identity this membership belongs to — the key the
+   *  identity list (`sessionSlot`) and sync rows (`persona`) use. `null` when no
+   *  identity is bound or the bound one is signed out. */
+  persona_slot: string | null;
 }
 
 /** The inferred (confirm-inferred) workspace→Dōjō binding surfaced in the workspace
@@ -1649,6 +1605,10 @@ export interface SyncStateRow {
   /** The identity (its Keychain session slot) whose sync last wrote this row;
    *  null on a row no sync has written since identities were recorded. */
   persona: string | null;
+  /** What the reader can do about a `skipped` row, joined server-side from
+   *  `sensei.reason_codes` (domain `repository_sharing`) — null when the
+   *  reason names no code. The screen never keeps its own copy of this text. */
+  remedy: string | null;
 }
 
 /** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, partial, skipped,
@@ -1682,56 +1642,6 @@ export interface ProvisionModel {
   id: string;
   name: string;
   phase: ProvisionPhase;
-}
-
-// ── Diagrams · Structure (#205) ─────────────────────────────────────────────
-
-/** The three rollups the Structure endpoint serves.
- *
- *  `module` is the module's TOP segment, not the whole module path — measured
- *  on sensei, grouping on the whole path collapses 1,751 files to 1,446 groups
- *  (1.21x) because that segment is per-file across most of the tree, while its
- *  first segment gives 150 (11.7x). The daemon owns that decision; this type
- *  only names the levels it offers. */
-export type StructureLevel = 'file' | 'module' | 'package';
-
-export interface StructureNode {
-  id: string;
-  label: string;
-  package: string;
-  module: string;
-  language: string | null;
-  /** package → top module → leaf, truncated at whatever level this node IS.
-   *  From the fqn, never the filesystem — see the daemon's `structure_nodes`. */
-  path: string[];
-  files: number;
-  symbols: number;
-}
-
-export interface StructureEdge {
-  source: string;
-  target: string;
-  kind: string;
-  /** `in_module` | `cross_module` | `cross_package`, computed in the view. */
-  span: string;
-  occurrences: number;
-}
-
-/** What the diagram is NOT showing. `unplaced` reads from `graph_placement`,
- *  so this and the resolution surfaces cannot disagree. Shown always, because a
- *  sparse diagram with no count beside it reads as a simple codebase rather
- *  than an unresolved one. */
-export interface StructureCoverage {
-  drawn: number;
-  unplaced: number;
-}
-
-export interface StructurePayload {
-  level: StructureLevel;
-  kinds: string[];
-  nodes: StructureNode[];
-  edges: StructureEdge[];
-  coverage: StructureCoverage;
 }
 
 // ── Diagrams · Schema (#221) ────────────────────────────────────────────────
@@ -1806,147 +1716,16 @@ export interface SchemaPayload {
   refs: SchemaRef[];
   entities: SchemaEntity[];
   deps: SchemaDep[];
+  /** dbd's v3 `enums`: each enum and its values, in order. */
+  enums: SchemaEnum[];
 }
 
-// ── Diagrams · Layers and Cycles (#232) ─────────────────────────────────────
-
-/** How one dependency sits against the layering.
- *
- *  FOUR VALUES, NOT TWO, and `skip` is the one that matters. A call that skips
- *  a layer is LEGAL under relaxed layering — rokkit's own vocabulary separates
- *  it from a climb for exactly that reason — so a screen that colours both as
- *  violations reports a problem the architecture does not have.
- *
- *  `up` is the real one: every `up` edge is a cycle's back edge, the arrow the
- *  feedback order says to cut. */
-export type Conformance = 'down' | 'skip' | 'up' | 'level';
-
-/** The grains the Layers endpoint serves. `package` is absent on purpose — a
- *  package graph on this corpus is single digits of nodes, which has no
- *  layering to show. */
-export type LayeringLevel = 'module' | 'file';
-
-export interface LayeringNode {
-  id: string;
-  label: string;
-  group: string;
-  weight: number;
-  files: number;
-  language: string | null;
-  /** NULL when the unit was not placed — the endpoint keeps the node and says
-   *  so rather than dropping it. */
-  layer: number | null;
-  component: number | null;
-  componentSize: number | null;
-}
-
-export interface LayeringEdge {
-  id: string;
-  source: string;
-  target: string;
-  kind: 'dependency';
-  weight: number;
-  conformance: Conformance;
-  /** The arrow the feedback order says to cut — one per cycle. */
-  weakest: boolean;
-}
-
-/** A dependency with no layering verdict: the two ends and how often. */
-export interface LayeringDep {
-  source: string;
-  target: string;
-  occurrences: number;
-}
-
-export interface LayeringCycle {
-  component: number;
-  members: string[];
-  layer: number;
-  /** Every dependency inside the component, heaviest first. */
-  inner: LayeringDep[];
-  /** The weakest link. NULL when the component has no cuttable edge. */
-  cut: LayeringDep | null;
-}
-
-/** What the picture is NOT showing.
- *
- *  `unknownUnit` is the one with teeth and travels with the payload for the
- *  reason `unplaced` does on Structure: a dependency whose endpoint owns no
- *  file is not a unit, so it is dropped — and a diagram missing a share of its
- *  edges with no number beside it reads as a sparse codebase rather than an
- *  incompletely-indexed one. */
-export interface LayeringCoverage {
-  drawn: number;
-  unplaced: number;
-  units: number;
-  unknownUnit: number;
-}
-
-export interface LayeringPayload {
-  level: LayeringLevel;
-  kinds: string[];
-  /** `derived` means this layering was MEASURED from the call graph rather than
-   *  declared. The screen therefore answers "do these calls flow downward",
-   *  not "is this the architecture you intended" — a declared layering is a
-   *  different question and a different source. */
-  layerSource: 'derived';
-  depth: number;
-  nodes: LayeringNode[];
-  edges: LayeringEdge[];
-  cycles: LayeringCycle[];
-  /** A unit depending on itself. At module grain that is two of its files
-   *  referring to each other, which is a fact about the module; at file grain
-   *  it is empty by construction. */
-  selfDependencies: LayeringDep[];
-  coverage: LayeringCoverage;
-}
-
-// ── Diagrams · Neighbourhood (#220) ─────────────────────────────────────────
-
-/** One card: a symbol the rings reached. `group` is its PACKAGE (crate,
- *  npm package), so a card's tint says which side of a boundary it sits on. */
-export interface NeighbourCard {
-  id: string;
-  label: string;
-  kind: string | null;
-  group: string | null;
-  module: string | null;
-  language: string | null;
-  file: string | null;
-  line: number | null;
-  /** A library symbol, or another workspace's: drawn, never walked through. */
-  external: boolean;
-  rows: [];
-}
-
-/** One placed call, folded per (caller, callee) pair. `kind` is always
- *  `dependency` — that is what makes the layout say "called by / calls". */
-export interface NeighbourEdge {
-  id: string;
-  source: string;
-  target: string;
-  kind: 'dependency';
-  /** Call sites. */
-  weight: number;
-}
-
-export interface NeighbourCoverage {
-  drawn: number;
-  /** Cards a capped ring found and did not draw, per side. */
-  cut: { in: number; out: number };
-  /** Calls the focus makes that the graph could not place. */
-  unplacedCallees: number;
-  /** Unplaced calls elsewhere in the workspace that use the focus's NAME — some
-   *  may be calls to it, so the callers column is a floor. */
-  namedUnplaced: number;
-}
-
-export interface NeighbourhoodPayload {
-  depth: number;
-  focus: NeighbourCard;
-  nodes: NeighbourCard[];
-  edges: NeighbourEdge[];
-  coverage: NeighbourCoverage;
+export interface SchemaEnum {
+  schema: string;
+  name: string;
+  values: string[];
+  note?: string;
+  noteMd?: string;
 }
 
 // ── Pruner (#247) ───────────────────────────────────────────────────────────
@@ -1988,24 +1767,205 @@ export interface PruneResult {
 /** What a board serves in its workspace (D40): the `sensei.tracker_level` enum. */
 export type TrackerLevel = 'epic' | 'sprint' | 'task';
 
+/** A `sensei.tracker_kind` label: the trackers sensei has an adapter for. */
+export type TrackerKind = 'jira' | 'gitlab' | 'github';
+
 export interface TrackerConnection {
   id: string;
-  kind: 'jira';
+  kind: TrackerKind;
   level: TrackerLevel;
   /** Normalised by the daemon, e.g. `https://acme.atlassian.net`. */
   base_url: string;
-  /** The account the token belongs to (Jira: the Atlassian email). */
+  /** The account the token belongs to (Jira: the Atlassian email; GitLab: the token's username; GitHub: its login). */
   account: string;
-  /** Jira project key, or the board name for a cross-project board. */
+  /** Jira project key, or the board name for a cross-project board; GitLab: the full path at connect; GitHub: `<owner>/<number>`. */
   external_scope: string;
   board_ref: string;
   board_name: string | null;
+  /** GitLab: where sprints come from; null for Jira. */
+  sprint_source: 'iteration' | 'milestone' | null;
+  /** GitLab: when the sprint source last changed (ISO); null when it never has. */
+  sprint_source_changed_at: string | null;
+  /** GitLab: the board's current full path; null for Jira. */
+  full_path: string | null;
+  /** GitHub: the project's address (Replace token re-sends it); null otherwise. */
+  url: string | null;
+  /** GitHub: the project's Iteration field the sprints come from; null when it has none, and for Jira and GitLab. */
+  iteration_field: string | null;
   status: 'pending' | 'connected' | 'stale' | 'error';
   last_success_at: string | null;
   /** A fixed `tracker_error` code, never a raw message. */
   last_error: string | null;
   counts: { tasks: number; sprints: number };
+  /** Usage and SDLC write-back (tracker-metrics-writeback W8, tracker-sdlc-metrics S9). */
+  writeback: TrackerWriteback;
+  /** The board's project figures (tracker-sdlc-metrics S6). */
+  sdlc_project: ProjectSdlc;
 }
+
+/** Each null figure's reason code, by figure key (tracker-sdlc-metrics S6). */
+export type SdlcReasons = Record<string, string>;
+
+/** A ticket's SDLC figures (S6). Every `null` has a `reasons` entry. Percents are
+ *  0–100, times are minutes or hours as named, instants are ISO. */
+export interface TicketSdlc {
+  worked_minutes: number | null;
+  prompts: number | null;
+  ai_token_cost: number | null;
+  cost_per_prompt_cycle: number | null;
+  escaped_task_defects: number | null;
+  compile_defects: number | null;
+  test_defects: number | null;
+  review_fixes: number | null;
+  review_defects: number | null;
+  total_defects: number | null;
+  testing_efficiency: number | null;
+  review_efficiency: number | null;
+  build_runs: number | null;
+  runs_unknown: number | null;
+  unclassified_failures: number | null;
+  build_failure_rate: number | null;
+  mean_build_recovery_minutes: number | null;
+  build_unrecovered: number | null;
+  work_started_at: string | null;
+  submitted_at: string | null;
+  submitted_via: string | null;
+  execution_hours: number | null;
+  lead_hours: number | null;
+  on_hold_minutes: number | null;
+  on_hold_count: number | null;
+  on_hold_by_reason: Record<string, number> | null;
+  on_hold_ratio: number | null;
+  rework_minutes: number | null;
+  rework_cycles: number | null;
+  post_review_rework_ratio: number | null;
+  estimated_points: number | null;
+  expected_minutes: number | null;
+  time_variance_minutes: number | null;
+  effort_cost: number | null;
+  rework_cost: number | null;
+  reasons: SdlcReasons;
+}
+
+/** A sprint's replayed sets (S5), as counts. */
+export interface SprintFacts {
+  committed: number;
+  added: number;
+  removed: number;
+  completed_committed: number;
+  completed_added: number;
+  carried_over: number;
+  /** Tickets whose status category is unknown at the sprint's end (a data-quality count). */
+  unknown_status: number;
+}
+
+/** A sprint's SDLC figures (S6); `facts` is `null` when the sprint has no replay. */
+export interface SprintSdlc {
+  commitment_reliability: number | null;
+  total_completion: number | null;
+  scope_change: number | null;
+  carry_over_rate: number | null;
+  unplanned_work_ratio: number | null;
+  velocity: number | null;
+  points_commitment_reliability: number | null;
+  facts: SprintFacts | null;
+  reasons: SdlcReasons;
+}
+
+/** A board's project figures (S6). */
+export interface ProjectSdlc {
+  predictability: number | null;
+  tokens_per_ticket: number | null;
+  prompts_per_ticket: number | null;
+  tickets_with_sessions: number;
+  sessions_without_tokens: number;
+  reasons: SdlcReasons;
+}
+
+/** A workspace's SDLC metric settings (S1): project-level, never per person. */
+export interface MetricSettings {
+  hourly_rate: number | null;
+  minutes_per_point: number | null;
+  idle_threshold_minutes: number;
+}
+
+/** A board's write-back state, first that applies (W8). */
+export type TrackerWritebackState =
+  | 'disabled'
+  | 'pass_failed'
+  | 'owner_not_a_person'
+  | 'owner_lookup_failed'
+  | 'owner_unknown'
+  | 'nothing_assigned'
+  | 'active';
+
+export interface TrackerWriteback {
+  enabled: boolean;
+  state: TrackerWritebackState;
+  surface: 'comment' | 'fields';
+  /** Mapped custom fields; `fields` surface when > 0. */
+  mapped: number;
+  /** Live tickets assigned to the token owner. */
+  assigned: number;
+  /** The assigned tickets whose last write failed. */
+  failing: number;
+  /** A fixed `tracker_error` code for `pass_failed` / `owner_lookup_failed`, else null. */
+  error: string | null;
+}
+
+/** A metric a tracker field can be mapped to: the `sensei.tracker_metric` enum
+ *  (usage W3, then SDLC S9, in the daemon's write order). */
+export type TrackerMetric =
+  | 'sessions'
+  | 'active_hours'
+  | 'claude_hours'
+  | 'user_hours'
+  | 'wall_hours'
+  | 'cycle_hours'
+  | 'tokens_fresh'
+  | 'cache_read'
+  | 'cache_write'
+  | 'tokens_out'
+  | 'tokens_reasoning'
+  | 'metered_cost'
+  | 'api_cost'
+  | 'compile_defects'
+  | 'test_defects'
+  | 'review_fixes'
+  | 'escaped_task_defects'
+  | 'review_defects'
+  | 'total_defects'
+  | 'build_runs'
+  | 'rework_cycles'
+  | 'prompts'
+  | 'testing_efficiency'
+  | 'review_efficiency'
+  | 'build_failure_rate'
+  | 'on_hold_ratio'
+  | 'post_review_rework_ratio'
+  | 'mean_build_recovery_minutes'
+  | 'on_hold_minutes'
+  | 'rework_minutes'
+  | 'worked_minutes'
+  | 'execution_hours'
+  | 'lead_hours'
+  | 'cost_per_prompt_cycle';
+
+/** One mapped field (W7): `metric` is written into the tracker field `field_ref`. */
+export interface TrackerFieldMapping {
+  metric: TrackerMetric;
+  field_ref: string;
+}
+
+/** A ticket's last write-back outcome: the `sensei.tracker_writeback_status` enum. */
+export type TrackerWritebackStatus =
+  | 'ok'
+  | 'forbidden'
+  | 'field_invalid'
+  | 'comment_removed'
+  | 'not_found'
+  | 'rate_limited'
+  | 'error';
 
 /** What `POST …/trackers/sync` counted. */
 export interface TrackerSyncCounts {
@@ -2020,7 +1980,8 @@ export interface TrackerSyncCounts {
  *  0); every sum carries the count it summed (`_n`). */
 export interface TrackerUsage {
   sessions: number;
-  by_source: { branch: number; prompt: number };
+  /** Sessions with a link of each source; `fetch` = the assistant fetched the ticket (get_ticket). */
+  by_source: { branch: number; prompt: number; fetch: number };
   /** Sessions in the set linked to two or more of the tracker's tickets. */
   shared: number;
   active_secs: number | null;
@@ -2071,6 +2032,8 @@ export interface SprintUsageRow {
   linked_other: TrackerUsage | null;
   unlinked: TrackerUsage | null;
   reason: 'not_started' | 'no_dates' | null;
+  /** The sprint's replayed figures (S5, S6). */
+  sdlc: SprintSdlc;
 }
 
 export interface NamedRef {
@@ -2087,7 +2050,14 @@ export interface TrackerTaskRow {
   current_sprint: NamedRef | null;
   sprints: NamedRef[];
   removed: boolean;
+  /** Whether the token owner is the assignee; `null` while the owner is unknown. */
+  assigned_to_me: boolean | null;
+  /** The last write-back outcome; `null` when never attempted. */
+  writeback_status: TrackerWritebackStatus | null;
+  /** When a write-back last landed. */
+  writeback_at: string | null;
   usage: TrackerUsage;
+  sdlc: TicketSdlc;
 }
 
 /** `GET …/tracker-tasks/{key}`. */
@@ -2098,8 +2068,13 @@ export interface TrackerTaskDetail {
     issue_type: string | null;
     status: string | null;
     removed: boolean;
+    /** Whether the token owner is the assignee; `null` while the owner is unknown. */
+    assigned_to_me: boolean | null;
+    writeback_status: TrackerWritebackStatus | null;
+    writeback_at: string | null;
   };
   usage: TrackerUsage;
+  sdlc: TicketSdlc;
   by_repo: Array<{ repository_id: string; name: string; usage: TrackerUsage }>;
   sessions: Array<{
     id: string;

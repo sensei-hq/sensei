@@ -15,7 +15,7 @@ describe('UnreadWorkspacesNotice', () => {
     cleanup.push(m.destroy);
     const el = m.container.querySelector('[data-unread-workspaces]');
     expect(el?.getAttribute('data-unread-workspaces')).toBe('2');
-    expect(el?.textContent).toContain('Could not read 2 workspaces');
+    expect(el?.textContent).toContain("Couldn't read 2 workspaces");
     expect(el?.textContent).toContain('alpha (Bad Gateway)');
     expect(el?.textContent).toContain('beta (HTTP 500)');
   });
@@ -29,6 +29,6 @@ describe('UnreadWorkspacesNotice', () => {
   it('says "workspace" for one', () => {
     const m = mountComponent(UnreadWorkspacesNotice, { unread: [{ name: 'alpha', reason: 'x' }] });
     cleanup.push(m.destroy);
-    expect(m.container.textContent).toContain('Could not read 1 workspace:');
+    expect(m.container.textContent).toContain("Couldn't read 1 workspace");
   });
 });

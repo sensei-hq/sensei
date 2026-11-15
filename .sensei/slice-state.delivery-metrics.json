@@ -1,0 +1,76 @@
+{
+  "slice_id": "delivery-metrics-F2",
+  "spec_path": "docs/spec/daemon/tracker-delivery-metrics.md",
+  "plan_path": "docs/plans/2026-11-04-tracker-delivery-metrics.md",
+  "issue": 352,
+  "branch": "feature/delivery_metrics",
+  "mode": "unattended",
+  "phases": [
+    "claims",
+    "locate",
+    "spec-audit",
+    "tests-red",
+    "implement",
+    "verify",
+    "review",
+    "commit"
+  ],
+  "current_phase": "PR #358 open (feature/delivery_metrics \u2192 develop), awaiting review",
+  "completed": [
+    "F1 (#351) committed",
+    "F2 claims",
+    "F2 locate",
+    "F2 spec-audit (A1)",
+    "F2a dojo DDL + SQL tests",
+    "F2b dojo endpoints (POST /v1/you/delivery, GET \u2026/delivery, \u2026/delivery/tickets)",
+    "F2c daemon push (DDL tracker_push_marks + sync_entity tracker_board; dojo/delivery.rs; pg_store/delivery.rs; board_figures; UserPlane::push_delivery; tasks/dojo_delivery.rs; tick wiring) \u2014 108 Rust tests green",
+    "F2d dojo view (packages/sdlc-figures shared; workspace-delivery-data/view; delivery-state; ScrWorkspaceDelivery; route; preview link) \u2014 dojo 2173 tests green, check clean",
+    "F2 review swarm (5 agents): fixed A (SQL shape/bounds/history, reader-safe reasons, tests for sync_enabled, completeness, workspace binding, reason_words, backlog), B (streamed byte cap, list guards, reported_at consistency + 409, one wire-types module, view length, page wiring), C (hash name+kind, Result + sync-state on every board failure, two-board/mark-before-send/refused-not-acked tests, ORDER BY replay), D (Settings\u2192D\u014dj\u014d boards group), E (dbml, marks comment, plan, claims, spec D3)",
+    "F1 #351",
+    "F2 #352 (b97b6f74c)",
+    "F3 #353 (d2715b779)",
+    "F4 #354 (456455b5d)",
+    "F5 #355",
+    "F6 #356"
+  ],
+  "gate_status": "pass",
+  "open_questions": [],
+  "known_broken": [
+    "app sessions-digest 'local day' tests fail in IST (pre-existing, #357)",
+    "dojo SQL advisor_guards (staging.metric_gating no RLS) and repository_metric_series (permission denied for schema sensei) fail on develop's schema too (pre-existing)",
+    "shared dojo readAllPages turns a null answer into [] for every caller (pre-existing; delivery reads guard their own)"
+  ],
+  "amendments": [
+    "Gate 5 is an allow-list of four daemon reads, never /api/dojo/* (audit HIGH)",
+    "Tickets deep link ?board=&ticket= added to D2 and gate 3",
+    "No-window sprints show Tickets' not_started/no_dates words; REASONS moves to lib/sdlc-figures.ts",
+    "Cost cell is api_cost (usageCells), not metered_cost, in app and Dojo",
+    "Sprint order = daemon's (start_at desc nulls last, seq desc) in app and Dojo",
+    "Real-0 rule and its tests move from Tickets to Delivery",
+    "Section-list surfaces named: sidebar spec, e2e multi-window, inspect list, workspace-tickets.md, PRD 16 README",
+    "SprintFacts app type widened with unknown_status; sprintSdlcFigures shows all 7",
+    "F2 A1: D3/D4 rewritten after the pre-build audit (21 findings): plan tenant, facts once per tick, canonical hash without history_at, attempted marks + 6 h expiry + failure backoff + sync-state record, lock skip, consistency token, removed sprints sdlc null, removed tickets not sent, membership sprints, FOR UPDATE ordering, workspace from verified repository ids, app ticket order",
+    "F2a: delivery_tickets.title nullable (Jira can return no summary; D83), no column defaults on removed/sprints"
+  ],
+  "next_command": "watch PR #358 checks and review; address feedback on feature/delivery_metrics",
+  "decisions_f3": [
+    "B16 (user 2026-11-05): merged effort_cost/rework_cost and any item with <2 contributors show only to readers allowed per-person rows; F3 serves the restricted view to everyone, F4 opens it",
+    "A2: effort wire shape, dojo.file_delivery wrapper (one transaction), dojo.delivery_effort_merged pure merge",
+    "A3: first submission (pr then push), not-applicable vs unknown nulls, paired ratios, partial_cost rule, person-time labels, project row over non-removed tickets, sprint _n coverage"
+  ],
+  "f3_decomposition": [
+    "daemon: ticket.rs Numerators (ms + counts, serde skip)",
+    "daemon: store candidate_session_repos(tracker) -> session->repo_key; provable filter by exclusive_repos",
+    "daemon: dojo/delivery.rs effort builders (pure): ticket_row, sprint_row, project_row, effort_json, effort hash",
+    "daemon: tasks/dojo_delivery.rs build_effort per persona+board; push both parts when either due; marks per part",
+    "dojo DDL: delivery_effort table; delivery_scope helper; file_delivery wrapper; delivery_effort_merged; reads add team/contributors/last_report (B16 restricted)",
+    "dojo TS: ingest effort shape check; delivery-data team; view Team columns, contributors line, explainers",
+    "reason code no_contributor_value"
+  ],
+  "f3_status": "built: daemon effort (Numerators, ticket/sprint/project rows, build_effort, push both parts), dojo DDL (delivery_effort, delivery_scope, merge_sum/pair/put, effort_merged, team_view, team, reason_words, file_delivery; reads extended), TS ingest + view + screen; SQL tests mutation-proven",
+  "f3_review": {
+    "security": "decoy/poison/limits fixed (row_ok validator, sessions>=1, SQL bounds); forger limit documented in B16",
+    "data": "per-install source key, N/A reasons, exec/lead partial, ai cost +, known limits widened",
+    "tests": "e2e push test (exclusive, sprint row, project no_usage, refusal marks both parts), SQL partial/solo/project/poison cases"
+  }
+}

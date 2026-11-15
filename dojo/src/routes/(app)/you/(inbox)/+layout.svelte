@@ -7,6 +7,9 @@
 	import { initialSelection } from '$lib/relay/relay-inbox-view';
 	import type { SendReply } from '$lib/relay/relay-inbox-state.svelte';
 	import { replyToGate } from '$lib/relay-data';
+	import { RelayNotify } from '$lib/relay/relay-notify.svelte';
+	import { env } from '$env/dynamic/public';
+	import { pushSupported, subscribeToPush, postNotificationPrefs } from '$lib/relay-push';
 
 	// Inbox zone — two-panel master-detail (mockup ScrInbox). Left = RelayList over
 	// relayInboxState; right = RelayDetail for the selected run (in-page selection),
@@ -38,6 +41,15 @@
 	// Replies go to the run's own dōjō with the signed-in session (#305).
 	const send: SendReply = (tenantKey, inboxId, reply) =>
 		replyToGate(tenantKey, inboxId, reply, { fetch, accessToken: data.accessToken ?? null });
+
+	// "Notify me" — the browser's push, registered with each dōjō the inbox spans.
+	const notify = new RelayNotify({
+		supported: pushSupported,
+		permission: () => Notification.permission,
+		subscribe: (tenantKey) => subscribeToPush(tenantKey, env.PUBLIC_VAPID_KEY, { accessToken: data.accessToken ?? null }),
+		postPrefs: (tenantKey) =>
+			postNotificationPrefs(tenantKey, { approvals: true, stalls: true, crashed: true }, { accessToken: data.accessToken ?? null })
+	});
 </script>
 
 <!-- h-full + overflow-hidden so the two panes scroll independently inside the shell
@@ -45,7 +57,7 @@
      flex-col with min-h-0 so its child's sticky-header + scroll-body works. -->
 <div class="grid h-full grid-cols-1 overflow-hidden md:grid-cols-[minmax(340px,400px)_minmax(0,1fr)]">
 	<aside class="border-paper-edge min-h-0 flex-col md:border-r {active ? 'hidden md:flex' : 'flex'}">
-		<RelayList />
+		<RelayList {notify} tenantKeys={data.tenantKeys} />
 	</aside>
 	<section class="min-h-0 min-w-0 flex-col {active ? 'flex' : 'hidden md:flex'}">
 		{#if relayInboxState.selected}

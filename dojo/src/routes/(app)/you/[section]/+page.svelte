@@ -7,7 +7,8 @@
 		startAzureConnectAsOwn,
 		provisionFromForge,
 		setPackAdoption,
-		setRepoElection
+		setRepoElection,
+		setGraphBranch
 	} from '$lib/client-data';
 	import { AzureConnectState } from '$lib/azure-connect-state.svelte';
 	import { page } from '$app/state';
@@ -31,7 +32,7 @@
 	let { data } = $props();
 
 	const you = new YouSectionState();
-	const api: YouApi = { adoptContribution, setPackAdoption, provisionFromForge, setRepoElection };
+	const api: YouApi = { adoptContribution, setPackAdoption, provisionFromForge, setRepoElection, setGraphBranch };
 
 	// Opening a workspace routes to the preview drill-in; a dōjō row steps into its
 	// org console (the slug is the org id, which /org/[slug] resolves).
@@ -43,6 +44,10 @@
 	const onPackToggle = (pack: KitRulePack, adopt: boolean) => you.togglePack(api, pack, adopt, invalidateAll);
 	const syncGithub = () => you.syncGithub(api, invalidateAll);
 	const elect = (repoKey: string, elected: boolean) => you.elect(api, repoKey, elected, invalidateAll);
+	const trackBranch = (repoKey: string, branch: string, label: string | null) =>
+		you.track(api, repoKey, branch, label, invalidateAll);
+	const untrackBranch = (repoKey: string, branch: string) =>
+		you.untrack(api, repoKey, branch, invalidateAll);
 
 	// Azure DevOps (#308 R5b, D42): connect through Microsoft Entra, then import an
 	// organization as its own dōjō — how an Azure organization's dōjō is first
@@ -84,7 +89,14 @@
 {:else if data.section === 'packs'}
 	<ScrRulePacks packs={data.rulePacks} loadError={data.packsError} error={you.actionError} onToggle={onPackToggle} />
 {:else if data.section === 'sharing'}
-	<ScrSharing repos={sharingRepos} error={sharingError} pending={you.sharingPending} onToggle={elect} />
+	<ScrSharing
+		repos={sharingRepos}
+		error={sharingError}
+		pending={you.sharingPending}
+		onToggle={elect}
+		onTrack={trackBranch}
+		onUntrack={untrackBranch}
+	/>
 {:else if data.section === 'dojos'}
 	<ScrMyDojos
 		dojos={data.dojos}

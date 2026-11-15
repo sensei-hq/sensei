@@ -1,6 +1,8 @@
 <script lang="ts">
+    import { StateView } from '@sensei/ui';
+    import { deltaView } from '$lib/impact';
     import Kanji from '$lib/components/Kanji.svelte';
-    import { PageHeader, Screen, ScreenState } from '$lib/components';
+    import { PageHeader, Screen } from '$lib/components';
     import { invalidateAll } from '$app/navigation';
     import type { PatternEntry } from '$lib/types.js';
 
@@ -15,24 +17,6 @@
         expanded = { ...expanded, [id]: !expanded[id] };
     }
 
-    // "+12%" / "-4%" / "±0%" / "—" — same vocabulary as the observatory
-    // Impact page so both surfaces read the same. Null means no baseline
-    // could be computed (fewer than the analyzer's minimum session count).
-    function fmtFtrDelta(v: number | null | undefined): string {
-        if (v == null) return '—';
-        const pct = Math.round(v * 100);
-        if (pct === 0) return '±0%';
-        return pct > 0 ? `+${pct}%` : `${pct}%`;
-    }
-    function deltaTone(v: number | null | undefined, anti: boolean): string {
-        // On an anti-pattern the meaning of the sign flips — a NEGATIVE FTR
-        // delta on an anti-pattern is EXPECTED and reads healthy (the locus
-        // performs worse, which is why we're flagging it). So invert the
-        // tone rule on anti-pattern rows.
-        if (v == null || v === 0) return 'text-ink-mute';
-        const good = anti ? v < 0 : v > 0;
-        return good ? 'text-success' : 'text-warning';
-    }
 </script>
 
 {#snippet PatternRow(p: PatternEntry, anti: boolean)}
@@ -54,7 +38,7 @@
             />
             <div class="flex-1 min-w-0">
                 <p class="m-0 text-sm text-ink truncate">{p.name}</p>
-                <p class="m-0 mt-0.5 text-xs text-ink-soft flex items-center gap-2">
+                <p class="m-0 mt-0.5 text-xs text-ink-mute flex items-center gap-2">
                     {#if p.instanceCount != null && p.instanceCount > 0}
                         <span class="font-mono">{p.instanceCount}×</span>
                         <span class="text-ink-faint">·</span>
@@ -69,19 +53,19 @@
                 </p>
             </div>
             <span
-                class="text-xs font-mono min-w-[3.5rem] text-right {deltaTone(p.ftrDelta, anti)}"
+                class="text-xs font-mono min-w-[3.5rem] text-right {deltaView(p.ftrDelta, { anti }).text}"
                 data-testid={`pattern-ftr-delta-${p.id}`}
                 title="FTR delta vs workspace baseline"
-            >{fmtFtrDelta(p.ftrDelta)}</span>
+            >{deltaView(p.ftrDelta, { anti }).label}</span>
             <span class="text-xs text-ink-faint w-3">{open ? '▾' : '▸'}</span>
         </button>
 
         {#if open}
             <div class="mt-2 flex flex-col gap-2 pl-1" data-testid={`pattern-detail-${p.id}`}>
                 {#if p.description}
-                    <p class="text-sm text-ink-soft m-0 leading-normal">{p.description}</p>
+                    <p class="text-sm text-ink-mute m-0 leading-normal">{p.description}</p>
                 {:else}
-                    <p class="text-xs text-ink-soft opacity-60 m-0 italic">
+                    <p class="text-xs text-ink-mute opacity-60 m-0 italic">
                         No description captured for this pattern yet.
                     </p>
                 {/if}
@@ -89,7 +73,7 @@
                 {#if p.enforcement}
                     <div>
                         <span class="text-xs uppercase tracking-wide opacity-60">Enforcement</span>
-                        <p class="text-sm text-ink-soft m-0 mt-1">{p.enforcement}</p>
+                        <p class="text-sm text-ink-mute m-0 mt-1">{p.enforcement}</p>
                     </div>
                 {/if}
 
@@ -103,7 +87,7 @@
                                     <span class="text-xs font-mono text-ink-faint ml-1">{g.files.length}</span>
                                     <ul class="list-none m-0 mt-0.5 p-0 pl-3">
                                         {#each g.files as file (file)}
-                                            <li class="text-xs font-mono text-ink-soft break-all">{file}</li>
+                                            <li class="text-xs font-mono text-ink-mute break-all">{file}</li>
                                         {/each}
                                     </ul>
                                 </li>
@@ -130,7 +114,7 @@
     <div class="px-6 py-6">
         {#if data.error}
             <!-- A failed read is shown, never "no patterns" (#85). -->
-            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+            <StateView status="error" error={data.error} failure={data.failure} onretry={() => invalidateAll()} />
         {:else}
         {#if data.followed.length > 0}
             <section class="mb-5">
@@ -157,7 +141,7 @@
             </section>
         {/if}
         {#if data.followed.length === 0 && data.antiPatterns.length === 0}
-            <p class="text-sm text-ink-soft">No patterns detected yet.</p>
+            <p class="text-sm text-ink-mute">No patterns detected yet.</p>
         {/if}
         {/if}
     </div>

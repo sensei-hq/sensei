@@ -43,7 +43,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if stance.length === 0 && rungs.length === 0}
-			<p class="text-ink-mute text-sm">
+			<p class="text-ink-soft text-sm">
 				Your stance and your personal rules are kept by sensei on your machine, not by the dōjō.
 				Set them in sensei; the dōjō shows the rules of the dōjōs you belong to.
 			</p>
@@ -61,7 +61,7 @@
 					<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 						Your effective constitution
 					</span>
-					<span class="mono text-ink-mute text-xs">— personal · every workspace you touch</span>
+					<span class="mono text-ink-soft text-xs">— personal · every workspace you touch</span>
 				</div>
 				<div class="flex flex-col gap-3">
 					{#each rungs as rung (rung.id)}

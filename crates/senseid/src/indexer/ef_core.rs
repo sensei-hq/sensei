@@ -306,6 +306,7 @@ pub fn derive(input: &Input) -> Result<Derived, String> {
             columns,
             indexes: Vec::new(),
             refs,
+            enum_values: Vec::new(),
         });
     }
 

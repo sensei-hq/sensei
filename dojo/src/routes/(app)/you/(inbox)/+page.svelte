@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { Screen } from '@sensei/ui';
-	import { EmptyState } from '$lib/components/kit';
+	import { Screen, EmptyState } from '@sensei/ui';
 
 	// The /you index is the RIGHT panel of the two-panel inbox when no run is open —
 	// the list rail lives in +layout.svelte, which auto-opens the first run on md+.

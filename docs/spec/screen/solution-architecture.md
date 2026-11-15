@@ -2,7 +2,7 @@
 
 **Segment:** 04 · Project window — solution variant
 **Route:** `/solution/[id]/architecture`
-**Source mockup:** [`lib/observatory/solution-track.jsx`](../../mockups/Sensei/lib/observatory/solution-track.jsx) → `SolutionArchitecture` (merged cross-repo graph)
+**Source mockup:** `lib/observatory/solution-track.jsx` → `SolutionArchitecture` (merged cross-repo graph)
 **Source design:** `docs/archive/ideas/24-desktop-observatory.md`
 **App file:** `app/src/routes/solution/[id]/architecture/+page.svelte`
 

@@ -70,6 +70,7 @@ describe('WorkspaceImpactState — logging an impact', () => {
     await s.logImpact(api({ tryCreateImpactVerdict: vi.fn().mockResolvedValue(fail(500, 'boom')) }), 'p1', reload);
     expect(s.logForm).toEqual({ title: 'x', note: 'y' });
     expect(s.logError).toContain('boom');
+    expect(s.logNotice).toMatchObject({ tone: 'fault', title: "Couldn't log that impact", detail: expect.stringContaining('boom') });
     expect(reload).not.toHaveBeenCalled();
   });
 });
@@ -85,6 +86,7 @@ describe('WorkspaceImpactState — deciding', () => {
 
     await s.decide(api({ tryDecideImpactVerdict: vi.fn().mockResolvedValue(fail(404, 'Not Found')) }), 'p1', 'v2', 'failure', reload);
     expect(s.decideError('v2')).toContain('Not Found');
+    expect(s.decideNotice('v2')).toMatchObject({ tone: 'fault', title: "Couldn't record that verdict" });
     expect(s.isDeciding('v2')).toBe(false);
     expect(reload).toHaveBeenCalledOnce();
   });

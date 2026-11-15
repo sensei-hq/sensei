@@ -9,13 +9,28 @@ Feature: Billing & Seats — tier model, metering, and billing portal (all unbui
   Scenario: an admin moves a dōjō to Paid in the billing page
     Given an admin of a Free dōjō at /org/[slug]/billing
     When they choose "Paid — organizations & teams"
-    Then gating, integrations and consolidated metrics unlock and billing setup begins
+    Then blocking targets on an organisation's private repositories, integrations and consolidated metrics unlock, and billing setup begins
 
   NO TEST
-  Scenario: the Free tier allows individuals and open source forever
+  Scenario: the Free tier covers public repositories forever (D46)
     Given a Free-tier Dōjō with public/OSS repos
     When the billing check runs
     Then no invoice is generated and no payment is required
+
+  NO TEST
+  Scenario: an organisation's private repositories stay hidden until its admin or owner subscribes (D46)
+    Given an organisation's Free-tier Dōjō whose member has private repos
+    When the member opens the dōjō's repository list
+    Then no private repository is listed or synced
+    And the list says private repositories are supported on paid plans, linking to Settings › Plan & billing
+    And local sensei still works in full for those repositories
+
+  NO TEST
+  Scenario: a personal dōjō syncs its private repositories free (D46)
+    Given a personal Dōjō whose owner has private repos, none opted out
+    When the owner opens the dōjō's repository list
+    Then the private repositories are listed and synced
+    And no subscription is asked for
 
   NO TEST
   Scenario: the Paid tier bills per active contributor
@@ -75,4 +90,4 @@ Feature: Billing & Seats — tier model, metering, and billing portal (all unbui
   Scenario: no separate Enterprise tier exists
     Given the pricing page
     When it renders
-    Then there are only two tiers (Free, Paid) and SSO/audit/SLA are options on Paid
+    Then there are only two tiers (Free, Paid), SSO and audit are free, and extended audit retention and SLA are options on Paid

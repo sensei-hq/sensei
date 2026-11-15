@@ -20,7 +20,6 @@ Sensei watches your coding sessions, learns your team's patterns and conventions
 |-----------|----------|---------|
 | [`app/`](app/) | SvelteKit + Tauri | Desktop observatory |
 | [`crates/`](crates/) | Rust | Background daemon, CLI, MCP server (single unified workspace) |
-| [`website/`](website/) | SvelteKit | Marketing website |
 | [`docs/`](docs/) | Markdown | Design docs, mockups, backlog |
 
 Sibling repos (versioned independently, pulled in as dependencies):
@@ -32,6 +31,7 @@ Sibling repos (versioned independently, pulled in as dependencies):
 
 ```bash
 brew tap sensei-hq/tap
+brew trust sensei-hq/tap                   # Homebrew 7+ loads a third-party tap only once trusted
 brew install sensei-hq/tap/sensei          # CLI + daemon + MCP server
 brew install --cask sensei-hq/tap/senseihq # Desktop app
 ```
@@ -104,6 +104,6 @@ make update
 ## Component READMEs
 
 - [app/README.md](app/README.md) — desktop app setup, routes, build
-- [website/README.md](website/README.md) — marketing site, deployment
+- [sensei-hq/website](https://github.com/sensei-hq/website) — sensei-hq.com, its own repository
 - [docs/README.md](docs/README.md) — design docs index
 - [sensei-hq/gateway](https://github.com/sensei-hq/gateway) — LLM routing, providers, capabilities (separate repo)

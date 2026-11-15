@@ -25,13 +25,13 @@
 			onclick={() => onnav?.(it.id)}
 			class="relative flex cursor-pointer flex-col items-center gap-1 bg-transparent {on
 				? 'text-ink'
-				: 'text-ink-mute'}"
+				: 'text-ink-soft'}"
 			style="padding: 8px 4px 12px"
 		>
 			{#if mark.kind === 'icon'}
-				<Icon name={mark.value} size={20} toneClass={on ? 'text-accent' : 'text-ink-mute'} />
+				<Icon name={mark.value} size={20} toneClass={on ? 'text-accent' : 'text-ink-soft'} />
 			{:else}
-				<span class="kanji text-lg {on ? 'text-accent' : 'text-ink-mute'}">{mark.value}</span>
+				<span class="kanji text-lg {on ? 'text-accent' : 'text-ink-soft'}">{mark.value}</span>
 			{/if}
 			<span class="text-xs {on ? 'font-semibold' : 'font-normal'}" style="white-space: nowrap"
 				>{it.label}</span

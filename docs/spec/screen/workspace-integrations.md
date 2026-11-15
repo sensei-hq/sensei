@@ -10,10 +10,12 @@ and the connected-state line of the Dōjō mockup's Integrations tab
 - the sidebar entry `{ id: 'integrations', kanji: '繋', label: 'Integrations' }` in
   `project-sidebar-view.ts` `SECTIONS`, after `sprints` and before `about`
   (`isSectionActive` matches it by the `/integrations` route prefix)
-- `app/src/lib/api.ts` wrappers: `listTrackers`, `connectTracker`, `syncTracker`,
-  `disconnectTracker`
+- `app/src/lib/api.ts` wrappers on `senseiApi`: `tryListTrackers`, `tryConnectTracker`,
+  `trySyncTracker`, `tryDisconnectTracker`, and `trySetTrackerWriteback` (usage and SDLC write-back,
+  [`tracker-metrics-writeback.md`](../daemon/tracker-metrics-writeback.md) W8)
 
-**Daemon contract:** [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md) R3, R4, R8, R9.
+**Daemon contract:** [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md) R3, R4, R8, R9;
+GitLab: [`spec/daemon/tracker-gitlab.md`](../daemon/tracker-gitlab.md) §G1, §G3, §G8, §G10.
 
 **Naming:** "Integrations" means external tools this *project* connects to (issue
 trackers today). The Observatory's "Dōjō connections" are a different thing: your
@@ -30,8 +32,8 @@ This section overrides "one project has one tracker" below (spec `docs/spec/trac
 - The form's first field is **"What the board serves"**: three radios (Epics, Sprints, Tasks, each with a
   one-line help). **None is preselected**, and Connect stays disabled until one is chosen. Replace token
   pre-selects the board's own level.
-- **Disconnect board #N?** names the board; the body says the workspace's other boards stay and Jira is not
-  changed.
+- **Disconnect board #N?** names the board; the body says the workspace's other boards stay and the tracker
+  itself is not changed.
 - Polling runs while any board is `pending`; the status line follows the board connected last.
 - New codes: `tracker_not_found` "This board is no longer connected to this workspace."; `level_required`
   "Choose what the board serves." and `invalid_level` "A board serves epics, sprints or tasks." (both
@@ -39,19 +41,66 @@ This section overrides "one project has one tracker" below (spec `docs/spec/trac
 
 
 
-Where a user **connects this project to its issue tracker**: Jira today, GitLab
-later. One project has one tracker (spec R1), so this is a per-project screen, not
-a global setting.
+Where a user **connects this project to its issue tracker**: Jira, GitLab or GitHub
+(amended 2026-11-07, `tracker-gitlab.md`; 2026-11-09, `tracker-github.md`). One project has one tracker (spec R1), so this is a
+per-project screen, not a global setting.
 
-**Eyebrow:** `繋 · INTEGRATIONS`. **Header:** "Issue tracker". **Sub-line:** "Connect
-this project's Jira board so sensei can link AI sessions to tickets and report time
-and tokens per ticket. Read-only: sensei never changes anything in Jira."
+**Eyebrow:** `繋 · INTEGRATIONS`. **Header:** "Issue trackers". **Sub-line** (superseded
+2026-10-26 by tracker-metrics-writeback W-UI, 2026-11-07 by `tracker-gitlab.md`, and
+2026-11-09 by `tracker-github.md`):
+"Connect this workspace's Jira, GitLab or GitHub boards, each at a level, so sensei can
+link AI sessions to tickets and report time, tokens and cost per ticket. On tickets
+assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields
+you map (GitLab and GitHub boards are read-only for now)."
+
+## Write-back on each board card (tracker-metrics-writeback W-UI)
+
+A **GitLab** or **GitHub** card has neither the checkbox nor **Fields**. In their place it
+shows "Write-back: not available for GitLab yet" (or "…for GitHub yet",
+`data-writeback="unsupported"`): the daemon refuses write-back for both with 409
+`writeback_unsupported` (`tracker-gitlab.md` §G8, `tracker-github.md` §H6).
+Everything below is the Jira card's.
+
+- **Write back to Jira**: a labelled checkbox (`data-action="writeback"`) that sends
+  `PATCH …/trackers/{tracker}` `{writeback_enabled}` (`spec/daemon/tracker-metrics-writeback.md` W8). It is disabled while any request
+  runs. The card shows the tracker the daemon returns, so a refused switch stays as it
+  was and the alert says why.
+- **A state line** (`data-writeback-state=<state>`), from `writeback.state`:
+  - `active`: "Writing to N tickets assigned to you." (N = `writeback.assigned`; "1
+    ticket"), plus " K couldn't be written." when `failing > 0`
+  - `disabled`: "Write-back is off."
+  - `pass_failed`, by `error`: token → "Couldn't read the Jira token to write back.
+    Replace the token."; `db` → "Couldn't record what was written. Write-back retries
+    on each sync."; `rate_limited` → "Jira is rate-limiting writes. Write-back resumes
+    on the next sync."; `transport` → "Writing didn't finish in time. Write-back resumes
+    on the next sync."
+  - `owner_not_a_person`: "This token belongs to an app account, so sensei can't tell
+    which tickets are yours. Nothing is written."
+  - `owner_lookup_failed`: "Couldn't check which tickets are yours: <error text>.
+    Retrying on each sync."
+  - `owner_unknown`: "Checking which tickets are yours on the next sync."
+  - `nothing_assigned`: "No tickets on this board are assigned to you."
+- **Fields** (`data-action="fields"`, "Fields (N mapped)") opens the board's mapping in a
+  `data-section="fields"` editor:
+  - one row per mapped field (`data-field-row=<i>`): a metric select and a "Jira field
+    id" input. The select offers the 13 usage metrics, then the 21 SDLC
+    metrics (`tracker-sdlc-metrics.md` S9), in the daemon's write order (`METRICS`, pinned
+    to the `tracker_metric` enum by the state spec)
+  - Remove per row, **Add a field**, and **Save fields**, which sends the whole set with
+    `PUT …/fields`
+  - under the rows: "Each ticket counts its own sessions in full; don't sum these fields
+    across tickets."
+  - a refused save names its row (`data-field-error`): the W7 code's text from
+    `FIELD_MAPPING_ERRORS`; a duplicate marks the second row. A failure that names no
+    row is the card alert.
 
 ## States
 
-**1 · Not connected.** A tracker picker shows "Jira" selected, and "GitLab, coming
-soon" disabled with `aria-disabled="true"`. Below it is the Jira form, with fields in
-this order everywhere they appear:
+**1 · Not connected.** A tracker picker of three radios, **Jira** (selected), **GitLab**
+(amended 2026-11-07: it replaced "GitLab, coming soon") and **GitHub** (amended 2026-11-09). The radios are
+disabled while a token is being replaced, so the board's own tracker stays chosen. Below
+it is the chosen tracker's form. The Jira form has its fields in this order everywhere
+they appear:
 
 | # | Label (visible `<label>`, not only a placeholder) | Input | Help text |
 |---|---|---|---|
@@ -63,8 +112,35 @@ this order everywhere they appear:
 Under the form: "Your token is stored in your system keychain, not in sensei's
 database."
 
+The **GitLab form** (`tracker-gitlab.md` §G1) has no email and no *Advanced* fields:
+
+| # | Label | Input | Help text |
+|---|---|---|---|
+| 1 | Group or project URL | text | "Open the group or project in GitLab and copy the address bar, e.g. https://gitlab.example.com/acme/platform. https only, on the standard port." |
+| 2 | Confirm the host | text; shown only while the URL's host is not `gitlab.com` | "Type the host from the URL again (e.g. gitlab.example.com). sensei sends your token only to this host." |
+| 3 | Access token | `type="password"`, never echoed | "In GitLab, create a personal or group access token with the read_api scope, and paste it here." No create-token link: the token page is on the user's own host. |
+
+The GitLab form sends `{board_url, api_token}`, plus `confirm_host` when one was typed.
+The daemon compares the host; the UI only reads it to decide whether to ask.
+
+The **GitHub form** (`tracker-github.md` §H1, §H2) has no email, no host and no *Advanced*
+fields:
+
+| # | Label | Input | Help text |
+|---|---|---|---|
+| 1 | Project URL | text | "Open the project on GitHub and copy the address bar, e.g. https://github.com/orgs/acme/projects/3." |
+| 2 | Access token | `type="password"`, never echoed | "Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project's repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can't read shows as not found." The `unauthorized` alert links to `https://github.com/settings/personal-access-tokens/new`. |
+| 3 | Iteration field (optional) | text | "Only when the project has more than one Iteration field: its name, as the project shows it." |
+
+The GitHub form sends `{board_url, api_token}`, plus `iteration_field` when one was typed.
+On 422 `iteration_field_ambiguous` the alert reads "Choose the project's Iteration field:
+<names>." and, under field 3, a row of buttons (`data-github-choices`), one per name the
+daemon returned; a button fills field 3. **Connect** for GitHub needs the URL and the
+token.
+
 **Connect** stays disabled until Board URL (or Site + Board id), email and token are
-all non-empty. Enter in any field submits. While the request runs, the button shows
+all non-empty (Jira), or until the URL, the token and, for a host other than
+`gitlab.com`, the confirmed host are (GitLab). Enter in any field submits. While the request runs, the button shows
 "Checking credentials and board…" and the same text is announced in a
 `role="status"` region.
 
@@ -85,8 +161,32 @@ Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)
 [Sync now]  [Replace token]  [Disconnect]
 ```
 
+A GitLab card (amended 2026-11-07):
+
+```
+GitLab · gitlab.example.com · acme/platform
+Sprints: milestones
+● connected · synced 2 min ago · 4 sprints · 87 tickets
+Write-back: not available for GitLab yet
+[Sync now]  [Replace token]  [Disconnect]
+```
+
 - Fields come from `GET …/trackers`: `base_url`, `external_scope`, `board_name`,
-  `board_ref`, `status`, `last_success_at`, `counts`.
+  `board_ref`, `status`, `last_success_at`, `counts`; for GitLab also `full_path`,
+  `sprint_source` and `sprint_source_changed_at`; for GitHub also `url` and
+  `iteration_field` (all from the row's `params`, null for the other kinds).
+- A GitHub card (amended 2026-11-09) is titled `GitHub · <owner>/<number> · <board_name>`,
+  its sprints line reads "Sprints: the <iteration_field> iteration field" (none when the
+  project has no Iteration field), and **Replace token** re-sends `board_url = url` and
+  the stored `iteration_field`, so only the token is new.
+- GitLab's title is `GitLab · <host> · <full_path>` (`external_scope` when `full_path`
+  is absent), followed by ` (<board_name>)` when the name differs from the path.
+- **Sprints line** (GitLab, `data-sprint-source`): "Sprints: iterations" or "Sprints:
+  milestones", from `sprint_source`.
+- **Source-change notice** (GitLab, `role="note"`, `data-notice="sprint-source"`), for 14
+  days after `sprint_source_changed_at`: "Sprints now come from iterations. Earlier
+  milestone sprints are marked removed." (or the reverse, "…from milestones. Earlier
+  iteration sprints…"). See `tracker-gitlab.md` §G3.
 - The status is always shown as **text**; the dot is decorative. The wording follows
   R9: `connected`; `stale` ("last synced 3 h ago"); `error` (mapped message below);
   `pending` ("first sync running…", also shown after **Replace token** until the new credential syncs).
@@ -94,7 +194,9 @@ Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)
 - **Replace token** opens the form with **Advanced** Site URL + Board id and email
   pre-filled from the connection (`base_url`, `board_ref`, `account`; the daemon keeps no
   board URL, and the UI never builds one) and the token field empty, then re-connects
-  through R3.
+  through R3. For **GitLab** it opens the GitLab form with the URL built from `base_url`
+  + `/` + `full_path` (the board's current path), **Confirm the host** = the stored host,
+  and the token field empty, so only the token is new.
 - **Disconnect** opens a modal dialog:
   - Title: "Disconnect Jira?"
   - Body: "This removes this project's synced sprints, tickets and session links from
@@ -109,6 +211,18 @@ Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)
 Errors render in a `role="alert"` region next to the form or the card, with
 `aria-describedby` on the field they concern (Board URL, email or token). After a
 failure, focus moves to the alert.
+
+The words are **per tracker** (amended 2026-11-07): `errorFor` takes the kind of the
+tracker the request was about, so a GitLab failure never names Jira. The table gives the
+Jira words; GitLab's differ for `invalid_base_url` ("That isn't a GitLab board address.
+Use https://<host>/<group> or https://<host>/<group>/<project>: https on the standard
+port, no subpath, and not a local name such as .local or .internal."), `unauthorized`
+("GitLab rejected the token. Check it has the read_api scope and hasn't expired.", with
+no create-token link), `token_required` ("Enter a GitLab access token with the read_api
+scope."), `board_not_found` ("No group or project <board_ref> on <base_url>."),
+`not_found` ("GitLab no longer has this group or project (it may have been deleted or
+moved)."), `rate_limited`, `bad_request` and the reach codes (`transport`, `http_error`,
+`redirect`, `decode`), which name GitLab.
 
 | Code | Shown as | Recovery offered |
 |---|---|---|
@@ -129,7 +243,18 @@ failure, focus moves to the alert.
 | `internal` | "The sensei daemon hit a database error." | **Retry** |
 | `db` (a sync's `last_error`) | "sensei hit a database error while syncing." | **Retry sync** |
 | `unsupported_tracker` | "This tracker type isn't available in this version of sensei." | none |
+| `host_not_confirmed` (GitLab) | "Type the GitLab host again, exactly as in the board URL." | focus Board URL |
+| `writeback_unsupported` | "Write-back isn't available for this tracker yet." | none |
 | `busy` | "A sync is already running." | none |
+| `invalid_body` (a refused write-back PATCH) | "sensei refused that change." | none |
+| Fields editor (`FIELD_MAPPING_ERRORS`, on the row it names; a duplicate names its second row): `unknown_metric` | "Unknown metric." | none |
+| `duplicate_mapping` | "Already mapped." | none |
+| `invalid_field_ref` | "Use a custom field id like customfield_10050." | none |
+| `field_not_found` | "No such field on this Jira site." | none |
+| `field_not_number` | "That field isn't a number field." | none |
+| `field_in_use` | "That field already has values on this board. Pick an empty field." | none |
+| `invalid_body` (a refused Fields save) | "Couldn't save the mapping." | none |
+| `busy` (a Fields save while a sync or write-back pass holds the board; on the card) | "The board is syncing or writing back. Save again in a moment." | none; the editor stays open |
 | any other code | "Unexpected error from sensei (<code>)." | **Retry** |
 | daemon unreachable (network error to `127.0.0.1`) | "The sensei daemon didn't respond." | **Retry**. Never shown as "not connected". |
 
@@ -160,16 +285,19 @@ failure, focus moves to the alert.
 4. Disconnect: the dialog opens with Cancel focused and Esc cancels. Confirming returns to the not-connected state, and `GET …/trackers` returns `[]`.
 5. Daemon stopped → the daemon-error state with Retry, never the not-connected form.
 6. a11y: every input has a programmatic label; the status and alert regions are announced (axe check passes on all three states).
+7. Write-back: each card's checkbox reflects `writeback.enabled` and sends one PATCH; the state line has the text above for its state; a refused PATCH leaves the checkbox as it was and shows the alert (component tests).
+8. GitLab (component tests, `tracker-gitlab.md` D16): the GitLab radio is enabled; a GitLab tracker with `unauthorized` and its card render no "Jira"; the card shows "Write-back: not available for GitLab yet" and no checkbox; the source-change notice shows within 14 days of `sprint_source_changed_at`.
 
 ## Wrong gate
 
 - The token shown, logged, persisted or prefilled anywhere in the UI.
 - "Not connected" displayed because a read failed; "daemon didn't respond" shown for a daemon error code.
-- A connect button enabled without an email (it would always 401 on Jira Cloud).
+- A connect button enabled on the Jira form without an email (it would always 401 on Jira Cloud).
 - UI-side URL parsing (a second parser beside the daemon's).
-- GitLab selectable before an adapter is registered.
+- A GitLab failure, card or form that names Jira; a write-back checkbox or Fields on a GitLab card.
 - Status conveyed by colour alone; a destructive action without a confirming dialog.
-- Per-person data (assignee, author) shown.
+- Per-person data (assignee, author) shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
+- The write-back checkbox flipping on a click the daemon refused.
 
 ## Related
 

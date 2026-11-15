@@ -19,7 +19,7 @@ export const NEEDS_TONE: Record<string, NeedsTone> = {
 	gate: { icon: 'command', label: 'approve', toneClass: 'text-accent' },
 	conflict: { icon: 'danger-triangle', label: 'settle', toneClass: 'text-warning' },
 	decision: { icon: 'checklist-minimalistic', label: 'decide', toneClass: 'text-accent' },
-	review: { icon: 'clipboard-check', label: 'review', toneClass: 'text-ink-soft' }
+	review: { icon: 'clipboard-check', label: 'review', toneClass: 'text-ink-mute' }
 };
 
 /** One button in a needs-kind's action set. */

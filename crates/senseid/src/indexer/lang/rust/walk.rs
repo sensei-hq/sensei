@@ -1672,7 +1672,13 @@ impl<'a> Walk<'a> {
             self.children(node, scope);
             return;
         };
-        let Ok(ty) = type_segment(ty) else {
+        // A BLANKET IMPL OVER ITS OWN PARAMETER NAMES NO TYPE. `impl<T: Tr>
+        // Word for T` is about every `T`, and `T` is declared by this header
+        // alone, so an owner minted from it is a type no declaration mints
+        // (the resolver's R4 pin). Unnameable, like a type the segmenter
+        // refuses: members under nobody, no implements edge.
+        let own_parameters = self.type_parameter_names(node);
+        let Some(ty) = type_segment(ty).ok().filter(|t| !own_parameters.contains(t)) else {
             let mut inner = scope.clone();
             inner.container = Container::Unnameable { raw: ty.to_string() };
             inner.container_at = inner.fn_scope.len();
@@ -1748,6 +1754,22 @@ impl<'a> Walk<'a> {
             self.trait_impl(node, scope, owner);
         }
         self.children(node, &inner);
+    }
+
+    /// The names an item's own `<…>` declares — `T` in `impl<T: Tr> Word for
+    /// T` — read from the grammar's `type_parameter` children by their `name`
+    /// field (tree-sitter-rust 0.23; lifetimes and consts are not types).
+    fn type_parameter_names(&self, node: Node<'_>) -> BTreeSet<String> {
+        let Some(parameters) = node.child_by_field_name("type_parameters") else {
+            return BTreeSet::new();
+        };
+        let mut cursor = parameters.walk();
+        parameters
+            .named_children(&mut cursor)
+            .filter(|p| p.kind() == "type_parameter")
+            .filter_map(|p| p.child_by_field_name("name"))
+            .map(|name| self.text(name).to_string())
+            .collect()
     }
 
     /// `impl Trait for Type` states that `Type` IS a `Trait`. An inherent

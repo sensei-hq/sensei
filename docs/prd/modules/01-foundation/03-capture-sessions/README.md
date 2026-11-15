@@ -30,7 +30,7 @@ The user's experience: *point sensei at a folder once and it just keeps knowing*
 
 ## Surfaces
 
-- **API** — `POST /api/scan/roots`, `GET /api/projects/suggestions`, `POST /api/projects/merge`
+- **API** — `POST /api/scan/roots`, `GET /api/scan/suggestions`, `POST /api/workspaces/merge`
   (+ split), `crates/senseid/src/api/handlers/sessions.rs::materialise_session`,
   `crates/senseid/src/api/handlers/sessions.rs` (`ingest_hook_event`, `hook_gate`,
   `hook_nudge` — the `/hook/*` event ingest), MCP `log_event`.
@@ -153,23 +153,23 @@ Closing a dash is adapter work against this contract, not a new design ([C-25](.
 
 ## Signals shown
 
-| Signal | Source | Consumer |
-|---|---|---|
-| Discovered repo/workspace rows | scan | every screen; Workspace window Overview |
-| Multi-repo suggestion card | scan analyzer | Observatory Workspaces pane |
-| `activity.assistant_events` rows | adapters / hooks | analyzer materialisation |
-| `activity.sessions` rows (ftr, corrections, analyzed_at) | materialisation | FTR, Sessions, replay |
-| Branch indicator ("main / feat-x") | branch scan-mode | code-graph + impact views |
-| Session tokens (split) + model | transcript adapters | M8 usage/cost metrics, Sessions |
-| `metered_cost` (billed) / `list_cost_usd` (list price) | transcript adapter / usage mod | M8 cost metrics |
-| `SessionMeasure` / `TurnComplete` events | usage mod (extensions) | per-turn usage, context occupancy, plan headroom (future M8 signals) |
+| Signal | Source | Consumer | Decision it drives / next step |
+|---|---|---|---|
+| Discovered repo/workspace rows | scan | every screen; Workspace window Overview | open the workspace window for the new workspace |
+| Multi-repo suggestion card | scan analyzer | Observatory Workspaces pane | accept or decline the *combine with …?* suggestion |
+| `activity.assistant_events` rows | adapters / hooks | analyzer materialisation | none — candidate to cut (an internal row; its decision is shown in M7) |
+| `activity.sessions` rows (ftr, corrections, analyzed_at) | materialisation | FTR, Sessions, replay | open a corrected session's replay to see what went wrong |
+| Branch indicator ("main / feat-x") | branch scan-mode | code-graph + impact views | check you are reading the branch you meant before acting on an impact view |
+| Session tokens (split) + model | transcript adapters | M8 usage/cost metrics, Sessions | compare models' cost per session in M8; change the default model when one costs more for the same FTR |
+| `metered_cost` (billed) / `list_cost_usd` (list price) | transcript adapter / usage mod | M8 cost metrics | tell money spent (billed) from quota used (subscription) before cutting usage |
+| `SessionMeasure` / `TurnComplete` events | usage mod (extensions) | per-turn usage, context occupancy, plan headroom (future M8 signals) | none — candidate to cut until the M8 headroom signals ship |
 
 ## Done gate
 
 - A fresh scan of `~/Developer` + `~/Work` turns every discovered repo into a
   `sensei.folders` row within the incremental scan window; nested roots do not get
   double-indexed (outer subsumes).
-- Multi-repo groups appear as proposal cards; accept merges via `POST /api/projects/merge`;
+- Multi-repo groups appear as proposal cards; accept merges via `POST /api/workspaces/merge`;
   dismiss is remembered for the 7-day staleness window.
 - Every Claude Code session with the plugin installed produces `assistant_events` rows
   continuously (not batched at session end).
@@ -187,7 +187,7 @@ Closing a dash is adapter work against this contract, not a new design ([C-25](.
 psql -A -t -c "select count(*) from activity.assistant_events
                where ts_ms > (extract(epoch from now()) - 60) * 1000" -d sensei
 # suggestions pending?
-curl -s http://localhost:7744/api/projects/suggestions | jq '.suggestions'
+curl -s http://localhost:7744/api/scan/suggestions | jq '.suggestions'
 # usage captured at the source? (list cost per Claude Code session, last day)
 psql -A -c "select client_session_id, list_cost_usd, metered_cost from activity.sessions
             where started_at > now() - interval '1 day' and acp_id = 'claude'" -d sensei

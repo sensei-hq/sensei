@@ -7,8 +7,13 @@
 	import { page } from '$app/stores';
 	import { colorMode, loadColorMode, setColorMode } from '$lib/theme.svelte';
 	import { glyphs, loadGlyphMode } from '$lib/glyphs.svelte';
+	import { setGlyphMode } from '@sensei/ui';
 
 	let { children } = $props();
+
+	// Shared components (Notice) read the glyph mode from context, as in the
+	// desktop app (#133): one getter over the persisted choice, provided once.
+	setGlyphMode(() => glyphs.mode);
 
 	// The console ports the desktop app's Zen/Sumi vocabulary (see rokkit.config.js
 	// + app.css), so the effective theme must be `zen-sumi`, not rokkit. The shared

@@ -1,10 +1,14 @@
 // The workspace window's Tickets screen: one lane per sprint board, side by side
 // (D40), each listing its tickets first with the sprint as a filter.
 // Spec: docs/spec/screen/workspace-tickets.md, docs/spec/tracker-levels.md.
+import { failureNotice } from '@sensei/ui';
 import type { ApiResult } from '$lib/api.js';
 import { activeMinutes, compactDuration, compactTokens, durationMinutes } from '$lib/sessions-digest.js';
+import { SDLC_REASONS, sprintWindowReason, ticketSdlcRows, type SdlcRow, type Words } from '$lib/sdlc-figures.js';
+import { apiCostText } from '@sensei/sdlc-figures';
 import { errorFor } from '$lib/tracker-errors.js';
 import type {
+  MetricReason,
   SprintUsageRow,
   TrackerConnection,
   TrackerTaskDetail,
@@ -30,9 +34,11 @@ export interface SprintsApi {
   ) => Promise<ApiResult<UnlinkedSession[]>>;
   tryGetBacklog: (workspaceId: string, trackerId: string) => Promise<ApiResult<BacklogUsage>>;
   tryListBacklogTasks: (workspaceId: string, trackerId: string) => Promise<ApiResult<TrackerTaskRow[]>>;
+  tryGetReasonCodes: (domain: string) => Promise<ApiResult<{ domain: string; reasons: Record<string, MetricReason> }>>;
 }
 
-const boardName = (t: TrackerConnection) => t.board_name ?? `board #${t.board_ref}`;
+/** A board's name, else its reference. */
+export const boardName = (t: TrackerConnection) => t.board_name ?? `board #${t.board_ref}`;
 
 /** Sprint-filter values besides a sprint's id: every ticket, or those in no sprint. */
 export const ALL = 'all';
@@ -54,23 +60,20 @@ export interface UsageCells {
 }
 
 /** A failed request in the screens' shared words. */
-function failureText(error: { status: number; message: string; body?: Record<string, unknown> }): string {
+export function failureText(error: { status: number; message: string; body?: Record<string, unknown> }): string {
   return errorFor(error.status, error.body ?? { error: error.message }).text;
 }
 
 /** The API cost at list prices: "$1.24", "$1.24+" when some work could not be
  *  priced (a lower bound), "<$0.01" for a fraction of a cent, "—" when nothing was. */
 function apiCost(u: TrackerUsage): string {
-  if (u.api_cost == null) return '—';
-  const plus = u.api_cost_partial > 0 ? '+' : '';
-  const shown = u.api_cost > 0 && u.api_cost < 0.005 ? '<$0.01' : `$${u.api_cost.toFixed(2)}`;
-  return shown + plus;
+  return apiCostText(u.api_cost, u.api_cost_partial > 0);
 }
 
 /** One usage object as table cells. Unknown is "—", never 0. */
 export function usageCells(u: TrackerUsage): UsageCells {
   return {
-    sessions: `${u.sessions} (${u.by_source.branch}/${u.by_source.prompt})`,
+    sessions: `${u.sessions} (${u.by_source.branch}/${u.by_source.prompt}/${u.by_source.fetch})`,
     active: compactDuration(activeMinutes(u.active_secs)),
     fresh: compactTokens(u.tokens_fresh),
     out: compactTokens(u.tokens_out),
@@ -83,11 +86,6 @@ export function usageCells(u: TrackerUsage): UsageCells {
 }
 
 const tickets = (n: number) => `${n} ticket${n === 1 ? '' : 's'}`;
-
-const REASONS: Record<string, string> = {
-  not_started: 'Not started. Usage counts from the sprint’s start.',
-  no_dates: 'Jira has no dates for this sprint, so its sessions can’t be placed in it.',
-};
 
 /** One option of the sprint filter. */
 export interface FilterItem {
@@ -120,6 +118,16 @@ export class TicketLane {
   tasksError = $state<string | null>(null);
   unlinked = $state<UnlinkedSession[] | null>(null);
   unlinkedError = $state<string | null>(null);
+
+  /** Notice props for a failed ticket read (packages/ui/notice.js). */
+  get tasksNotice() {
+    return failureNotice("Couldn't load this board's tickets", this.tasksError);
+  }
+
+  /** Notice props for a failed read of the sessions linked to no ticket. */
+  get unlinkedNotice() {
+    return failureNotice("Couldn't load the sessions not linked to a ticket", this.unlinkedError);
+  }
 
   constructor(
     api: SprintsApi,
@@ -179,7 +187,7 @@ export class TicketLane {
     }
     const s = this.selected;
     if (!s) return null;
-    if (s.reason) return { kind: 'reason', text: REASONS[s.reason] ?? s.reason };
+    if (s.reason) return { kind: 'reason', text: sprintWindowReason(s.reason) };
     const parts: Array<[string, TrackerUsage | null]> = [
       ['Linked to this sprint', s.linked_sprint],
       ['Linked to other tickets', s.linked_other],
@@ -273,8 +281,26 @@ export class TicketsState {
   lanes = $state<TicketLane[]>([]);
   ticket = $state<TrackerTaskDetail | null>(null);
   ticketError = $state<string | null>(null);
+  /** The key of the ticket last opened — what a failed read names. */
+  ticketKey = $state<string | null>(null);
+
+  /** Notice props for a failed load: what failed, the reason as the detail. */
+  get loadNotice() {
+    return failureNotice("Couldn't load this workspace's tickets", this.loadError);
+  }
+
+  /** Notice props for a ticket that would not open. */
+  get ticketNotice() {
+    return failureNotice(`Couldn't open ${this.ticketKey ?? 'that ticket'}`, this.ticketError);
+  }
   /** The lane a ticket was opened from: where "Back" returns. */
   ticketLane = $state<TicketLane | null>(null);
+  /** The SDLC reason vocabulary, read with the boards. */
+  words = $state<Words>({});
+  /** Bumped per open and close, so a slower earlier ticket read is dropped. */
+  #ticketSeq = 0;
+  /** A ticket a link named, opened once the lanes exist (and kept across a failed load). */
+  #link: { board: string | null; key: string } | null = null;
 
   constructor(api: SprintsApi, workspaceId: string) {
     this.#api = api;
@@ -301,10 +327,21 @@ export class TicketsState {
     return [...parts, ...old.map((k) => `as ${k}`)].join(' · ');
   }
 
+  /** The open ticket's SDLC group. */
+  get ticketSdlc(): SdlcRow[] {
+    return this.ticket ? ticketSdlcRows(this.ticket.sdlc, this.words) : [];
+  }
+
   async load() {
     this.view = 'loading';
-    const trackers = await this.#api.tryListTrackers(this.#workspaceId);
+    const [trackers, reasons] = await Promise.all([
+      this.#api.tryListTrackers(this.#workspaceId),
+      this.#api.tryGetReasonCodes(SDLC_REASONS),
+    ]);
     if (!trackers.ok) return this.#failed(trackers.error);
+    // Without the words a null figure could only show its bare code (A10).
+    if (!reasons.ok) return this.#failed(reasons.error);
+    this.words = reasons.data.reasons;
     const boards = trackers.data.filter((t) => t.level === 'sprint');
     if (boards.length === 0) {
       this.view = 'not_connected';
@@ -329,7 +366,20 @@ export class TicketsState {
     this.loadError = null;
     this.lanes = lanes;
     this.view = 'ready';
-    await Promise.all(lanes.map((l) => l.setFilter(ALL)));
+    // The link opens with the lanes, not after their lists: a ticket chosen while the
+    // lists load is newer than the link and wins (openTicket's sequence).
+    const link = this.#link;
+    this.#link = null;
+    await Promise.all([
+      ...lanes.map((l) => l.setFilter(ALL)),
+      link ? this.openLinked(link.board, link.key) : undefined,
+    ]);
+  }
+
+  /** Open this ticket once the lanes exist: a link from Delivery Metrics
+   *  (`?board=&ticket=`, tracker-delivery-metrics D2). */
+  followLink(board: string | null, key: string) {
+    this.#link = { board, key };
   }
 
   #failed(error: Parameters<typeof failureText>[0]) {
@@ -338,9 +388,12 @@ export class TicketsState {
   }
 
   async openTicket(lane: TicketLane, key: string) {
+    const seq = ++this.#ticketSeq;
     this.ticketError = null;
+    this.ticketKey = key;
     this.ticketLane = lane;
     const res = await this.#api.tryGetTrackerTask(this.#workspaceId, key);
+    if (seq !== this.#ticketSeq) return;
     if (res.ok) this.ticket = res.data;
     else {
       this.ticket = null;
@@ -348,7 +401,16 @@ export class TicketsState {
     }
   }
 
+  /** Open the ticket a link names (Delivery Metrics, tracker-delivery-metrics D2): from
+   *  its board's lane, else the first lane. Nothing while there are no lanes. */
+  async openLinked(board: string | null, key: string) {
+    if (this.view !== 'ready' || this.lanes.length === 0) return;
+    const lane = this.lanes.find((l) => l.id === board) ?? this.lanes[0];
+    await this.openTicket(lane, key);
+  }
+
   closeTicket() {
+    ++this.#ticketSeq;
     this.ticket = null;
     this.ticketError = null;
   }

@@ -12,40 +12,45 @@
 // caller: the principal ids handed in are already the tenant's members.
 //
 // Fail-closed: a query error throws AdminError(500) — never a fabricated name. A
-// principal with no identity row (or only nameless ones) resolves to null/null,
-// and the caller falls back to a stable shortId (an honest label, not an
-// invented name).
+// principal the identities still leave unnamed falls back to
+// `principals.display_name`; one nothing names resolves to null/null, and the
+// mapper says so in words (an honest label, not an invented name).
 import { AdminError, type DojoClient } from './admin-data';
 
 /** The columns this resolver needs off `dojo.identities`. */
 export interface IdentityNameRow {
 	principal_id: string;
 	display_name: string | null;
+	/** The forge login last seen at sign-in (renameable — never the identity). */
+	handle: string | null;
 	email: string | null;
 	last_login_at: string | null;
 }
 
-/** A resolved person: the best display name + email for a user_id (either may be null). */
+/** A resolved person: the best display name + handle + email for a user_id (each may be null). */
 export interface ResolvedName {
 	display_name: string | null;
+	handle: string | null;
 	email: string | null;
 }
 
-const IDENTITY_NAME_COLS = 'principal_id, display_name, email, last_login_at';
+const IDENTITY_NAME_COLS = 'principal_id, display_name, handle, email, last_login_at';
 
-/** Preference tier for a candidate identity row: a named row beats an email-only
- *  row beats a bare row. Lower is better. */
+/** Preference tier for a candidate identity row: a named row beats a
+ *  handle-only row beats an email-only row beats a bare row. Lower is better. */
 function tier(r: IdentityNameRow): number {
 	if (r.display_name && r.display_name.trim()) return 0;
-	if (r.email && r.email.trim()) return 1;
-	return 2;
+	if (r.handle && r.handle.trim()) return 1;
+	if (r.email && r.email.trim()) return 2;
+	return 3;
 }
 
 /**
  * Pick the best identity for one user from their identity rows (pure). Prefers a
- * row that has a display name, then one with an email; within a tier, the most
- * recently logged-in row wins (a null `last_login_at` is treated as oldest).
- * Returns null/null when `rows` is empty or every row is bare.
+ * row that has a display name, then a handle-only row, then one with an email;
+ * within a tier, the most recently logged-in row wins (a null `last_login_at`
+ * is treated as oldest). Returns null/null/null when `rows` is empty or every
+ * row is bare.
  */
 export function pickBestIdentity(rows: IdentityNameRow[]): ResolvedName {
 	let best: IdentityNameRow | null = null;
@@ -60,19 +65,20 @@ export function pickBestIdentity(rows: IdentityNameRow[]): ResolvedName {
 			best = r;
 		}
 	}
-	if (!best) return { display_name: null, email: null };
+	if (!best) return { display_name: null, handle: null, email: null };
 	return {
 		display_name: best.display_name && best.display_name.trim() ? best.display_name : null,
+		handle: best.handle && best.handle.trim() ? best.handle : null,
 		email: best.email && best.email.trim() ? best.email : null
 	};
 }
 
 /**
- * Resolve a set of PRINCIPAL ids to their best display name + email, from
- * `dojo.identities`. Returns a Map keyed by principal id — only principals that
- * HAVE an identity row appear; the caller treats a missing key (or null name) as
- * "fall back to shortId". A query error throws AdminError(500) (fail-closed, no
- * fabrication).
+ * Resolve a set of PRINCIPAL ids to their best display name + email: the best
+ * `dojo.identities` row first, then `principals.display_name` for ids the
+ * identities still leave unnamed. Returns a Map keyed by principal id with an
+ * entry per scoped id; null names stay null and the mapper says so in words.
+ * A query error throws AdminError(500) (fail-closed, no fabrication).
  *
  * Only principals who are MEMBERS of `tenantId` are resolved. Identities carry
  * no tenant, and an id can come straight from a request body, so "the caller
@@ -140,6 +146,20 @@ async function namesOf(db: DojoClient, principalIds: string[]): Promise<Map<stri
 		else byPrincipal.set(r.principal_id, [r]);
 	}
 	const out = new Map<string, ResolvedName>();
-	for (const [pid, rows] of byPrincipal) out.set(pid, pickBestIdentity(rows));
+	for (const pid of principalIds) out.set(pid, pickBestIdentity(byPrincipal.get(pid) ?? []));
+	// Principals fallback (brief item 1): ids the identities still leave
+	// unnamed take `principals.display_name`. Same scoped ids — never the raw
+	// requested ones (`principals` is global, no tenant column). Identity
+	// names win (refreshed at each sign-in); emails stay the identity's;
+	// whitespace-only counts as absent, like `pickBestIdentity`.
+	const unnamed = [...out.entries()].filter(([, n]) => !n.display_name).map(([pid]) => pid);
+	if (unnamed.length > 0) {
+		const prof = await db.from('principals').select('id, display_name').in('id', unnamed);
+		if (prof.error) throw new AdminError(500, prof.error.message);
+		for (const p of (prof.data ?? []) as unknown as Array<{ id: string; display_name: string | null }>) {
+			const cur = out.get(p.id);
+			if (cur && p.display_name && p.display_name.trim()) cur.display_name = p.display_name;
+		}
+	}
 	return out;
 }

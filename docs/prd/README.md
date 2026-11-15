@@ -40,7 +40,7 @@ down?*
 | What are we building, and why? | **`prd/`** (this tree) |
 | Is it built? How far? What's next? | [`roadmap/`](../roadmap/README.md) |
 | How is it built? | [`architecture/`](../architecture/README.md) |
-| What does it look like? | [`mockups/`](../mockups/) |
+| What does it look like? | `mockups/` |
 | What is open right now? | [`backlog.md`](../backlog.md) (GitHub issues) |
 
 If two disagree, the higher row wins; the lower one is the bug.
@@ -48,9 +48,10 @@ If two disagree, the higher row wins; the lower one is the bug.
 ## Who this is for
 
 The personas in [`03-personas.md`](03-personas.md) — the humans whose goals every
-module's "Serves:" line must name. Newly covered this pass: **management /
-delivery-lead** and **client / workspace stakeholder** viewpoints, for the
-multi-user, multi-team case.
+module's "Serves:" line must name. The multi-user, multi-team case adds the
+**manager** (a member manager is a maintainer or a lead; an outside manager or
+client is a viewer, D54), the **client / workspace stakeholder** (a viewer, D8) and
+the **team lead** (per-person metrics across the workspaces the lead can read, D58).
 
 ## The 30 modules, by plane
 
@@ -71,7 +72,7 @@ reading order; the index is [`modules/README.md`](modules/README.md).
 - **Status and gaps** — that is [`../roadmap/`](../roadmap/README.md). A module
   spec describes the target; the roadmap says whether it exists yet.
 - **Implementation** — that is [`../architecture/`](../architecture/README.md).
-- **Visual ground truth** — that is [`../mockups/`](../mockups/), untouched.
+- **Visual ground truth** — that is `../mockups/`, untouched.
 - **Design system and cross-cutting UX** — [`../design/`](../design/README.md).
 
 ## Read next

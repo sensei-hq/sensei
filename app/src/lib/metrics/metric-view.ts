@@ -1,4 +1,6 @@
+import { correctionsView, sessionFtrView } from '$lib/ftr';
 import { isoDay } from '../dates.js';
+import { metricKanji } from './metric-kanji.js';
 // Pure view logic for workspace metrics: wire rows -> presentational card models.
 //
 // The daemon serves two shapes (see crates/senseid): the per-workspace *values*
@@ -495,12 +497,6 @@ export function explainerForDay(series: MetricSeriesPoint[], day: string | null)
     return text ? text : null;
 }
 
-/** "no corrections" / "1 correction" / "N corrections" — a session's rework count. */
-function correctionsPhrase(n: number): string {
-    if (n <= 0) return 'no corrections';
-    return n === 1 ? '1 correction' : `${formatCount(n)} corrections`;
-}
-
 /** "1 turn" / "N turns" — a session's turn count. */
 function turnsPhrase(n: number): string {
     return n === 1 ? '1 turn' : `${formatCount(n)} turns`;
@@ -515,7 +511,7 @@ function turnsPhrase(n: number): string {
 export function sessionOneLiner(s: DrilldownSession): string {
     const parts: string[] = [];
     if (s.outcome && s.outcome.trim()) parts.push(s.outcome.trim());
-    parts.push(s.ftr === true ? 'first-try' : correctionsPhrase(s.corrections));
+    parts.push(s.ftr === true ? sessionFtrView(true).label : correctionsView(s.corrections).label);
     parts.push(turnsPhrase(s.turns));
     return parts.join(' · ');
 }
@@ -871,11 +867,11 @@ export const TREND_RULE: Record<TrendColor, string> = {
 /** Grade badge tone (a per-KLOC quality grade; healthier grade = calmer token).
  *  Full class strings so UnoCSS extracts them statically. */
 export const GRADE_CLASS: Record<MetricGrade, string> = {
-    A: 'text-success bg-success-soft',
-    B: 'text-success bg-success-soft',
-    C: 'text-warning bg-warning-soft',
-    D: 'text-error bg-error-soft',
-    F: 'text-error bg-error-soft',
+    A: 'text-on-success-soft bg-success-soft',
+    B: 'text-on-success-soft bg-success-soft',
+    C: 'text-on-warning-soft bg-warning-soft',
+    D: 'text-on-error-soft bg-error-soft',
+    F: 'text-on-error-soft bg-error-soft',
 };
 
 /** Unit-free magnitude for ranking movers: relative change vs the prior, so
@@ -1061,6 +1057,41 @@ export function groupSignals(signals: SignalVM[]): SignalGroup[] {
     return groups;
 }
 
+/** One row of the drill-down rail: a rokkit List link, plus its trend. */
+export interface SignalRailItem {
+    key: string;
+    text: string;
+    href: string;
+    /** The List's value — the href, so the current row is the selected metric's. */
+    value: string;
+    /** The metric's glyph, or null when it has none (see metric-kanji). */
+    kanji: string | null;
+    trend: string | null;
+    trendClass: string | null;
+}
+
+/** The drill-down rail as rokkit List data: a group per signal group, a link per signal. */
+export function signalRailItems(
+    groups: SignalGroup[],
+    workspaceId: string,
+): { text: string; children: SignalRailItem[] }[] {
+    return groups.map((g) => ({
+        text: g.label,
+        children: g.signals.map((s) => {
+            const href = `/workspace/${workspaceId}/metrics/${s.key}`;
+            return {
+                key: s.key,
+                text: s.name,
+                href,
+                value: href,
+                kanji: metricKanji(s.key),
+                trend: s.trend?.label ?? null,
+                trendClass: s.trend ? TREND_TEXT[s.color] : null,
+            };
+        }),
+    }));
+}
+
 /** A one-line deterministic summary headline — the honest fallback when no
  *  ollama headline is present. States how many signals moved and which way. */
 export function deterministicHeadline(signals: SignalVM[]): string {
@@ -1094,3 +1125,9 @@ export function seriesDistribution(values: number[]): SeriesDistribution | null 
     const mean = values.reduce((a, b) => a + b, 0) / values.length;
     return { high, mean, low };
 }
+
+/** The period a grain counts in, for "12 of 30 days" — "periods" for any other. */
+export function grainUnit(grain: string): string {
+    return grain === 'daily' ? 'days' : grain === 'weekly' ? 'weeks' : grain === 'monthly' ? 'months' : 'periods';
+}
+

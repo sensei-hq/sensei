@@ -10,6 +10,7 @@ use crate::db::pg_store::trackers::{ApplyCounts, ApplyError};
 use crate::tracker::link::known_tasks;
 use crate::tracker::{
     BoardScope, GetTransport, KnownTask, Link, SessionText, Snapshot, TrackerAdapter, TrackerError,
+    needs_owner_backfill,
 };
 
 /// Candidate sessions read per chunk when computing links.
@@ -102,13 +103,18 @@ async fn run(
     }
     pg.mark_tracker_attempt(tracker_id).await.map_err(SyncError::Db)?;
     let prev = pg.tracker_prev_state(tracker_id).await.map_err(SyncError::Db)?;
+    // The whole-sync deadline covers the owner lookup and steps 2-3.
+    let until = tokio::time::Instant::now() + deadline;
+    if needs_owner_backfill(row.owner_ref.as_ref().map(|o| o.as_str()), row.owner_state.as_deref())
+    {
+        backfill_owner(pg, tracker_id, adapter, transport, &row.secret_service, until).await;
+    }
 
     // 2. Fetch, with no connection checked out, under the whole-sync deadline
     // (shared with step 3). Every write below is conditional on this credential
     // still being current.
+    let board = BoardScope::of(&row);
     let secret_service = row.secret_service;
-    let board = BoardScope { base_url: row.base_url, board_ref: row.board_ref };
-    let until = tokio::time::Instant::now() + deadline;
     let snapshot = match tokio::time::timeout_at(
         until,
         adapter.fetch_snapshot(transport, &board, &prev),
@@ -142,10 +148,7 @@ async fn run(
             }
         };
     // 4. Apply in one short transaction; success is recorded inside it.
-    let patch = match &snapshot.board_name {
-        Some(name) => serde_json::json!({ "board_name": name }),
-        None => serde_json::json!({}),
-    };
+    let patch = params_patch(&snapshot, &row.params, chrono::Utc::now());
     match pg
         .apply_tracker_snapshot(
             tracker_id,
@@ -162,6 +165,32 @@ async fn run(
         Err(ApplyError::Gone) => Err(SyncError::Gone),
         Err(ApplyError::Superseded) => Err(SyncError::Superseded),
         Err(ApplyError::Db(e)) => Err(record_db(pg, tracker_id, &secret_service, e).await),
+    }
+}
+
+/// Who the token belongs to, for a tracker with no owner on record (spec W1). Never
+/// fails the sync: a failed lookup is recorded as `owner_error`, and a failed store
+/// is only logged, leaving `assigned_to_me` NULL for this sync.
+async fn backfill_owner(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    adapter: &dyn TrackerAdapter,
+    transport: &dyn GetTransport,
+    secret_service: &str,
+    until: tokio::time::Instant,
+) {
+    let looked = tokio::time::timeout_at(until, adapter.owner(transport))
+        .await
+        .unwrap_or(Err(TrackerError::Transport));
+    let stored = match &looked {
+        Ok(owner) => pg.set_tracker_owner(tracker_id, secret_service, owner).await,
+        Err(e) => pg.set_tracker_owner_error(tracker_id, secret_service, e.code()).await,
+    };
+    if let Err(e) = looked {
+        tracing::warn!(tracker_id = %tracker_id, code = e.code(), "tracker sync: owner lookup failed");
+    }
+    if let Err(db) = stored {
+        tracing::warn!(tracker_id = %tracker_id, "tracker sync: could not record the owner lookup: {db}");
     }
 }
 
@@ -256,12 +285,38 @@ async fn record_failure(
     SyncError::Failed(e)
 }
 
+/// Pure: what a snapshot writes into the row's `params`: the adapter's
+/// `params_extra`, with `board_name` beside it when the snapshot read one.
+///
+/// When the snapshot's `sprint_source` differs from the one `stored` (an upgrade to
+/// iterations, or a downgrade), `sprint_source_changed_at` = `now` joins it, for
+/// Integrations' notice (§G3). A first source is not a change.
+fn params_patch(
+    snapshot: &crate::tracker::Snapshot,
+    stored: &serde_json::Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
+    let mut patch = snapshot.params_extra.clone();
+    let source = |v: Option<&serde_json::Value>| v.and_then(|s| s.as_str()).map(String::from);
+    let (was, is) = (source(stored.get("sprint_source")), source(patch.get("sprint_source")));
+    if let (Some(was), Some(is)) = (was, is)
+        && was != is
+    {
+        patch.insert("sprint_source_changed_at".into(), serde_json::json!(now.to_rfc3339()));
+    }
+    if let Some(name) = &snapshot.board_name {
+        patch.insert("board_name".into(), serde_json::json!(name));
+    }
+    serde_json::Value::Object(patch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tracker::connect::tests::connected_tracker;
     use crate::tracker::jira::JiraAdapter;
     use crate::tracker::test_support::FakeBoard;
+    use crate::tracker::test_support::fake_adapter;
     use serde_json::json;
 
     async fn rows(
@@ -585,115 +640,6 @@ mod tests {
         assert_eq!(removed_at().await, Some(first), "a sprint's removed_at is never advanced");
     }
 
-    /// A second, non-Jira adapter: GitLab-like `#12` keys relative to a project
-    /// scope, and iteration-named sprints. The coordinator must handle it unchanged
-    /// (gate 1l). Leaked so it is `'static`, like a registered adapter.
-    struct FakeAdapter {
-        scopes: [String; 2],
-    }
-
-    fn fake_adapter(scopes: [String; 2]) -> &'static FakeAdapter {
-        Box::leak(Box::new(FakeAdapter { scopes }))
-    }
-
-    #[async_trait::async_trait]
-    impl crate::tracker::TrackerAdapter for FakeAdapter {
-        fn kind(&self) -> crate::tracker::TrackerKind {
-            crate::tracker::TrackerKind::Jira
-        }
-        fn connect_params(
-            &self,
-            _body: &serde_json::Value,
-        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
-            Err(crate::tracker::ParamError::InvalidBaseUrl)
-        }
-        fn auth(
-            &self,
-            account: &str,
-            token: &crate::tracker::ApiToken,
-        ) -> crate::tracker::AuthScheme {
-            crate::tracker::AuthScheme::Basic { user: account.into(), token: token.clone() }
-        }
-        async fn validate(
-            &self,
-            _t: &dyn GetTransport,
-            _p: &crate::tracker::ConnectParams,
-        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
-            Err(crate::tracker::ValidateError::BoardNotFound)
-        }
-        async fn fetch_snapshot(
-            &self,
-            _t: &dyn GetTransport,
-            _board: &BoardScope,
-            _prev: &crate::tracker::PrevState,
-        ) -> Result<crate::tracker::Snapshot, TrackerError> {
-            use crate::tracker::sprint::SprintState;
-            use crate::tracker::{Snapshot, SprintRow, TaskRow};
-            let task = |id: &str, key: &str, scope: &str| TaskRow {
-                external_id: id.into(),
-                key: key.into(),
-                scope: Some(scope.into()),
-                summary: None,
-                issue_type: None,
-                status: Some("opened".into()),
-            };
-            let iteration = |id: &str, seq: i64, state| SprintRow {
-                external_id: id.into(),
-                seq,
-                name: format!("Iteration {seq}"),
-                state,
-                start_at: None,
-                end_at: None,
-                complete_at: None,
-            };
-            Ok(Snapshot {
-                board_name: Some("Group board".into()),
-                sprints: vec![iteration("gid://iteration/7", 7, SprintState::Active)],
-                tasks: vec![
-                    task("gid://issue/1", "#12", &self.scopes[0]),
-                    task("gid://issue/2", "#12", &self.scopes[1]),
-                ],
-                members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
-            })
-        }
-        /// `#N` in a prompt, for the task of that key whose scope is the session's repo.
-        fn match_links(
-            &self,
-            session: &crate::tracker::SessionText,
-            known: &[crate::tracker::KnownTask],
-        ) -> Vec<crate::tracker::Link> {
-            known
-                .iter()
-                .filter(|k| k.scope.is_some() && k.scope == session.repo_key)
-                .filter_map(|k| {
-                    let n: usize = session.prompts.iter().map(|p| p.matches(&k.key).count()).sum();
-                    (n > 0).then(|| crate::tracker::Link {
-                        session_id: session.session_id,
-                        task_external_id: k.external_id.clone(),
-                        source: crate::tracker::LinkSource::Prompt,
-                        matched_key: k.key.clone(),
-                        mentions: n as u32,
-                    })
-                })
-                .collect()
-        }
-        fn unknown_keys(
-            &self,
-            _session: &crate::tracker::SessionText,
-            _known: &[crate::tracker::KnownTask],
-        ) -> Vec<String> {
-            Vec::new()
-        }
-        async fn fetch_tasks(
-            &self,
-            _t: &dyn GetTransport,
-            _board: &BoardScope,
-            _keys: &[String],
-        ) -> Result<crate::tracker::Discovered, TrackerError> {
-            Ok(Default::default())
-        }
-    }
-
     #[tokio::test]
     async fn the_coordinator_handles_a_non_jira_adapter_unchanged() {
         let pg = PgStore::test_store().await;
@@ -723,6 +669,72 @@ mod tests {
         assert_eq!(scope.as_deref(), Some("gitlab.com/group/a"));
         assert_eq!(sprint.as_deref(), Some("gid://iteration/7"));
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.params["board_name"], json!("Group board"));
+    }
+
+    #[test]
+    fn the_params_patch_is_the_adapters_extra_with_the_board_name() {
+        let extra: serde_json::Map<String, serde_json::Value> = serde_json::from_value(
+            json!({"full_path": "acme/platform", "sprint_source": "milestone"}),
+        )
+        .unwrap();
+        let with_name = crate::tracker::Snapshot {
+            board_name: Some("Platform".into()),
+            params_extra: extra.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            params_patch(&with_name, &json!({}), chrono::Utc::now()),
+            json!({"board_name": "Platform", "full_path": "acme/platform", "sprint_source": "milestone"})
+        );
+        let without_name = crate::tracker::Snapshot { params_extra: extra, ..Default::default() };
+        assert_eq!(
+            params_patch(&without_name, &json!({}), chrono::Utc::now()),
+            json!({"full_path": "acme/platform", "sprint_source": "milestone"})
+        );
+        assert_eq!(params_patch(&Default::default(), &json!({}), chrono::Utc::now()), json!({}));
+    }
+
+    #[test]
+    fn a_changed_sprint_source_is_stamped_and_a_first_or_same_one_is_not() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-07T10:00:00Z").unwrap().to_utc();
+        let snap = |source: &str| crate::tracker::Snapshot {
+            params_extra: serde_json::from_value(json!({"sprint_source": source})).unwrap(),
+            ..Default::default()
+        };
+        let stored = json!({"sprint_source": "milestone", "full_path": "acme"});
+        assert_eq!(
+            params_patch(&snap("iteration"), &stored, now)["sprint_source_changed_at"],
+            json!("2026-11-07T10:00:00+00:00")
+        );
+        assert!(
+            params_patch(&snap("milestone"), &stored, now)
+                .get("sprint_source_changed_at")
+                .is_none()
+        );
+        assert!(
+            params_patch(&snap("milestone"), &json!({}), now)
+                .get("sprint_source_changed_at")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_snapshots_params_extra_reaches_the_row_and_keeps_what_it_does_not_name() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        let adapter =
+            crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
+                scopes: ["gitlab.com/group/a".into(), "gitlab.com/group/b".into()],
+                params_extra: serde_json::from_value(json!({"full_path": "acme/platform"}))
+                    .unwrap(),
+                ..crate::tracker::test_support::FakeAdapter::gitlab_like()
+            });
+        sync_tracker(&pg, &TrackerLocks::default(), t, adapter, &FakeBoard::empty(), SYNC_DEADLINE)
+            .await
+            .unwrap();
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.params["full_path"], json!("acme/platform"));
         assert_eq!(row.params["board_name"], json!("Group board"));
     }
 
@@ -799,6 +811,161 @@ mod tests {
         let _ = sync(&pg, t, &board).await;
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         assert_eq!(row.last_error, None, "the old token's 401 must not land on the new connection");
+    }
+
+    // ── Owner and assignee (write-back spec W1) ──────────────────────────────
+
+    use crate::tracker::test_support::{assigned, forget_owner, owner_of, rows_containing};
+
+    #[tokio::test]
+    async fn a_tracker_without_an_owner_looks_it_up_once_and_an_app_token_is_not_asked_again() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        let board = FakeBoard::standard().with_myself(json!({"accountType": "app"}));
+        sync(&pg, t, &board).await.unwrap();
+        sync(&pg, t, &board).await.unwrap();
+        assert_eq!(board.myself_calls(), 1, "not_a_person is final");
+        assert_eq!(owner_of(&pg, t).await, (None, Some("not_a_person".into()), None));
+    }
+
+    #[tokio::test]
+    async fn a_tracker_without_an_owner_stores_the_person_and_the_same_sync_assigns_with_it() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        let board = FakeBoard::standard().with_assignees([Some("A1"), None, Some("B9")]);
+        sync(&pg, t, &board).await.unwrap();
+        assert_eq!(owner_of(&pg, t).await, (Some("A1".into()), None, None));
+        assert_eq!(
+            assigned(&pg, t).await,
+            vec![
+                ("10001".into(), Some(true)),
+                ("10002".into(), Some(false)),
+                ("10003".into(), Some(false))
+            ]
+        );
+        sync(&pg, t, &board).await.unwrap();
+        assert_eq!(board.myself_calls(), 1, "an owner on record is never re-asked");
+    }
+
+    #[tokio::test]
+    async fn a_failing_owner_lookup_is_recorded_apart_and_never_fails_the_sync() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        let denied = FakeBoard::standard().fail("/rest/api/3/myself", TrackerError::Forbidden);
+        for _ in 0..2 {
+            assert!(sync(&pg, t, &denied).await.is_ok());
+            let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+            assert_eq!(row.last_error, None, "the read sync succeeded");
+            assert_eq!(owner_of(&pg, t).await, (None, None, Some("forbidden".into())));
+        }
+        assert_eq!(denied.myself_calls(), 2, "a failed lookup is retried, once per sync");
+        assert!(assigned(&pg, t).await.iter().all(|(_, a)| a.is_none()), "no owner, no answer");
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        assert_eq!(
+            owner_of(&pg, t).await,
+            (Some("A1".into()), None, None),
+            "a success clears the error"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_owner_looked_up_on_a_token_replaced_mid_call_is_not_stored() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        // The first call of the sync is the owner lookup; the hook re-keys during it.
+        let board = FakeBoard::standard().on_call(reconnect_mid_sync(&pg, t));
+        let _ = sync(&pg, t, &board).await;
+        assert_eq!(board.calls().first().map(String::as_str), Some("/rest/api/3/myself"));
+        assert_eq!(owner_of(&pg, t).await.0, None, "the old token's owner never lands");
+    }
+
+    #[tokio::test]
+    async fn the_owner_lookup_spends_the_sync_deadline() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        let slow: crate::tracker::test_support::Hook = Box::new(|path| {
+            Box::pin(async move {
+                if path == "/rest/api/3/myself" {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                }
+            })
+        });
+        let board = FakeBoard::standard().on_call(slow);
+        let started = std::time::Instant::now();
+        let r = sync_tracker(
+            &pg,
+            &TrackerLocks::default(),
+            t,
+            &JiraAdapter,
+            &board,
+            Duration::from_millis(300),
+        )
+        .await;
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert_eq!(
+            r,
+            Err(SyncError::Failed(TrackerError::Transport)),
+            "the fetch had no time left"
+        );
+        assert_eq!(owner_of(&pg, t).await.2.as_deref(), Some("transport"));
+    }
+
+    #[tokio::test]
+    async fn a_failing_owner_store_never_fails_the_sync() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        forget_owner(&pg, t).await;
+        // This test's own database: make any owner write fail.
+        sqlx_core::query::query(
+            "CREATE FUNCTION pg_temp_fail_owner() RETURNS trigger LANGUAGE plpgsql AS
+               $$ BEGIN RAISE EXCEPTION 'owner store refused'; END $$",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query(
+            "CREATE TRIGGER fail_owner BEFORE UPDATE OF owner_ref, owner_state, owner_error
+               ON sensei.trackers FOR EACH ROW EXECUTE FUNCTION pg_temp_fail_owner()",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let board = FakeBoard::standard().with_assignees([Some("A1"), None, None]);
+        assert!(sync(&pg, t, &board).await.is_ok());
+        assert!(
+            assigned(&pg, t).await.iter().all(|(_, a)| a.is_none()),
+            "no owner stored, no answer"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_ticket_is_mine_only_while_the_owner_is_its_assignee_and_no_assignee_is_stored() {
+        let pg = PgStore::test_store().await;
+        let (t, _p) = connected_tracker(&pg).await;
+        let board =
+            FakeBoard::standard().with_assignees([Some("A1"), Some("zz-sentinel-b2"), None]);
+        sync(&pg, t, &board).await.unwrap();
+        assert_eq!(
+            assigned(&pg, t).await,
+            vec![
+                ("10001".into(), Some(true)),
+                ("10002".into(), Some(false)),
+                ("10003".into(), Some(false))
+            ]
+        );
+        let reassigned = FakeBoard::standard().with_assignees([
+            Some("zz-sentinel-b2"),
+            Some("zz-sentinel-b2"),
+            None,
+        ]);
+        sync(&pg, t, &reassigned).await.unwrap();
+        assert_eq!(assigned(&pg, t).await[0], ("10001".into(), Some(false)), "reassigned away");
+        assert_eq!(rows_containing(&pg, "zz-sentinel-b2").await, Vec::<String>::new());
     }
 
     // ── Linking (F3, spec R5 step 3 + R6) ───────────────────────────────────
@@ -882,6 +1049,49 @@ mod tests {
         assert_eq!(links(&pg, t).await, vec![], "a link the text no longer supports is dropped");
     }
 
+    /// TG5 (D63): a `fetch` link is the start of work, written when the assistant
+    /// fetched the ticket — no text supports it, so a sync's full relink must
+    /// keep it, `started_at` included. Key matching still links the same session
+    /// by branch/prompt beside it (the fallback for a ticket fetched elsewhere,
+    /// e.g. `gh issue view`).
+    #[tokio::test]
+    async fn a_sync_relink_keeps_fetch_links() {
+        let pg = PgStore::test_store().await;
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let s = session_with(&pg, Some(r), &[], &["picking up AUTH-3"]).await;
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.session_task_links
+                    (session_id, task_id, source, matched_key, mentions, started_at)
+             SELECT $1, id, 'fetch', 'AUTH-2', 1, '2026-11-01T09:00:00Z'
+               FROM sensei.tracker_tasks WHERE tracker_id = $2 AND external_id = '10002'",
+        )
+        .bind(s)
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        assert_eq!(
+            links(&pg, t).await,
+            sorted(vec![
+                link(s, "10002", "fetch", "AUTH-2", 1),
+                link(s, "10003", "prompt", "AUTH-3", 1),
+            ]),
+            "the fetch link survives the relink; key matching still links by prompt"
+        );
+        let (started,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT started_at FROM sensei.session_task_links WHERE session_id = $1 AND source = 'fetch'",
+        )
+        .bind(s)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(started.map(|d| d.to_rfc3339()), Some("2026-11-01T09:00:00+00:00".into()));
+    }
+
     #[tokio::test]
     async fn a_removed_issue_keeps_its_links() {
         let pg = PgStore::test_store().await;
@@ -947,11 +1157,7 @@ mod tests {
         let live = session_with(&pg, Some(repo_in(&pg, p).await), &[], &[]).await;
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         let snapshot = JiraAdapter
-            .fetch_snapshot(
-                &FakeBoard::standard(),
-                &BoardScope { base_url: row.base_url, board_ref: row.board_ref },
-                &Default::default(),
-            )
+            .fetch_snapshot(&FakeBoard::standard(), &BoardScope::of(&row), &Default::default())
             .await
             .unwrap();
         let to = |s| crate::tracker::Link {
@@ -985,6 +1191,9 @@ mod tests {
         fn kind(&self) -> crate::tracker::TrackerKind {
             JiraAdapter.kind()
         }
+        fn capabilities(&self) -> crate::tracker::Capabilities {
+            JiraAdapter.capabilities()
+        }
         fn connect_params(
             &self,
             body: &serde_json::Value,
@@ -997,6 +1206,70 @@ mod tests {
             token: &crate::tracker::ApiToken,
         ) -> crate::tracker::AuthScheme {
             JiraAdapter.auth(account, token)
+        }
+        async fn owner(
+            &self,
+            t: &dyn GetTransport,
+        ) -> Result<crate::tracker::OwnerLookup, TrackerError> {
+            JiraAdapter.owner(t).await
+        }
+        async fn find_comment(
+            &self,
+            t: &dyn GetTransport,
+            task: &str,
+            owner: &crate::tracker::AccountRef,
+        ) -> Result<Option<String>, TrackerError> {
+            JiraAdapter.find_comment(t, task, owner).await
+        }
+        async fn create_comment(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            report: &crate::tracker::writeback::Report,
+        ) -> Result<String, TrackerError> {
+            JiraAdapter.create_comment(w, task, report).await
+        }
+        async fn update_comment(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            comment: &str,
+            report: &crate::tracker::writeback::Report,
+        ) -> Result<(), TrackerError> {
+            JiraAdapter.update_comment(w, task, comment, report).await
+        }
+        async fn issue_exists(
+            &self,
+            t: &dyn GetTransport,
+            task: &str,
+        ) -> Result<bool, TrackerError> {
+            JiraAdapter.issue_exists(t, task).await
+        }
+        fn field_ref_shape(&self, f: &str) -> bool {
+            JiraAdapter.field_ref_shape(f)
+        }
+        async fn check_fields(
+            &self,
+            t: &dyn GetTransport,
+            f: &[String],
+        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
+            JiraAdapter.check_fields(t, f).await
+        }
+        async fn field_in_use(
+            &self,
+            t: &dyn GetTransport,
+            b: &BoardScope,
+            f: &str,
+        ) -> Result<bool, TrackerError> {
+            JiraAdapter.field_in_use(t, b, f).await
+        }
+        async fn write_fields(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            f: &[(String, crate::tracker::FieldValue)],
+        ) -> Result<(), TrackerError> {
+            JiraAdapter.write_fields(w, task, f).await
         }
         async fn validate(
             &self,
@@ -1069,7 +1342,8 @@ mod tests {
         let n = uuid::Uuid::new_v4().simple().to_string();
         // repo_key goes through the production normaliser, from an SSH remote; the
         // adapter's scope comes from the HTTPS form of the same project.
-        let key = |remote: String| crate::db::pg_store::normalize_repo_key(&remote).unwrap();
+        let key =
+            |remote: String| crate::db::pg_store::repo_key::normalize_repo_key(&remote).unwrap();
         let scope_a = key(format!("https://gitlab.com/Group/Sub/A{n}"));
         let scope_b = key(format!("https://gitlab.com/Group/Sub/B{n}"));
         let with_remote = |remote: Option<String>| {

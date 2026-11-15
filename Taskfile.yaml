@@ -3,9 +3,9 @@ version: '3'
 dotenv: ['.env']
 
 vars:
-  # Same dbd release the daemon links (dbd-core in crates/bootstrap/Cargo.toml).
+  # Same dbd release the daemon links (dbd-core in the root Cargo.toml).
   DBD_TAG:
-    sh: grep -oP 'dbd-core = \{.*tag = "\K[^"]+' crates/bootstrap/Cargo.toml
+    sh: grep -oP 'dbd-core = \{.*tag = "\K[^"]+' Cargo.toml
   DATABASE_URL: 'postgresql://{{.PGUSER}}{{if .PGPASSWORD}}:{{.PGPASSWORD}}{{end}}@{{.PGHOST}}:{{.PGPORT}}/{{.PGDATABASE}}'
 
 tasks:

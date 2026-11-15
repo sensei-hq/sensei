@@ -245,36 +245,7 @@ pub fn looks_like_html(content_type: Option<&str>, body: &str) -> bool {
 // the connection is pinned to the address that was checked, so a second DNS
 // answer cannot swap it.
 
-/// Whether `ip` is on the public internet: not loopback, private, link-local,
-/// shared (CGNAT), unique-local, multicast, broadcast, documentation or unspecified.
-fn is_public_ip(ip: std::net::IpAddr) -> bool {
-    use std::net::IpAddr;
-    match ip {
-        IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            !(v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_multicast()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-                || a == 0
-                || (a == 100 && (64..128).contains(&b)))
-        }
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => is_public_ip(IpAddr::V4(v4)),
-            None => {
-                let first = v6.segments()[0];
-                !(v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || (first & 0xfe00) == 0xfc00
-                    || (first & 0xffc0) == 0xfe80)
-            }
-        },
-    }
-}
+use crate::net::addr::is_public_ip;
 
 /// The URL and the checked address to connect to, or why it is refused.
 async fn public_target(url: &str) -> Result<(reqwest::Url, std::net::SocketAddr), String> {
@@ -1163,32 +1134,6 @@ mod tests {
     use super::*;
 
     // ── CodeQL #1: a library URL may only reach the public internet ─────────
-
-    #[test]
-    fn only_public_addresses_are_public() {
-        for ip in [
-            "127.0.0.1",
-            "10.1.2.3",
-            "172.16.0.1",
-            "192.168.1.5",
-            "169.254.169.254",
-            "100.64.0.1",
-            "0.0.0.0",
-            "224.0.0.1",
-            "255.255.255.255",
-            "::1",
-            "::",
-            "fe80::1",
-            "fd00::1",
-            "::ffff:127.0.0.1",
-            "::ffff:10.0.0.1",
-        ] {
-            assert!(!is_public_ip(ip.parse().unwrap()), "{ip} must not count as public");
-        }
-        for ip in ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111"] {
-            assert!(is_public_ip(ip.parse().unwrap()), "{ip} is public");
-        }
-    }
 
     #[tokio::test]
     async fn a_library_url_must_be_http_to_a_public_address() {

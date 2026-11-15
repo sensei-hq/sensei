@@ -1,9 +1,9 @@
+import { readError, type ReadError } from '$lib/read-error';
 import type { PageLoad } from './$types';
 import {
 	getSegments,
 	listRuns,
 	listGates,
-	DojoApiError,
 	type RelaySegment,
 	type RelayRun,
 	type RelayGate
@@ -31,6 +31,7 @@ export const load: PageLoad = async ({ parent, fetch, params }) => {
 	let run: RelayRun | null = null;
 	let gates: RelayGate[] = [];
 	let error: string | null = null;
+	let failure: ReadError | null = null;
 	let noMembership = false;
 	try {
 		const guarded = await guardTenantScope<RunDetail>(
@@ -50,7 +51,9 @@ export const load: PageLoad = async ({ parent, fetch, params }) => {
 		gates = guarded.value.gates.filter((g) => g.run_id === runId);
 		noMembership = guarded.noMembership;
 	} catch (e) {
-		error = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+		// The status travels with the message, so a 403 reads as a refusal (M3, r1).
+		failure = readError(e);
+		error = failure.message;
 	}
-	return { runId, run, segments, gates, error, noMembership };
+	return { runId, run, segments, gates, error, failure, noMembership };
 };

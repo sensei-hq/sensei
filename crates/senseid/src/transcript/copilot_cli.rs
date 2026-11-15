@@ -90,6 +90,8 @@ fn parse_events_jsonl_turns(content: &str) -> Vec<TranscriptTurn> {
                     }
                     cur = Some(TranscriptTurn {
                         turn_index: turns.len() as i32 + 1,
+                        origin: "human".to_string(),
+                        prompt_id: None,
                         user_text: Some(text.to_string()),
                         assistant_text: String::new(),
                         started_at: parse_timestamp(&v),
@@ -267,16 +269,16 @@ fn extract_jsonl_tokens(content: &str) -> Option<SessionTokens> {
             let mut acc = SessionTokens {
                 input: 0,
                 output: 0,
-                cache_read: Some(0),
-                cache_write: Some(0),
-                reasoning: Some(0),
+                // Unknown until a model reports one (D83): never a seeded 0.
+                cache_read: None,
+                cache_write: None,
+                reasoning: None,
                 cost: None,
             };
             // Premium requests, summed across models. Only premium models
             // consume them — in the sample, 780 of 840 came from one model and
             // every other consumed zero — so this is the field that answers
             // "what did this session actually cost against the plan".
-            let mut premium = 0f64;
             let mut any = false;
             for m in models.values() {
                 // camelCase, as the CLI actually writes it. The previous
@@ -289,17 +291,17 @@ fn extract_jsonl_tokens(content: &str) -> Option<SessionTokens> {
                 any = true;
                 acc.input += u["inputTokens"].as_i64().unwrap_or(0);
                 acc.output += u["outputTokens"].as_i64().unwrap_or(0);
-                acc.cache_read =
-                    Some(acc.cache_read.unwrap_or(0) + u["cacheReadTokens"].as_i64().unwrap_or(0));
-                acc.cache_write = Some(
-                    acc.cache_write.unwrap_or(0) + u["cacheWriteTokens"].as_i64().unwrap_or(0),
+                // Present AND an integer is a report; null, a string or a fraction is not.
+                let count = |k: &str| u.get(k).and_then(serde_json::Value::as_i64);
+                super::add_reported(&mut acc.cache_read, count("cacheReadTokens"));
+                super::add_reported(&mut acc.cache_write, count("cacheWriteTokens"));
+                super::add_reported(&mut acc.reasoning, count("reasoningTokens"));
+                super::add_reported(
+                    &mut acc.cost,
+                    m["requests"].get("cost").and_then(serde_json::Value::as_f64),
                 );
-                acc.reasoning =
-                    Some(acc.reasoning.unwrap_or(0) + u["reasoningTokens"].as_i64().unwrap_or(0));
-                premium += m["requests"]["cost"].as_f64().unwrap_or(0.0);
             }
             if any {
-                acc.cost = Some(premium);
                 latest = Some(acc);
             }
         }
@@ -339,6 +341,8 @@ fn parse_sqlite_turns(db_path: &Path, session_id: &str) -> Vec<TranscriptTurn> {
         }
         turns.push(TranscriptTurn {
             turn_index: i as i32 + 1,
+            origin: "human".to_string(),
+            prompt_id: None,
             user_text: if user_msg.is_empty() { None } else { Some(user_msg) },
             assistant_text,
             started_at: None,
@@ -649,6 +653,46 @@ mod tests {
         assert_eq!(t.cache_write, Some(30));
         assert_eq!(t.reasoning, Some(6));
         assert_eq!(t.cost, Some(7.0), "premium requests, from requests.cost");
+    }
+
+    /// D83 batch C (audit row: copilot_cli.rs:294-299): a token count the source
+    /// never reported is not measured — `None`, never `Some(0)`. A count is known
+    /// once any model reports it; a reported 0 stays 0.
+    #[test]
+    fn a_token_count_no_model_reported_is_none_not_zero() {
+        let silent = r#"{"type":"session.shutdown","data":{"modelMetrics":{"gpt-5.4":{"requests":{"count":2,"cost":0},"usage":{"inputTokens":20,"outputTokens":10}}}}}"#;
+        let t = extract_jsonl_tokens(silent).unwrap();
+        assert_eq!((t.input, t.output), (20, 10));
+        assert_eq!(
+            (t.cache_read, t.cache_write, t.reasoning),
+            (None, None, None),
+            "never reported: not measured"
+        );
+
+        let partly = r#"{"type":"session.shutdown","data":{"modelMetrics":{"a":{"requests":{"cost":1},"usage":{"inputTokens":1,"outputTokens":1,"cacheReadTokens":5,"reasoningTokens":0}},"b":{"requests":{"cost":0},"usage":{"inputTokens":1,"outputTokens":1}}}}}"#;
+        let t = extract_jsonl_tokens(partly).unwrap();
+        assert_eq!(t.cache_read, Some(5), "known once any model reports it");
+        assert_eq!(t.cache_write, None, "no model reported it");
+        assert_eq!(t.reasoning, Some(0), "a reported 0 is a reading");
+    }
+
+    /// Review C1 (L0: this row): premium cost no model reported is None — `0.0` is
+    /// a real reading (`SessionTokens.cost`), so a missing one must not read as it.
+    #[test]
+    fn a_premium_cost_no_model_reported_is_none_not_zero() {
+        let none = r#"{"type":"session.shutdown","data":{"modelMetrics":{"m":{"requests":{"count":2},"usage":{"inputTokens":1,"outputTokens":1}}}}}"#;
+        assert_eq!(extract_jsonl_tokens(none).unwrap().cost, None);
+        let zero = r#"{"type":"session.shutdown","data":{"modelMetrics":{"m":{"requests":{"cost":0},"usage":{"inputTokens":1,"outputTokens":1}}}}}"#;
+        assert_eq!(extract_jsonl_tokens(zero).unwrap().cost, Some(0.0));
+    }
+
+    /// Review C2: present but not an integer (null, a string, a fraction) is not a
+    /// report — the model contributes nothing to that count.
+    #[test]
+    fn a_count_present_as_null_or_not_an_integer_is_not_reported() {
+        let odd = r#"{"type":"session.shutdown","data":{"modelMetrics":{"m":{"requests":{"cost":null},"usage":{"inputTokens":1,"outputTokens":1,"cacheReadTokens":null,"cacheWriteTokens":"5","reasoningTokens":5.5}}}}}"#;
+        let t = extract_jsonl_tokens(odd).unwrap();
+        assert_eq!((t.cache_read, t.cache_write, t.reasoning, t.cost), (None, None, None, None));
     }
 
     #[test]

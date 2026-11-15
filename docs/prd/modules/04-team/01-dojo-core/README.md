@@ -34,8 +34,9 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   ladder (`contributor < maintainer < lead < admin` — `dojo.member_role`, canonical since 2026-10-21); the `dojo`
   schema (`repositories`, `repository_elections`, `repository_metrics`,
   `memberships`, `shared_rules`, `tenants`; `tenant_scopes` is planned, not built);
-  routing (`dojo/routing.rs` — client binding routes to client Dōjō and excludes
-  employer; employer binding routes to employer; personal is the fallback);
+  routing — a repository's work goes to **that repository's dōjō** and nowhere else
+  (D53, D34); `dojo/routing.rs` still encodes the retired client-over-employer
+  precedence as a forward seam with no production caller;
   the federation wire (`dojo_protocol` — rules + artifacts push/pull);
   contribution pipeline (`dojo/contribute.rs` — publish, already-sent guard,
   artifact kinds: `memory`, `rule`, `skill`, `command`, `agent`, `pattern`);
@@ -52,7 +53,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 
 - **API (Worker `/v1`)** — `/v1/t/{tenant}/rules` · `/artifacts` · `/triage`
   · `/triage/promote` · `/audit`
-  · `/projects` · `/knowledge` · `/rules/resolved` · `/policies` · `/members`
+  · `/workspaces` · `/knowledge` · `/rules/resolved` · `/policies` · `/members`
   · `/identities` · `/relay/{gates,inbox}` · `/health`.
 - **Daemon** — `dojo/client.rs` (tenant base URL, artifacts/relay URLs,
   membership resolution); `dojo/routing.rs` (binding inference); `dojo/mod.rs`
@@ -70,8 +71,9 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 ## Data invariants
 
 - **Lead.** A repository belongs to **exactly one Dōjō** via its membership
-  binding (`dojo.repository_elections`); client work routes to the client Dōjō
-  and **excludes the employer** — the owning org wins ordinary conflicts.
+  binding (`dojo.repository_elections`). A session in that repository is governed
+  by **that dōjō alone** — its rules and its targets (D53). No other dōjō's rules
+  carry in; a person's own `user`-rung rules still apply locally, below the dōjō.
 - **Lead.** An election and a mandate are **different rows** — a repo going
   public does not silently convert one into the other.
 - **Lead.** `principal_id` in metrics is a **principal, never a git email** —
@@ -81,25 +83,22 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 - **Lead.** Anonymization: `origin` (open-source · personal-closed · employer
   · client) determines the strip; the **universal strip** means client work is
   anonymized the same way every time, or it doesn't leave.
-- **Lead.** Governance resolution order: ① confidentiality first → ② mandatory
-  locks (★ / mandatory) so no narrower scope can relax → ③ otherwise more
-  specific scope refines broader. The single canonical statement across
-  confidentiality · enforcement · priority · scope — and how confidentiality
-  interacts with a P0 — is [design/governance.md §Resolution
-  order](../../../../design/governance.md#resolution-order-the-one-order); this
-  module links it rather than restating it.
+- **Lead.** Governance precedence (D57, `governance.rs`): the **stronger enforcement wins** (mandatory > required > recommended > advisory, and a mandatory rule is never overridden); between rules of equal enforcement, the **most specific scope wins** (general → user → dōjō → workspace → repository). The longer statement is
+  [design/governance.md §Resolution
+  order](../../../../design/governance.md#resolution-order-the-one-order); where it
+  differs, D57 and `governance.rs` win.
 
 ## Signals shown
 
-| Element | Meaning | Worked example |
-|---|---|---|
-| Membership kind | employer / client / community / personal | `employer` |
-| Role floor | `contributor < maintainer < lead < admin` | `maintainer` |
-| Tenant | the Dōjō this repo federates to | `dojo.sensei-hq.com/t/org/sensei-hq` |
-| Effective rules | resolved ladder for this repo | 12 rules (3 dōjō, 2 workspace, 7 personal) |
-| Contribution | a shareable finding | `memory#m-42 → rule (mandatory)` |
-| Triage | auto-approve / human / reject | `auto-approve score 0.87` |
-| Audit | immutable event | `promote rule#r-12 by u-3` |
+| Element | Meaning | Worked example | Decision it drives / next step |
+|---|---|---|---|
+| Membership kind | employer / client / community / personal | `employer` | none — candidate to cut (D53: the repository's dōjō governs; the kind no longer routes) |
+| Role floor | `contributor < maintainer < lead < admin` | `maintainer` | ask an admin for the role a surface needs |
+| Tenant | the Dōjō this repo federates to | `dojo.sensei-hq.com/t/org/sensei-hq` | confirm the repository syncs to the dōjō you expect |
+| Effective rules | resolved ladder for this repo | 12 rules (3 dōjō, 2 workspace, 7 personal) | open the rule that applies; propose a change at its scope |
+| Contribution | a shareable finding | `memory#m-42 → rule (mandatory)` | share it, or keep it local |
+| Triage | auto-approve / human / reject | `auto-approve score 0.87` | approve or reject the items waiting on a person |
+| Audit | immutable event | `promote rule#r-12 by u-3` | none — candidate to cut (a record) |
 
 ## Done gate
 
@@ -109,8 +108,8 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 - A contribution published from the daemon reaches the Worker `/v1/triage`,
   auto-approves at score ≥0.8 with k-anonymity ≥3, and the promoted rule
   appears in the next `get_rules` call (5 min cache).
-- Client work is anonymized by the universal strip; the employer never receives
-  the client's finding.
+- Client work is anonymized by the universal strip; a finding goes only to its
+  repository's dōjō (D53).
 - The audit trail records every promote/triage/decide event immutably.
 
 ```bash
@@ -119,7 +118,7 @@ curl -s "https://dojo.sensei-hq.com/v1/t/org/sensei-hq/rules/resolved?repo=..." 
 
 ## Wrong gate
 
-- **A repo binds to the wrong Dōjō** (employer receives client work, or personal
+- **A repo binds to the wrong Dōjō** (another dōjō receives its work, or personal
   when a Dōjō exists) — routing regressed.
 - **A promoted rule doesn't appear in `get_rules`** after cache expiry —
   federation/push regressed.

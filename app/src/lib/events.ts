@@ -8,6 +8,9 @@
 export type EventHandler<T> = (event: T) => void;
 
 export class EventManager<T> {
+  /** Fires on every socket open, initial and reconnects (F8: routes re-read
+   *  on reconnect — broadcast has no replay). Mirrors EventSource's shape. */
+  onopen: (() => void) | null = null;
   private source: EventSource | null = null;
   private handlers: EventHandler<T>[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -78,6 +81,7 @@ export class EventManager<T> {
       }
     };
 
+    this.source.onopen = () => this.onopen?.();
     this.source.onerror = () => {
       this.disconnect();
       if (this.handlers.length > 0) {

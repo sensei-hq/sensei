@@ -7,6 +7,6 @@ export const load: PageLoad = async ({ params, parent }) => {
   const { workspace } = await parent();
   const read = await senseiApi(appState.port).tryGetWorkspacePatterns(params.id);
   return read.ok
-    ? { workspace, followed: read.data.followed ?? [], antiPatterns: read.data.antiPatterns ?? [], error: null }
-    : { workspace, followed: [], antiPatterns: [], error: failureReason(read.error) };
+    ? { workspace, followed: read.data.followed ?? [], antiPatterns: read.data.antiPatterns ?? [], error: null, failure: null }
+    : { workspace, followed: [], antiPatterns: [], error: failureReason(read.error), failure: read.error };
 };
