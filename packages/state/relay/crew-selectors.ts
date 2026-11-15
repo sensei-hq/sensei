@@ -31,7 +31,7 @@ export interface RelayMemberView {
   model: string;
   /** The not-responding line under the card. */
   alert: string | null;
-  /** The host tag: the editor the assistant runs in. Null while the daemon reports none (#419). */
+  /** The host tag: the editor the assistant runs in. Null while the daemon reports none (#396: assistant vs editor). */
   editor: { label: string; title: string } | null;
 }
 
@@ -102,7 +102,7 @@ function member(lane: RelayLane): RelayMemberView {
       status === 'not_responding'
         ? `No answer since ${lane.lease_expires_at ? hhmm(lane.lease_expires_at) : 'a time not reported'} · lease lost.`
         : null,
-    // The daemon does not report the editor a session runs in yet (#419's catalogue).
+    // The daemon does not report the editor a session runs in yet (#396: assistant vs editor classification).
     editor: null,
   };
 }
