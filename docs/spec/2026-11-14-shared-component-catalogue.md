@@ -48,7 +48,7 @@ screen) · hand-drawn SVG charts 7 · `.chip` 5 (#410) · tablists 4 · switches
 | rokkit `StatCard` | `MetricCard`, `ProgressCard`, dōjō `StatBadge` — where they are a number and its label |
 | rokkit `Switch` / `Toggle` | `AssistantCard`'s hand switch; app `Switch` wrapper if it adds nothing (#410) |
 | rokkit `Tabs` | app `TabBar`, dōjō `TabBar`, `SubTabs` (#47) |
-| rokkit `List` (item snippet) | `LaneList`, `CompletedList`, `QueueSection`, dōjō `ListSection` — rows with their own buttons need a non-selecting mode first |
+| rokkit `List` (item snippet; `selectable={false}`, `variant="card"`, rokkit 1.15.6) | `LaneList`, `CompletedList` **done** (`382022f51`); `QueueSection`, dōjō `ListSection` — rows with their own buttons still need their own row controls inside a display-only row |
 | rokkit `Timeline` (item snippet) | `TaskHistory`/`HistoryEntry`, `RelayTimeline`, dōjō `RunActivity` — fixes the off-centre dots |
 | rokkit chart `Sparkline` | `FtrStrip` (#412), `MetricSparkline`, dōjō `Spark` ×2 |
 | rokkit `Button` / `Toolbar` | dōjō `Btn`, `@sensei/ui` `ActionButton`, `ToolbarItem` + `toolbar-item.js` |
@@ -62,8 +62,9 @@ Stays local: screen-specific compositions (LaneRow, MemberCard, DecisionRow, Pla
 
 1. Relay first — **done 2026-11-14:** app + dōjō on rokkit 1.15.4 (`3cd4a8cac`); toolbar via `kind`/`count`,
    `relay-toolbar.css`, `relay-filters.css`, `@sensei/ui` ToolbarItem deleted (`ac4640baf`); Working accent
-   (`035b8aeac`); relay `Pill`/`Tag` → rokkit Pill (`942488387`). **Remaining:** Timeline; List where rows have no
-   buttons; the mockup's host tag ("in Cursor", needs a Pill `title`).
+   (`035b8aeac`); relay `Pill`/`Tag` → rokkit Pill (`942488387`). Then (2026-11-14/15): TaskHistory → rokkit
+   Timeline (`e30a2cd13`, 1.15.5); host tag via Pill `title` (`165f884de`, 1.15.5); LaneList + CompletedList →
+   display-only rokkit List cards (`382022f51`, 1.15.6). Step 1 is done.
 2. Guards before mass migration: specs that fail on a new hand chip, a `<style>` colour, an `i-solar-*` class, an
    `overflow-auto` outside the shell — each with today's count as an allowlist that only shrinks.
 3. The dōjō's `/preview` (Rule 6), before the first family that touches the dōjō.
@@ -74,4 +75,4 @@ Stays local: screen-specific compositions (LaneRow, MemberCard, DecisionRow, Pla
 ## Open questions
 
 - Where a rokkit component is a control (List, Pill with `removable`) and our use is display-only, confirm the
-  display mode exists before migrating.
+  display mode exists before migrating. List: answered — `selectable={false}` (rokkit #184, 1.15.6).
