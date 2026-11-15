@@ -298,6 +298,14 @@ export class RelayState {
     // The daemon adds a row it may already hold (a lane re-registers): restate it.
     const restate = action === 'add' && target.get(row.id) !== undefined;
     target.apply({ action: restate ? 'update' : action, entity, data: row });
+    // A read out while this row arrived holds an older snapshot; when it lands it
+    // replaces the rows, this one too — so read again after it (#426: a lane that
+    // registered during a re-read vanished from the crew until the next event).
+    if (entity === 'item') {
+      if (this.#queueInFlight) this.#queueAgain = true;
+    } else if (this.#nowInFlight) {
+      this.#nowAgain = true;
+    }
     // A lane in a crew this screen has not read: a coordinator minted it — read the crew.
     const crew = entity === 'lane' && action !== 'remove' ? (row as { crew_id?: unknown }).crew_id : undefined;
     if (typeof crew === 'string' && this.#summary && !this.#summary.crews.some((c) => c.id === crew)) {
