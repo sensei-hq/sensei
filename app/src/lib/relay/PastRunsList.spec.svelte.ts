@@ -34,6 +34,7 @@ describe('PastRunsList (CONTRACT §1i; the UI half of #393)', () => {
     done: '6 of 6 tasks done',
     members: '3 members',
     deletes: { text: 'deleted in 17 days', warning: false },
+    href: null,
     ...over,
   });
 
@@ -55,6 +56,13 @@ describe('PastRunsList (CONTRACT §1i; the UI half of #393)', () => {
     }
     expect(row.querySelector('[data-part="deletes"]')?.getAttribute('data-warning')).toBe('false');
     expect(c.querySelector('[data-past-run="run-ab10"] [data-part="deletes"]')?.getAttribute('data-warning')).toBe('true');
+  });
+
+  it('a row with somewhere to go is a link to the run, read-only', () => {
+    const c = mount(PastRunsList, { rows: [past({ href: '/relay/runs/run-ab13' })] });
+    const link = c.querySelector('[data-past-run="run-ab13"]')!.closest('[data-list-item]')!;
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe('/relay/runs/run-ab13');
   });
 
   it('no past runs: nothing drawn', () => {

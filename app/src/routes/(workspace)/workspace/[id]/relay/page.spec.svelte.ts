@@ -916,6 +916,8 @@ describe('Relay — a draft run starts from the Crew view; past runs below (#424
     expect(text(one(card, '[data-run-title]'))).toBe(`Run ${F.DRAFT_RUN_ID.slice(-4)} draft`);
     const past = need(section(c, 'past-runs'), 'Past runs');
     expect(all(past, '[data-past-run]').map((r) => r.getAttribute('data-past-run'))).toEqual([F.PAST_RUN_ID]);
+    // Each opens its run, read-only, under this window's Relay.
+    expect(one(past, '[data-past-run]')!.closest('a[data-list-item]')?.getAttribute('href')).toBe(`/workspace/w1/relay/runs/${F.PAST_RUN_ID}`);
   });
 
   it('Start starts the draft on the screen’s crew, then reads the runs again', async () => {
