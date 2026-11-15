@@ -502,3 +502,27 @@ describe('RelayState · the run list: a draft to start, past runs (#424)', () =>
     expect(source.readRuns).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('RelayState · a read that lands after newer events (#426 found it)', () => {
+  it('a row event while Now is being read: the read that lands is followed by a fresh one', async () => {
+    const stale = F.deferred<ApiResult<RelayNow>>();
+    const two = F.now({ lanes: [F.coordinatorLane(), F.lane({ id: 'lane-b', code: 'L2' })] });
+    const three = F.now({ lanes: [F.coordinatorLane(), F.lane({ id: 'lane-b', code: 'L2' }), F.lane({ id: 'lane-c', code: 'L3' })] });
+    const readNow = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(F.ok(three));
+    const { source, emit } = fakeSource({ readNow });
+    const s = new RelayState(source, {}, reads(two));
+    s.connect();
+    // A read starts (as a re-read would)…
+    const reading = s.reReadNow();
+    // …and while it is out, the third lane's row arrives on the stream.
+    emit({ entity: 'lane', action: 'add', data: { ...F.lane({ id: 'lane-c', code: 'L3' }) } } as unknown as RelayStreamEvent);
+    expect(s.lanes.items.map((l) => l.id)).toContain('lane-c');
+    // The read lands with its older snapshot (two lanes)…
+    stale.resolve(F.ok(two));
+    await reading;
+    await settle();
+    // …and is followed by a fresh read: the third lane is there in the end.
+    expect(readNow).toHaveBeenCalledTimes(2);
+    expect(s.lanes.items.map((l) => l.id)).toContain('lane-c');
+  });
+});
