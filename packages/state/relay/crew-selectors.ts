@@ -3,9 +3,10 @@
 // the daemon does not report — a heartbeat, the editor a session runs in, the catalogue
 // of assistants seen on this machine — is not invented (D83).
 
-import { crewTail, hhmm } from './format.js';
+import { crewTail, hhmm, taskHref, taskStateLabel } from './format.js';
+import { taskStateTone } from './task-selectors.js';
 import { assistantLabel, type RelayTone } from './now-selectors.js';
-import type { RelayLane, RelayNow, RelayPresence, RelayRole, RelayRunList, RelayRunListRow } from './types.js';
+import type { RelayLane, RelayNow, RelayPresence, RelayRole, RelayRunDetail, RelayRunList, RelayRunListRow } from './types.js';
 
 export type { RelayPresence };
 
@@ -30,6 +31,19 @@ export interface RelayPastRunView {
   members: string;
   /** Deleted 30 days after it ended; three days or fewer reads as a warning. */
   deletes: { text: string; warning: boolean };
+  /** Where the row opens the run, read-only; null without a base. */
+  href: string | null;
+}
+
+/** A past run, read-only (CONTRACT §1i). */
+export interface RelayArchivedRunView {
+  title: string;
+  name: string;
+  state: { label: string; tone: RelayTone };
+  banner: { text: string; warning: boolean };
+  facts: Array<{ label: string; value: number }>;
+  members: Array<{ id: string; codename: string; laneCode: string; role: RelayRole; family: string; model: string }>;
+  tasks: Array<{ id: string; title: string; state: { label: string; tone: RelayTone }; by: string; href: string | null }>;
 }
 
 /** One member (COMPONENTS §3e MemberCard). */
@@ -137,7 +151,7 @@ const daysUntil = (iso: string, at: number) => {
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
 /** Ended runs, newest first (CONTRACT §1i): id and span · tasks done · members · when deleted. */
-export function toPastRuns(runs: RelayRunList | null, at = Date.now()): RelayPastRunView[] {
+export function toPastRuns(runs: RelayRunList | null, at = Date.now(), base: string | null = null): RelayPastRunView[] {
   if (!runs) return [];
   return [...runs.archived]
     .sort((a, b) => (b.completed_at ?? b.created_at).localeCompare(a.completed_at ?? a.created_at))
@@ -146,21 +160,76 @@ export function toPastRuns(runs: RelayRunList | null, at = Date.now()): RelayPas
       const to = run.completed_at ? monthDay(run.completed_at) : from;
       const left = run.delete_after ? daysUntil(run.delete_after, at) : null;
       return {
+        href: base ? runHref(base, run.id) : null,
         id: run.id,
         title: `Run ${run.id.slice(-4)}`,
         name: run.title,
-        state: run.state === 'completed' ? { label: 'completed', tone: 'success' } : { label: run.state, tone: 'neutral' },
+        state: runState(run.state),
         span: from === to ? from : `${from} – ${to}`,
         done: `${run.done_tasks} of ${plural(run.total_tasks, 'task')} done`,
         members: plural(run.members, 'member'),
-        deletes:
-          left === null
-            ? { text: 'deletion date not reported', warning: false }
-            : left <= 0
-              ? { text: 'deleted today', warning: true }
-              : { text: `deleted in ${plural(left, 'day')}`, warning: left <= 3 },
+        deletes: deletion(left),
       };
     });
+}
+
+/** Where a run opens, read-only, under a relay base. */
+export const runHref = (base: string, runId: string): string => `${base}/runs/${encodeURIComponent(runId)}`;
+
+const deletion = (left: number | null) =>
+  left === null
+    ? { text: 'deletion date not reported', warning: false }
+    : left <= 0
+      ? { text: 'deleted today', warning: true }
+      : { text: `deleted in ${plural(left, 'day')}`, warning: left <= 3 };
+
+const runState = (state: string): { label: string; tone: RelayTone } =>
+  state === 'completed' ? { label: 'completed', tone: 'success' } : { label: state, tone: 'neutral' };
+
+/** A past run, read-only (CONTRACT §1i): the banner (archived when its last task was done;
+ *  deleted 30 days on, by a daily job), its facts, who was on it, and what it did — done
+ *  first, each task opening its task view. */
+export function toArchivedRun(detail: RelayRunDetail, opts: { base: string; at?: number }): RelayArchivedRunView {
+  const { run } = detail;
+  const at = opts.at ?? Date.now();
+  const left = run.delete_after ? daysUntil(run.delete_after, at) : null;
+  const when = run.delete_after ? (left !== null && left <= 0 ? 'today' : `in ${plural(left ?? 0, 'day')}`) : 'date not reported';
+  const ended = run.completed_at ? monthDay(run.completed_at) : 'on a day not reported';
+  const text =
+    run.state === 'cancelled'
+      ? `Cancelled ${ended}. Deleted 30 days after it ended, by a daily job: ${when}.`
+      : `Archived when its last task was done, ${ended}. Deleted 30 days after it completed, by a daily job: ${when}.`;
+  const order = (state: string) => (state === 'done' ? 0 : 1);
+  const tasks = Object.entries(detail.tasks_by_state)
+    .sort(([a], [b]) => order(a) - order(b))
+    .flatMap(([, list]) => list)
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      state: { label: taskStateLabel(t.state), tone: taskStateTone(t.state) },
+      by: t.lane ? (t.lane.suggested_name ?? t.lane.code) : 'on no lane',
+      href: run.crew_id ? taskHref(opts.base, run.crew_id, t.id) : null,
+    }));
+  return {
+    title: `Run ${run.id.slice(-4)}`,
+    name: run.title,
+    state: runState(run.state),
+    banner: { text, warning: left !== null && left <= 3 },
+    facts: [
+      { label: 'Tasks', value: tasks.length },
+      { label: 'Done', value: tasks.filter((t) => t.state.label === 'done').length },
+      { label: 'Members', value: detail.members.length },
+    ],
+    members: detail.members.map((m) => ({
+      id: m.id,
+      codename: m.suggested_name ?? m.code,
+      laneCode: m.code,
+      role: m.role,
+      family: assistantLabel(m.family, null),
+      model: m.model ?? 'model not reported',
+    })),
+    tasks,
+  };
 }
 
 const STATUS_TEXT: Record<RelayPresence, string> = { active: 'Active', idle: 'Idle', not_responding: 'Not responding' };

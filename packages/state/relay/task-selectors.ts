@@ -47,6 +47,9 @@ const STATE_TONE: Record<string, RelayTone> = {
   ready: 'neutral',
 };
 
+/** The tone a task's state reads in. */
+export const taskStateTone = (state: string): RelayTone => STATE_TONE[state] ?? 'neutral';
+
 /** "2 h 22 min", "38 min". */
 function duration(secs: number): string {
   const mins = Math.round(secs / 60);
@@ -113,7 +116,7 @@ export function toTaskView(view: RelayTaskView, o: { back: { label: string; href
     header: {
       back: o.back,
       title: t.title,
-      state: { label: taskStateLabel(t.state), tone: STATE_TONE[t.state] ?? 'neutral' },
+      state: { label: taskStateLabel(t.state), tone: taskStateTone(t.state) },
       ticket: t.ticket ? { provider: providerLabel(t.ticket.provider), key: t.ticket.key, url: t.ticket.url ?? null } : null,
       facts: [
         { k: 'Lane', v: lane ? `${lane.title ?? lane.code} · ${lane.code}${paused}` : 'in the pool' },

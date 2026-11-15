@@ -677,6 +677,40 @@ export interface RelayRunList {
   archived: RelayRunListRow[];
 }
 
+/** A task of a run, as `GET /relay/runs/{id}` groups them by state. */
+export interface RelayRunTask {
+  id: string;
+  title: string;
+  phase: string;
+  state: string;
+  round: number;
+  state_changed_at: string;
+  completed_at: string | null;
+  current_step: string | null;
+  steps_done: number;
+  steps_total: number;
+  /** The lane that last held it; null when none did. */
+  lane: { id: string; code: string; suggested_name: string | null } | null;
+}
+
+/** A lane that took part in a run. */
+export interface RelayRunMember {
+  id: string;
+  code: string;
+  role: RelayRole;
+  title: string | null;
+  suggested_name: string | null;
+  family: string;
+  model: string | null;
+}
+
+/** `GET /relay/runs/{id}` (#419): the run, its tasks by state, who took part. */
+export interface RelayRunDetail {
+  run: RelayRunListRow;
+  tasks_by_state: Record<string, RelayRunTask[]>;
+  members: RelayRunMember[];
+}
+
 /** `POST /relay/runs/{id}/cancel`. */
 export interface RelayCancelledRun {
   run_id: string;
