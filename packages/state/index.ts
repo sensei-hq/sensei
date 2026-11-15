@@ -76,6 +76,7 @@ export {
 } from './relay/now-selectors.js';
 export { toQueueRows, type RelayQueueRowView } from './relay/queue-selectors.js';
 export {
+  editorTag,
   toAddMember,
   toMemberGroups,
   toRunCard,

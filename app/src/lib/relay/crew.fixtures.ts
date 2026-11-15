@@ -1,6 +1,6 @@
 // The Crew view as the r1 mockup draws it (Relay.dc.html, view "crew"): the bench renders
 // these beside the artboard. Data in the shape the crew selectors produce.
-import type { RelayAddMemberView, RelayMemberGroupView, RelayMemberView, RelayRunCardView } from '@sensei/state';
+import { editorTag, type RelayAddMemberView, type RelayMemberGroupView, type RelayMemberView, type RelayRunCardView } from '@sensei/state';
 
 const m = (
   laneCode: string,
@@ -11,6 +11,7 @@ const m = (
   family: string,
   model: string,
   alert: string | null = null,
+  editor: RelayMemberView['editor'] = null,
 ): RelayMemberView => ({
   id: laneCode,
   codename,
@@ -22,6 +23,7 @@ const m = (
   family,
   model,
   alert,
+  editor,
 });
 
 export const mockupRunCard = (): RelayRunCardView => ({
@@ -46,7 +48,7 @@ export const mockupGroups = (): RelayMemberGroupView[] => [
       m('L3', 'jade-altair', 'Activity logs', 'contributor', 'active', 'Muse', 'model not reported'),
       m('L4', 'iris-deneb', 'ER diagrams', 'contributor', 'active', 'Claude Code 2.1', 'claude-opus-5-5'),
       m('L5', 'coral-spica', 'Docs pages', 'contributor', 'active', 'Freebuff 1.4', 'model not reported'),
-      m('L6', 'slate-mira', 'Sync hardening', 'contributor', 'idle', 'Agent', 'claude-sonnet-4-5'),
+      m('L6', 'slate-mira', 'Sync hardening', 'contributor', 'idle', 'Agent', 'claude-sonnet-4-5', null, editorTag('Cursor', 'claude-sonnet-4-5')),
     ],
   },
 ];

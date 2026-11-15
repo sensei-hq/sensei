@@ -1,7 +1,7 @@
 <script lang="ts">
   // One crew member (COMPONENTS §3e MemberCard; CONTRACT §1h): full width — the role
   // mark in its presence tone, the codename (mono, in that tone; its title the status),
-  // objective · code, the family and model tags, Message; not responding: the warning
+  // objective · code, the family and model tags (and the host, in an editor), Message; not responding: the warning
   // border and its line under the card. On a phone: mark, name, Message; tags below.
   import { Pill } from '@rokkit/ui';
   import type { RelayMemberView, RelayPresence } from '@sensei/state';
@@ -33,6 +33,9 @@
   <span data-member-tags class="order-3 md:order-none basis-full md:basis-auto pl-11 md:pl-0 flex-[1_1_auto] min-w-0 flex flex-wrap gap-1.5">
     <Pill value={member.family} size="sm" />
     <Pill value={member.model} variant="outline" size="sm" class="font-mono" />
+    {#if member.editor}
+      <span data-member-host class="contents"><Pill value={member.editor.label} title={member.editor.title} variant="outline" size="sm" /></span>
+    {/if}
   </span>
   <button
     type="button"

@@ -70,6 +70,7 @@ describe('toMemberGroups · presence (CONTRACT §1h)', () => {
       family: 'Claude Code 2.1',
       model: 'claude-opus-5-5',
       alert: null,
+      editor: null,
     });
   });
 
