@@ -2,6 +2,12 @@ import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { fileURLToPath } from 'node:url';
 
+// The day-bucketing specs (sessions-digest) are written in US Central time: pinned here
+// so every run — the pre-commit hook's `bun run test:unit` included — reads the same
+// day, whatever the machine's zone or the hour. Set before the workers start; they
+// inherit it.
+process.env.TZ = 'America/Chicago';
+
 export default defineConfig({
   plugins: [svelte()],
   // Mirror the vite-defines from `vite.config.ts` so tests see the same
