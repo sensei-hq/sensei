@@ -18,6 +18,7 @@ import type {
   RelayAddToBacklog,
   RelayAddTriage,
   RelayAnswer,
+  RelayCancelledRun,
   RelayCreateRun,
   RelayCreatedRun,
   RelayCrew,
@@ -28,6 +29,7 @@ import type {
   RelayNow,
   RelayQueue,
   RelayResources,
+  RelayRunList,
   RelayRunSummary,
   RelaySendMessage,
   RelayStreamEvent,
@@ -54,6 +56,10 @@ export interface RelaySource {
   addToBacklog(body: RelayAddToBacklog): Promise<ApiResult<{ item_id: string }>>;
   addTriage(body: RelayAddTriage): Promise<ApiResult<{ item_id: string }>>;
   createRun(body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>>;
+  /** Every run, open (a draft among them) and ended (#419; the Crew view, #424). */
+  readRuns(): Promise<ApiResult<RelayRunList>>;
+  startRun(runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>>;
+  cancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
   /** Subscribe to the stream: every event, and every open — the first and each
    *  reconnect (a broadcast has no replay). Returns the teardown. */
   events(on: (event: RelayStreamEvent) => void, onOpen: () => void): () => void;
@@ -142,12 +148,21 @@ export class RelayState {
   addRole = $state<'coordinator' | 'contributor'>('coordinator');
   /** Why the last sprint was refused (the selection and the form stay as they were). */
   sprintError = $state<string | null>(null);
+  /** Every run, open and ended (`GET /relay/runs`); null until read. */
+  runList = $state<RelayRunList | null>(null);
+  /** Why the last read of the runs failed; null when it did not. */
+  runsError = $state<string | null>(null);
+  /** The run being started or cancelled; null when none is. */
+  startingRun = $state<string | null>(null);
+  /** Why the last start or cancel was refused. */
+  runActionError = $state<string | null>(null);
 
   #nowInFlight: Promise<void> | null = null;
   #nowAgain = false;
   #queueInFlight: Promise<void> | null = null;
   #queueAgain = false;
   #createInFlight: Promise<string | null> | null = null;
+  #runActionInFlight: Promise<string | null> | null = null;
 
   constructor(source: RelaySource, filter: RelayFilter, reads: RelayReads, options: RelayStateOptions = {}) {
     this.source = source;
@@ -244,6 +259,8 @@ export class RelayState {
   /** One stream event: a row changes that row alone; ids alone re-read what they name. */
   apply(event: RelayStreamEvent): void {
     const data = event.data as Record<string, unknown>;
+    // A run changed: the run list (drafts, past runs) is read whole, once it was read.
+    if (event.entity === 'run' && this.runList) void this.readRuns();
     if ((ROW_ENTITIES as readonly string[]).includes(event.entity) && typeof data.id === 'string') {
       this.#applyRow(event.entity as RowEntity, event.action, data as { id: string });
       return;
@@ -483,5 +500,49 @@ export class RelayState {
     this.clearSelection();
     this.creatingSprint = false;
     return answer.data.run_id;
+  }
+
+  // ── The run list (#424): a draft to start, past runs ──
+
+  /** Read every run, open and ended. A failure says so and keeps what was read before. */
+  async readRuns(): Promise<void> {
+    const answer = await this.source.readRuns();
+    if (!answer.ok) {
+      this.runsError = failureReason(answer.error);
+      return;
+    }
+    this.runsError = null;
+    this.runList = answer.data;
+  }
+
+  /** Start a draft on the screen's crew. Null when taken; else why it was refused. One
+   *  write per press; the runs are read again after it. */
+  startRun(runId: string): Promise<string | null> {
+    return this.#runAction(runId, () => this.source.startRun(runId, this.crew?.id ?? null));
+  }
+
+  /** Cancel a run (its open tasks end; planned items go back to the backlog). */
+  cancelRun(runId: string): Promise<string | null> {
+    return this.#runAction(runId, () => this.source.cancelRun(runId));
+  }
+
+  #runAction(runId: string, write: () => Promise<ApiResult<unknown>>): Promise<string | null> {
+    if (this.#runActionInFlight) return this.#runActionInFlight;
+    const action = (async () => {
+      this.startingRun = runId;
+      this.runActionError = null;
+      const answer = await write();
+      if (!answer.ok) {
+        this.runActionError = failureReason(answer.error);
+        return this.runActionError;
+      }
+      await this.readRuns();
+      return null;
+    })().finally(() => {
+      this.startingRun = null;
+      if (this.#runActionInFlight === action) this.#runActionInFlight = null;
+    });
+    this.#runActionInFlight = action;
+    return action;
   }
 }

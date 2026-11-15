@@ -10,8 +10,10 @@ import type {
   RelayAddToBacklog,
   RelayAddTriage,
   RelayAnswer,
+  RelayCancelledRun,
   RelayCreateRun,
   RelayCreatedRun,
+  RelayRunList,
   RelayFilter,
   RelayNow,
   RelayQueue,
@@ -31,6 +33,9 @@ export interface RelayRealtimeTransport {
   addToBacklog(body: RelayAddToBacklog): Promise<ApiResult<{ item_id: string }>>;
   addTriage(body: RelayAddTriage): Promise<ApiResult<{ item_id: string }>>;
   createRun(body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>>;
+  readRuns(): Promise<ApiResult<RelayRunList>>;
+  startRun(runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>>;
+  cancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
   /** Subscribe to the channel: each change as a StateEvent, and each status change. Returns the teardown. */
   subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: RelayChannelStatus) => void): () => void;
 }
@@ -45,6 +50,9 @@ export function relayRealtimeSource(transport: RelayRealtimeTransport): RelaySou
     addToBacklog: (body) => transport.addToBacklog(body),
     addTriage: (body) => transport.addTriage(body),
     createRun: (body) => transport.createRun(body),
+    readRuns: () => transport.readRuns(),
+    startRun: (runId, crewId) => transport.startRun(runId, crewId),
+    cancelRun: (runId) => transport.cancelRun(runId),
     events(on, onOpen) {
       return transport.subscribe(on, (status) => {
         if (status === 'SUBSCRIBED') onOpen();
@@ -59,7 +67,9 @@ export type CannedWrite =
   | { kind: 'send'; body: RelaySendMessage }
   | { kind: 'backlog'; body: RelayAddToBacklog }
   | { kind: 'triage'; body: RelayAddTriage }
-  | { kind: 'run'; body: RelayCreateRun };
+  | { kind: 'run'; body: RelayCreateRun }
+  | { kind: 'start'; runId: string; crewId: string | null }
+  | { kind: 'cancel'; runId: string };
 
 /** A transport for specs and the bench: canned reads, recorded writes, and a channel the test drives. */
 export function cannedRealtime(reads: { now: RelayNow | null; queue: RelayQueue | null }) {
@@ -79,6 +89,15 @@ export function cannedRealtime(reads: { now: RelayNow | null; queue: RelayQueue 
     createRun: async (body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>> => {
       writes.push({ kind: 'run', body });
       return { ok: false, error: { status: 501, message: 'the canned transport mints no runs' } };
+    },
+    readRuns: async (): Promise<ApiResult<RelayRunList>> => unread,
+    startRun: async (runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>> => {
+      writes.push({ kind: 'start', runId, crewId });
+      return { ok: false, error: { status: 501, message: 'the canned transport starts no runs' } };
+    },
+    cancelRun: async (runId: string): Promise<ApiResult<RelayCancelledRun>> => {
+      writes.push({ kind: 'cancel', runId });
+      return { ok: false, error: { status: 501, message: 'the canned transport cancels no runs' } };
     },
     subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: RelayChannelStatus) => void) {
       handler = on;

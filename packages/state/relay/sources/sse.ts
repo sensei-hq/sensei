@@ -24,6 +24,9 @@ export function relaySseSource(api: RelayApi, stream: () => RelayEventStream): R
     addToBacklog: (body) => api.tryAddToBacklog(body),
     addTriage: (body) => api.tryAddTriage(body),
     createRun: (body) => api.tryCreateRun(body),
+    readRuns: () => api.tryGetRuns(),
+    startRun: (runId, crewId) => api.tryStartRun(runId, crewId),
+    cancelRun: (runId) => api.tryCancelRun(runId),
     events(on, onOpen) {
       const socket = stream();
       socket.onopen = () => onOpen();

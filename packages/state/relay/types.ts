@@ -652,6 +652,37 @@ export interface RelayCreatedRun {
   status: RelayRunState;
 }
 
+/** One run as `GET /relay/runs` lists it (#419): open (draft, planning, active) or ended
+ *  (completed, cancelled; deleted at `delete_after`, 30 days on). A draft has no crew. */
+export interface RelayRunListRow {
+  id: string;
+  crew_id: string | null;
+  title: string;
+  goal: string;
+  state: RelayRunState;
+  repo_key: string | null;
+  workspace_id: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  delete_after: string | null;
+  total_tasks: number;
+  done_tasks: number;
+  members: number;
+}
+
+/** `GET /relay/runs`: the open runs and the ended ones still kept. */
+export interface RelayRunList {
+  active: RelayRunListRow[];
+  archived: RelayRunListRow[];
+}
+
+/** `POST /relay/runs/{id}/cancel`. */
+export interface RelayCancelledRun {
+  run_id: string;
+  status: RelayRunState;
+}
+
 // ─── Stream (F8; the dōjō seam) ─────────────────────────────────────────────
 
 /** One relay-socket event: the shared {action, entity, data} contract.

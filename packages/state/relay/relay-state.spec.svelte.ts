@@ -493,11 +493,11 @@ describe('RelayState · the run list: a draft to start, past runs (#424)', () =>
     const { source, emit } = fakeSource();
     const s = new RelayState(source, {}, reads());
     s.connect();
-    emit({ entity: 'run', action: 'updated', data: { id: 'r-other' } } as RelayStreamEvent);
+    emit({ entity: 'run', action: 'update', data: { id: 'r-other' } } as RelayStreamEvent);
     await settle();
     expect(source.readRuns).not.toHaveBeenCalled();
     await s.readRuns();
-    emit({ entity: 'run', action: 'updated', data: { id: 'r-other' } } as RelayStreamEvent);
+    emit({ entity: 'run', action: 'update', data: { id: 'r-other' } } as RelayStreamEvent);
     await settle();
     expect(source.readRuns).toHaveBeenCalledTimes(2);
   });
