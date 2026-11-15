@@ -165,7 +165,7 @@
   // The Crew view (#424): the run card, the members by role, and AddMember for the role
   // the person picked (the coordinator first).
   const runCard = $derived(toRunCard(state.now, state.runList));
-  const pastRuns = $derived(toPastRuns(state.runList, Date.now()));
+  const pastRuns = $derived(toPastRuns(state.runList, Date.now(), base));
   // The run list (a draft to start, past runs) is read when the Crew view opens; run
   // events and the person's own start or cancel read it again.
   $effect(() => {
