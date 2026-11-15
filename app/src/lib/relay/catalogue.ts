@@ -13,6 +13,7 @@ import { toPastRuns, toRunCard } from '@sensei/state';
 import * as RF from '$lib/test-stubs/relay-fixtures.js';
 import { decision, floatingReview, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
 import PastRunsList from './PastRunsList.svelte';
+import RelayRunScreen from './RelayRunScreen.svelte';
 import { toRelayShell, type RelayShellInput, type RelayStatFilter } from './relay-shell.js';
 import { SHELL_FIXTURES, calm, crewNoRun, filteredWorking, loadedNow } from './relay-shell.fixtures.js';
 import RelayShell from './RelayShell.svelte';
@@ -196,6 +197,12 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
   entry('PastRunsList/mockup', 'ended runs under the Crew view: two completed (one deleted tomorrow, in warning), one cancelled', PastRunsList, {
     rows: toPastRuns(RF.pastRunList(), RF.PAST_AT),
   }),
+  entry('RelayRunScreen/completed', 'a past run, read-only: the banner, who was on it, what it did (rows open each task)', RelayRunScreen, {
+    detail: RF.runDetail(),
+    error: null,
+    viewId: 'preview.relay.run',
+    base: '/relay',
+  }, { height: 720, phoneHeight: 1100 }),
   entry('AddMember/setup', 'no crew yet: step 1 of 2, the coordinator', AddMember, { view: setupStep1(), oncopy: () => {}, onrole: () => {} }),
   entry('AddMember/setup-step2', 'the coordinator in: step 2 of 2, a contributor; the line names the crew (#419, beyond the mockup line)', AddMember, { view: setupStep2(), oncopy: () => {}, onrole: () => {} }),
   entry('AddMember/add', 'a crew at work: Add a member, contributors only', AddMember, { view: addContributor(), oncopy: () => {}, onrole: () => {} }),

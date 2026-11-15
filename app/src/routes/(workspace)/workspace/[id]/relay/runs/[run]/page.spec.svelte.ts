@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Workspace · Relay · a past run, read-only (CONTRACT §1i; #424, the UI half of #393):
 // the banner, who was on it, what it did — each task opening its task view.
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, vi } from 'vitest';
 import { tick } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import type { ApiResult } from '$lib/api.js';
@@ -21,6 +21,13 @@ vi.mock('$app/state', () => ({
     url: new URL('http://localhost/workspace/w1/relay/runs/x'),
   },
 }));
+
+// The page and its loader compile on first import; under the full suite that alone can
+// pass a test's 5 s, so it is paid once here, not inside the first test.
+beforeAll(async () => {
+  await import(/* @vite-ignore */ PAGE);
+  await import(/* @vite-ignore */ LOADER);
+}, 30_000);
 
 let cleanup: Array<() => void> = [];
 afterEach(() => {
