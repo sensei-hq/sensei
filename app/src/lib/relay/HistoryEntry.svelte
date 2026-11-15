@@ -1,6 +1,6 @@
 <script lang="ts">
-  // One entry of a task's history (CONTRACT §1e.6; COMPONENTS §3d HistoryEntry): a node on
-  // the timeline in its outcome's tone, and a card — the title, the outcome as a pill and
+  // One entry of a task's history (CONTRACT §1e.6; COMPONENTS §3d HistoryEntry): a card
+  // (its dot is TaskHistory's Timeline) — the title, the outcome as a pill and
   // the time; who; what was said in a block edged in that tone; for a work/rework turn its
   // files, gates and telemetry folded. Each review its outcome, summary and comments; the
   // merge its note; a message to the crew with the receipts folded into it. A number
@@ -9,6 +9,7 @@
   import type { RelayAction, RelayLaneRef } from '$lib/relay-api.js';
   import type { RelayTone } from '@sensei/state';
   import { codeOf, hhmm } from './relay-format.js';
+  import { historyTone } from './relay-timeline.js';
 
   let {
     action,
@@ -34,28 +35,9 @@
   const askTitle = (a: Extract<RelayAction, { kind: 'asked' }>) =>
     a.props.asked_of === 'person' ? 'Asked you' : `Asked ${codeOf(lanes, a.props.asked_of)}`;
 
-  /** The entry's tone: the node's ring, the edge of what was said, the outcome pill. */
-  const tone = $derived<RelayTone>(
-    action.kind === 'merged'
-      ? 'success'
-      : action.kind === 'reviewed'
-        ? action.props.verdict === 'approved'
-          ? 'success'
-          : 'warning'
-        : action.kind === 'interrupted'
-          ? 'danger'
-          : action.kind === 'asked'
-            ? 'warning'
-            : 'accent',
-  );
+  /** The entry's tone: the edge of what was said, the outcome pill (the dot is the timeline's). */
+  const tone = $derived<RelayTone>(historyTone(action));
   // Literal, so UnoCSS finds each.
-  const NODE: Record<RelayTone, string> = {
-    success: 'border-success',
-    warning: 'border-warning',
-    danger: 'border-danger',
-    accent: 'border-accent',
-    neutral: 'border-paper-edge-strong',
-  };
   const EDGE: Record<RelayTone, string> = {
     success: 'border-l-success',
     warning: 'border-l-warning',
@@ -84,15 +66,8 @@
 
 <article
   data-history-entry={action.id}
-  class="relative flex flex-col gap-2 py-2.5 px-3.5 rounded-[10px] border border-solid border-paper-edge bg-paper"
+  class="flex flex-col gap-2 py-2.5 px-3.5 rounded-[10px] border border-solid border-paper-edge bg-paper"
 >
-  <span
-    data-entry-node
-    data-tone={tone}
-    aria-hidden="true"
-    class="absolute -left-[29px] top-3 w-3 h-3 rounded-full border-2 border-solid bg-paper {NODE[tone]}"
-  ></span>
-
   <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1">
     <p data-entry-title class="m-0 text-base font-semibold">
       {#if action.kind === 'assigned'}Assigned
