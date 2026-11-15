@@ -70,6 +70,8 @@ describe('NeedsYou', () => {
     const c = mount(NeedsYou, props());
     expect(text(c.querySelector('[data-section-heading]'))).toBe('Needs you · 4');
     const card = c.querySelector('article[data-decision]')!;
+    // The card is reached by its decision (#426: several can be open at once).
+    expect(card.getAttribute('data-decision')).toBe(view().decisions[0].id);
     expect(text(card.querySelector('[data-decision-question]'))).toBe('Where does the activity log live?');
     expect(text(card)).toContain('Activity logs is waiting on this.');
     expect(card.querySelector(`a[href="/relay/${F.CREW_ID}/t-logs"]`)).not.toBeNull();
