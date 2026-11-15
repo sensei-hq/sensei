@@ -35,6 +35,7 @@ export const mockupRunCard = (): RelayRunCardView => ({
     { label: 'Tasks', value: 12 },
     { label: 'Done', value: 5 },
   ],
+  draft: null,
 });
 
 /** The mockup's crew: the coordinator, six contributors — one not responding, one idle. */

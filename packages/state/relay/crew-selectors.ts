@@ -5,7 +5,7 @@
 
 import { crewTail, hhmm } from './format.js';
 import { assistantLabel, type RelayTone } from './now-selectors.js';
-import type { RelayLane, RelayNow, RelayPresence, RelayRole } from './types.js';
+import type { RelayLane, RelayNow, RelayPresence, RelayRole, RelayRunList, RelayRunListRow } from './types.js';
 
 export type { RelayPresence };
 
@@ -15,6 +15,21 @@ export interface RelayRunCardView {
   state: { label: string; tone: RelayTone };
   meta: string;
   facts: Array<{ label: string; value: number }>;
+  /** A draft waiting to start (#419): Start (when it can) and Cancel. Null for any other card. */
+  draft: { runId: string; canStart: boolean; note: string | null } | null;
+}
+
+/** One ended run under the Crew view (CONTRACT §1i; the UI half of #393). */
+export interface RelayPastRunView {
+  id: string;
+  title: string;
+  name: string;
+  state: { label: string; tone: RelayTone };
+  span: string;
+  done: string;
+  members: string;
+  /** Deleted 30 days after it ended; three days or fewer reads as a warning. */
+  deletes: { text: string; warning: boolean };
 }
 
 /** One member (COMPONENTS §3e MemberCard). */
@@ -55,9 +70,13 @@ export interface RelayAddMemberView {
 const codename = (lane: RelayLane) => lane.suggested_name ?? lane.code;
 const repoName = (repo: string | null) => (repo ? (repo.split('/').pop() ?? repo) : 'no repository');
 
-/** The run card: the open run when there is one, else the crew itself; null without a crew. */
-export function toRunCard(now: RelayNow | null): RelayRunCardView | null {
+/** The run card: the open run when there is one; else a draft waiting to start; else the
+ *  crew itself. Null without a crew and without a draft. */
+export function toRunCard(now: RelayNow | null, runs: RelayRunList | null = null): RelayRunCardView | null {
   const crew = now?.crews[0];
+  const open = crew ? now?.runs.find((r) => r.crew_id === crew.id && (r.state === 'planning' || r.state === 'active')) : undefined;
+  const draft = open ? undefined : runs?.active.find((r) => r.state === 'draft');
+  if (draft) return draftCard(now, draft);
   if (!now || !crew) return null;
   const coordinator = now.lanes.find((l) => l.crew_id === crew.id && l.role === 'coordinator');
   const members = now.lanes.filter((l) => l.crew_id === crew.id).length;
@@ -69,6 +88,7 @@ export function toRunCard(now: RelayNow | null): RelayRunCardView | null {
       state: { label: 'no run yet', tone: 'neutral' },
       meta: `${repoName(crew.repo_key)} · started ${hhmm(crew.started_at)}${who}`,
       facts: [{ label: 'Members', value: members }],
+      draft: null,
     };
   }
   const started = run.started_at ?? run.created_at;
@@ -81,7 +101,66 @@ export function toRunCard(now: RelayNow | null): RelayRunCardView | null {
       { label: 'Tasks', value: run.total_tasks },
       { label: 'Done', value: run.done_tasks },
     ],
+    draft: null,
   };
+}
+
+/** A draft: what it is, and whether the crew can start it now — a member must be answering. */
+function draftCard(now: RelayNow | null, draft: RelayRunListRow): RelayRunCardView {
+  const crew = now?.crews[0];
+  const lanes = crew ? (now?.lanes ?? []).filter((l) => l.crew_id === crew.id) : [];
+  const answering = lanes.some((l) => l.presence !== 'not_responding');
+  const note = !crew ? 'Set up your crew to start it.' : answering ? null : 'Start it once a member is answering.';
+  return {
+    title: `Run ${draft.id.slice(-4)}`,
+    state: { label: 'draft', tone: 'neutral' },
+    meta: `${repoName(draft.repo_key)} · drafted ${hhmm(draft.created_at)} · ${draft.title} · starts on ${crew ? 'this crew' : 'your crew'}`,
+    facts: crew ? [{ label: 'Members', value: lanes.length }] : [],
+    draft: { runId: draft.id, canStart: Boolean(crew) && answering, note },
+  };
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "Nov 2", by the reader's calendar. */
+const monthDay = (iso: string) => {
+  const d = new Date(iso);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+};
+/** Whole calendar days from `at` to `iso`, by the reader's calendar. */
+const daysUntil = (iso: string, at: number) => {
+  const day = (t: number) => {
+    const d = new Date(t);
+    return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  };
+  return Math.round((day(Date.parse(iso)) - day(at)) / 86_400_000);
+};
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+/** Ended runs, newest first (CONTRACT §1i): id and span · tasks done · members · when deleted. */
+export function toPastRuns(runs: RelayRunList | null, at = Date.now()): RelayPastRunView[] {
+  if (!runs) return [];
+  return [...runs.archived]
+    .sort((a, b) => (b.completed_at ?? b.created_at).localeCompare(a.completed_at ?? a.created_at))
+    .map((run) => {
+      const from = monthDay(run.started_at ?? run.created_at);
+      const to = run.completed_at ? monthDay(run.completed_at) : from;
+      const left = run.delete_after ? daysUntil(run.delete_after, at) : null;
+      return {
+        id: run.id,
+        title: `Run ${run.id.slice(-4)}`,
+        name: run.title,
+        state: run.state === 'completed' ? { label: 'completed', tone: 'success' } : { label: run.state, tone: 'neutral' },
+        span: from === to ? from : `${from} – ${to}`,
+        done: `${run.done_tasks} of ${plural(run.total_tasks, 'task')} done`,
+        members: plural(run.members, 'member'),
+        deletes:
+          left === null
+            ? { text: 'deletion date not reported', warning: false }
+            : left <= 0
+              ? { text: 'deleted today', warning: true }
+              : { text: `deleted in ${plural(left, 'day')}`, warning: left <= 3 },
+      };
+    });
 }
 
 const STATUS_TEXT: Record<RelayPresence, string> = { active: 'Active', idle: 'Idle', not_responding: 'Not responding' };

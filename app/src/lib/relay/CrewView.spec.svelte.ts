@@ -51,6 +51,7 @@ const card = (): RelayRunCardView => ({
     { label: 'Tasks', value: 12 },
     { label: 'Done', value: 5 },
   ],
+  draft: null,
 });
 
 const groups = (): RelayMemberGroupView[] => [

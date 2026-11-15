@@ -80,11 +80,13 @@ export {
   toAddMember,
   toMemberGroups,
   toRunCard,
+  toPastRuns,
   type RelayAddMemberView,
   type RelayMemberGroupView,
   type RelayMemberView,
   type RelayPresence,
   type RelayRunCardView,
+  type RelayPastRunView,
 } from './relay/crew-selectors.js';
 export {
   toTaskView,
