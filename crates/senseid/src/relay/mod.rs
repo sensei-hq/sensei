@@ -1499,6 +1499,33 @@ mod tests {
         assert!(!g.generic.contains("assigns"), "the coordinator no longer assigns: {}", g.generic);
     }
 
+    /// #419: what a person now does to a lane, said where the lane reads it at
+    /// register — the codename it is shown by, a nudge and what it asks, and
+    /// a crew the person closed (410 relay_lane_gone, then reregister refused
+    /// 409 "crew is closed") as the signal to stop rather than to resume.
+    #[test]
+    fn guidance_v2_names_what_a_person_does_to_a_lane() {
+        let g = relay_guidance_for("", None);
+        assert_eq!(g.version, "2");
+        let bullet = |name: &str| {
+            g.generic
+                .lines()
+                .find(|l| l.starts_with(&format!("- {name}:")))
+                .unwrap_or_else(|| panic!("generic guidance carries a '- {name}:' bullet"))
+                .to_string()
+        };
+        let named = bullet("Name");
+        assert!(named.contains("suggested_name"), "where the codename arrives: {named}");
+        let nudge = bullet("Nudge");
+        for word in ["props.nudge", "reason", "answer"] {
+            assert!(nudge.contains(word), "the nudge bullet lacks {word:?}: {nudge}");
+        }
+        let closed = bullet("Closed");
+        for word in ["410", "relay_lane_gone", "409", "crew is closed", "stop"] {
+            assert!(closed.contains(word), "the closed-crew bullet lacks {word:?}: {closed}");
+        }
+    }
+
     #[test]
     fn clamp_wait_timeout_defaults_and_clamps() {
         assert_eq!(clamp_wait_timeout(None), 25_000);
