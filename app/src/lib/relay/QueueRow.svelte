@@ -5,6 +5,7 @@
   // identity; in the backlog a checkbox picks it for a run. It draws toQueueRows'
   // data and calls back.
   import { Pill } from '@rokkit/ui';
+  import { Notice } from '@sensei/ui';
   import type { RelayQueueRowView } from '@sensei/state';
   import { NOW_CARD_ROW } from './primitives.js';
 
@@ -23,11 +24,13 @@
   } = $props();
 
   let busy = $state(false);
+  /** Why the last + was refused; a later + that is taken clears it. */
+  let refused = $state<string | null>(null);
 
   async function add(): Promise<void> {
     if (busy || !onadd) return;
     busy = true;
-    await onadd();
+    refused = await onadd();
     busy = false;
   }
 </script>
@@ -78,5 +81,6 @@
       onclick={() => void add()}
       class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-solid border-paper-edge bg-paper text-ink cursor-pointer disabled:opacity-60"
     ><span aria-hidden="true" class="text-lg leading-none">+</span></button>
+    {#if refused}<div class="basis-full"><Notice size="inline" tone="fault" title={refused} data-add-refused /></div>{/if}
   {/if}
 </li>
