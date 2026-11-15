@@ -26,4 +26,12 @@ ignore = [
     # quick-xml >= 0.41.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+
+    # RUSTSEC-2026-0459 — C SQLite CVE-2026-119375 in libsqlite3-sys 0.30.1.
+    #
+    # FAILS THE BAR ABOVE: it ships, bundled into senseid via rusqlite and via
+    # dbd-core → sqlx-sqlite. A user-approved exception (2026-11-15) so v0.22.0
+    # can release; the fix (sqlx 0.9 in dbd and sensei, rusqlite with
+    # libsqlite3-sys >= 0.39) is #446. Remove this entry when #446 closes.
+    "RUSTSEC-2026-0459",
 ]
