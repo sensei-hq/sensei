@@ -194,6 +194,20 @@ export function runListRow(over: Partial<RelayRunListRow> = {}): RelayRunListRow
   };
 }
 
+/** The clock the past-run fixtures are read at: deletion days count from here. */
+export const PAST_AT = Date.parse('2026-11-15T12:00:00Z');
+
+/** Ended runs for Past runs: two completed (one deleted in two days), one cancelled. */
+export function pastRunList(): RelayRunList {
+  return runList({
+    archived: [
+      runListRow({ id: PAST_RUN_ID, crew_id: CREW_ID, state: 'completed', title: 'Sprint 11', goal: 'Notice family', started_at: '2026-11-01T09:00:00Z', completed_at: '2026-11-02T17:00:00Z', delete_after: '2026-12-02T17:00:00Z', total_tasks: 6, done_tasks: 6, members: 3 }),
+      runListRow({ id: OTHER_RUN_ID, crew_id: CREW_ID, state: 'completed', title: 'Sprint 10', goal: 'Diagrams header', started_at: '2026-10-15T09:00:00Z', completed_at: '2026-10-17T15:00:00Z', delete_after: '2026-11-16T15:00:00Z', total_tasks: 9, done_tasks: 9, members: 4 }),
+      runListRow({ id: '019a5e2c-4b1d-7c00-8d2e-00000000ab14', crew_id: CREW_ID, state: 'cancelled', title: 'Sprint 9', goal: 'Billing build', started_at: '2026-10-10T09:00:00Z', completed_at: '2026-10-10T11:00:00Z', delete_after: '2026-11-09T11:00:00Z', total_tasks: 3, done_tasks: 1, members: 2 }),
+    ],
+  });
+}
+
 /** `GET /relay/runs`: a draft waiting for a crew, and one run that completed. */
 export function runList(over: Partial<RelayRunList> = {}): RelayRunList {
   return {

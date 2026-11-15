@@ -9,7 +9,10 @@
 import { createRawSnippet } from 'svelte';
 import { Pill, StatCard } from '@rokkit/ui';
 import type { PreviewEntry, PreviewView } from '$lib/preview/catalogue.js';
+import { toPastRuns, toRunCard } from '@sensei/state';
+import * as RF from '$lib/test-stubs/relay-fixtures.js';
 import { decision, floatingReview, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
+import PastRunsList from './PastRunsList.svelte';
 import { toRelayShell, type RelayShellInput, type RelayStatFilter } from './relay-shell.js';
 import { SHELL_FIXTURES, calm, crewNoRun, filteredWorking, loadedNow } from './relay-shell.fixtures.js';
 import RelayShell from './RelayShell.svelte';
@@ -83,6 +86,25 @@ const statCard =
       pressed: shell.filter?.stat === id,
     };
   };
+/** The draft run card (#424), each worked out by toRunCard from the shared fixtures. */
+function draftCards(): PreviewEntry[] {
+  const crewWith = (presence: 'idle' | 'not_responding') =>
+    RF.now({ runs: [], lanes: [RF.coordinatorLane({ presence, suggested_name: 'atlas-rigel' }), RF.lane({ presence, suggested_name: 'cobalt-lyra' })] });
+  const card = (now: ReturnType<typeof RF.now>, extra: Record<string, unknown> = {}) => ({
+    card: toRunCard(now, RF.runList()),
+    groups: [],
+    onmessage: () => {},
+    onstart: () => {},
+    oncancel: () => {},
+    ...extra,
+  });
+  return [
+    entry('RunCard/draft', 'a sprint drafted, a member answering: Start run and Cancel', RunCard, card(crewWith('idle'))),
+    entry('RunCard/draft-waiting', 'no member answering yet: Start waits, and says why', RunCard, card(crewWith('not_responding'))),
+    entry('RunCard/draft-no-crew', 'drafted before the crew: Start waits for the crew', RunCard, card(RF.noCrew())),
+    entry('RunCard/draft-refused', 'a start the daemon refused: the reason on the card', RunCard, card(crewWith('idle'), { error: 'the crew has no live lane' })),
+  ];
+}
 /** A stand-in body, so the shell's own regions are what the picture shows. */
 /** Rows enough that every shell's body overflows at both widths: the scroll test
  *  (e2e/preview/scroll.spec.ts) scrolls each one to its last row. Numbered, so a
@@ -169,6 +191,10 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
     card: mockupRunCard(),
     groups: mockupGroups(),
     onmessage: () => {},
+  }),
+  ...draftCards(),
+  entry('PastRunsList/mockup', 'ended runs under the Crew view: two completed (one deleted tomorrow, in warning), one cancelled', PastRunsList, {
+    rows: toPastRuns(RF.pastRunList(), RF.PAST_AT),
   }),
   entry('AddMember/setup', 'no crew yet: step 1 of 2, the coordinator', AddMember, { view: setupStep1(), oncopy: () => {}, onrole: () => {} }),
   entry('AddMember/setup-step2', 'the coordinator in: step 2 of 2, a contributor; the line names the crew (#419, beyond the mockup line)', AddMember, { view: setupStep2(), oncopy: () => {}, onrole: () => {} }),
