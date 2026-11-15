@@ -927,6 +927,19 @@ describe('Relay — a draft run starts from the Crew view; past runs below (#424
     await vi.waitFor(() => expect(api.tryGetRuns).toHaveBeenCalledTimes(2));
   });
 
+  it('a failed read of the runs says so, with Retry; nothing is invented in its place', async () => {
+    const { c, api } = await open({ now: crewNoRun(), runs: F.fail(503, 'daemon busy') });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-runs-error]')).not.toBeNull());
+    expect(text(one(c, '[data-runs-error]'))).toContain('daemon busy');
+    expect(one(c, '[data-run-start]')).toBeNull();
+    expect(section(c, 'past-runs')).toBeNull();
+    api.tryGetRuns.mockResolvedValue(F.ok(F.runList()));
+    need(one(c, '[data-runs-error] [data-notice-primary], [data-runs-error] button'), 'Retry').click();
+    await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
+    expect(one(c, '[data-runs-error]')).toBeNull();
+  });
+
   it('a refused start shows on the card', async () => {
     const { c, api } = await open({ now: crewNoRun() });
     api.tryStartRun.mockResolvedValue(F.fail(409, 'the crew has no live lane'));
