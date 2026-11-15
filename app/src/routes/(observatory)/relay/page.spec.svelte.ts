@@ -148,7 +148,7 @@ describe('Observatory · Relay — every crew, workspace or not', () => {
     const looseGroup = need(one(c, `[data-crew-group="${F.LOOSE_CREW_ID}"]`), 'the loose crew’s group');
     expect(text(one(looseGroup, '[data-crew-heading]'))).toContain('jerrythomas/scratch');
     expect(one(loose, `a[href="/relay/${F.LOOSE_CREW_ID}/t-scratch"]`)).not.toBeNull();
-    expect(one(c, `[data-lane-row="L1"] a[href="/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
+    expect(need(one(c, '[data-lane-row="L1"]'), 'L1').closest(`a[data-list-item][href="/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
   });
 
   it('lane rows are grouped by crew, and each group’s heading names its repository', async () => {

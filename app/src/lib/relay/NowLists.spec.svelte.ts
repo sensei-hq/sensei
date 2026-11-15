@@ -23,6 +23,8 @@ function mount<P extends Record<string, unknown>>(component: unknown, props: P) 
 
 const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 const part = (row: Element, name: string) => row.querySelector(`[data-part="${name}"]`);
+/** The rokkit List row (link or plain row) a row's content sits in. */
+const rowOf = (c: Element, sel: string) => c.querySelector(sel)!.closest('[data-list-item]')!;
 
 const working = (over: Partial<RelayLaneRowView> = {}): RelayLaneRowView => ({
   id: 'l1',
@@ -57,17 +59,20 @@ describe('LaneList · LaneRow', () => {
   it('the heading counts every lane; one card of rows, in order', () => {
     const c = mount(LaneList, { groups: [group([working(), working({ id: 'l2', code: 'L2' })])] });
     expect(text(c.querySelector('[data-section-heading]'))).toBe('Lanes · 2');
-    const card = c.querySelector('ul[data-lanes-card]');
+    // rokkit List: one display-only card, each row a link or a plain row.
+    const card = c.querySelector('nav[data-list][data-variant="card"]');
     expect(card).not.toBeNull();
-    expect([...card!.querySelectorAll(':scope > li[data-lane-row]')].map((li) => li.getAttribute('data-lane-row'))).toEqual(['L1', 'L2']);
+    expect([...card!.querySelectorAll(':scope > [data-list-item] [data-lane-row]')].map((r) => r.getAttribute('data-lane-row'))).toEqual(['L1', 'L2']);
+    expect(card!.querySelector('button')).toBeNull();
   });
 
   it('a row on a task is one link with the mockup’s parts: mark, name, task, state, when, chevron', () => {
     const c = mount(LaneList, { groups: [group([working()])] });
     const li = c.querySelector('[data-lane-row="L1"]')!;
-    const links = li.querySelectorAll('a');
-    expect(links).toHaveLength(1);
-    expect(links[0].getAttribute('href')).toBe('/relay/c/t-structure');
+    const link = rowOf(c, '[data-lane-row="L1"]');
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe('/relay/c/t-structure');
+    expect(li.querySelectorAll('a')).toHaveLength(0);
     expect([...links[0].children].map((el) => el.getAttribute('data-part'))).toEqual(['mark', 'name', 'task', 'state', 'when', 'chevron']);
     expect(text(part(li, 'name'))).toBe('Diagrams cobalt-lyra · Claude Code 2.1');
     expect(text(part(li, 'task'))).toBe('Structure view on the shell (tests r1)');
@@ -105,7 +110,11 @@ describe('LaneList · LaneRow', () => {
       groups: [group([working({ task: 'Nothing assigned', state: { label: 'idle', tone: 'neutral' }, when: { text: '', over: false }, href: null })])],
     });
     const li = c.querySelector('[data-lane-row="L1"]')!;
-    expect(li.querySelectorAll('a, button')).toHaveLength(0);
+    const row = rowOf(c, '[data-lane-row="L1"]');
+    // A plain rokkit row: not a link, not a button, not focusable.
+    expect(row.tagName).toBe('DIV');
+    expect(row.hasAttribute('data-static')).toBe(true);
+    expect(row.querySelectorAll('a, button')).toHaveLength(0);
     expect(part(li, 'chevron')).toBeNull();
     // It keeps the chevron's room, so its pill and time stay in the column.
     expect(li.querySelector('[data-chevron-space]')).not.toBeNull();
@@ -148,12 +157,13 @@ describe('CompletedList · CompletedRow', () => {
     const c = mount(CompletedList, { rows: [done(), done({ id: 't2', outcome: { label: 'approved', tone: 'success' } })] });
     expect(text(c.querySelector('[data-section-heading]'))).toBe('Completed today · 2');
     const row = c.querySelector('[data-completed-row="t-header"]')!;
-    const links = row.querySelectorAll('a');
-    expect(links).toHaveLength(1);
-    expect(links[0].getAttribute('href')).toBe('/relay/c/t-header');
-    expect([...links[0].children].map((el) => el.getAttribute('data-part'))).toEqual(['at', 'title', 'lane', 'outcome', 'chevron']);
+    const link = rowOf(c, '[data-completed-row="t-header"]');
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe('/relay/c/t-header');
+    expect([...row.children].map((el) => el.getAttribute('data-part'))).toEqual(['at', 'title', 'lane', 'outcome', 'chevron']);
     expect(text(part(row, 'lane'))).toBe('Diagrams · cobalt-lyra');
     expect(part(row, 'outcome')?.getAttribute('data-tone')).toBe('success');
-    expect(c.querySelector('ul[data-completed-card]')).not.toBeNull();
+    expect(c.querySelector('section[data-relay-section="completed"] nav[data-list][data-variant="card"]')).not.toBeNull();
+    expect(c.querySelector('[data-relay-section="completed"] button')).toBeNull();
   });
 });

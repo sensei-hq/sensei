@@ -435,8 +435,8 @@ describe('Relay · Now — Lanes (#422: LaneList from the selectors)', () => {
     const { c } = await open({ now: F.ok(crew()) });
     const lanes = need(section(c, 'lanes'), 'the lanes section');
     expect(text(one(lanes, '[data-section-heading]'))).toBe('Lanes · 5');
-    const card = need(one(lanes, 'ul[data-lanes-card]'), 'the lanes card');
-    expect(all(card, ':scope > li[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L0', 'L1', 'L3', 'L2', 'L5']);
+    const card = need(one(lanes, 'nav[data-list][data-variant="card"]'), 'the lanes card');
+    expect(all(card, ':scope > [data-list-item] [data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L0', 'L1', 'L3', 'L2', 'L5']);
 
     const l1 = need(one(lanes, '[data-lane-row="L1"]'), '[data-lane-row="L1"]');
     // No codename yet (#395): the code stands in, beside the assistant.
@@ -471,10 +471,12 @@ describe('Relay · Now — Lanes (#422: LaneList from the selectors)', () => {
 
   it('a lane on a task is one link to the task view; an idle lane opens nothing', async () => {
     const { c } = await open({ now: F.ok(crew()) });
-    const l1 = all(c, '[data-lane-row="L1"] a');
-    expect(l1).toHaveLength(1);
-    expect(l1[0].getAttribute('href')).toBe(`/workspace/w1/relay/${F.CREW_ID}/t-structure`);
-    expect(one(c, '[data-lane-row="L5"] a')).toBeNull();
+    const l1 = need(one(c, '[data-lane-row="L1"]'), 'L1').closest('[data-list-item]')!;
+    expect(l1.tagName).toBe('A');
+    expect(l1.getAttribute('href')).toBe(`/workspace/w1/relay/${F.CREW_ID}/t-structure`);
+    const l5 = need(one(c, '[data-lane-row="L5"]'), 'L5').closest('[data-list-item]')!;
+    expect(l5.tagName).toBe('DIV');
+    expect(l5.querySelector('a, button')).toBeNull();
   });
 });
 
@@ -491,9 +493,10 @@ describe('Relay · Now — Completed today (#422: CompletedList from the selecto
     expect(text(one(rows[0], '[data-part="lane"]'))).toBe('Diagrams · L1');
     expect(text(one(rows[0], '[data-part="outcome"]'))).toBe('merged');
     expect(text(one(rows[1], '[data-part="outcome"]'))).toBe('approved');
-    const links = all(rows[0], 'a');
-    expect(links).toHaveLength(1);
-    expect(links[0].getAttribute('href')).toBe(`/workspace/w1/relay/${F.CREW_ID}/t-header`);
+    const link = rows[0].closest('[data-list-item]')!;
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe(`/workspace/w1/relay/${F.CREW_ID}/t-header`);
+    expect(all(rows[0], 'a')).toHaveLength(0);
   });
 });
 
