@@ -899,6 +899,40 @@ describe('Relay — the Crew view with a crew (#424)', () => {
   });
 });
 
+describe('Relay — a draft run starts from the Crew view; past runs below (#424)', () => {
+  const crewNoRun = () => F.ok(F.now({ runs: [], lanes: [F.coordinatorLane({ presence: 'idle' }), F.lane({ presence: 'idle' })] }));
+
+  it('opening Crew reads the runs: the draft on the run card, Past runs below', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    expect(api.tryGetRuns).not.toHaveBeenCalled();
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
+    expect(api.tryGetRuns).toHaveBeenCalledTimes(1);
+    const card = need(one(c, '[data-run-card]'), 'the run card');
+    expect(text(one(card, '[data-run-title]'))).toBe(`Run ${F.DRAFT_RUN_ID.slice(-4)} draft`);
+    const past = need(section(c, 'past-runs'), 'Past runs');
+    expect(all(past, '[data-past-run]').map((r) => r.getAttribute('data-past-run'))).toEqual([F.PAST_RUN_ID]);
+  });
+
+  it('Start starts the draft on the screen’s crew, then reads the runs again', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
+    need(one(c, '[data-run-start]'), 'Start').click();
+    await vi.waitFor(() => expect(api.tryStartRun).toHaveBeenCalledWith(F.DRAFT_RUN_ID, F.CREW_ID));
+    await vi.waitFor(() => expect(api.tryGetRuns).toHaveBeenCalledTimes(2));
+  });
+
+  it('a refused start shows on the card', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    api.tryStartRun.mockResolvedValue(F.fail(409, 'the crew has no live lane'));
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
+    need(one(c, '[data-run-start]'), 'Start').click();
+    await vi.waitFor(() => expect(text(one(c, '[data-run-error]'))).toContain('the crew has no live lane'));
+  });
+});
+
 describe('Relay — no crew yet', () => {
   it('the info band frames it ("No crew yet", what to do); the Crew view is the landing: set up the crew, step 1 of 2 (#424)', async () => {
     const { c } = await open({ now: F.ok(F.noCrew()) });

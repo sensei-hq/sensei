@@ -72,6 +72,50 @@ describe('RunCard', () => {
       'Contributors · 1',
     ]);
     expect(text(root)).not.toMatch(/\bEnd\b/);
+    expect(root.querySelector('[data-run-start]')).toBeNull();
+    expect(root.querySelector('[data-run-cancel]')).toBeNull();
+  });
+
+  const draft = (over: Partial<NonNullable<RelayRunCardView['draft']>> = {}): RelayRunCardView => ({
+    ...card(),
+    title: 'Run ab12',
+    state: { label: 'draft', tone: 'neutral' },
+    facts: [{ label: 'Members', value: 2 }],
+    draft: { runId: 'run-ab12', canStart: true, note: null, ...over },
+  });
+
+  it('a draft: Start and Cancel, each calling back with the run', async () => {
+    const onstart = vi.fn();
+    const oncancel = vi.fn();
+    const c = mount(RunCard, { card: draft(), groups: groups(), onmessage: vi.fn(), onstart, oncancel });
+    const start = c.querySelector<HTMLButtonElement>('[data-run-start]')!;
+    expect(text(start)).toBe('Start run');
+    expect(start.disabled).toBe(false);
+    start.click();
+    c.querySelector<HTMLButtonElement>('[data-run-cancel]')!.click();
+    await tick();
+    expect(onstart).toHaveBeenCalledWith('run-ab12');
+    expect(oncancel).toHaveBeenCalledWith('run-ab12');
+  });
+
+  it('a draft that cannot start yet: Start disabled, the reason beside it', () => {
+    const c = mount(RunCard, {
+      card: draft({ canStart: false, note: 'Start it once a member is answering.' }),
+      groups: groups(),
+      onmessage: vi.fn(),
+      onstart: vi.fn(),
+      oncancel: vi.fn(),
+    });
+    expect(c.querySelector<HTMLButtonElement>('[data-run-start]')!.disabled).toBe(true);
+    expect(text(c.querySelector('[data-run-note]'))).toBe('Start it once a member is answering.');
+  });
+
+  it('while it starts: both buttons wait; a refusal shows on the card', () => {
+    const busy = mount(RunCard, { card: draft(), groups: groups(), onmessage: vi.fn(), onstart: vi.fn(), oncancel: vi.fn(), busy: true });
+    expect(busy.querySelector<HTMLButtonElement>('[data-run-start]')!.disabled).toBe(true);
+    expect(busy.querySelector<HTMLButtonElement>('[data-run-cancel]')!.disabled).toBe(true);
+    const refused = mount(RunCard, { card: draft(), groups: groups(), onmessage: vi.fn(), onstart: vi.fn(), oncancel: vi.fn(), error: 'the crew has no live lane' });
+    expect(text(refused.querySelector('[data-run-error]'))).toContain('the crew has no live lane');
   });
 });
 
