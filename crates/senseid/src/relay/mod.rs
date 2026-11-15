@@ -938,6 +938,15 @@ capped.\n\
 relay_reregister) with your lane_id resumes the same lane and returns the \
 task checkpoint. POST /api/relay/unregister releases the lane cleanly when \
 you leave.\n\
+- Name: register answers with your codename in suggested_name (two words, \
+unique in the crew); the person sees you by it beside your lane code.\n\
+- Nudge: a nudge reaches you as a message, usually with the task_id that \
+waits on you: a review to claim, a question to answer, a report to finish. \
+Act on that task in your next turn; a nudge is not new work.\n\
+- Closed: the person may close the crew, which releases every lane at once. \
+Your calls then answer 410 relay_lane_gone and reregister answers 409 \
+\"crew is closed\": the work is over, so stop the heartbeat and poll loops \
+and do not retry.\n\
 - Silence: no transcripts in any field. Titles, summaries, notes, and \
 messages carry decisions and diffs, never pasted session text.";
 
@@ -1517,7 +1526,9 @@ mod tests {
         let named = bullet("Name");
         assert!(named.contains("suggested_name"), "where the codename arrives: {named}");
         let nudge = bullet("Nudge");
-        for word in ["props.nudge", "reason", "answer"] {
+        // A lane's envelope carries a message's text and task_id, not its
+        // props: the bullet names what the lane can see.
+        for word in ["message", "task_id", "answer"] {
             assert!(nudge.contains(word), "the nudge bullet lacks {word:?}: {nudge}");
         }
         let closed = bullet("Closed");
