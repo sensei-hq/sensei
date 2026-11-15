@@ -14,6 +14,11 @@
  *   3. Planner — a lane claims Task 0 and asks the person; Needs you shows it and the
  *               person answers; the plan report floats for review; another lane approves
  *               it; the plan unpacks and the band reads active.
+ *   4. Work   — both lanes claim (the second early, gated on the first); a checkpoint's
+ *               steps show on the lane row; the first report waits for a reviewer, is
+ *               approved, and the broker's gate merges it (Completed today); then the
+ *               second, the same way.
+ *   5. Done   — the run completes: it leaves the band, and Past runs lists it.
  */
 import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
@@ -92,6 +97,14 @@ test.beforeAll(async () => {
   writeFileSync(join(repo, 'README'), 'base\n');
   g('add', '.');
   g('commit', '-qm', 'init');
+  // One branch per planned task, as each lane would push it.
+  for (const t of ['t1', 't2']) {
+    g('checkout', '-qb', `lane/${t}`, 'main');
+    writeFileSync(join(repo, `${t}.txt`), `${t}\n`);
+    g('add', '.');
+    g('commit', '-qm', t);
+  }
+  g('checkout', '-q', 'main');
 });
 
 test.afterAll(async () => {
@@ -105,6 +118,8 @@ test('the run, driven from the app end to end, every change from the stream', as
   await test.step('1 · Queue: two items to the backlog, picked; Create run drafts it (no crew yet)', () => queueStage(tauriPage));
   await test.step('2 · Crew: a coordinator and two contributors register and appear live; Start starts the draft', () => crewStage());
   await test.step('3 · Planner: Task 0 claimed, the person answers its question, the plan is reviewed and unpacks', () => plannerStage());
+  await test.step('4 · Work: claims, steps, a report reviewed and merged by the gate — twice', () => workStage());
+  await test.step('5 · Done: the run completes, leaves the band, and Past runs lists it', () => doneStage());
 });
 
 async function queueStage(tauriPage: TauriPageLike): Promise<void> {
@@ -219,4 +234,77 @@ async function plannerStage(): Promise<void> {
 
   // The plan unpacks: the band reads active.
   await expect.poll(() => attrOf(band, 'data-run-state'), { timeout: STREAM }).toBe('active');
+}
+
+/** The broker's merge gate runs on the sweeper's pass. */
+const GATE = 200_000;
+const work: { t1: string; t2: string } = { t1: '', t2: '' };
+
+/** Wait for the gate to merge a task, then for the screen to show it under Completed today. */
+async function mergedAndCompleted(taskId: string, title: string): Promise<void> {
+  await expect
+    .poll(async () => (await person<{ task: { state: string } }>('GET', `/relay/tasks/${lanes.coord!.crewId}/${taskId}`)).task.state, {
+      timeout: GATE,
+      intervals: [5_000],
+    })
+    .toBe('done');
+  await expect.poll(async () => (await textsOf('[data-completed-row]')).includes(title), { timeout: STREAM }).toBe(true);
+}
+
+async function workStage(): Promise<void> {
+  const a = lanes.a!;
+  const b = lanes.b!;
+  // A takes the first task; B the second early — its report waits for the first.
+  const first = await a.claimNext();
+  expect(first.task?.deps_status).toBe('satisfied');
+  work.t1 = first.task!.id;
+  const second = await b.claimNext();
+  expect(second.task?.deps_status).toBe('early_claim_gated');
+  work.t2 = second.task!.id;
+  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('First file'), { timeout: STREAM }).toBe(true);
+  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('Second file'), { timeout: STREAM }).toBe(true);
+
+  // A's checkpoint: its steps, counted on its lane row.
+  await a.checkpoint(work.t1, {
+    current_step: 'Checking the file',
+    steps: [
+      { key: 'write', title: 'Write t1.txt', state: 'done' },
+      { key: 'check', title: 'Check it', state: 'open' },
+    ],
+  });
+  await expect.poll(async () => (await textsOf('[data-lane-progress]')).includes('1 of 2 steps done'), { timeout: STREAM }).toBe(true);
+
+  // B's early report is refused until the first is done.
+  const early = await b.attempt(() => b.report(work.t2, { phase: 'impl', round: 1, summary: { changed: 't2.txt' }, branch: 'lane/t2' }));
+  expect(early).toMatchObject({ ok: false, status: 409, error: 'relay_upstream_deps_unmet' });
+
+  // A reports; the report waits for a reviewer; B claims and approves; the gate merges.
+  await a.report(work.t1, { phase: 'impl', round: 1, summary: { changed: 't1.txt' }, branch: 'lane/t1', files: [{ path: 't1.txt', added: 1, removed: 0 }] });
+  const floating1 = `[data-floating-review][data-task-id="${work.t1}"]`;
+  await expect.poll(() => countOf(floating1), { timeout: STREAM }).toBe(1);
+  const review1 = await b.claimNext();
+  expect([review1.claim_type, review1.task?.id]).toEqual(['review', work.t1]);
+  expect((await b.review(work.t1, 'approved', 'Good.')).state).toBe('approved');
+  await expect.poll(() => countOf(floating1), { timeout: STREAM }).toBe(0);
+  await mergedAndCompleted(work.t1, 'First file');
+  execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', 'lane/t1', 'main']);
+
+  // Now B reports the second; A reviews; the gate merges.
+  await b.report(work.t2, { phase: 'impl', round: 1, summary: { changed: 't2.txt' }, branch: 'lane/t2', files: [{ path: 't2.txt', added: 1, removed: 0 }] });
+  const review2 = await a.claimNext();
+  expect([review2.claim_type, review2.task?.id]).toEqual(['review', work.t2]);
+  expect((await a.review(work.t2, 'approved', 'Good.')).state).toBe('approved');
+  await mergedAndCompleted(work.t2, 'Second file');
+  execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', 'lane/t2', 'main']);
+}
+
+async function doneStage(): Promise<void> {
+  // Every task done: the broker completes the run on its pass; the band lets it go.
+  const band = `[data-sprint-band][data-run-id="${ids.run}"]`;
+  await expect.poll(() => countOf(band), { timeout: GATE, intervals: [5_000] }).toBe(0);
+  // The Crew view: the run is past — listed under Past runs, opening read-only.
+  await view('Crew').click();
+  const row = `[data-relay-section="past-runs"] [data-past-run="${ids.run}"]`;
+  await expect.poll(() => countOf(row), { timeout: STREAM }).toBe(1);
+  expect(await textsOf(row)).toContain('Run journey');
 }
