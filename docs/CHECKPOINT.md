@@ -13,13 +13,14 @@ Catalogue spec `docs/spec/2026-11-14-shared-component-catalogue.md` approved (d�
   List cards: red `a09b0797b`, green `382022f51`; app + dōjō `^1.15.6`. Catalogue Order step 1 done.
 - StatCard fixtures on the bench (red `b2c8c10cd`, green `8e75d54b3`): eight states from `toRelayShell`, drawn as the
   stats band draws them; preview fixtures may compute props from the view (`propsFor`).
+- #419 wrap-up: guidance v2 (codename, nudge, closed crew → stop; `ce92c3ba2`), lanes.md §4, live + e2e DBs
+  reconciled (`dbd diff` clean), daemon installed, relay e2e 8/8. Editor tag → #396. #419 closes on lane merge.
 - sensei v0.22.1 released (notarized, tap, dōjō deployed); shipped issues closed (memory: close on merge).
 
-**Remaining (in order):** #419 wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`,
-editor field, install, e2e) → #426. Then catalogue Order 2–5 (guards, dōjō `/preview`, families; QueueSection and
+**Remaining (in order):** #426. Then catalogue Order 2–5 (guards, dōjō `/preview`, families; QueueSection and
 dōjō ListSection need their row controls inside display-only rows). Queued: #446 (sqlx 0.9 / SQLite CVE), #447.
 
-**Next command:** #419 wrap-up — read the issue's remaining items, then red-first per item.
+**Next command:** #426 — read the issue, then red-first per item.
 
 **Open questions (user):** none.
 
