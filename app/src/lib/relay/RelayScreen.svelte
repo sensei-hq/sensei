@@ -23,6 +23,7 @@
     toNeedsYou,
     toQueueRows,
     toRunCard,
+    toPastRuns,
     toWaitRows,
     type NowRowOptions,
   } from '@sensei/state';
@@ -36,6 +37,7 @@
   import AddItemForm from './AddItemForm.svelte';
   import AddMember from './AddMember.svelte';
   import RunCard from './RunCard.svelte';
+  import PastRunsList from './PastRunsList.svelte';
   import LaneList from './LaneList.svelte';
   import CompletedList from './CompletedList.svelte';
   import NeedsYou from './NeedsYou.svelte';
@@ -162,7 +164,13 @@
 
   // The Crew view (#424): the run card, the members by role, and AddMember for the role
   // the person picked (the coordinator first).
-  const runCard = $derived(toRunCard(state.now));
+  const runCard = $derived(toRunCard(state.now, state.runList));
+  const pastRuns = $derived(toPastRuns(state.runList, Date.now()));
+  // The run list (a draft to start, past runs) is read when the Crew view opens; run
+  // events and the person's own start or cancel read it again.
+  $effect(() => {
+    if (shell.view === 'crew' && state.now && !state.runList) void state.readRuns();
+  });
   const memberGroups = $derived(toMemberGroups(state.now, Date.now()));
   const addMember = $derived(toAddMember(state.now, state.addRole));
   async function copy(text: string): Promise<void> {
@@ -206,9 +214,18 @@
          AddMember — set-up while there is no run, else Add a member. -->
     <section aria-label="Crew" class="flex flex-col gap-5 p-4" data-relay-section="crew">
       {#if runCard}
-        <RunCard card={runCard} groups={memberGroups} onmessage={() => (state.composing = true)} />
+        <RunCard
+          card={runCard}
+          groups={memberGroups}
+          onmessage={() => (state.composing = true)}
+          onstart={(runId) => void state.startRun(runId)}
+          oncancel={(runId) => void state.cancelRun(runId)}
+          busy={state.startingRun !== null}
+          error={state.runActionError}
+        />
       {/if}
       <AddMember view={addMember} oncopy={(text) => void copy(text)} onrole={(role) => (state.addRole = role)} />
+      <PastRunsList rows={pastRuns} />
     </section>
   {:else if state.now && state.hasCrew && shell.view === 'now'}
     <!-- Now (CONTRACT §1c): what needs the person, then the lanes, then today's

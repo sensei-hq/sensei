@@ -18,6 +18,7 @@ import { mountComponent } from '$lib/test-mount.js';
 import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 import type { ApiResult } from '$lib/api.js';
 import type { RelayNow, RelayQueue } from '$lib/relay-api.js';
+import type { RelayRunList } from '@sensei/state';
 import * as F from '$lib/test-stubs/relay-fixtures.js';
 
 // Variables, so the transform does not resolve them before phase B creates them.
@@ -119,6 +120,8 @@ async function open(
   opts: {
     now?: ApiResult<RelayNow>;
     queue?: ApiResult<RelayQueue>;
+    /** `GET /relay/runs` (#424): a draft and a past run unless given. */
+    runs?: ApiResult<RelayRunList>;
     workspace?: string;
     /** The workspace layout's data, which SvelteKit merges into the page's `data`. */
     layout?: Record<string, unknown>;
@@ -127,6 +130,7 @@ async function open(
   const api = F.fakeRelayApi();
   if (opts.now) api.tryGetNow.mockResolvedValue(opts.now);
   if (opts.queue) api.tryGetQueue.mockResolvedValue(opts.queue);
+  if (opts.runs) api.tryGetRuns.mockResolvedValue(opts.runs);
   const loaded = await loadFor(opts.workspace ?? 'w1', api);
   const data = { ...(opts.layout ?? {}), ...(loaded as object) };
   const { default: Page } = await import(/* @vite-ignore */ PAGE);
@@ -935,7 +939,10 @@ describe('Relay — a draft run starts from the Crew view; past runs below (#424
 
 describe('Relay — no crew yet', () => {
   it('the info band frames it ("No crew yet", what to do); the Crew view is the landing: set up the crew, step 1 of 2 (#424)', async () => {
-    const { c } = await open({ now: F.ok(F.noCrew()) });
+    // No run drafted either: the landing is the set-up alone.
+    const { c, api } = await open({ now: F.ok(F.noCrew()), runs: F.ok(F.runList({ active: [], archived: [] })) });
+    await vi.waitFor(() => expect(api.tryGetRuns).toHaveBeenCalled());
+    await tick();
     const info = need(one(c, '[data-screen-info]'), '[data-screen-info]');
     expect(text(info)).toContain('No crew yet');
     expect(text(info)).toContain('Set it up below');
@@ -955,6 +962,16 @@ describe('Relay — no crew yet', () => {
     expect(section(c, 'completed')).toBeNull();
     expect(one(c, '[data-relay-error]')).toBeNull();
     expect(toolbarButton(c, 'Message the crew')).toBeNull();
+  });
+
+  it('a run drafted before the crew: its card above the set-up, Start waiting for the crew (#424)', async () => {
+    const { c } = await open({ now: F.ok(F.noCrew()) });
+    await vi.waitFor(() => expect(one(c, '[data-run-card]')).not.toBeNull());
+    const card = need(one(c, '[data-run-card]'), 'the draft card');
+    expect(text(one(card, '[data-run-title]'))).toBe(`Run ${F.DRAFT_RUN_ID.slice(-4)} draft`);
+    expect((one(card, '[data-run-start]') as HTMLButtonElement).disabled).toBe(true);
+    expect(text(one(card, '[data-run-note]'))).toBe('Set up your crew to start it.');
+    expect(one(c, '[data-add-member]')).not.toBeNull();
   });
 
   it('choosing Contributor shows its line; Copy puts the shown line on the clipboard', async () => {
