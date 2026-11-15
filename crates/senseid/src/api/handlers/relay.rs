@@ -5543,6 +5543,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn now_leaves_out_a_closed_crews_open_questions() {
+        // #426: a question a lane of a now-closed crew asked stayed in Needs you,
+        // where answering it reaches no one. Now's decisions are the open crews'.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &coord.0,
+                json!({
+                    "question": "Left behind?",
+                    "options": [{"id": "yes", "label": "Yes"}],
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let question = |now: &serde_json::Value| {
+            now["decisions"].as_array().unwrap().iter().any(|d| d["question"] == "Left behind?")
+        };
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(question(&now), "an open crew's question is on Now: {now}");
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(!question(&now), "a closed crew's question is not: {now}");
+    }
+
+    #[tokio::test]
     async fn now_lists_open_crews_only() {
         // #426: a closed crew stayed in now.crews, and the screen took the first
         // crew as its own — a run created there tried to start on a closed crew
