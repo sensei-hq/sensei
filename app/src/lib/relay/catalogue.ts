@@ -7,11 +7,11 @@
 // props it takes, nothing else.
 
 import { createRawSnippet } from 'svelte';
-import { Pill } from '@rokkit/ui';
-import type { PreviewEntry } from '$lib/preview/catalogue.js';
+import { Pill, StatCard } from '@rokkit/ui';
+import type { PreviewEntry, PreviewView } from '$lib/preview/catalogue.js';
 import { decision, floatingReview, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
-import { toRelayShell } from './relay-shell.js';
-import { SHELL_FIXTURES } from './relay-shell.fixtures.js';
+import { toRelayShell, type RelayShellInput, type RelayStatFilter } from './relay-shell.js';
+import { SHELL_FIXTURES, calm, crewNoRun, filteredWorking, loadedNow } from './relay-shell.fixtures.js';
 import RelayShell from './RelayShell.svelte';
 import DecisionRow from './DecisionRow.svelte';
 import FloatingReviewRow from './FloatingReviewRow.svelte';
@@ -52,7 +52,7 @@ const entry = (
   id: string,
   note: string,
   component: PreviewEntry['component'],
-  props: Record<string, unknown>,
+  props: PreviewEntry['props'],
   frame?: PreviewEntry['frame'],
 ): PreviewEntry => ({ id, note, component, props, frame });
 
@@ -61,6 +61,28 @@ const entry = (
 const accepted = async () => null;
 /** A shell fixture's actions go nowhere: the bench shows one state at a time. */
 const still = { view: () => {}, compose: () => {}, filter: () => {}, narrow: () => {} };
+/** One card of the relay stats band, from the relay's own derivation, drawn as the
+ *  shell's stats band draws it (rokkit StatCard): the kanji mark, the icon in icon mode,
+ *  a filter toggle pressed when its filter is on. */
+const statCard =
+  (input: () => RelayShellInput, id: RelayStatFilter) =>
+  (view: PreviewView): Record<string, unknown> => {
+    const shell = toRelayShell(input(), still);
+    const stat = shell.stats?.find((s) => s.id === id);
+    if (!stat) throw new Error(`the ${id} stat is not in this shell fixture`);
+    return {
+      ...stat.attrs,
+      label: stat.title,
+      value: stat.value,
+      tone: stat.tone,
+      description: stat.description,
+      reserveDescription: true,
+      icon: view.glyph === 'icon' ? stat.icon : undefined,
+      mark: stat.kanji,
+      onclick: () => {},
+      pressed: shell.filter?.stat === id,
+    };
+  };
 /** A stand-in body, so the shell's own regions are what the picture shows. */
 /** Rows enough that every shell's body overflows at both widths: the scroll test
  *  (e2e/preview/scroll.spec.ts) scrolls each one to its last row. Numbered, so a
@@ -80,6 +102,14 @@ const band = createRawSnippet(() => ({
 }));
 
 export const RELAY_CATALOGUE: PreviewEntry[] = [
+  entry('StatCard/working', 'the stats band: lanes on a task now, in the accent', StatCard, statCard(loadedNow, 'working')),
+  entry('StatCard/working-pressed', 'its filter on: the card pressed', StatCard, statCard(filteredWorking, 'working')),
+  entry('StatCard/waiting-too-long', 'the oldest wait past the threshold: warning, and said in words', StatCard, statCard(loadedNow, 'waiting')),
+  entry('StatCard/waiting-calm', 'nothing waits long: ink', StatCard, statCard(calm, 'waiting')),
+  entry('StatCard/waiting-unreported', 'waits whose age was not reported', StatCard, statCard(crewNoRun, 'waiting')),
+  entry('StatCard/blocked', 'on you, or lease lost: danger', StatCard, statCard(loadedNow, 'blocked')),
+  entry('StatCard/blocked-none', 'nothing blocked: ink', StatCard, statCard(calm, 'blocked')),
+  entry('StatCard/done', 'completed today, with how many passed review first time', StatCard, statCard(loadedNow, 'done')),
   entry('LaneList/mockup', 'the mockup’s seven lanes: working, waits past the threshold, lease lost, a question, idle', LaneList, { groups: mockupLanes() }),
   entry('LaneList/main-window', 'the main window: a card per crew under its repository', LaneList, { groups: mainWindowLanes() }),
   entry('LaneList/edges', 'a quota pause, and an objective and task that need the ellipsis', LaneList, { groups: edgeLanes() }),

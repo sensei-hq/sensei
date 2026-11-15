@@ -12,9 +12,15 @@ export interface PreviewEntry {
   note: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   component: Component<any>;
-  props: Record<string, unknown>;
+  /** The props, or — when they depend on the view (marks, width) — how to work them out from it. */
+  props: Record<string, unknown> | ((view: PreviewView) => Record<string, unknown>);
   /** A shell drawn in a box of this height; on a phone the header bands stack, so it gets `phoneHeight`. */
   frame?: { height: number; phoneHeight?: number };
+}
+
+/** The props a fixture is drawn with in a view. */
+export function propsFor(entry: PreviewEntry, view: PreviewView): Record<string, unknown> {
+  return typeof entry.props === 'function' ? entry.props(view) : entry.props;
 }
 
 /** A component in the index: its name and how many fixtures it has. */

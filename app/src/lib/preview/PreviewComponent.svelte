@@ -3,7 +3,7 @@
   // marks and width the query asks for — the page a person reviews and, for `all`, the
   // one the capture matrix shoots. Nothing here reads the daemon.
   import { setGlyphMode } from '$lib/glyphs';
-  import { ALL, fixtureName, previewHref, type PreviewComponent, type PreviewEntry, type PreviewView } from './catalogue.js';
+  import { ALL, fixtureName, previewHref, propsFor, type PreviewComponent, type PreviewEntry, type PreviewView } from './catalogue.js';
 
   let data: { component: string; entries: PreviewEntry[]; components: PreviewComponent[]; view: PreviewView } = $props();
 
@@ -102,7 +102,7 @@
               style:height="{data.view.width === 'phone' ? (item.frame.phoneHeight ?? item.frame.height) : item.frame.height}px"
             >
               <div data-preview-main class="flex-1 min-w-0 min-h-0 overflow-hidden">
-                <item.component {...item.props} />
+                <item.component {...propsFor(item, data.view)} />
               </div>
             </div>
           {:else}
@@ -112,7 +112,7 @@
               class:w-[390px]={data.view.width === 'phone'}
               class:max-w-[1100px]={data.view.width === 'wide'}
             >
-              <item.component {...item.props} />
+              <item.component {...propsFor(item, data.view)} />
             </div>
           {/if}
         </section>
