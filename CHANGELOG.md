@@ -15,6 +15,16 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.22.1] — 2026-11-15
+
+### Fixed
+
+- **Release: the macOS daemon binaries are notarized.** `ci-notarize.sh` handed
+  `ditto -c -k` three binaries; it archives one source, so v0.22.0's macOS daemon
+  builds failed and no v0.22.0 GitHub release or tap update was published. The
+  binaries now go up as one folder. 0.22.1 carries everything listed under 0.22.0.
+- The marketplace mirror keeps its MIT `LICENSE` (it now lives in `marketplace/`).
+
 ## [0.22.0] — 2026-11-15
 
 ### Added
