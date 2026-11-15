@@ -11,6 +11,9 @@
  *               (no crew yet).
  *   2. Crew   — the driver registers a coordinator and two contributors: their cards
  *               appear live; Start starts the draft; the run card reads planning.
+ *   3. Planner — a lane claims Task 0 and asks the person; Needs you shows it and the
+ *               person answers; the plan report floats for review; another lane approves
+ *               it; the plan unpacks and the band reads active.
  */
 import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
@@ -101,6 +104,7 @@ test('the run, driven from the app end to end, every change from the stream', as
   tauri = tauriPage;
   await test.step('1 · Queue: two items to the backlog, picked; Create run drafts it (no crew yet)', () => queueStage(tauriPage));
   await test.step('2 · Crew: a coordinator and two contributors register and appear live; Start starts the draft', () => crewStage());
+  await test.step('3 · Planner: Task 0 claimed, the person answers its question, the plan is reviewed and unpacks', () => plannerStage());
 });
 
 async function queueStage(tauriPage: TauriPageLike): Promise<void> {
@@ -144,18 +148,75 @@ async function crewStage(): Promise<void> {
   await expect.poll(() => countOf('[data-member]'), { timeout: STREAM }).toBe(1);
   lanes.a = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'cobalt-e2e' });
   lanes.b = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'coral-e2e' });
-  // Every member's card, by its codename, as the stream brings each in.
-  await expect
-    .poll(async () => {
-      const cards = await textsOf('[data-member]');
-      return ['atlas-e2e', 'cobalt-e2e', 'coral-e2e'].filter((name) => cards.includes(name));
-    }, { timeout: STREAM })
-    .toEqual(['atlas-e2e', 'cobalt-e2e', 'coral-e2e']);
-  expect(await countOf('[data-member]')).toBe(3);
+  // Every member's card, as the stream brings each in; then each by its codename.
+  await expect.poll(() => countOf('[data-member]'), { timeout: STREAM }).toBe(3);
+  const cards = await textsOf('[data-member]');
+  for (const name of ['atlas-e2e', 'cobalt-e2e', 'coral-e2e']) expect(cards).toContain(name);
+
 
   const start = tauri.locator('[data-run-card] [data-run-start]');
   await expect(start).toBeEnabled({ timeout: STREAM });
   await start.click();
   await expect(tauri.locator('[data-run-card] [data-run-title]')).toContainText('planning', { timeout: STREAM });
   expect(await countOf('[data-run-card] [data-run-start]')).toBe(0);
+}
+
+/** An attribute of the first element a selector matches, read in the page. */
+const attrOf = (selector: string, name: string) =>
+  tauri.evaluate(`document.querySelector(${JSON.stringify(selector)})?.getAttribute(${JSON.stringify(name)}) ?? null`) as Promise<string | null>;
+
+const PLAN = {
+  tasks: [
+    { key: 't1', title: 'First file', phase: 'impl', owned_paths: ['t1.txt'], acceptance: ['t1.txt exists'], deps: [] },
+    { key: 't2', title: 'Second file', phase: 'impl', owned_paths: ['t2.txt'], acceptance: ['t2.txt exists'], deps: ['t1'] },
+  ],
+};
+const ids: { run: string; task0: string } = { run: '', task0: '' };
+
+async function plannerStage(): Promise<void> {
+  const a = lanes.a!;
+  const b = lanes.b!;
+  const runs = await person<{ active: Array<{ id: string; title: string; state: string }> }>('GET', '/relay/runs');
+  ids.run = runs.active.find((r) => r.title === 'Run journey')!.id;
+
+  await view('Now').click();
+  const band = `[data-sprint-band][data-run-id="${ids.run}"]`;
+  await expect.poll(() => attrOf(band, 'data-run-state'), { timeout: STREAM }).toBe('planning');
+
+  // A lane claims Task 0: its row shows the plan task.
+  const claim = await a.claimNext();
+  expect(claim.claim_type).toBe('task');
+  ids.task0 = claim.task!.id;
+  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('cobalt-e2e'), { timeout: STREAM }).toBe(true);
+  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('Plan: Run journey'), { timeout: STREAM }).toBe(true);
+
+  // It asks the person; Needs you shows the question, and the person answers in the app.
+  const decisionId = await a.ask({
+    task_id: ids.task0,
+    question: 'One file per task, or both in one?',
+    options: [
+      { id: 'split', label: 'One per task' },
+      { id: 'one', label: 'Both in one' },
+    ],
+    recommended: 'split',
+  });
+  const needs = '[data-relay-section="needs-you"]';
+  await expect.poll(async () => (await textsOf(`${needs} [data-decision-question]`)).includes('One file per task, or both in one?'), { timeout: STREAM }).toBe(true);
+  const card = `${needs} [data-decision="${decisionId}"]`;
+  await tauri.locator(`${card} [data-option="split"]`).click();
+  await tauri.locator(`${card} [data-decision-answer]`).click();
+  await expect.poll(() => countOf(card), { timeout: STREAM }).toBe(0);
+
+  // The plan report floats for review; another lane claims it and approves.
+  await a.reportPlan(ids.task0, PLAN, 'Planned two files, one per task.');
+  const floating = `[data-floating-review][data-task-id="${ids.task0}"]`;
+  await expect.poll(() => countOf(floating), { timeout: STREAM }).toBe(1);
+  const review = await b.claimNext();
+  expect([review.claim_type, review.task?.id]).toEqual(['review', ids.task0]);
+  const approved = await b.review(ids.task0, 'approved', 'Sound plan.');
+  expect(approved.state).toBe('done');
+  await expect.poll(() => countOf(floating), { timeout: STREAM }).toBe(0);
+
+  // The plan unpacks: the band reads active.
+  await expect.poll(() => attrOf(band, 'data-run-state'), { timeout: STREAM }).toBe('active');
 }
