@@ -26,19 +26,17 @@ User ruling 2026-11-14: one shell — fix rokkit, never patch per screen; reuse 
 - Catalogue spec `docs/spec/2026-11-14-shared-component-catalogue.md` **approved**; ruling: `/preview` covers the
   dōjō's components too (shared preview kit in `@sensei/ui`, dōjō mounts its own `/preview`; Rule 6, Order step 3).
 
-**Remaining (in order):** TaskHistory → rokkit Timeline · lists → rokkit List (no-button rows) · StatCard
-fixtures · #419 wrap-up (guidance v2, live DDL incl. now.ddl `last_nudge`, install, e2e) → #426. Then catalogue
-Order 2–5 (guards, dōjō `/preview`, families).
+- rokkit 1.15.5 (#182 Timeline tone + dot, #183 Pill title) published; app + dōjō bumped. TaskHistory on
+  `<Timeline marker="dot">` (`e30a2cd13`, historyTone shared); MemberCard host tag via `editorTag` (`165f884de`;
+  `editor` null until the daemon reports it, #419). Timeline line is zen-sumi `paper-mute` (fainter than before).
 
-- Timeline, rokkit side: **PR sensei-hq/rokkit#182 awaiting the user's review** (branch `feat/timeline-tone-dot`,
-  red `50a173808` → green `695bbd4ed`; check 9092 + browser 183): item `tone` → `data-tone`; `marker="dot"`, a 12px
-  dot centred on one line; `--timeline-gap`, `--timeline-dot-top`.
+**Remaining (in order):** lists → rokkit List (no-button rows) · StatCard fixtures · #419 wrap-up (guidance v2,
+live DDL incl. now.ddl `last_nudge`, editor field, install, e2e) → #426. Then catalogue Order 2–5. Queued (user):
+how negative terms are identified — phrases or intent (investigating). #446: sqlx 0.9 / SQLite CVE.
 
-**Next command:** after #182 is merged and published (1.15.5): bump `@rokkit/*` in app + dōjō, then TaskHistory →
-`<Timeline marker="dot">` with HistoryEntry as the `content` snippet (red-first; drop the hand-placed node).
+**Next command:** lists → rokkit List (red-first). Release v0.22.0 in progress on develop (`lanes/merge`).
 
-**Open questions (user):** review/merge/publish rokkit#182; host tag needs a Pill `title`; merge #417 + `make release`
-(then this lane → develop when finished).
+**Open questions (user):** none open on this lane.
 
 **Known broken:** CONTRACT §15 auto-nudge for non-review waits not built (`task.waiting` gap). Dev Vite binds IPv6
 `localhost` only (rig uses `localhost`). Lane test DB: re-apply a changed view by hand (self-apply skips).
