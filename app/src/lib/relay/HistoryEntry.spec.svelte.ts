@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // One history entry, to the mockup (#425; COMPONENTS §3d HistoryEntry; CONTRACT §1e.6):
-// a node on the timeline in its outcome's tone, a card (radius 10) whose header row is
+// a card (radius 10) whose header row is
 // the title, the outcome pill and the time; what was said in a block edged in that tone;
 // a turn's files, gates and telemetry in a fold.
 import { describe, it, expect, afterEach } from 'vitest';
@@ -23,12 +23,10 @@ function mount(id: string) {
 const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 describe('HistoryEntry', () => {
-  it('a card with radius 10, its node on the timeline in the outcome’s tone', () => {
+  it('a card with radius 10; the timeline’s dot is TaskHistory’s, not the card’s', () => {
     const { root } = mount('act-merged');
     expect(root.className).toMatch(/rounded-\[10px\]/);
-    const node = root.querySelector('[data-entry-node]')!;
-    expect(node.getAttribute('data-tone')).toBe('success');
-    expect(mount('act-review-1').root.querySelector('[data-entry-node]')!.getAttribute('data-tone')).toBe('warning');
+    expect(root.querySelector('[data-entry-node]')).toBeNull();
   });
 
   it('the header row: the title, the outcome as a pill, and the time', () => {

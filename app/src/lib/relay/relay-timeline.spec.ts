@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { RelayAction, RelayLaneRef, RelayTaskView } from '$lib/relay-api.js';
-import { buildTimeline, foldReceipts } from './relay-timeline.js';
+import { buildTimeline, foldReceipts, historyTone } from './relay-timeline.js';
 
 // F8: the task timeline — one thin row per broker-known action,
 // oldest first, plus the derived terminal row (a cancel writes no
@@ -259,5 +259,21 @@ describe('foldReceipts', () => {
         { id: 'm1', kind: 'message', reply_to: null } as unknown as RelayAction,
       ]),
     ).toEqual({ m1: 'read', m2: 'delivered' });
+  });
+});
+
+describe('historyTone', () => {
+  const act = (kind: string, props: Record<string, unknown> = {}) => ({ id: kind, kind, props }) as unknown as RelayAction;
+  it('reads an entry in its outcome: merged and approved succeed, changes requested and a question warn, a lost lease is danger', () => {
+    expect(historyTone(act('merged'))).toBe('success');
+    expect(historyTone(act('reviewed', { verdict: 'approved' }))).toBe('success');
+    expect(historyTone(act('reviewed', { verdict: 'changes_requested' }))).toBe('warning');
+    expect(historyTone(act('asked'))).toBe('warning');
+    expect(historyTone(act('interrupted'))).toBe('danger');
+  });
+  it('anything else is the accent', () => {
+    for (const kind of ['assigned', 'reported', 'message', 'started', 'answered', 'handed_over']) {
+      expect(historyTone(act(kind)), kind).toBe('accent');
+    }
   });
 });
