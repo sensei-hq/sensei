@@ -215,4 +215,9 @@ jobs:
       # bootstrap stays runnable without Postgres (the no-DB coverage job); run
       # here, by name, where Postgres is.
       - name: Test the schema deploy (bootstrap, needs Postgres)
+        # The install connects as the OS user (`postgres://localhost/<db>`), as a
+        # local Postgres trusts its owner; on the runner that user is `runner`,
+        # which the service does not know. PGUSER makes the runner an install.
+        env:
+          PGUSER: postgres
         run: cargo test -p sensei-bootstrap --test deploy_upgrade -- --ignored
