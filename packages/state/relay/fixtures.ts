@@ -7,6 +7,8 @@
 // only the first, fails.
 import type { ApiResult } from '../result.js';
 import type {
+  RelayRunList,
+  RelayRunListRow,
   RelayAction,
   RelayPresence,
   RelayActionKind,
@@ -168,6 +170,52 @@ export function completed(over: Partial<RelayCompletedTask> = {}): RelayComplete
 
 export const RUN_ID = '019a5e2c-4b1d-7c00-8d2e-00000000ab10';
 export const OTHER_RUN_ID = '019a5e2c-4b1d-7c00-8d2e-00000000ab11';
+export const DRAFT_RUN_ID = '019a5e2c-4b1d-7c00-8d2e-00000000ab12';
+export const PAST_RUN_ID = '019a5e2c-4b1d-7c00-8d2e-00000000ab13';
+
+/** One run as `GET /relay/runs` lists it (#419): open (draft, planning, active) or ended. */
+export function runListRow(over: Partial<RelayRunListRow> = {}): RelayRunListRow {
+  return {
+    id: DRAFT_RUN_ID,
+    crew_id: null,
+    title: 'Sprint 12',
+    goal: 'Diagrams on the shell',
+    state: 'draft',
+    repo_key: 'github.com/sensei-hq/sensei',
+    workspace_id: null,
+    created_at: '2026-11-12T09:00:00Z',
+    started_at: null,
+    completed_at: null,
+    delete_after: null,
+    total_tasks: 0,
+    done_tasks: 0,
+    members: 0,
+    ...over,
+  };
+}
+
+/** `GET /relay/runs`: a draft waiting for a crew, and one run that completed. */
+export function runList(over: Partial<RelayRunList> = {}): RelayRunList {
+  return {
+    active: [runListRow()],
+    archived: [
+      runListRow({
+        id: PAST_RUN_ID,
+        crew_id: CREW_ID,
+        title: 'Sprint 11',
+        goal: 'Notice family',
+        state: 'completed',
+        started_at: '2026-11-01T09:00:00Z',
+        completed_at: '2026-11-02T17:00:00Z',
+        delete_after: '2026-12-02T17:00:00Z',
+        total_tasks: 6,
+        done_tasks: 6,
+        members: 3,
+      }),
+    ],
+    ...over,
+  };
+}
 
 /** An open sprint run as `relay.now`'s `sprint_summary` counts it (queue cutover). */
 export function sprint(over: Partial<RelayRunSummary> = {}): RelayRunSummary {

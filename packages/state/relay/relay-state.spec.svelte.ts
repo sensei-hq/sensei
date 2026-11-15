@@ -4,7 +4,7 @@
 // events in, data out — no DOM, no fetch.
 import { describe, it, expect, vi } from 'vitest';
 import type { ApiResult } from '../result.js';
-import type { RelayCreateRun, RelayCreatedRun, RelayNow, RelayQueue, RelayStreamEvent } from './types.js';
+import type { RelayCreateRun, RelayCreatedRun, RelayNow, RelayQueue, RelayRunList, RelayStreamEvent } from './types.js';
 import { RelayState, type RelayReads, type RelaySource } from './relay-state.svelte.js';
 import * as F from './fixtures.js';
 
@@ -23,6 +23,12 @@ function fakeSource(over: Partial<Record<keyof RelaySource, unknown>> = {}) {
       async (): Promise<ApiResult<RelayCreatedRun>> =>
         F.ok({ run_id: F.RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }),
     ),
+    readRuns: vi.fn(async (): Promise<ApiResult<RelayRunList>> => F.ok(F.runList())),
+    startRun: vi.fn(
+      async (): Promise<ApiResult<RelayCreatedRun>> =>
+        F.ok({ run_id: F.DRAFT_RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }),
+    ),
+    cancelRun: vi.fn(async () => F.ok({ run_id: F.DRAFT_RUN_ID, status: 'cancelled' })),
     events: vi.fn((handler: (e: RelayStreamEvent) => void, onOpen: () => void) => {
       on = handler;
       opened = onOpen;
@@ -425,5 +431,74 @@ describe('RelayState · the role AddMember shows (#424)', () => {
     expect(s.addRole).toBe('coordinator');
     s.addRole = 'contributor';
     expect(s.addRole).toBe('contributor');
+  });
+});
+
+describe('RelayState · the run list: a draft to start, past runs (#424)', () => {
+  it('reads the runs once asked; until then, none', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    expect(s.runList).toBeNull();
+    await s.readRuns();
+    expect(source.readRuns).toHaveBeenCalledTimes(1);
+    expect(s.runList?.active.map((r) => r.state)).toEqual(['draft']);
+    expect(s.runList?.archived.map((r) => r.state)).toEqual(['completed']);
+    expect(s.runsError).toBeNull();
+  });
+
+  it('a failed read says so and invents no list', async () => {
+    const { source } = fakeSource({ readRuns: vi.fn(async () => F.fail(503, 'down')) });
+    const s = new RelayState(source, {}, reads());
+    await s.readRuns();
+    expect(s.runList).toBeNull();
+    expect(s.runsError).toContain('down');
+  });
+
+  it('starts a draft on the screen’s crew, single-flight, then reads the runs again', async () => {
+    const d = F.deferred<ApiResult<RelayCreatedRun>>();
+    const { source } = fakeSource({ startRun: vi.fn(() => d.promise) });
+    const s = new RelayState(source, {}, reads());
+    await s.readRuns();
+    const first = s.startRun(F.DRAFT_RUN_ID);
+    const second = s.startRun(F.DRAFT_RUN_ID);
+    expect(source.startRun).toHaveBeenCalledTimes(1);
+    expect(source.startRun.mock.calls[0]).toEqual([F.DRAFT_RUN_ID, F.CREW_ID]);
+    expect(s.startingRun).toBe(F.DRAFT_RUN_ID);
+    d.resolve(F.ok({ run_id: F.DRAFT_RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }));
+    expect(await first).toBeNull();
+    expect(await second).toBeNull();
+    expect(s.startingRun).toBeNull();
+    expect(source.readRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refused start keeps the draft and says why', async () => {
+    const { source } = fakeSource({ startRun: vi.fn(async () => F.fail(409, 'the crew has no live lane')) });
+    const s = new RelayState(source, {}, reads());
+    expect(await s.startRun(F.DRAFT_RUN_ID)).toContain('no live lane');
+    expect(s.runActionError).toContain('no live lane');
+  });
+
+  it('cancels a run, then reads the runs again; a refusal says why', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    expect(await s.cancelRun(F.DRAFT_RUN_ID)).toBeNull();
+    expect(source.cancelRun).toHaveBeenCalledWith(F.DRAFT_RUN_ID);
+    expect(source.readRuns).toHaveBeenCalledTimes(1);
+    const refused = fakeSource({ cancelRun: vi.fn(async () => F.fail(404, 'run not found')) });
+    const t = new RelayState(refused.source, {}, reads());
+    expect(await t.cancelRun(F.DRAFT_RUN_ID)).toContain('run not found');
+  });
+
+  it('a run event on the stream reads the runs again, once they were read', async () => {
+    const { source, emit } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    s.connect();
+    emit({ entity: 'run', action: 'updated', data: { id: 'r-other' } } as RelayStreamEvent);
+    await settle();
+    expect(source.readRuns).not.toHaveBeenCalled();
+    await s.readRuns();
+    emit({ entity: 'run', action: 'updated', data: { id: 'r-other' } } as RelayStreamEvent);
+    await settle();
+    expect(source.readRuns).toHaveBeenCalledTimes(2);
   });
 });
