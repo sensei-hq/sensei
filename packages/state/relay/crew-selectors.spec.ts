@@ -3,7 +3,7 @@
 // read and a clock in. What the daemon does not report (a heartbeat, the editor a
 // session runs in, the catalogue) is not invented (D83).
 import { describe, it, expect } from 'vitest';
-import { editorTag, toAddMember, toMemberGroups, toPastRuns, toRunCard } from './crew-selectors.js';
+import { editorTag, toAddMember, toArchivedRun, toMemberGroups, toPastRuns, toRunCard } from './crew-selectors.js';
 import { hhmm } from './format.js';
 import * as F from './fixtures.js';
 
@@ -97,8 +97,8 @@ describe('toPastRuns (#424 the UI half of #393; CONTRACT §1i)', () => {
       ],
     });
     expect(toPastRuns(list, at)).toEqual([
-      { id: F.PAST_RUN_ID, title: `Run ${F.PAST_RUN_ID.slice(-4)}`, name: 'Sprint 11', state: { label: 'completed', tone: 'success' }, span: 'Nov 1 – Nov 2', done: '6 of 6 tasks done', members: '3 members', deletes: { text: 'deleted in 17 days', warning: false } },
-      { id: F.OTHER_RUN_ID, title: `Run ${F.OTHER_RUN_ID.slice(-4)}`, name: 'Sprint 10', state: { label: 'cancelled', tone: 'neutral' }, span: 'Oct 15 – Oct 16', done: '1 of 4 tasks done', members: '1 member', deletes: { text: 'deleted today', warning: true } },
+      { id: F.PAST_RUN_ID, title: `Run ${F.PAST_RUN_ID.slice(-4)}`, name: 'Sprint 11', state: { label: 'completed', tone: 'success' }, span: 'Nov 1 – Nov 2', done: '6 of 6 tasks done', members: '3 members', deletes: { text: 'deleted in 17 days', warning: false }, href: null },
+      { id: F.OTHER_RUN_ID, title: `Run ${F.OTHER_RUN_ID.slice(-4)}`, name: 'Sprint 10', state: { label: 'cancelled', tone: 'neutral' }, span: 'Oct 15 – Oct 16', done: '1 of 4 tasks done', members: '1 member', deletes: { text: 'deleted today', warning: true }, href: null },
     ]);
   });
 
@@ -110,6 +110,11 @@ describe('toPastRuns (#424 the UI half of #393; CONTRACT §1i)', () => {
   it('a run that never started spans from when it was drafted', () => {
     const list = F.runList({ archived: [F.runListRow({ id: F.PAST_RUN_ID, state: 'cancelled', started_at: null, created_at: '2026-11-03T09:00:00Z', completed_at: '2026-11-03T10:00:00Z', delete_after: '2026-12-03T10:00:00Z' })] });
     expect(toPastRuns(list, at)[0].span).toBe('Nov 3');
+  });
+
+  it('with a base, each row opens its run read-only', () => {
+    const rows = toPastRuns(F.runList(), at, '/relay');
+    expect(rows[0].href).toBe(`/relay/runs/${F.PAST_RUN_ID}`);
   });
 
   it('none ended, or no read: no rows', () => {
@@ -227,5 +232,56 @@ describe('editorTag · the host a session runs in (COMPONENTS §3e)', () => {
   it('no member carries an editor while the daemon reports none (D83: not invented)', () => {
     const groups = toMemberGroups(F.now());
     expect(groups.flatMap((g) => g.members).every((m) => m.editor === null)).toBe(true);
+  });
+});
+
+describe('toArchivedRun (CONTRACT §1i: a past run, read-only)', () => {
+  const at = Date.parse('2026-11-15T12:00:00Z');
+  const view = () => toArchivedRun(F.runDetail(), { base: '/relay', at });
+
+  it('the run by id and name, its state, the banner: archived when its last task was done; deleted 30 days on, by a daily job', () => {
+    const v = view();
+    expect(v.title).toBe(`Run ${F.PAST_RUN_ID.slice(-4)}`);
+    expect(v.name).toBe('Sprint 11');
+    expect(v.state).toEqual({ label: 'completed', tone: 'success' });
+    expect(v.banner).toEqual({
+      text: 'Archived when its last task was done, Nov 2. Deleted 30 days after it completed, by a daily job: in 17 days.',
+      warning: false,
+    });
+    expect(v.facts).toEqual([
+      { label: 'Tasks', value: 3 },
+      { label: 'Done', value: 2 },
+      { label: 'Members', value: 2 },
+    ]);
+  });
+
+  it('a cancelled run says so; three days or fewer left reads as a warning', () => {
+    const run = F.runListRow({ id: F.PAST_RUN_ID, state: 'cancelled', crew_id: F.CREW_ID, completed_at: '2026-11-15T09:00:00Z', delete_after: '2026-11-17T09:00:00Z' });
+    expect(toArchivedRun(F.runDetail({ run }), { base: '/relay', at }).banner).toEqual({
+      text: 'Cancelled Nov 15. Deleted 30 days after it ended, by a daily job: in 2 days.',
+      warning: true,
+    });
+  });
+
+  it('who was on it: codename (or code), role, assistant and model', () => {
+    expect(view().members).toEqual([
+      { id: 'lane-a', codename: 'cobalt-lyra', laneCode: 'L1', role: 'coordinator', family: 'Claude Code', model: 'claude-opus-5-5' },
+      { id: 'lane-b', codename: 'L2', laneCode: 'L2', role: 'contributor', family: 'Muse', model: 'model not reported' },
+    ]);
+  });
+
+  it('what it did: every task, done first, each opening its task view; a task on no lane says so', () => {
+    expect(view().tasks).toEqual([
+      { id: 't-plan', title: 'Plan: Sprint 11', state: { label: 'done', tone: 'success' }, by: 'cobalt-lyra', href: `/relay/${F.CREW_ID}/t-plan` },
+      { id: 't-header', title: 'Diagrams header', state: { label: 'done', tone: 'success' }, by: 'L2', href: `/relay/${F.CREW_ID}/t-header` },
+      { id: 't-extra', title: 'Stretch goal', state: { label: 'cancelled', tone: 'neutral' }, by: 'on no lane', href: `/relay/${F.CREW_ID}/t-extra` },
+    ]);
+  });
+
+  it('a run with no crew (cancelled as a draft) opens no task', () => {
+    const run = F.runListRow({ id: F.PAST_RUN_ID, state: 'cancelled', crew_id: null, completed_at: '2026-11-15T09:00:00Z', delete_after: '2026-12-15T09:00:00Z' });
+    const v = toArchivedRun(F.runDetail({ run, tasks_by_state: {} }), { base: '/relay', at });
+    expect(v.tasks).toEqual([]);
+    expect(v.facts[0]).toEqual({ label: 'Tasks', value: 0 });
   });
 });

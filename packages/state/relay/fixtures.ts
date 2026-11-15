@@ -7,6 +7,7 @@
 // only the first, fails.
 import type { ApiResult } from '../result.js';
 import type {
+  RelayRunDetail,
   RelayRunList,
   RelayRunListRow,
   RelayAction,
@@ -206,6 +207,38 @@ export function pastRunList(): RelayRunList {
       runListRow({ id: '019a5e2c-4b1d-7c00-8d2e-00000000ab14', crew_id: CREW_ID, state: 'cancelled', title: 'Sprint 9', goal: 'Billing build', started_at: '2026-10-10T09:00:00Z', completed_at: '2026-10-10T11:00:00Z', delete_after: '2026-11-09T11:00:00Z', total_tasks: 3, done_tasks: 1, members: 2 }),
     ],
   });
+}
+
+/** `GET /relay/runs/{id}` (#419): an ended run, its tasks by state, who took part. */
+export function runDetail(over: Partial<RelayRunDetail> = {}): RelayRunDetail {
+  const lane = (id: string, code: string, suggested_name: string | null) => ({ id, code, suggested_name });
+  const task = (id: string, title: string, state: string, by: ReturnType<typeof lane> | null) => ({
+    id,
+    title,
+    phase: 'impl',
+    state,
+    round: 1,
+    state_changed_at: '2026-11-02T16:00:00Z',
+    completed_at: state === 'done' ? '2026-11-02T16:00:00Z' : null,
+    current_step: null,
+    steps_done: 0,
+    steps_total: 0,
+    lane: by,
+  });
+  const a = lane('lane-a', 'L1', 'cobalt-lyra');
+  const b = lane('lane-b', 'L2', null);
+  return {
+    run: pastRunList().archived[0],
+    tasks_by_state: {
+      done: [task('t-plan', 'Plan: Sprint 11', 'done', a), task('t-header', 'Diagrams header', 'done', b)],
+      cancelled: [task('t-extra', 'Stretch goal', 'cancelled', null)],
+    },
+    members: [
+      { id: 'lane-a', code: 'L1', role: 'coordinator', title: 'Diagrams', suggested_name: 'cobalt-lyra', family: 'claude-code', model: 'claude-opus-5-5' },
+      { id: 'lane-b', code: 'L2', role: 'contributor', title: 'Billing', suggested_name: null, family: 'muse', model: null },
+    ],
+    ...over,
+  };
 }
 
 /** `GET /relay/runs`: a draft waiting for a crew, and one run that completed. */
