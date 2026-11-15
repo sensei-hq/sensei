@@ -64,7 +64,10 @@ export const relayClient = (base: string): RelayApi => {
       if (res.ok) return { ok: true, data: (await res.json()) as T };
       try {
         const parsed = (await res.json()) as Record<string, unknown> | null;
-        const reason = parsed && typeof parsed.error === 'string' && parsed.error ? parsed.error : res.statusText;
+        // The daemon's refusal is { error: <code>, message: <reason> }: the reason is what a
+        // person reads; the code only when there is no reason.
+        const text = (key: string) => (parsed && typeof parsed[key] === 'string' && parsed[key] ? (parsed[key] as string) : null);
+        const reason = text('message') ?? text('error') ?? res.statusText;
         return { ok: false, error: { status: res.status, message: reason } };
       } catch {
         return { ok: false, error: { status: res.status, message: res.statusText } };
