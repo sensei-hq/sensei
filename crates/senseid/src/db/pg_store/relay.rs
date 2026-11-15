@@ -7092,6 +7092,9 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         let crew_ids: Vec<Uuid> = crews.iter().map(|c| c.0).collect();
+        // What waits on the person — questions, messages — is an open crew's only: a
+        // closed crew's would sit in Needs you with no one to answer (#426).
+        let open_ids: Vec<Uuid> = crews.iter().filter(|c| c.4 != "closed").map(|c| c.0).collect();
         // A closed crew still scopes what it did today (completed, today's counts),
         // but it is not a crew on the screen (#426): the screen takes the first crew
         // as its own, and a closed one would take runs it can never start.
@@ -7188,7 +7191,7 @@ impl PgStore {
              order by v.payload->>'asked_at' desc, v.id desc",
         )
         .bind(user_id)
-        .bind(crew_ids.clone())
+        .bind(open_ids.clone())
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
@@ -7207,7 +7210,7 @@ impl PgStore {
                  order by v.payload->>'sent_at' desc, v.id desc",
         )
         .bind(user_id)
-        .bind(crew_ids.clone())
+        .bind(open_ids.clone())
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
