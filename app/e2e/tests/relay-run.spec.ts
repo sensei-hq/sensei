@@ -21,14 +21,16 @@
  *   5. Done   — the run completes: it leaves the band, and Past runs lists it.
  */
 import { execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateToScreen, seedSetupComplete, DAEMON_URL } from '../helpers';
 import { RelayCrew, type RelayLane } from '../lib/relay-crew';
+import { shot } from '../lib/shot';
 
 const STREAM = 20_000;
+const EVIDENCE = 'test-results/relay-run';
 const REPO_KEY = 'github.com/sensei-hq/e2e-run';
 // Unique per run: the shared e2e broker keeps every earlier run's items.
 const RUN_TAG = Date.now().toString(36);
@@ -78,6 +80,13 @@ const typeInto = (selector: string, value: string) =>
 /** How many elements a selector matches, counted in the page (this driver has no count). */
 const countOf = async (selector: string) =>
   Number(await tauri.evaluate(`document.querySelectorAll(${JSON.stringify(selector)}).length`));
+/** A picture of a state, for the report: best effort — the window capture can come
+ *  back unavailable in this harness (#284), so its verdict is logged, never asserted. */
+async function evidence(name: string): Promise<void> {
+  mkdirSync(EVIDENCE, { recursive: true });
+  await new Promise((r) => setTimeout(r, 1200));
+  console.log(`[relay-run] ${name}: ${await shot(tauri, `${EVIDENCE}/${name}.png`)}`);
+}
 /** The text of every element a selector matches, read in the page. */
 const textsOf = (selector: string) =>
   tauri.evaluate(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.textContent.replace(/\\s+/g, ' ').trim()))`) as Promise<string>;
@@ -156,6 +165,7 @@ async function queueStage(tauriPage: TauriPageLike): Promise<void> {
   await expect(tauriPage.locator('[data-run-card] [data-run-meta]')).toContainText('Run journey');
   await expect(tauriPage.locator('[data-run-card] [data-run-start]')).toBeDisabled();
   await expect(tauriPage.locator('[data-run-card] [data-run-note]')).toHaveText('Set up your crew to start it.');
+  await evidence('1-queue-draft');
 }
 
 async function crewStage(): Promise<void> {
@@ -163,14 +173,22 @@ async function crewStage(): Promise<void> {
   await expect.poll(() => countOf('[data-member]'), { timeout: STREAM }).toBe(1);
   lanes.a = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'cobalt-e2e' });
   lanes.b = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'coral-e2e' });
-  // Every member's card, as the stream brings each in; then each by its codename.
-  await expect.poll(() => countOf('[data-member]'), { timeout: STREAM }).toBe(3);
-  const cards = await textsOf('[data-member]');
-  for (const name of ['atlas-e2e', 'cobalt-e2e', 'coral-e2e']) expect(cards).toContain(name);
+  // Every member's card, by its codename, as the stream brings each in. One poll for
+  // the settled roster: a read that was out while a lane registered lands with its
+  // older snapshot and is followed at once by a fresh one (the roster can blink).
+  await expect
+    .poll(async () => {
+      const cards: string[] = JSON.parse(await textsOf('[data-member]'));
+      return { cards: cards.length, names: ['atlas-e2e', 'cobalt-e2e', 'coral-e2e'].filter((n) => cards.some((c) => c.includes(n))) };
+    }, { timeout: STREAM })
+    .toEqual({ cards: 3, names: ['atlas-e2e', 'cobalt-e2e', 'coral-e2e'] });
+  // The Crew button's badge counts them too (its name carries the count).
+  await expect.poll(() => attrOf('[data-screen-tools] [aria-label^="Crew"]', 'aria-label'), { timeout: STREAM }).toBe('Crew · 3');
 
 
   const start = tauri.locator('[data-run-card] [data-run-start]');
   await expect(start).toBeEnabled({ timeout: STREAM });
+  await evidence('2-crew-draft-ready');
   await start.click();
   await expect(tauri.locator('[data-run-card] [data-run-title]')).toContainText('planning', { timeout: STREAM });
   expect(await countOf('[data-run-card] [data-run-start]')).toBe(0);
@@ -234,6 +252,7 @@ async function plannerStage(): Promise<void> {
 
   // The plan unpacks: the band reads active.
   await expect.poll(() => attrOf(band, 'data-run-state'), { timeout: STREAM }).toBe('active');
+  await evidence('3-planner-active');
 }
 
 /** The broker's merge gate runs on the sweeper's pass. */
@@ -263,6 +282,9 @@ async function workStage(): Promise<void> {
   work.t2 = second.task!.id;
   await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('First file'), { timeout: STREAM }).toBe(true);
   await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('Second file'), { timeout: STREAM }).toBe(true);
+  // The Working stat counts both lanes on a task (only this crew is open).
+  const working = '[data-relay-stat="working"] [data-stat-card-value]';
+  await expect.poll(async () => JSON.parse(await textsOf(working))[0], { timeout: STREAM }).toBe('2');
 
   // A's checkpoint: its steps, counted on its lane row.
   await a.checkpoint(work.t1, {
@@ -287,6 +309,7 @@ async function workStage(): Promise<void> {
   expect((await b.review(work.t1, 'approved', 'Good.')).state).toBe('approved');
   await expect.poll(() => countOf(floating1), { timeout: STREAM }).toBe(0);
   await mergedAndCompleted(work.t1, 'First file');
+  await evidence('4-work-first-merged');
   execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', 'lane/t1', 'main']);
 
   // Now B reports the second; A reviews; the gate merges.
@@ -307,4 +330,5 @@ async function doneStage(): Promise<void> {
   const row = `[data-relay-section="past-runs"] [data-past-run="${ids.run}"]`;
   await expect.poll(() => countOf(row), { timeout: STREAM }).toBe(1);
   expect(await textsOf(row)).toContain('Run journey');
+  await evidence('5-done-past-runs');
 }
