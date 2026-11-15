@@ -3,7 +3,7 @@
 // read and a clock in. What the daemon does not report (a heartbeat, the editor a
 // session runs in, the catalogue) is not invented (D83).
 import { describe, it, expect } from 'vitest';
-import { toAddMember, toMemberGroups, toRunCard } from './crew-selectors.js';
+import { editorTag, toAddMember, toMemberGroups, toRunCard } from './crew-selectors.js';
 import { hhmm } from './format.js';
 import * as F from './fixtures.js';
 
@@ -142,5 +142,19 @@ describe('toAddMember · set up the crew, or add to it', () => {
     const add = toAddMember(F.now({ lanes: [F.lane()], runs: [] }), 'coordinator');
     expect(add.role).toBe('coordinator');
     expect(add.command.text).toBe(`register with sensei as coordinator in crew ${F.CREW_ID}`);
+  });
+});
+
+describe('editorTag · the host a session runs in (COMPONENTS §3e)', () => {
+  it('reads "in <editor>", its title saying whose transcripts the work counts for', () => {
+    expect(editorTag('Cursor', 'claude-sonnet-4-5')).toEqual({
+      label: 'in Cursor',
+      title: 'Cursor is the editor; the assistant inside it does the work, and its transcripts count for claude-sonnet-4-5.',
+    });
+  });
+
+  it('no member carries an editor while the daemon reports none (D83: not invented)', () => {
+    const groups = toMemberGroups(F.now());
+    expect(groups.flatMap((g) => g.members).every((m) => m.editor === null)).toBe(true);
   });
 });

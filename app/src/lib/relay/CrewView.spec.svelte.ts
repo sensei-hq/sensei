@@ -38,6 +38,7 @@ const member = (over: Partial<RelayMemberView> = {}): RelayMemberView => ({
   family: 'Claude Code 2.1',
   model: 'claude-opus-5-5',
   alert: null,
+  editor: null,
   ...over,
 });
 
@@ -103,6 +104,22 @@ describe('MemberCard', () => {
     expect(root.getAttribute('data-status')).toBe('not_responding');
     expect(root.querySelector('[data-member-codename]')!.className).toMatch(/text-warning/);
     expect(text(root.querySelector('[data-member-alert]'))).toBe('No answer since 10:42 · lease lost.');
+  });
+
+  it('in an editor: a host tag after the model, its title saying what the editor is', () => {
+    const editor = { label: 'in Cursor', title: 'Cursor is the editor; the assistant inside it does the work, and its transcripts count for claude-opus-5-5.' };
+    const c = mount(MemberCard, { member: member({ editor }), onmessage: vi.fn() });
+    const tags = [...c.querySelectorAll('[data-member-tags] [data-pill]')] as HTMLElement[];
+    expect(tags.map(text)).toEqual(['Claude Code 2.1', 'claude-opus-5-5', 'in Cursor']);
+    const host = c.querySelector('[data-member-host] [data-pill]') as HTMLElement;
+    expect(host.getAttribute('title')).toBe(editor.title);
+    expect(host.getAttribute('data-variant')).toBe('outline');
+    expect(host.getAttribute('data-size')).toBe('sm');
+  });
+
+  it('no editor reported: no host tag', () => {
+    const c = mount(MemberCard, { member: member(), onmessage: vi.fn() });
+    expect(c.querySelector('[data-member-host]')).toBeNull();
   });
 
   it('idle reads in the muted tone', () => {
