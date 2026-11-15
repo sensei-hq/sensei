@@ -537,7 +537,10 @@ describe('Relay · Queue', () => {
     await tick();
     need(toolbarButton(c, 'Create run · 1'), 'Create run · 1').click();
     await tick();
-    expect(one(c, '[data-create-sprint]')).not.toBeNull();
+    const form = need(one(c, '[data-create-sprint]'), 'the run form');
+    // One name for it, button and form alike.
+    expect(text(one(form, 'h2'))).toBe('Create run · 1');
+    expect(text(one(form, '[data-sprint-submit]'))).toBe('Create run');
   });
 
   it('a triage row: title, kind first then tags, the ticket button, and +', async () => {

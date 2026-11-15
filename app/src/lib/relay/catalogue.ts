@@ -64,7 +64,7 @@ const entry = (
  *  callbacks resolve to "no refusal" so the component can be exercised. */
 const accepted = async () => null;
 /** A shell fixture's actions go nowhere: the bench shows one state at a time. */
-const still = { view: () => {}, compose: () => {}, filter: () => {}, narrow: () => {} };
+const still = { view: () => {}, compose: () => {}, filter: () => {}, narrow: () => {}, createRun: () => {} };
 /** One card of the relay stats band, from the relay's own derivation, drawn as the
  *  shell's stats band draws it (rokkit StatCard): the kanji mark, the icon in icon mode,
  *  a filter toggle pressed when its filter is on. */

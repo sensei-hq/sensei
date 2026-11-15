@@ -26,6 +26,7 @@ const base: RelayShellInput = {
   stats: { working: 1, waiting: { count: 4, oldestMin: 52 }, blocked: 2, done: 5, firstPass: '1 of 5 first-pass' },
   filter: null,
   compose: false,
+  selected: 0,
   info: true,
   resources,
   freshness: null,

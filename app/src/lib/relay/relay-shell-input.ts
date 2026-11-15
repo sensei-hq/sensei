@@ -20,6 +20,8 @@ export interface ShellSource {
   composing: boolean;
   statFilter: RelayStatFilter | null;
   queueCount: number | null;
+  /** Backlog items picked for a run; none unless given. */
+  selected?: number;
   /** The main window's URL narrowing ('' = all); absent in the workspace window. */
   narrow?: { repo: string; workspace: string } | null;
   /** The clock, for ages; defaults to now. */
@@ -47,6 +49,7 @@ export function toShellInput(src: ShellSource): RelayShellInput {
     stats: toStats(now, at),
     filter: src.statFilter,
     compose: src.composing,
+    selected: src.selected ?? 0,
     info: true,
     resources: r
       ? {

@@ -93,6 +93,7 @@
         composing: state.composing,
         statFilter: state.statFilter,
         queueCount: state.queueCount,
+        selected: state.selectedCount,
         narrow: filtered ? { repo: current('repo'), workspace: current('workspace') } : null,
       }),
       {
@@ -102,6 +103,7 @@
         compose: () => (state.composing = !state.composing),
         filter: (id) => (state.statFilter = id),
         narrow,
+        createRun: () => (state.creatingSprint = true),
       },
     ),
   );

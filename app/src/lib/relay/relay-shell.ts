@@ -41,6 +41,8 @@ export interface RelayShellInput {
   } | null;
   filter: RelayStatFilter | null;
   compose: boolean;
+  /** Backlog items picked for a run (the Queue's checkboxes). */
+  selected: number;
   /** Whether the info band is open (the toggle's label follows it). */
   info: boolean;
   resources: {
@@ -72,6 +74,8 @@ export interface RelayShellActions {
   filter(id: RelayStatFilter | null): void;
   /** Narrow the main window's read by repository or workspace ('' = all). */
   narrow(key: RelayNarrowKey, value: string): void;
+  /** Open the run form over the picked backlog items. */
+  createRun(): void;
 }
 
 export interface RelayFooterItem {
@@ -176,11 +180,16 @@ function toolbar(input: RelayShellInput, pressed: RelayView, actions: RelayShell
     iconButton('queue', 'Queue', VIEW_ICONS.queue, 'view', pressed === 'queue', input.counts.queue, () => actions.view('queue')),
     iconButton('crew', 'Crew', VIEW_ICONS.crew, 'view', pressed === 'crew', input.counts.crew, () => actions.view('crew')),
   ];
+  // Backlog items picked on the Queue: a run over them (drafted until the crew can start it).
+  const create: ToolbarItem[] =
+    pressed === 'queue' && input.selected > 0
+      ? [{ id: 'create-run', value: 'create-run', type: 'button', label: `Create run · ${input.selected}`, onclick: () => actions.createRun() }]
+      : [];
   // Someone to message: a crew. A run is not required — lanes register before a sprint starts.
   const message = input.crew
     ? [iconButton('message', 'Message the crew', MESSAGE_ICON, 'toggle', input.compose, 0, () => actions.compose())]
     : [];
-  return [...views, { type: 'separator' }, ...message, info];
+  return [...views, { type: 'separator' }, ...create, ...message, info];
 }
 
 function infoBand(input: RelayShellInput): InfoColumn[] {

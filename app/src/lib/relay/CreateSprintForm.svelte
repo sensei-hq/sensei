@@ -62,7 +62,7 @@
 
 <div class="flex flex-col gap-3 border-b border-paper-edge bg-paper-soft p-4" data-create-sprint>
   <div class="flex items-center gap-2">
-    <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Create sprint · {selected.length}</h2>
+    <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Create run · {selected.length}</h2>
     <button type="button" class="ml-auto text-xs underline" data-sprint-cancel onclick={oncancel}>Cancel</button>
   </div>
 
@@ -132,7 +132,7 @@
       disabled={!ready || busy}
       onclick={() => void submit()}
     >
-      Create sprint
+      Create run
     </button>
   </div>
 </div>
