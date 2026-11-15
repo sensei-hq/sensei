@@ -18,12 +18,16 @@ Catalogue spec `docs/spec/2026-11-14-shared-component-catalogue.md` approved (d�
 - #424 runs (2026-11-15, red→green each): state `runList`/`startRun`/`cancelRun` (`41bbbefb2`); selectors draft
   card + `toPastRuns`; RunCard Start/Cancel + PastRunsList + runs-read Notice; past-run view `relay/runs/[run]`
   (`toArchivedRun`, RelayRunScreen, both windows); bench fixtures. #424 UI done (its e2e pin is #426).
+- #426 journey GREEN (`app/e2e/tests/relay-run.spec.ts`, 5 steps, 3.2 min; relay e2e 9/9): fixed on the way —
+  Create run trigger (#420 regression), silent +, refusal code→reason, closed crews off Now (+their questions),
+  stream row lost to a stale read, vitest TZ pinned. Daemon reinstalled (release, with the now fixes).
 - sensei v0.22.1 released (notarized, tap, dōjō deployed); shipped issues closed (memory: close on merge).
 
-**Remaining (in order):** #426 journey (app e2e): `app/e2e/lib/relay-crew.ts`, then `relay-run.spec.ts` stage by stage. Then catalogue Order 2–5 (guards, dōjō `/preview`, families; QueueSection and
+**Remaining (in order):** #426 gaps (seeded ticket item; screenshots blank #284) · roster blink (merge reads into
+stream rows) · then catalogue Order 2–5; merge the lane to develop when the rebuild is called done. Then catalogue Order 2–5 (guards, dōjō `/preview`, families; QueueSection and
 dōjō ListSection need their row controls inside display-only rows). Queued: #446 (sqlx 0.9 / SQLite CVE), #447.
 
-**Next command:** write `app/e2e/lib/relay-crew.ts` (twin of `scripts/relay-queue-smoke.sh`), then stage 1 of the journey.
+**Next command:** decide with the user: merge the relay rebuild to develop now, or close the #426 gaps first.
 
 **Open questions (user):** none.
 
