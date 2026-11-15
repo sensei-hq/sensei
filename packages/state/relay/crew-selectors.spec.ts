@@ -3,7 +3,7 @@
 // read and a clock in. What the daemon does not report (a heartbeat, the editor a
 // session runs in, the catalogue) is not invented (D83).
 import { describe, it, expect } from 'vitest';
-import { editorTag, toAddMember, toMemberGroups, toRunCard } from './crew-selectors.js';
+import { editorTag, toAddMember, toMemberGroups, toPastRuns, toRunCard } from './crew-selectors.js';
 import { hhmm } from './format.js';
 import * as F from './fixtures.js';
 
@@ -45,6 +45,76 @@ describe('toRunCard', () => {
   it('no crew, no card; no read, no card', () => {
     expect(toRunCard(F.noCrew())).toBeNull();
     expect(toRunCard(null)).toBeNull();
+  });
+
+  it('an open run carries no draft actions', () => {
+    const now = F.now({ runs: [F.sprint({ state: 'active' })] });
+    expect(toRunCard(now, F.runList())!.draft).toBeNull();
+    expect(toRunCard(F.now({ runs: [] }), null)!.draft).toBeNull();
+  });
+});
+
+describe('toRunCard · a draft waiting to start (#424; #419 draft → start)', () => {
+  it('no open run and a draft: the draft, Start once a member is live, and Cancel', () => {
+    const now = F.now({ runs: [], lanes: [F.coordinatorLane({ presence: 'idle' })] });
+    const card = toRunCard(now, F.runList())!;
+    expect(card.title).toBe(`Run ${F.DRAFT_RUN_ID.slice(-4)}`);
+    expect(card.state).toEqual({ label: 'draft', tone: 'neutral' });
+    expect(card.meta).toBe(`sensei · drafted ${hhmm('2026-11-12T09:00:00Z')} · Sprint 12 · starts on this crew`);
+    expect(card.draft).toEqual({ runId: F.DRAFT_RUN_ID, canStart: true, note: null });
+  });
+
+  it('a crew with no member answering cannot start it yet, and says so', () => {
+    const now = F.now({ runs: [], lanes: [F.coordinatorLane({ presence: 'not_responding' })] });
+    expect(toRunCard(now, F.runList())!.draft).toEqual({
+      runId: F.DRAFT_RUN_ID,
+      canStart: false,
+      note: 'Start it once a member is answering.',
+    });
+  });
+
+  it('no crew yet: the draft still shows; Start waits for the crew', () => {
+    const card = toRunCard(F.noCrew(), F.runList())!;
+    expect(card.state).toEqual({ label: 'draft', tone: 'neutral' });
+    expect(card.facts).toEqual([]);
+    expect(card.draft).toEqual({ runId: F.DRAFT_RUN_ID, canStart: false, note: 'Set up your crew to start it.' });
+  });
+
+  it('an open run wins over a draft', () => {
+    const now = F.now({ runs: [F.sprint({ state: 'planning' })] });
+    expect(toRunCard(now, F.runList())!.state.label).toBe('planning');
+  });
+});
+
+describe('toPastRuns (#424 the UI half of #393; CONTRACT §1i)', () => {
+  const at = Date.parse('2026-11-15T12:00:00Z');
+
+  it('one row per ended run, newest first: its id, title, span, tasks done, members, and when it is deleted', () => {
+    const list = F.runList({
+      archived: [
+        F.runListRow({ id: F.PAST_RUN_ID, state: 'completed', title: 'Sprint 11', started_at: '2026-11-01T09:00:00Z', completed_at: '2026-11-02T17:00:00Z', delete_after: '2026-12-02T17:00:00Z', total_tasks: 6, done_tasks: 6, members: 3 }),
+        F.runListRow({ id: F.OTHER_RUN_ID, state: 'cancelled', title: 'Sprint 10', started_at: '2026-10-15T09:00:00Z', completed_at: '2026-10-16T09:00:00Z', delete_after: '2026-11-15T09:00:00Z', total_tasks: 4, done_tasks: 1, members: 1 }),
+      ],
+    });
+    expect(toPastRuns(list, at)).toEqual([
+      { id: F.PAST_RUN_ID, title: `Run ${F.PAST_RUN_ID.slice(-4)}`, name: 'Sprint 11', state: { label: 'completed', tone: 'success' }, span: 'Nov 1 – Nov 2', done: '6 of 6 tasks done', members: '3 members', deletes: { text: 'deleted in 17 days', warning: false } },
+      { id: F.OTHER_RUN_ID, title: `Run ${F.OTHER_RUN_ID.slice(-4)}`, name: 'Sprint 10', state: { label: 'cancelled', tone: 'neutral' }, span: 'Oct 15 – Oct 16', done: '1 of 4 tasks done', members: '1 member', deletes: { text: 'deleted today', warning: true } },
+    ]);
+  });
+
+  it('three days or fewer left reads as a warning', () => {
+    const list = F.runList({ archived: [F.runListRow({ id: F.PAST_RUN_ID, state: 'completed', started_at: '2026-10-17T09:00:00Z', completed_at: '2026-10-18T13:00:00Z', delete_after: '2026-11-18T13:00:00Z' })] });
+    expect(toPastRuns(list, at)[0].deletes).toEqual({ text: 'deleted in 3 days', warning: true });
+  });
+
+  it('a run that never started spans from when it was drafted', () => {
+    const list = F.runList({ archived: [F.runListRow({ id: F.PAST_RUN_ID, state: 'cancelled', started_at: null, created_at: '2026-11-03T09:00:00Z', completed_at: '2026-11-03T10:00:00Z', delete_after: '2026-12-03T10:00:00Z' })] });
+    expect(toPastRuns(list, at)[0].span).toBe('Nov 3');
+  });
+
+  it('none ended, or no read: no rows', () => {
+    expect(toPastRuns(F.runList({ archived: [] }), at)).toEqual([]);
+    expect(toPastRuns(null, at)).toEqual([]);
   });
 });
 
