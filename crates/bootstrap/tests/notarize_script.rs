@@ -12,8 +12,13 @@ fn script() -> PathBuf {
 
 /// Fakes: `xcrun notarytool submit` prints `{"id":"sub-1","status":"$STATUS"}`;
 /// `xcrun notarytool log` prints a fixed rejection log; `ditto` writes the zip.
-/// Every call is appended to `$CALLS`.
+/// Every call is appended to `$CALLS`. Like the real `ditto -c -k`, the fake refuses
+/// more than one source.
 fn run(dir: &Path, status: &str) -> (std::process::Output, String) {
+    run_with(dir, status, &["senseid"])
+}
+
+fn run_with(dir: &Path, status: &str, binaries: &[&str]) -> (std::process::Output, String) {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     for (name, body) in [
@@ -23,19 +28,25 @@ fn run(dir: &Path, status: &str) -> (std::process::Output, String) {
         ),
         (
             "ditto",
-            "#!/bin/sh\necho \"ditto $*\" >> \"$CALLS\"\nfor last; do :; done\ntouch \"$last\"\n",
+            "#!/bin/sh\necho \"ditto $*\" >> \"$CALLS\"\nn=0; for a; do case \"$a\" in -*) ;; *) n=$((n+1)) ;; esac; done\n[ \"$n\" -eq 2 ] || { echo \"ditto: Can't archive multiple sources\" >&2; exit 1; }\nfor last; do :; done\ntouch \"$last\"\n",
         ),
     ] {
         let p = bin.join(name);
         std::fs::write(&p, body).unwrap();
         Command::new("chmod").arg("+x").arg(&p).status().unwrap();
     }
-    let target = dir.join("senseid");
-    std::fs::write(&target, "x").unwrap();
+    let targets: Vec<PathBuf> = binaries
+        .iter()
+        .map(|b| {
+            let p = dir.join(b);
+            std::fs::write(&p, "x").unwrap();
+            p
+        })
+        .collect();
     let calls = dir.join("calls.log");
     let out = Command::new("bash")
         .arg(script())
-        .arg(&target)
+        .args(&targets)
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
         .env("RUNNER_TEMP", dir)
         .env("STATUS", status)
@@ -80,4 +91,15 @@ fn the_private_key_is_written_only_for_the_call_and_removed() {
         .filter(|e| e.path().extension().is_some_and(|x| x == "p8"))
         .collect();
     assert!(left.is_empty(), "the .p8 must not outlive the job step");
+}
+
+#[test]
+fn the_release_s_three_binaries_go_up_in_one_archive() {
+    // release.yml passes senseid, sensei and sensei-mcp; `ditto -c -k` archives ONE
+    // source, so v0.22.0's notarize step failed with "Can't archive multiple sources".
+    let t = tempfile::tempdir().unwrap();
+    let (o, calls) = run_with(t.path(), "Accepted", &["senseid", "sensei", "sensei-mcp"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(calls.matches("ditto ").count(), 1, "{calls}");
+    assert_eq!(calls.matches("notarytool submit").count(), 1, "{calls}");
 }
