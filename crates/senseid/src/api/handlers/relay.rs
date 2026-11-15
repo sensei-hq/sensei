@@ -5543,6 +5543,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn now_lists_open_crews_only() {
+        // #426: a closed crew stayed in now.crews, and the screen took the first
+        // crew as its own — a run created there tried to start on a closed crew
+        // ("crew is closed"). Now is the live state; a closed crew is the archive's.
+        let h = harness().await;
+        let open = register_coordinator(&h).await;
+        let closed = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", closed.2),
+            Some(json!({"lane_id": closed.0})),
+            Some(&closed.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let crews: Vec<&str> =
+            body["crews"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert!(crews.contains(&open.2.as_str()), "the open crew is listed: {crews:?}");
+        assert!(!crews.contains(&closed.2.as_str()), "the closed crew is not: {crews:?}");
+    }
+
+    #[tokio::test]
     async fn now_lanes_carry_their_presence() {
         // active: on a task (or a review) under a live lease; idle: a live
         // lease and nothing held; not_responding: the lease is no longer live.
