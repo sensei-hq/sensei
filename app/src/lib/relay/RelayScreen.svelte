@@ -225,6 +225,16 @@
         />
       {/if}
       <AddMember view={addMember} oncopy={(text) => void copy(text)} onrole={(role) => (state.addRole = role)} />
+      {#if state.runsError}
+        <Notice
+          data-runs-error
+          tone="fault"
+          size="inline"
+          title="Couldn't read the runs"
+          detail={state.runsError}
+          primary={{ label: 'Retry', name: 'retry-runs', onclick: () => void state.readRuns() }}
+        />
+      {/if}
       <PastRunsList rows={pastRuns} />
     </section>
   {:else if state.now && state.hasCrew && shell.view === 'now'}

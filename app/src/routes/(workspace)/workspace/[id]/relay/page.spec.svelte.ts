@@ -931,11 +931,15 @@ describe('Relay — a draft run starts from the Crew view; past runs below (#424
     const { c, api } = await open({ now: crewNoRun(), runs: F.fail(503, 'daemon busy') });
     need(tab(c, 'Crew'), 'the Crew button').click();
     await vi.waitFor(() => expect(one(c, '[data-runs-error]')).not.toBeNull());
+    expect(text(one(c, '[data-runs-error]'))).toContain("Couldn't read the runs");
+    // The daemon's reason is behind Why?, as on every read failure here.
+    need(one(c, '[data-runs-error] [data-action="toggle"]'), 'Why?').click();
+    await tick();
     expect(text(one(c, '[data-runs-error]'))).toContain('daemon busy');
     expect(one(c, '[data-run-start]')).toBeNull();
     expect(section(c, 'past-runs')).toBeNull();
     api.tryGetRuns.mockResolvedValue(F.ok(F.runList()));
-    need(one(c, '[data-runs-error] [data-notice-primary], [data-runs-error] button'), 'Retry').click();
+    need(one(c, '[data-runs-error] [data-action="retry-runs"]'), 'Retry').click();
     await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
     expect(one(c, '[data-runs-error]')).toBeNull();
   });
