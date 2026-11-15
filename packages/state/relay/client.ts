@@ -11,6 +11,7 @@ import {
   type RelayCreateRun,
   type RelayCreatedRun,
   type RelayCancelledRun,
+  type RelayRunDetail,
   type RelayRunList,
   type RelayFilter,
   type RelayNow,
@@ -35,6 +36,7 @@ export interface RelayApi {
   /** Mint a sprint run (queue cutover); the daemon's refusal text says why not. */
   tryCreateRun(body: RelayCreateRun): Promise<ApiResult<RelayCreatedRun>>;
   tryGetRuns(): Promise<ApiResult<RelayRunList>>;
+  tryGetRun(runId: string): Promise<ApiResult<RelayRunDetail>>;
   tryStartRun(runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>>;
   tryCancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
 }
@@ -83,6 +85,7 @@ export const relayClient = (base: string): RelayApi => {
     tryAddTriage: (body) => call<{ item_id: string }>('POST', '/relay/triage', body),
     tryCreateRun: (body) => call<RelayCreatedRun>('POST', '/relay/runs', body),
     tryGetRuns: () => call<RelayRunList>('GET', '/relay/runs'),
+    tryGetRun: (runId) => call<RelayRunDetail>('GET', `/relay/runs/${encodeURIComponent(runId)}`),
     tryStartRun: (runId, crewId) =>
       call<RelayCreatedRun>('POST', `/relay/runs/${encodeURIComponent(runId)}/start`, { crew_id: crewId }),
     tryCancelRun: (runId) => call<RelayCancelledRun>('POST', `/relay/runs/${encodeURIComponent(runId)}/cancel`, {}),
