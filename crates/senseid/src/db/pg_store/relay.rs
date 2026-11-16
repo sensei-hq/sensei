@@ -7879,9 +7879,9 @@ impl PgStore {
             }
             None => serde_json::Value::Null,
         };
-        let handoff_row: Option<(Option<String>, serde_json::Value, DateTime<Utc>)> =
+        let handoff_row: Option<(Option<String>, serde_json::Value, DateTime<Utc>, Option<Uuid>)> =
             sqlx_core::query_as::query_as(
-                "select body_md, props, created_at from relay.actions
+                "select body_md, props, created_at, lane_id from relay.actions
                  where user_id = $1 and task_id = $2 and kind in ('assigned', 'brief_updated')
                  order by created_at desc, id desc limit 1",
             )
@@ -7891,11 +7891,41 @@ impl PgStore {
             .await
             .map_err(db_err)?;
         let handoff_json = match handoff_row {
-            Some((body, props, at)) => serde_json::json!({
-                "body_md": body.unwrap_or_default(),
-                "docs": props.get("docs").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
-                "at": iso(at),
-            }),
+            Some((body, props, at, writer)) => {
+                // Who handed it off, and to whom (#425). A handover writes its brief
+                // stamped with the lane that took the task, beside a `handed_over` row
+                // at the same moment that names both lanes; any other brief was written
+                // by the lane that handed it off, to the lane holding the task now.
+                let over: Option<serde_json::Value> = sqlx_core::query_scalar::query_scalar(
+                    "select props from relay.actions
+                     where user_id = $1 and task_id = $2 and kind = 'handed_over'
+                       and created_at >= $3
+                     order by created_at desc, id desc limit 1",
+                )
+                .bind(user_id)
+                .bind(task_id)
+                .bind(at)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                let lane_ref = |id: Option<Uuid>| {
+                    id.map_or(serde_json::Value::Null, |id| id.to_string().into())
+                };
+                let (by_lane, to_lane) = match over {
+                    Some(p) => (
+                        p.get("from_lane").cloned().unwrap_or(serde_json::Value::Null),
+                        p.get("to_lane").cloned().unwrap_or(serde_json::Value::Null),
+                    ),
+                    None => (lane_ref(writer), lane_ref(lane_id)),
+                };
+                serde_json::json!({
+                    "body_md": body.unwrap_or_default(),
+                    "docs": props.get("docs").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+                    "at": iso(at),
+                    "by_lane": by_lane,
+                    "to_lane": to_lane,
+                })
+            }
             None => serde_json::Value::Null,
         };
         let history: Vec<(
@@ -12848,7 +12878,7 @@ mod tests {
         let pg = PgStore::test_store().await;
         let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xf7);
-        fx_task(&pg, u1(), t, c1, None, "assigned", "tests", 1).await;
+        fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
         fx_action(
             &pg,
             u1(),
