@@ -88,6 +88,18 @@ describe('Database · ER', () => {
     expect(q('[data-testid="schema-tabs"]')).not.toBeNull();
   });
 
+  it('the entity page fills the scroller, so the Diagram tab’s canvas gets the sized box it needs (#432)', async () => {
+    render();
+    await settle();
+    const item = [...target.querySelectorAll('[data-testid="schema-sidebar"] [data-tree-item-content]')]
+      .find((n) => n.textContent?.trim() === 'orders') as HTMLElement;
+    item.click();
+    await settle();
+    // The graph sizes through a height:100% chain that collapses in an unsized
+    // box; the fill below is what keeps the neighborhood canvas visible.
+    expect((q('[data-testid="schema-page"]') as HTMLElement).classList.contains('flex-1')).toBe(true);
+  });
+
   // Review r1 F2 (L0's standing rule from activity-logs): a steady state with no
   // design passes no sidebar snippet, never an empty one — the old page drew its
   // aside inside `{:else if view.model}`.

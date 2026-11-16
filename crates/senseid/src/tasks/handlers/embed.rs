@@ -45,6 +45,44 @@ const EMBED_TIMEOUT_SECS: u64 = 30;
 /// Give up embedding a folder after this many consecutive batch failures — the
 /// backend is unhealthy; leave the remaining nodes for `/api/embed/backfill`.
 const EMBED_MAX_CONSECUTIVE_FAILURES: u32 = 5;
+/// Default per-run cap on embedding backend calls (#359). A first scan of a
+/// monorepo packs thousands of batches; firing them all in one run bursts the
+/// local encoder and wedges the app. Each run spends at most this many calls,
+/// then a follow-up task continues the rest in the background. Config
+/// `embed.calls_per_run` overrides.
+const DEFAULT_EMBED_CALLS_PER_RUN: usize = 64;
+
+/// Parse `embed.calls_per_run`: positive integers win; anything else (unset,
+/// garbage, zero, negative) falls back to the default (batch_per_tick precedent).
+fn embed_calls_per_run(cfg: Option<String>) -> usize {
+    cfg.and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|&n| n > 0)
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_EMBED_CALLS_PER_RUN)
+}
+
+/// Per-run call budget (#359): every gateway invocation spends one `take()`.
+/// Past zero the run stops and the remainder waits for the follow-up task, so
+/// the burst is bounded no matter how many batches or per-text retries remain.
+struct CallBudget {
+    remaining: usize,
+}
+
+impl CallBudget {
+    fn new(cap: usize) -> Self {
+        Self { remaining: cap }
+    }
+    /// Spend one call. False = budget exhausted, stop the run. (Callers track
+    /// the denial itself: an empty budget at loop end may mean the work fit
+    /// exactly, which must NOT reenqueue.)
+    fn take(&mut self) -> bool {
+        if self.remaining == 0 {
+            return false;
+        }
+        self.remaining -= 1;
+        true
+    }
+}
 
 /// Build the text fed to the embedding model for a node. Combines kind, name,
 /// signature, and file location so semantically related symbols land near each
@@ -230,9 +268,18 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         .collect();
     let batches = pack_embed_batches(&texts);
 
+    // #359: bound the burst — batch attempts AND per-text retries share one
+    // per-run call budget, spent via `take()` at both gateway call sites below.
+    let cap = embed_calls_per_run(ctx.pg().get_config("embed.calls_per_run").await.ok().flatten());
+    let mut budget = CallBudget::new(cap);
     let mut embedded = 0u32;
     let mut consecutive_failures = 0u32;
+    let mut exhausted = false;
     for batch in &batches {
+        if !budget.take() {
+            exhausted = true;
+            break;
+        }
         let batch_texts: Vec<String> = batch.iter().map(|&i| texts[i].clone()).collect();
 
         // Embedding is best-effort and backfillable: a stalled or erroring
@@ -257,6 +304,10 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
                 }
                 let mut any_ok = false;
                 for (&i, text) in batch.iter().zip(batch_texts) {
+                    if !budget.take() {
+                        exhausted = true;
+                        break;
+                    }
                     match embed_batch(ctx, vec![text]).await {
                         BatchOutcome::Ok(mut v) => {
                             if let Some(vector) = v.pop() {
@@ -277,6 +328,9 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
                         }
                     }
                 }
+                if exhausted {
+                    break;
+                }
                 consecutive_failures = if any_ok { 0 } else { consecutive_failures + 1 };
                 if consecutive_failures >= EMBED_MAX_CONSECUTIVE_FAILURES {
                     tracing::warn!(
@@ -296,6 +350,25 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         }
     }
 
+    // #359: budget spent with progress made and nodes still pending — continue
+    // in the background instead of bursting. Plain `enqueue`, not
+    // `enqueue_unique`: the running self covers the twin check, so unique
+    // would drop the follow-up. No reenqueue on unhealthy backends (failures /
+    // timeouts return early or break above with `exhausted` false) or without
+    // progress (a wedged backend must not spin the queue). The pending query
+    // is limit-capped, so leftovers are re-checked cheaply rather than inferred.
+    if exhausted && embedded > 0 {
+        let leftover = ctx.pg().nodes_without_embeddings(&folder_id, 1).await?;
+        if !leftover.is_empty() {
+            let follow = Task::new(super::super::TaskKind::EmbedNodes, &task.folder_path, "");
+            ctx.queue.enqueue(follow).await;
+            tracing::info!(
+                "embed_nodes: {} — call budget spent after {embedded} nodes, follow-up queued",
+                task.folder_name(),
+            );
+        }
+    }
+
     tracing::info!("embed_nodes: {} — embedded {} nodes", task.folder_name(), embedded);
     Ok(embedded)
 }
@@ -303,6 +376,30 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tasks::TaskKind;
+
+    #[test]
+    fn embed_calls_per_run_defaults_parses_and_rejects_garbage() {
+        // #359: the per-run LLM-call budget is configurable, with a sane
+        // default when unset or unparseable (batch_per_tick precedent).
+        assert_eq!(embed_calls_per_run(None), DEFAULT_EMBED_CALLS_PER_RUN);
+        assert_eq!(embed_calls_per_run(Some("nonsense".into())), DEFAULT_EMBED_CALLS_PER_RUN);
+        assert_eq!(embed_calls_per_run(Some("0".into())), DEFAULT_EMBED_CALLS_PER_RUN);
+        assert_eq!(embed_calls_per_run(Some("-5".into())), DEFAULT_EMBED_CALLS_PER_RUN);
+        assert_eq!(embed_calls_per_run(Some("32".into())), 32);
+    }
+
+    #[test]
+    fn call_budget_denies_past_zero() {
+        // #359: every gateway invocation spends one call; past zero the run
+        // stops and the rest waits for the follow-up (backfill), so the burst
+        // is bounded no matter how many batches or per-text retries remain.
+        let mut budget = CallBudget::new(2);
+        assert!(budget.take());
+        assert!(budget.take());
+        assert!(!budget.take());
+        assert!(!budget.take());
+    }
 
     #[test]
     fn embed_text_combines_kind_name_signature_and_path() {
@@ -416,5 +513,229 @@ mod tests {
         }
         let batches = pack_embed_batches(&texts);
         assert_batches_safe(&texts, &batches);
+    }
+
+    // ── #359 behavioral pin: the wiring, not the parts ─────────────────────
+    // The r1 unit tests pin the config parser and the `CallBudget` struct, but
+    // nothing pinned `take()` AT the call sites, exhaustion stopping the run,
+    // or the follow-up conditions — L1's unwired mutant (both `take()` gates
+    // removed + the `exhausted` breaks neutralized) passed the whole suite.
+    // This handler-level test kills it: with a 2-call cap over 5 one-per-batch
+    // nodes, the run must stop after exactly 2 embeddings and a follow-up
+    // `EmbedNodes` must be queued. Unwired embeds all 5 with no follow-up;
+    // inverted (`if budget.take()`) embeds 0 with no follow-up.
+
+    /// A test-only embed adapter returning real `EMBED_DIM`-wide vectors. The
+    /// noop adapter answers no `embed` chain at all, so `embedded` stays 0 and
+    /// the follow-up path is unreachable with it.
+    struct FakeEmbedAdapter;
+
+    impl gateway::adapters::capability::Model for FakeEmbedAdapter {
+        fn id(&self) -> &str {
+            "fake-embed"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl gateway::adapters::capability::EmbedModel for FakeEmbedAdapter {
+        async fn embed(
+            &self,
+            _cfg: &gateway::types::config::RouterConfig,
+            req: &gateway::types::io::EmbedRequest,
+        ) -> Result<gateway::types::io::EmbedResponse, gateway::types::error::GatewayError>
+        {
+            Ok(gateway::types::io::EmbedResponse {
+                embeddings: req.texts.iter().map(|_| vec![0.1f32; EMBED_DIM]).collect(),
+                usage: None,
+                degraded: false,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl gateway::adapters::RegisterInto for FakeEmbedAdapter {
+        async fn register_into(
+            self: std::sync::Arc<Self>,
+            reg: &gateway::adapters::AdapterRegistry,
+        ) {
+            reg.register_embed(self.clone()).await;
+        }
+    }
+
+    /// [`make_ctx`](crate::tasks::test_support::make_ctx) with a gateway that
+    /// can actually embed: the fake adapter above behind an `embed` chain (the
+    /// chain `embed_batch` pins). Same shape as `init_gateway_test`.
+    async fn make_embed_ctx() -> std::sync::Arc<TaskContext> {
+        use gateway::types::capability::Capability;
+        use gateway::types::config::*;
+        use std::collections::HashMap;
+
+        let adapters = gateway::adapters::AdapterRegistry::new();
+        adapters.register(std::sync::Arc::new(FakeEmbedAdapter)).await;
+
+        let mut routers = HashMap::new();
+        routers.insert(
+            "fake-embed".into(),
+            RouterConfig {
+                url: "http://fake-embed".into(),
+                api_key_env: None,
+                api_key: None,
+                enabled: true,
+                timeout_ms: None,
+                headers: HashMap::new(),
+            },
+        );
+
+        let mut models = HashMap::new();
+        models.insert(
+            "fake-embed".into(),
+            ModelConfig {
+                id: "fake-embed".into(),
+                api_model_id: None,
+                provider: "fake-embed".into(),
+                capabilities: vec![Capability::TextEmbed],
+                context_window: 1_000_000,
+                max_output_tokens: 0,
+                pricing: None,
+                family: None,
+                catalog: None,
+            },
+        );
+
+        let mut chains = HashMap::new();
+        chains.insert(
+            "embed".into(),
+            FallbackChainConfig {
+                id: "embed".into(),
+                capability: Capability::TextEmbed,
+                models: vec![ChainEntry {
+                    model: "fake-embed".into(),
+                    router: Some("fake-embed".into()),
+                    api_model_id: None,
+                    priority: 1,
+                }],
+                fallback_triggers: vec![],
+            },
+        );
+
+        let config = GatewayConfig {
+            routers,
+            models,
+            chains,
+            constraints: Default::default(),
+            panels: Default::default(),
+            consensus: Default::default(),
+        };
+        let cb = gateway::circuit_breaker::CircuitBreakerManager::new(
+            gateway::circuit_breaker::CircuitBreakerConfig::default(),
+        );
+        let gateway = std::sync::Arc::new(gateway::Gateway::new(config, adapters, cb));
+
+        let queue = std::sync::Arc::new(crate::tasks::queue::TaskQueue::new());
+        let app_state = std::sync::Arc::new(crate::api::state::SharedState {
+            task_queue: queue.clone(),
+            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
+            gateway,
+            event_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(16);
+                tx
+            },
+            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
+            trackers: Default::default(),
+        });
+        std::sync::Arc::new(TaskContext {
+            queue,
+            app_state,
+            _graph_path: None,
+            logger: sensei_logger::Logger::noop(),
+        })
+    }
+
+    #[tokio::test]
+    async fn call_budget_stops_run_early_and_queues_followup() {
+        // #359 pin: the wired behavior end to end — the budget is spent at the
+        // call sites, the run stops past zero with nodes still pending, and a
+        // follow-up `EmbedNodes` continues in the background.
+        let ctx = make_embed_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let root = pg
+            .add_watch_root(&format!("/_test/embed-cap-root-{uniq}"), "t", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let abs_path = format!("/_test/embed-cap-{uniq}");
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            &format!("embed-cap-{uniq}"),
+            &abs_path,
+        )
+        .await
+        .unwrap();
+        // Five nodes, each packing one-per-batch: ~200-char names push every
+        // text's token estimate past half the 384 budget, so no batch holds two.
+        for i in 0..5 {
+            let name = format!("embed_cap_node_{i}_{}", "n".repeat(180));
+            crate::tasks::test_support::seed_node(
+                pg,
+                &fid,
+                "function",
+                &name,
+                "cap.rs",
+                None,
+                None,
+                Some(i),
+                Some(i),
+            )
+            .await
+            .unwrap();
+        }
+        let prior = pg.get_config("embed.calls_per_run").await.unwrap();
+        pg.set_config("embed.calls_per_run", "2").await.unwrap();
+
+        let task = Task::new(TaskKind::EmbedNodes, &abs_path, "");
+        let embedded = embed_nodes(&ctx, &task).await.unwrap();
+
+        assert_eq!(
+            embedded, 2,
+            "a 2-call cap over 5 one-per-batch nodes stops the run after 2 (unwired: 5, inverted: 0)"
+        );
+        assert!(
+            ctx.queue.has_pending_kind_folder(TaskKind::EmbedNodes, &abs_path).await,
+            "exhaustion with progress made and nodes pending queues a follow-up EmbedNodes"
+        );
+        let leftover = pg.nodes_without_embeddings(&fid, 10).await.unwrap();
+        assert_eq!(leftover.len(), 3, "the 3 unembedded nodes are the follow-up's work");
+
+        // cleanup
+        match prior {
+            Some(v) => pg.set_config("embed.calls_per_run", &v).await.unwrap(),
+            None => pg.delete_config("embed.calls_per_run").await.unwrap(),
+        }
+        let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1")
+            .bind(fid)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.files WHERE folder_id = $1")
+            .bind(fid)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1")
+            .bind(root)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
+            .bind(root)
+            .execute(pool)
+            .await
+            .ok();
     }
 }

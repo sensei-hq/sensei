@@ -19,10 +19,14 @@ set -euo pipefail
 work="${RUNNER_TEMP:-$(mktemp -d)}"
 key="$work/notary-$$.p8"
 zip="$work/notarize-$$.zip"
-trap 'rm -f "$key" "$zip"' EXIT
+stage="$work/notarize-$$"
+trap 'rm -rf "$key" "$zip" "$stage"' EXIT
 
 (umask 077 && printf '%s\n' "$APPLE_API_KEY_P8" > "$key")
-ditto -c -k --keepParent "$@" "$zip"
+# `ditto -c -k` archives ONE source: the binaries go up as one folder.
+mkdir -p "$stage"
+cp "$@" "$stage/"
+ditto -c -k --keepParent "$stage" "$zip"
 
 result=$(xcrun notarytool submit "$zip" \
   --key "$key" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \

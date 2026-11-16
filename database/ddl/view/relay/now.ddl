@@ -1,6 +1,6 @@
 set search_path to relay, extensions;
 
--- The Now screen's grain, one view in six sections: one row per lane with
+-- The Now screen's grain, one view in six sections: one row per live lane with
 -- its active task, newest lease and the review it holds; open person
 -- decisions; crew → person messages the person has not read; the manual
 -- triage count; today's completed tasks; open sprint runs counted by state;
@@ -23,6 +23,24 @@ select l.user_id, 'lane'::text as section, l.crew_id, l.id,
         'id', t.id, 'title', t.title, 'repo_key', t.repo_key, 'workspace_id', t.workspace_id,
         'phase', t.phase, 'state', t.state, 'round', t.round,
         'state_changed_at', t.state_changed_at,
+        -- Where the holder is (#418): the checkpoint's current step, and the
+        -- checklist settled (done or skipped) over its total.
+        'current_step', t.checkpoint->>'current_step',
+        'steps_done', (select count(*) from jsonb_array_elements(t.steps) s
+                        where s->>'state' in ('done', 'skipped')),
+        'steps_total', jsonb_array_length(t.steps),
+        -- The newest nudge about it (#419; CONTRACT §3f-bis): a nudge is a message
+        -- with props.nudge. By `you` (no lane, a person surface), `sensei` (no
+        -- lane, the daemon's own surface 'lane') or a `lane`; null when none.
+        'last_nudge', (
+          select jsonb_build_object('at', a.created_at,
+                   'by', case when a.lane_id is not null then 'lane'
+                              when a.props->>'surface' = 'lane' then 'sensei'
+                              else 'you' end)
+            from relay.actions a
+           where a.user_id = l.user_id and a.task_id = t.id and a.kind = 'message'
+             and a.props->>'nudge' = 'true'
+           order by a.created_at desc, a.id desc limit 1),
         'needs_answer', exists (
           select 1 from relay.actions a
            where a.user_id = l.user_id and a.kind = 'asked'
@@ -34,7 +52,15 @@ select l.user_id, 'lane'::text as section, l.crew_id, l.id,
     'reviewing', case when tr.id is null then null
       else jsonb_build_object(
         'id', tr.id, 'title', tr.title, 'phase', tr.phase, 'round', tr.round,
-        'claimed_at', tr.review_claimed_at) end
+        'claimed_at', tr.review_claimed_at) end,
+    -- The session's presence (#419; CONTRACT §1h): a live lease (granted,
+    -- not past its end) holding a task or a review is active, holding
+    -- nothing is idle; no live lease is not responding.
+    'presence', case
+      when ls.id is null or ls.state <> 'granted' or ls.expires_at <= current_timestamp
+        then 'not_responding'
+      when t.id is not null or tr.id is not null then 'active'
+      else 'idle' end
   ) as payload
 from relay.lanes l
 left join lateral (
@@ -46,6 +72,12 @@ left join relay.tasks t on t.user_id = l.user_id and t.lane_id = l.id
   and t.state in ('assigned', 'working', 'rework', 'blocked')
 left join relay.tasks tr on tr.user_id = l.user_id and tr.review_claimed_by = l.id
   and tr.state = 'in_review'
+-- Live lanes only (#419): a lane that left, or whose crew closed, leaves
+-- the list; its row stays for history.
+where l.unregistered_at is null
+  and exists (
+    select 1 from relay.crews c
+     where c.user_id = l.user_id and c.id = l.crew_id and c.status <> 'closed')
 union all
 select a.user_id, 'open_asked', a.crew_id, a.id,
   jsonb_build_object(

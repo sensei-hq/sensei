@@ -1,0 +1,528 @@
+// The relay domain state (#421; design 2026-11-12 §2b, §2c): six entity states on
+// ReactiveStageContext and one composite that hydrates from a RelaySource, applies the
+// stream's events, and keeps the screen's own state. Pure: canned reads and canned
+// events in, data out — no DOM, no fetch.
+import { describe, it, expect, vi } from 'vitest';
+import type { ApiResult } from '../result.js';
+import type { RelayCreateRun, RelayCreatedRun, RelayNow, RelayQueue, RelayRunList, RelayStreamEvent } from './types.js';
+import { RelayState, type RelayReads, type RelaySource } from './relay-state.svelte.js';
+import * as F from './fixtures.js';
+
+/** A source whose reads and writes are spies, and whose stream the test drives. */
+function fakeSource(over: Partial<Record<keyof RelaySource, unknown>> = {}) {
+  let on: ((e: RelayStreamEvent) => void) | null = null;
+  let opened: (() => void) | null = null;
+  const teardown = vi.fn();
+  const source = {
+    readNow: vi.fn(async (): Promise<ApiResult<RelayNow>> => F.ok(F.now())),
+    readQueue: vi.fn(async (): Promise<ApiResult<RelayQueue>> => F.ok(F.queue())),
+    answer: vi.fn(async () => F.ok({ action_id: 'act-answer' })),
+    send: vi.fn(async () => F.ok({ message_id: 'msg-1' })),
+    addToBacklog: vi.fn(async () => F.ok({ item_id: 'item-new' })),
+    createRun: vi.fn(
+      async (): Promise<ApiResult<RelayCreatedRun>> =>
+        F.ok({ run_id: F.RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }),
+    ),
+    readRuns: vi.fn(async (): Promise<ApiResult<RelayRunList>> => F.ok(F.runList())),
+    startRun: vi.fn(
+      async (): Promise<ApiResult<RelayCreatedRun>> =>
+        F.ok({ run_id: F.DRAFT_RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }),
+    ),
+    cancelRun: vi.fn(async () => F.ok({ run_id: F.DRAFT_RUN_ID, status: 'cancelled' })),
+    events: vi.fn((handler: (e: RelayStreamEvent) => void, onOpen: () => void) => {
+      on = handler;
+      opened = onOpen;
+      return teardown;
+    }),
+    ...over,
+  };
+  return {
+    source: source as unknown as RelaySource & typeof source,
+    emit: (e: RelayStreamEvent) => on?.(e),
+    open: () => opened?.(),
+    teardown,
+  };
+}
+
+const reads = (now: RelayNow | null = F.now(), queue: RelayQueue | null = F.queue()): RelayReads => ({
+  now,
+  nowError: null,
+  queue,
+  queueError: null,
+});
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+describe('RelayState · hydrate: the reads become the six entity states', () => {
+  it('lanes, decisions and messages by their ids; runs by run_id; the screen reads back what was read', () => {
+    const now = F.sprintNow();
+    const s = new RelayState(fakeSource().source, {}, reads(now));
+    expect(s.lanes.items.map((l) => l.id)).toEqual(now.lanes.map((l) => l.id));
+    expect(s.decisions.items.map((d) => d.id)).toEqual(now.decisions.map((d) => d.id));
+    expect(s.messages.items.map((m) => m.id)).toEqual(now.person_messages.map((m) => m.id));
+    expect(s.runs.items.map((r) => r.id)).toEqual(now.runs.map((r) => r.run_id));
+    // The screen still reads `now`: assembled from the entity states, equal to the read.
+    expect(s.now).toEqual(now);
+  });
+
+  it('tasks: the floating reviews and today’s completed, each marked by where it stands', () => {
+    const now = F.now({
+      floating_reviews: [F.floatingReview()],
+      completed_today: [F.completed()],
+    });
+    const s = new RelayState(fakeSource().source, {}, reads(now));
+    expect(s.tasks.items.map((t) => [t.id, t.stage])).toEqual([
+      [now.floating_reviews[0].task_id, 'floating'],
+      [now.completed_today[0].task_id, 'completed'],
+    ]);
+    expect(s.now?.floating_reviews).toEqual(now.floating_reviews);
+    expect(s.now?.completed_today).toEqual(now.completed_today);
+  });
+
+  it('items: triage and backlog; a ticket with no item yet is keyed by its tracker and key', () => {
+    const queue = F.queue();
+    const s = new RelayState(fakeSource().source, {}, reads(F.now(), queue));
+    const ids = s.items.items.map((i) => [i.id, i.stage]);
+    const ticket = queue.triage.find((t) => t.item_id === null);
+    expect(ticket, 'the fixture holds a tracker row').toBeDefined();
+    expect(ids).toContainEqual([`${ticket!.ticket!.provider}:${ticket!.ticket!.key}`, 'triage']);
+    expect(ids.filter(([, stage]) => stage === 'backlog').length).toBe(queue.backlog.length);
+    expect(s.queue).toEqual(queue);
+    expect(s.queueCount).toBe(queue.triage.length + queue.backlog.length);
+  });
+
+  it('no read is no state (D83): now, queue, runs and reviews read null, never empty', () => {
+    const s = new RelayState(fakeSource().source, {}, { now: null, nowError: F.fail(503, 'down').error, queue: null, queueError: null });
+    expect(s.now).toBeNull();
+    expect(s.queue).toBeNull();
+    expect(s.runs.items).toEqual([]);
+    expect(s.runsBand).toBeNull();
+    expect(s.floatingReviews).toBeNull();
+    expect(s.queueCount).toBeNull();
+    expect(s.nowError?.status).toBe(503);
+    expect(s.hasCrew).toBe(false);
+  });
+});
+
+describe('RelayState · apply: an event with its row changes that row alone', () => {
+  it('a lane row updates the lane in place, with no read', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    const lane = s.lanes.items[0];
+    s.apply({ action: 'update', entity: 'lane', data: { id: lane.id, title: 'Diagrams' } as never });
+    await settle();
+    expect(s.lanes.get(lane.id)?.title).toBe('Diagrams');
+    expect(s.now?.lanes[0].title).toBe('Diagrams');
+    expect(source.readNow).not.toHaveBeenCalled();
+  });
+
+  it('a lane added and a lane removed', () => {
+    const s = new RelayState(fakeSource().source, {}, reads());
+    const added = F.lane({ id: 'l-new', code: 'L7', title: 'Sync' });
+    s.apply({ action: 'add', entity: 'lane', data: added as never });
+    expect(s.now?.lanes.map((l) => l.id)).toContain('l-new');
+    s.apply({ action: 'remove', entity: 'lane', data: { id: 'l-new' } as never });
+    expect(s.now?.lanes.map((l) => l.id)).not.toContain('l-new');
+  });
+
+  it('a lane the daemon adds again (a re-register) restates the row held, with no read (#418)', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    const lane = s.lanes.items[0];
+    s.apply({ action: 'add', entity: 'lane', data: { ...lane, title: 'Back again' } as never });
+    await settle();
+    expect(s.lanes.items.filter((l) => l.id === lane.id)).toHaveLength(1);
+    expect(s.lanes.get(lane.id)?.title).toBe('Back again');
+    expect(source.readNow).not.toHaveBeenCalled();
+  });
+
+  it('the event’s own keys stay out of the row: op, reason and lane_id are not lane fields (#418)', () => {
+    const s = new RelayState(fakeSource().source, {}, reads());
+    const lane = s.lanes.items[0];
+    s.apply({
+      action: 'update',
+      entity: 'lane',
+      data: { ...lane, lease_state: 'expired', op: 'suspended', reason: 'lease_expired', lane_id: lane.id } as never,
+    });
+    expect(s.now?.lanes[0]).toEqual({ ...lane, lease_state: 'expired' });
+  });
+
+  it('a lane in a crew the screen has not read re-reads Now: a coordinator mints its crew (#418)', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    s.apply({ action: 'add', entity: 'lane', data: F.lane({ id: 'l-coord', crew_id: 'crew-new', code: 'L0' }) as never });
+    await settle();
+    expect(source.readNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a decision answered (removed) leaves Needs you; a message added joins it', () => {
+    const now = F.now({ decisions: [F.decision()], person_messages: [] });
+    const s = new RelayState(fakeSource().source, {}, reads(now));
+    s.apply({ action: 'remove', entity: 'decision', data: { id: now.decisions[0].id } as never });
+    expect(s.now?.decisions).toEqual([]);
+    const msg = F.personMessage({ id: 'msg-9' });
+    s.apply({ action: 'add', entity: 'message', data: msg as never });
+    expect(s.now?.person_messages.map((m) => m.id)).toEqual(['msg-9']);
+  });
+
+  it('a run row moves the band by its id', () => {
+    const now = F.sprintNow();
+    const s = new RelayState(fakeSource().source, {}, reads(now));
+    const run = now.runs[0];
+    s.apply({ action: 'update', entity: 'run', data: { id: run.run_id, done_tasks: 9 } as never });
+    expect(s.now?.runs[0].done_tasks).toBe(9);
+    expect(s.now?.runs[0].run_id).toBe(run.run_id);
+  });
+
+  it('a run row changes the band alone: its items ride their own events (#418)', async () => {
+    const now = F.sprintNow();
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads(now));
+    s.apply({ action: 'update', entity: 'run', data: { id: now.runs[0].run_id, op: 'activated' } as never });
+    await settle();
+    expect(source.readQueue).not.toHaveBeenCalled();
+    expect(source.readNow).not.toHaveBeenCalled();
+  });
+});
+
+describe('RelayState · apply: an event that names ids only (today’s daemon, until #418) re-reads', () => {
+  it('a task, lane or relay event re-reads Now once; a run event re-reads Now and the queue', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    s.apply({ action: 'update', entity: 'task', data: { task_id: 't1' } } as RelayStreamEvent);
+    await settle();
+    expect(source.readNow).toHaveBeenCalledTimes(1);
+    expect(source.readQueue).not.toHaveBeenCalled();
+    s.apply({ action: 'add', entity: 'run', data: { run_id: F.RUN_ID, crew_id: F.CREW_ID } } as RelayStreamEvent);
+    await settle();
+    expect(source.readNow).toHaveBeenCalledTimes(2);
+    expect(source.readQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('events while a read is in flight share it: one read, not one per event', async () => {
+    const d = F.deferred<ApiResult<RelayNow>>();
+    const { source } = fakeSource({ readNow: vi.fn(() => d.promise) });
+    const s = new RelayState(source, {}, reads());
+    for (const id of ['t1', 't2', 't3']) s.apply({ action: 'update', entity: 'task', data: { task_id: id } } as RelayStreamEvent);
+    expect(source.readNow).toHaveBeenCalledTimes(1);
+    d.resolve(F.ok(F.now({ lanes: [] })));
+    await settle();
+    expect(s.now?.lanes).toEqual([]);
+  });
+
+  it('a second press of Retry shares the read in flight: one read, with no catch-up read after it', async () => {
+    const d = F.deferred<ApiResult<RelayNow>>();
+    const { source } = fakeSource({ readNow: vi.fn(() => d.promise) });
+    const s = new RelayState(source, {}, { now: null, nowError: F.fail(503, 'down').error, queue: null, queueError: null });
+    const first = s.retryNow();
+    const second = s.retryNow();
+    expect(s.reading).toBe(true);
+    d.resolve(F.ok(F.now()));
+    await Promise.all([first, second]);
+    await settle();
+    expect(source.readNow).toHaveBeenCalledTimes(1);
+    expect(s.reading).toBe(false);
+  });
+
+  it('a step is the task screen’s, and an unknown entity changes nothing', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    s.apply({ action: 'add', entity: 'step', data: { task_id: 't1' } } as RelayStreamEvent);
+    s.apply({ action: 'add', entity: 'weather', data: {} } as RelayStreamEvent);
+    await settle();
+    expect(source.readNow).not.toHaveBeenCalled();
+  });
+
+  it('a failed re-read keeps what was shown and says why (D83)', async () => {
+    const { source } = fakeSource({ readNow: vi.fn(async () => F.fail(500, 'boom')) });
+    const s = new RelayState(source, {}, reads());
+    const before = s.now;
+    s.apply({ action: 'update', entity: 'lane', data: { lane_id: 'l1' } } as RelayStreamEvent);
+    await settle();
+    expect(s.now).toEqual(before);
+    expect(s.nowError?.message).toBe('boom');
+  });
+});
+
+describe('RelayState · connect: the stream is the source’s, the state applies it', () => {
+  it('subscribes once; each open of the stream (the first too) reads Now and the queue; events apply; teardown', async () => {
+    const f = fakeSource();
+    const s = new RelayState(f.source, { workspace_id: 'w1' }, reads());
+    const stop = s.connect();
+    expect(f.source.events).toHaveBeenCalledTimes(1);
+    // Nothing is read until the socket is open: the read then covers everything before it.
+    await settle();
+    expect(f.source.readNow).not.toHaveBeenCalled();
+    f.open();
+    await settle();
+    expect(f.source.readNow).toHaveBeenCalledWith({ workspace_id: 'w1' });
+    expect(f.source.readQueue).toHaveBeenCalledWith({ workspace_id: 'w1' });
+    const lane = s.lanes.items[0];
+    f.emit({ action: 'update', entity: 'lane', data: { id: lane.id, title: 'Live' } } as never);
+    expect(s.lanes.get(lane.id)?.title).toBe('Live');
+    f.open();
+    await settle();
+    expect(f.source.readNow).toHaveBeenCalledTimes(2);
+    expect(f.source.readQueue).toHaveBeenCalledTimes(2);
+    stop();
+    expect(f.teardown).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RelayState · the person’s writes', () => {
+  it('an answer goes to the source and the event it causes confirms it: no read of its own', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads(F.now({ decisions: [F.decision()] })));
+    const reason = await s.answer(s.decisions.items[0], 'db');
+    expect(reason).toBeNull();
+    expect(source.answer).toHaveBeenCalledWith({ decision_id: s.decisions.items[0].id, option: 'db', note: null, surface: 'desktop' });
+    expect(source.readNow).not.toHaveBeenCalled();
+  });
+
+  it('a refused answer says why', async () => {
+    const { source } = fakeSource({ answer: vi.fn(async () => F.fail(409, 'already answered')) });
+    const s = new RelayState(source, {}, reads(F.now({ decisions: [F.decision()] })));
+    expect(await s.answer(s.decisions.items[0], 'db')).toBe('already answered');
+  });
+
+  it('a message goes to the source; its reason when refused', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    const body = { crew_id: F.CREW_ID, to: { kind: 'crew' }, task_id: null, text: 'Try the other parser.' } as never;
+    expect(await s.send(body)).toBeNull();
+    expect(source.send).toHaveBeenCalledWith(body);
+  });
+
+  it('a nudge sends the row’s message from this surface, pending until the source answers (#419)', async () => {
+    let release!: (v: unknown) => void;
+    const { source } = fakeSource({ send: vi.fn(() => new Promise((r) => (release = r))) });
+    const s = new RelayState(source, {}, reads());
+    const message = { crew_id: F.CREW_ID, to: { kind: 'coordinator' }, task_id: 't-er', text: 'ER has waited 52 min: approved, not merged.', nudge: true, reason: 'merge_pending', waiting_min: 52 } as const;
+    const sent = s.nudge({ id: 't-er', nudge: { message } } as never);
+    expect(s.nudging).toEqual(['t-er']);
+    release(F.ok({ message_id: 'm1' }));
+    expect(await sent).toBeNull();
+    expect(source.send).toHaveBeenCalledWith({ ...message, surface: 'desktop' });
+    expect(s.nudging).toEqual([]);
+    expect(s.nudgeErrors).toEqual({});
+  });
+
+  it('a refused nudge keeps its reason on its row, and a later one clears it', async () => {
+    const send = vi.fn().mockResolvedValueOnce(F.fail(409, 'that lane has gone')).mockResolvedValueOnce(F.ok({ message_id: 'm2' }));
+    const { source } = fakeSource({ send });
+    const s = new RelayState(source, {}, reads());
+    const row = { id: 't-er', nudge: { message: { crew_id: F.CREW_ID, to: { kind: 'coordinator' }, task_id: 't-er', text: 'x', nudge: true, reason: 'merge_pending' } } } as never;
+    expect(await s.nudge(row)).toBe('that lane has gone');
+    expect(s.nudgeErrors).toEqual({ 't-er': 'that lane has gone' });
+    expect(await s.nudge(row)).toBeNull();
+    expect(s.nudgeErrors).toEqual({});
+  });
+
+  it('adding to the backlog is confirmed by its item events: no read of its own (#418)', async () => {
+    const { source } = fakeSource();
+    const queue = F.queue();
+    const s = new RelayState(source, {}, reads(F.now(), queue));
+    const item = queue.triage[0];
+    expect(await s.addToBacklog(item)).toBeNull();
+    expect(source.addToBacklog).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(source.readQueue).not.toHaveBeenCalled();
+    expect(source.readNow).not.toHaveBeenCalled();
+  });
+});
+
+// Queue cutover (phase 4), carried over from the app's RelayState: the person picks
+// backlog items and runs a sprint. One write per press; a refusal says why and
+// leaves the selection as it was.
+const sprintBody = (): Omit<RelayCreateRun, 'item_ids' | 'crew_id'> => ({
+  title: 'Sprint 15: Queue screen',
+  goal: 'Run a sprint from the Relay screen',
+  repo_key: null,
+  workspace_id: null,
+  config: { base_checkout: '/w/sensei', base_branch: 'develop', verify_cmd: 'make test-fast', auto_merge: true },
+});
+
+describe('RelayState · the sprint selection and createSprint', () => {
+  it('toggleSelected adds then removes; clearSelection empties', () => {
+    const s = new RelayState(fakeSource().source, {}, reads());
+    s.toggleSelected('item-a');
+    s.toggleSelected('item-b');
+    expect(s.selectedCount).toBe(2);
+    s.toggleSelected('item-a');
+    expect(s.isSelected('item-a')).toBe(false);
+    s.clearSelection();
+    expect(s.selectedCount).toBe(0);
+  });
+
+  it('is single-flight, names the crew, reads nothing back (its events confirm it), and clears the selection', async () => {
+    const d = F.deferred<ApiResult<RelayCreatedRun>>();
+    const { source } = fakeSource({ createRun: vi.fn(() => d.promise) });
+    const s = new RelayState(source, {}, reads());
+    s.toggleSelected('item-a');
+    s.toggleSelected('item-b');
+    const first = s.createSprint(sprintBody());
+    const second = s.createSprint(sprintBody());
+    expect(source.createRun).toHaveBeenCalledTimes(1);
+    const body = source.createRun.mock.calls[0][0] as RelayCreateRun;
+    expect(body.item_ids).toEqual(['item-a', 'item-b']);
+    expect(body.crew_id).toBe(F.CREW_ID);
+    d.resolve(F.ok({ run_id: F.RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }));
+    expect(await first).toBe(F.RUN_ID);
+    expect(await second).toBe(F.RUN_ID);
+    // The run's row and its items' removals confirm it (#418).
+    await settle();
+    expect(source.readQueue).not.toHaveBeenCalled();
+    expect(source.readNow).not.toHaveBeenCalled();
+    expect(s.selectedCount).toBe(0);
+    expect(s.sprintError).toBeNull();
+  });
+
+  it('starts the run in the same step when the screen has a crew; with none it drafts (#419)', async () => {
+    const { source } = fakeSource();
+    const withCrew = new RelayState(source, {}, reads());
+    withCrew.toggleSelected('item-a');
+    await withCrew.createSprint(sprintBody());
+    expect((source.createRun.mock.calls[0][0] as RelayCreateRun).start).toBe(true);
+    const bare = fakeSource();
+    const noCrew = new RelayState(bare.source, {}, reads(F.now({ crews: [], lanes: [] })));
+    noCrew.toggleSelected('item-a');
+    await noCrew.createSprint(sprintBody());
+    const body = bare.source.createRun.mock.calls[0][0] as RelayCreateRun;
+    expect([body.start, body.crew_id]).toEqual([false, null]);
+  });
+
+  it('keeps the selection and says why on a refusal; an empty selection makes no call', async () => {
+    const { source } = fakeSource({ createRun: vi.fn(async () => F.fail(409, 'more than one active crew: name crew_id')) });
+    const s = new RelayState(source, {}, reads());
+    expect(await s.createSprint(sprintBody())).toBeNull();
+    expect(source.createRun).not.toHaveBeenCalled();
+    s.toggleSelected('item-a');
+    expect(await s.createSprint(sprintBody())).toBeNull();
+    expect(s.sprintError).toContain('more than one active crew');
+    expect(s.selectedCount).toBe(1);
+  });
+});
+
+describe('RelayState · an open item the person adds to triage (#423)', () => {
+  const draft = { title: 'Hook skips the dōjō tests', kind: 'finding' as const, tags: ['dōjō'], repo_key: null, workspace_id: 'w1' };
+
+  it('goes to the source; its item event confirms it — no read of its own (#418)', async () => {
+    const { source } = fakeSource({ addTriage: vi.fn(async () => F.ok({ item_id: 'item-9' })) });
+    const s = new RelayState(source, { workspace_id: 'w1' }, reads());
+    expect(await s.addTriage(draft)).toBeNull();
+    expect(source.addTriage).toHaveBeenCalledWith(draft);
+    await settle();
+    expect(source.readQueue).not.toHaveBeenCalled();
+    expect(s.triageError).toBeNull();
+  });
+
+  it('a refusal says why, and nothing is read', async () => {
+    const { source } = fakeSource({ addTriage: vi.fn(async () => F.fail(422, 'title is empty')) });
+    const s = new RelayState(source, {}, reads());
+    expect(await s.addTriage({ ...draft, title: '' })).toBe('title is empty');
+    expect(s.triageError).toBe('title is empty');
+    expect(source.readQueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('RelayState · the role AddMember shows (#424)', () => {
+  it('starts with the coordinator, and keeps what the person picked', () => {
+    const s = new RelayState(fakeSource().source, {}, reads());
+    expect(s.addRole).toBe('coordinator');
+    s.addRole = 'contributor';
+    expect(s.addRole).toBe('contributor');
+  });
+});
+
+describe('RelayState · the run list: a draft to start, past runs (#424)', () => {
+  it('reads the runs once asked; until then, none', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    expect(s.runList).toBeNull();
+    await s.readRuns();
+    expect(source.readRuns).toHaveBeenCalledTimes(1);
+    expect(s.runList?.active.map((r) => r.state)).toEqual(['draft']);
+    expect(s.runList?.archived.map((r) => r.state)).toEqual(['completed']);
+    expect(s.runsError).toBeNull();
+  });
+
+  it('a failed read says so and invents no list', async () => {
+    const { source } = fakeSource({ readRuns: vi.fn(async () => F.fail(503, 'down')) });
+    const s = new RelayState(source, {}, reads());
+    await s.readRuns();
+    expect(s.runList).toBeNull();
+    expect(s.runsError).toContain('down');
+  });
+
+  it('starts a draft on the screen’s crew, single-flight, then reads the runs again', async () => {
+    const d = F.deferred<ApiResult<RelayCreatedRun>>();
+    const { source } = fakeSource({ startRun: vi.fn(() => d.promise) });
+    const s = new RelayState(source, {}, reads());
+    await s.readRuns();
+    const first = s.startRun(F.DRAFT_RUN_ID);
+    const second = s.startRun(F.DRAFT_RUN_ID);
+    expect(source.startRun).toHaveBeenCalledTimes(1);
+    expect(source.startRun.mock.calls[0]).toEqual([F.DRAFT_RUN_ID, F.CREW_ID]);
+    expect(s.startingRun).toBe(F.DRAFT_RUN_ID);
+    d.resolve(F.ok({ run_id: F.DRAFT_RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' }));
+    expect(await first).toBeNull();
+    expect(await second).toBeNull();
+    expect(s.startingRun).toBeNull();
+    expect(source.readRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refused start keeps the draft and says why', async () => {
+    const { source } = fakeSource({ startRun: vi.fn(async () => F.fail(409, 'the crew has no live lane')) });
+    const s = new RelayState(source, {}, reads());
+    expect(await s.startRun(F.DRAFT_RUN_ID)).toContain('no live lane');
+    expect(s.runActionError).toContain('no live lane');
+  });
+
+  it('cancels a run, then reads the runs again; a refusal says why', async () => {
+    const { source } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    expect(await s.cancelRun(F.DRAFT_RUN_ID)).toBeNull();
+    expect(source.cancelRun).toHaveBeenCalledWith(F.DRAFT_RUN_ID);
+    expect(source.readRuns).toHaveBeenCalledTimes(1);
+    const refused = fakeSource({ cancelRun: vi.fn(async () => F.fail(404, 'run not found')) });
+    const t = new RelayState(refused.source, {}, reads());
+    expect(await t.cancelRun(F.DRAFT_RUN_ID)).toContain('run not found');
+  });
+
+  it('a run event on the stream reads the runs again, once they were read', async () => {
+    const { source, emit } = fakeSource();
+    const s = new RelayState(source, {}, reads());
+    s.connect();
+    emit({ entity: 'run', action: 'update', data: { id: 'r-other' } } as RelayStreamEvent);
+    await settle();
+    expect(source.readRuns).not.toHaveBeenCalled();
+    await s.readRuns();
+    emit({ entity: 'run', action: 'update', data: { id: 'r-other' } } as RelayStreamEvent);
+    await settle();
+    expect(source.readRuns).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('RelayState · a read that lands after newer events (#426 found it)', () => {
+  it('a row event while Now is being read: the read that lands is followed by a fresh one', async () => {
+    const stale = F.deferred<ApiResult<RelayNow>>();
+    const two = F.now({ lanes: [F.coordinatorLane(), F.lane({ id: 'lane-b', code: 'L2' })] });
+    const three = F.now({ lanes: [F.coordinatorLane(), F.lane({ id: 'lane-b', code: 'L2' }), F.lane({ id: 'lane-c', code: 'L3' })] });
+    const readNow = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(F.ok(three));
+    const { source, emit } = fakeSource({ readNow });
+    const s = new RelayState(source, {}, reads(two));
+    s.connect();
+    // A read starts (as a re-read would)…
+    const reading = s.reReadNow();
+    // …and while it is out, the third lane's row arrives on the stream.
+    emit({ entity: 'lane', action: 'add', data: { ...F.lane({ id: 'lane-c', code: 'L3' }) } } as unknown as RelayStreamEvent);
+    expect(s.lanes.items.map((l) => l.id)).toContain('lane-c');
+    // The read lands with its older snapshot (two lanes)…
+    stale.resolve(F.ok(two));
+    await reading;
+    await settle();
+    // …and is followed by a fresh read: the third lane is there in the end.
+    expect(readNow).toHaveBeenCalledTimes(2);
+    expect(s.lanes.items.map((l) => l.id)).toContain('lane-c');
+  });
+});

@@ -47,7 +47,7 @@
     <span class="text-xs rounded-sm px-2 py-0.5 bg-paper text-ink-soft" data-state>{stateLabel}</span>
     <span
       class="ml-auto text-xs text-ink-faint tabular-nums"
-      data-progress
+      data-relay-progress
       data-done={run.done_tasks}
       data-total={run.total_tasks}
       data-fraction={fractionText}

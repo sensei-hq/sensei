@@ -40,7 +40,7 @@ week; `—` means no lane holds it yet. Per-module status and its evidence:
 | Trackers / sprints | ~40% | Jira, GitLab and GitHub Projects (daemon, D91, D92), boards per level (D40), sprints, Tickets screen | ADO adapter, dōjō-owned connections (D49, behind #310); tracker-ownership conflict; epics unread | L7 |
 | Teams / viewers | ~70% | roles, teams, invites, viewers, lead view | no viewer shell (D68); leads have no menu of their own; A4 writable workspaces | L4 |
 | Billing / plans | ~15% | `billing_accounts`, `seats`, `ScrBilling` | no provider, no subscription table; D46 entitlement is WP8; price to be announced (D75) | L4 (screen), L1 (WP8) |
-| Relay — local crews (2026-11-12) | ~80% daemon · ~30% screen | lanes, leases, the autonomous queue (FCFS claims, floating reviews, claim-early, checkpoints), sprint runs + Task 0, the deterministic merge gate — `plan/2026-11-10-relay-autonomous-queue/` (#399 #400 #401 #402 #403 #404 #405 closed by it; #415 narrowed to the slash command) | **the screen rebuild to mockup r1 + the e2e run from the app**: `design/2026-11-12-relay-screen-rebuild.md` → #418 #419 (daemon), #420 #421 #422 #423 #424 #425 (app), #426 (the run e2e), #427 (dōjō epic), #428 (shell epic); then #389; #398 close with dead-lease lanes; host health / janitor / shared build (design §10.1–10.3) unbuilt; the dōjō-plane relay unverified (#314) | next lane: #397 then #418/#419 and #420 in parallel |
+| Relay — local crews (2026-11-12) | ~80% daemon · ~30% screen | lanes, leases, the autonomous queue (FCFS claims, floating reviews, claim-early, checkpoints), sprint runs + Task 0, the deterministic merge gate — `plan/2026-11-10-relay-autonomous-queue/` (#399 #400 #401 #402 #403 #404 #405 closed by it; #415 narrowed to the slash command, landed after) | **the screen rebuild to mockup r1 + the e2e run from the app**: `design/2026-11-12-relay-screen-rebuild.md` → #418 #419 (daemon), #420 #421 #422 #423 #424 #425 (app), #426 (the run e2e), #427 (dōjō epic), #428 (shell epic); then #389; #398 close with dead-lease lanes; host health / janitor / shared build (design §10.1–10.3) → #444; the dōjō-plane relay unverified (#314) | next lane: #397 then #418/#419 and #420 in parallel |
 
 ## Issues this week's plan depends on
 
@@ -84,14 +84,13 @@ status — open or closed is GitHub's answer.
   main; verify the diagrams section on the shipped artifact (release checklist step 5) before closing. Also: #370
   reached main by PR only, so `LICENSE` is absent from develop — merge `origin/main` back into develop (the
   `make release` step that normally does it did not run for #370) before the release PR.
-- **develop CI red before the relay merge (the three Rust runs on `38d9b8663`, `58b66e9fa`, `d7168e0a4`; queued
-  2026-11-12).** Two independent causes, both blocking the release's "CI green": (1) `Rust / test`, step "Test the
-  rest of the workspace" (`cargo test --workspace --exclude senseid`): `crates/bootstrap/tests/sql_test_runner.rs:76`
-  `with_no_scope_every_database_is_asked_for` fails on CI and passes locally (`make test`, 2026-11-12) — environment-
-  bound (which databases the no-scope `run.sh` asks for vs what the runner has); log: run 42933662278. (2) `Rust /
-  lint`, `cargo audit`: RUSTSEC-2026-0459 on `libsqlite3-sys` 0.30.1 (CVE-2026-119375, medium 6.8; fix ≥ 0.39.0 — a
-  transitive dependency, `cargo tree -i libsqlite3-sys` names the path), plus unmaintained warnings (`number_prefix`,
-  `paste`). The merge commit `072ffec80` inherits both.
+- **Exception: RUSTSEC-2026-0459 ignored in `.cargo/audit.toml` (user, 2026-11-15) — #446.** A C SQLite CVE
+  (CVE-2026-119375, medium 6.8) in `libsqlite3-sys` 0.30.1, which ships bundled into senseid via `rusqlite` and via
+  `dbd-core` → `sqlx-sqlite`. It fails the audit bar (it ships); approved so v0.22.0 could release. The fix moves sqlx
+  to 0.9 in dbd and sensei and `rusqlite` to `libsqlite3-sys` >= 0.39 together (`links = "sqlite3"` allows one).
+  Remove the ignore when #446 closes. (The other develop CI reds queued 2026-11-12 are fixed: the bootstrap SQL
+  runner's harness no longer inherits `TEST_DATABASE_URL`; Rust 1.100's rust-analyzer `Cargo.lock` and the gate's
+  locked worktree, clippy `needless_bool`, `quinn-udp` RUSTSEC-2026-0538.)
 
 - **Forge tickets from unshared repositories travel with the board (DF2, 2026-11-09, deferred).** Matches Jira. Forge tickets
   carry their repository, so a later slice could send only tickets from the workspace's shared repositories.

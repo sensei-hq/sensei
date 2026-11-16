@@ -138,8 +138,18 @@ fn records<L: AsRef<str>>(
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
             return None;
         }
-        serde_json::from_str(line).ok().map(|v| (n, v))
+        serde_json::from_str(line)
+            .ok()
+            .filter(|v: &serde_json::Value| !is_regenerated(v))
+            .map(|v| (n, v))
     })
+}
+
+/// A line this tool rebuilt from kept turns — skip it, so re-ingesting an
+/// export never overwrites rich rows with poor ones. Checked post-parse on the
+/// top-level key (not a substring): prose *about* the marker must not skip.
+fn is_regenerated(v: &serde_json::Value) -> bool {
+    v.get(super::export::REGENERATED_MARKER).and_then(|m| m.as_bool()) == Some(true)
 }
 
 /// One of the things read out of a transcript, built a record at a time so that
@@ -1070,5 +1080,18 @@ mod tests {
         assert_eq!(first.thinking, None, "no breakdown is unknown, not 0");
         assert_ne!(ms[1].message_id, ms[2].message_id, "each id-less line is its own message");
         assert_eq!(parse_claude_transcript(c)[0].facts.tokens_out, Some(14));
+    }
+
+    #[test]
+    fn regenerated_lines_are_skipped_so_reingest_never_degrades_rows() {
+        let marked = r#"{"type":"user","timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"hi"},"sensei_regenerated":true}"#;
+        assert!(parse_claude_transcript(marked).is_empty());
+        let mixed = format!(
+            "{marked}\n{}",
+            r#"{"type":"user","timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"real"}}"#,
+        );
+        let turns = parse_claude_transcript(&mixed);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].user_text.as_deref(), Some("real"));
     }
 }

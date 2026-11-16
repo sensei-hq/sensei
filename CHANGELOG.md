@@ -15,17 +15,29 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.22.1] — 2026-11-15
+
+### Fixed
+
+- **Release: the macOS daemon binaries are notarized.** `ci-notarize.sh` handed
+  `ditto -c -k` three binaries; it archives one source, so v0.22.0's macOS daemon
+  builds failed and no v0.22.0 GitHub release or tap update was published. The
+  binaries now go up as one folder. 0.22.1 carries everything listed under 0.22.0.
+- The marketplace mirror keeps its MIT `LICENSE` (it now lives in `marketplace/`).
+
+## [0.22.0] — 2026-11-15
+
 ### Added
 
 - **Raw transcript backup.** Every ingested transcript's bytes are kept gzipped
   in `activity.transcript_raw` (sha-keyed, so re-reads never rewrite the blob),
   and pruned 90 days past their last sighting (`activity.transcript_raw_retention_days`)
   on the daily activity prune pass — rotated files stay recoverable for the window.
-
-## [0.22.0] — 2026-11-12
-
-### Added
-
+- **`/sensei:register`** joins a session to the active crew in one command (#415).
+- **SDD framework per ticket.** Each ticket records the spec-driven framework it was
+  built with (#390, #391, #392).
+- **Transcript export of a missing file** is lossy rather than an error: what was
+  ingested is exported and the missing source is said (#435).
 - **Relay autonomous queue.** A crew runs on a queue instead of hand-offs: lanes claim
   ready tasks and floating reviews first-come-first-served (`POST /api/relay/tasks/claim_next`,
   `/{id}/claim`, `/{id}/claim_review`, `/{id}/release`, `/{id}/checkpoint`, `GET /api/relay/queue`;
@@ -52,6 +64,23 @@ are marked **BREAKING**.
   re-pick and `assign`'s `reviewer_lane` are gone. Reading an envelope never starts a
   task; the holder's first write does. `tasks/wait` and `tasks` refuse unknown query
   keys and take `timeout_seconds`.
+- **Embedding calls are capped per scan run** and the rest continue in the
+  background, so a large scan no longer stalls on the model (#359).
+
+### Fixed
+
+- **Rust projects without a committed `Cargo.lock` indexed nothing on Rust 1.100.**
+  rust-analyzer 1.100 writes a lockfile into such a project; it read as an edit, so
+  every compile was stale on arrival. A file the compile writes itself is now part of
+  what it compiled; an edit made during the compile still counts.
+- **The relay merge gate's cleanup** removes a verify worktree left locked by a
+  `git worktree add` the budget killed.
+- **The schema diagram canvas** is sized to its content (#432).
+
+### Security
+
+- `quinn-udp` 0.5.16 (RUSTSEC-2026-0538). RUSTSEC-2026-0459 (bundled SQLite in
+  `libsqlite3-sys` 0.30.1) is a recorded exception until the sqlx 0.9 move (#446).
 
 ## [0.21.1] — 2026-10-27
 

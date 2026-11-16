@@ -48,10 +48,16 @@ const usesSharedLayout = (page: string) => {
 		: shared
 			? readFileSync(join('src/lib/components', shared[2], `${shared[1]}.svelte`), 'utf8')
 			: feature
-				? readFileSync(join('src/lib', feature[1], feature[2]), 'utf8')
+				? readFileSync(join('src/lib', feature[1], feature[2]), 'utf8') + featureShell(feature[1], feature[2])
 				: '';
 	const text = own + delegate;
 	return /<Screen[\s>]/.test(text) || rendersRokkitShell(text) || rendersSharedShell(text);
+};
+// A feature screen may draw its shell through a sibling `…Shell.svelte`
+// (`RelayScreen` → `RelayShell` → `ShellScreen`); that sibling is read too.
+const featureShell = (dir: string, file: string) => {
+	const shell = readFileSync(join('src/lib', dir, file), 'utf8').match(/import \w+ from '\.\/(\w+Shell\.svelte)'/);
+	return shell ? readFileSync(join('src/lib', dir, shell[1]), 'utf8') : '';
 };
 // D87: a migrated screen renders rokkit's `ScreenShell` — imported from
 // `@rokkit/app`, not a lookalike carrying the same name.

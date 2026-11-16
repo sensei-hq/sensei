@@ -605,7 +605,7 @@ pub(crate) mod sync;
 pub(crate) mod targets;
 pub(crate) mod tracker_usage;
 pub(crate) mod trackers;
-mod transcript;
+pub(crate) mod transcript;
 mod workspaces;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 

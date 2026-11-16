@@ -18,16 +18,50 @@ import { mountComponent } from '$lib/test-mount.js';
 import { KANJI_ICONS } from '$lib/glyph-vocabulary';
 import type { ApiResult } from '$lib/api.js';
 import type { RelayNow, RelayQueue } from '$lib/relay-api.js';
+import type { RelayRunList } from '@sensei/state';
 import * as F from '$lib/test-stubs/relay-fixtures.js';
 
 // Variables, so the transform does not resolve them before phase B creates them.
 const PAGE = './+page.svelte';
 const LOADER = './+page.js';
 
-const relay = vi.hoisted(() => ({ api: null as unknown }));
-vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
-// The socket is the route's, pinned in relay-crew-stream.spec — not here.
-vi.mock('$lib/relay/relay-crew-stream.js', () => ({ subscribeCrewStream: vi.fn(() => () => {}) }));
+// The relay socket is a stream the spec drives: opened, and fired, by hand (#421).
+const relay = vi.hoisted(() => {
+  type Stream = {
+    onopen: (() => void) | null;
+    handler: ((e: unknown) => void) | null;
+    destroyed: boolean;
+    subscribe(h: (e: unknown) => void): () => void;
+    destroy(): void;
+    open(): void;
+    fire(e: unknown): void;
+  };
+  const streams: Stream[] = [];
+  const stream = (): Stream => {
+    const s: Stream = {
+      onopen: null,
+      handler: null,
+      destroyed: false,
+      subscribe(h) {
+        s.handler = h;
+        return () => (s.handler = null);
+      },
+      destroy() {
+        s.destroyed = true;
+      },
+      open() {
+        s.onopen?.();
+      },
+      fire(e) {
+        s.handler?.(e);
+      },
+    };
+    streams.push(s);
+    return s;
+  };
+  return { api: null as unknown, streams, stream };
+});
+vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api), relayStream: vi.fn(() => relay.stream()) }));
 
 const route = vi.hoisted(() => ({ id: 'w1' }));
 vi.mock('$app/state', () => ({
@@ -62,6 +96,7 @@ let cleanup: Array<() => void> = [];
 afterEach(() => {
   cleanup.forEach((fn) => fn());
   cleanup = [];
+  relay.streams.length = 0;
   vi.unstubAllGlobals();
   vi.mocked(ScreenShell).mockClear();
   glyphs.mode = 'kanji';
@@ -85,6 +120,8 @@ async function open(
   opts: {
     now?: ApiResult<RelayNow>;
     queue?: ApiResult<RelayQueue>;
+    /** `GET /relay/runs` (#424): a draft and a past run unless given. */
+    runs?: ApiResult<RelayRunList>;
     workspace?: string;
     /** The workspace layout's data, which SvelteKit merges into the page's `data`. */
     layout?: Record<string, unknown>;
@@ -93,6 +130,7 @@ async function open(
   const api = F.fakeRelayApi();
   if (opts.now) api.tryGetNow.mockResolvedValue(opts.now);
   if (opts.queue) api.tryGetQueue.mockResolvedValue(opts.queue);
+  if (opts.runs) api.tryGetRuns.mockResolvedValue(opts.runs);
   const loaded = await loadFor(opts.workspace ?? 'w1', api);
   const data = { ...(opts.layout ?? {}), ...(loaded as object) };
   const { default: Page } = await import(/* @vite-ignore */ PAGE);
@@ -120,12 +158,15 @@ function triageRows(c: HTMLElement) {
   return rows;
 }
 
-/** A header tab by its label ("Now", "Queue"), wherever the header draws it. */
+/** A header view button by its name ("Now", "Queue"), wherever the header draws it. The
+ *  mockup's buttons are icons: the name is the accessible name, with the count ("Queue · 7"). */
 function tab(c: HTMLElement, label: string): HTMLElement | null {
   const header = one(c, '[data-screen-header]');
   if (!header) return null;
   return (
-    all(header, '[role="tab"], button, a').find((el) => text(el).startsWith(label)) ?? null
+    all(header, '[role="tab"], button, a').find((el) =>
+      (el.getAttribute('aria-label') || text(el)).startsWith(label),
+    ) ?? null
   );
 }
 const isActive = (el: HTMLElement | null) =>
@@ -161,6 +202,48 @@ describe('Relay — the loader’s read', () => {
 });
 
 // ─── Now · Needs you ────────────────────────────────────────────────────────
+
+// #421: the page builds the relay state over the daemon's source and connects it; the
+// socket's events apply to the state, so a row that arrives redraws that row alone.
+describe('Relay — the live stream (#421)', () => {
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it('the page connects one socket; its first open reads Now and the queue (nothing before it is missed)', async () => {
+    const { api } = await open();
+    expect(relay.streams).toHaveLength(1);
+    api.tryGetNow.mockClear();
+    api.tryGetQueue.mockClear();
+    relay.streams[0].open();
+    await settle();
+    expect(api.tryGetNow).toHaveBeenCalledWith({ workspace_id: 'w1' });
+    expect(api.tryGetQueue).toHaveBeenCalledWith({ workspace_id: 'w1' });
+  });
+
+  it('a lane row that arrives changes that lane on the screen, with no read', async () => {
+    const { c, api } = await open();
+    const lane = F.now().lanes[1];
+    const reads = api.tryGetNow.mock.calls.length;
+    relay.streams[0].fire({ action: 'update', entity: 'lane', data: { id: lane.id, title: 'Streamed objective' } });
+    await tick();
+    expect(text(need(one(c, `[data-lane-row="${lane.code}"]`), 'the lane row'))).toContain('Streamed objective');
+    expect(api.tryGetNow.mock.calls.length).toBe(reads);
+  });
+
+  it('an event that names ids only (today’s daemon) reads Now again', async () => {
+    const { api } = await open();
+    const reads = api.tryGetNow.mock.calls.length;
+    relay.streams[0].fire({ action: 'update', entity: 'task', data: { task_id: 't-structure' } });
+    await settle();
+    expect(api.tryGetNow.mock.calls.length).toBe(reads + 1);
+  });
+
+  it('leaving the screen closes the socket', async () => {
+    await open();
+    cleanup.forEach((fn) => fn());
+    cleanup = [];
+    expect(relay.streams[0].destroyed).toBe(true);
+  });
+});
 
 describe('Relay · Now — Needs you', () => {
   it('is absent when nothing needs the person', async () => {
@@ -226,50 +309,61 @@ describe('Relay · Now — Needs you', () => {
     expect(one(second, `a[href="/workspace/w1/relay/${F.CREW_ID}/t-billing"]`)).not.toBeNull();
   });
 
-  it('"N to triage — from …" counts every source, names them, and opens Queue', async () => {
-    const { c } = await open({
-      now: F.ok(
-        F.now({
-          triage: [
-            { provider: 'jira', sprint: 'sprint 47', count: 2 },
-            { provider: 'github', sprint: 'milestone 11', count: 1 },
-            { provider: 'manual', sprint: null, count: 1 },
-          ],
-        }),
-      ),
-    });
-    const line = one(c, '[data-triage-line]');
-    expect(line).not.toBeNull();
-    expect(text(line)).toContain('4 to triage');
-    expect(text(line)).toContain('Jira sprint 47');
-    expect(text(line)).toContain('GitHub milestone 11');
-
-    line!.click();
+  it('"N to triage" counts the queue’s triage items by source and opens the Queue, which shows them (the #379 brief)', async () => {
+    const { c } = await open({ now: F.ok(F.now({ triage: [] })) });
+    const line = need(one(c, '[data-triage-line]'), 'the triage line');
+    expect(text(line)).toContain('2 to triage');
+    expect(text(line)).toContain('From Jira sprint 47 and an open item');
+    line.click();
     await tick();
     expect(section(c, 'triage')).not.toBeNull();
     expect(section(c, 'lanes')).toBeNull();
     expect(isActive(tab(c, 'Queue'))).toBe(true);
   });
 
-  it('Answer sends the option the person picked, and the decision leaves Needs you', async () => {
+  it('tasks no lane has taken are their own read-only row, apart from triage (the #379 brief)', async () => {
+    const { c } = await open({
+      now: F.ok(F.now({ triage: [{ provider: 'github', sprint: 'milestone 11', count: 3 }, { provider: 'manual', sprint: null, count: 1 }] })),
+      queue: F.ok(F.queue({ triage: [] })),
+    });
+    const row = need(one(c, '[data-unassigned]'), 'the unassigned row');
+    expect(text(row)).toContain('Unassigned · 4');
+    expect(text(row)).toContain('From GitHub milestone 11 and an open item');
+    expect(one(c, '[data-triage-line]')).toBeNull();
+  });
+
+  it('a wait at the threshold is in Needs you’s long-waits card, oldest first', async () => {
+    const { c } = await open({
+      now: F.ok(F.now({ lanes: [F.lane({ task: { ...F.lane().task!, state: 'approved', state_changed_at: F.minutesAgo(52) } })] })),
+    });
+    const card = need(one(c, '[data-relay-section="needs-you"] [data-stale-waits]'), 'the long-waits card');
+    expect(text(one(card, '[data-stale-title]'))).toContain('1 task has waited 15 min or more');
+    expect(all(card, '[data-wait-row]').map((r) => r.getAttribute('data-wait-row'))).toEqual(['t-structure']);
+  });
+
+  it('Answer sends the option the person picked; the event it causes takes the decision out of Needs you', async () => {
     const { c, api } = await open({ now: F.ok(F.now({ decisions: [F.decision()] })) });
     api.tryGetNow.mockResolvedValue(F.ok(F.now({ decisions: [] })));
+    const reads = api.tryGetNow.mock.calls.length;
 
     const row = need(one(c, '[data-decision]'), '[data-decision]');
     need(one(row, '[data-option="file"]'), '[data-option="file"]').click();
     await tick();
     need(one(row, '[data-decision-answer]'), '[data-decision-answer]').click();
 
-    await vi.waitFor(() => expect(one(c, '[data-decision]')).toBeNull());
-    expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1));
     expect(api.tryAnswerDecision).toHaveBeenCalledWith({
       decision_id: 'ask-1',
       option: 'file',
       note: null,
       surface: 'desktop',
     });
-    // The answer is the daemon's to record; the screen re-reads rather than guessing.
-    expect(api.tryGetNow).toHaveBeenCalledTimes(2);
+    // The answer is the daemon's to record: the screen does not remove the row itself,
+    // nor read again on its own — the event the answer causes does (#421).
+    expect(api.tryGetNow.mock.calls.length).toBe(reads);
+    expect(one(c, '[data-decision]')).not.toBeNull();
+    relay.streams[0].fire({ action: 'update', entity: 'task', data: { op: 'answer', task_id: 't-structure' } });
+    await vi.waitFor(() => expect(one(c, '[data-decision]')).toBeNull());
   });
 
   it('a refused answer says why, keeps the decision, and can be sent again', async () => {
@@ -290,36 +384,78 @@ describe('Relay · Now — Needs you', () => {
 
 // ─── Now · Lanes ────────────────────────────────────────────────────────────
 
-describe('Relay · Now — Lanes', () => {
-  const crew = F.fiveLaneCrew;
+describe('Relay · Now — the stat filters choose what Now shows (CONTRACT §1c-0, #422)', () => {
+  const stat = (c: HTMLElement, id: string) => need(one(c, `[data-screen-stats] [data-stat="${id}"]`), `the ${id} stat`);
+  const busy = () =>
+    F.now({
+      decisions: [F.decision()],
+      lanes: [
+        F.lane(),
+        F.lane({ id: 'l2', code: 'L2', title: 'Billing', lease_state: 'expired', task: { ...F.lane().task!, id: 't2' } }),
+        F.lane({ id: 'l4', code: 'L4', title: 'ER diagrams', task: { ...F.lane().task!, id: 't4', state: 'approved', state_changed_at: F.minutesAgo(52) } }),
+      ],
+    });
+  const rows = (c: HTMLElement) => all(c, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'));
 
-  it('one row per lane: its objective, member, the one task, its state and the time on it', async () => {
+  it('Waiting replaces the lanes with every wait, oldest first; Needs you and Completed hide; Clear restores', async () => {
+    const { c } = await open({ now: F.ok(busy()) });
+    stat(c, 'waiting').click();
+    await tick();
+    const waiting = need(section(c, 'waiting'), 'the waiting section');
+    expect(text(one(waiting, '[data-section-heading]'))).toBe('Waiting · oldest first · 1');
+    expect(all(waiting, '[data-wait-row]').map((r) => r.getAttribute('data-wait-row'))).toEqual(['t4']);
+    expect(section(c, 'lanes')).toBeNull();
+    expect(section(c, 'needs-you')).toBeNull();
+    expect(section(c, 'completed')).toBeNull();
+    expect(text(one(waiting, '[data-showing]'))).toContain('Waiting');
+    need(one(waiting, '[data-showing] button'), 'Clear').click();
+    await tick();
+    expect(section(c, 'waiting')).toBeNull();
+    expect(section(c, 'lanes')).not.toBeNull();
+    expect(section(c, 'needs-you')).not.toBeNull();
+  });
+
+  it('Working and Blocked narrow the lanes; Completed today shows the completed alone', async () => {
+    const { c } = await open({ now: F.ok(busy()) });
+    stat(c, 'working').click();
+    await tick();
+    expect(rows(c)).toEqual(['L1']);
+    expect(section(c, 'completed')).toBeNull();
+    stat(c, 'blocked').click();
+    await tick();
+    expect(rows(c)).toEqual(['L2']);
+    stat(c, 'done').click();
+    await tick();
+    expect(section(c, 'lanes')).toBeNull();
+    expect(section(c, 'completed')).not.toBeNull();
+  });
+});
+
+describe('Relay · Now — Lanes (#422: LaneList from the selectors)', () => {
+  const crew = F.fiveLaneCrew;
+  const state = (c: HTMLElement, code: string) => text(one(c, `[data-lane-row="${code}"] [data-part="state"]`));
+
+  it('one card, one row per lane: objective over codename · assistant, the one task, its state, the time on it', async () => {
     const { c } = await open({ now: F.ok(crew()) });
     const lanes = need(section(c, 'lanes'), 'the lanes section');
-    expect(lanes).not.toBeNull();
-    expect(text(lanes)).toContain('Lanes · 5');
-    expect(all(lanes, '[data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual([
-      'L0',
-      'L1',
-      'L3',
-      'L2',
-      'L5',
-    ]);
+    expect(text(one(lanes, '[data-section-heading]'))).toBe('Lanes · 5');
+    const card = need(one(lanes, 'nav[data-list][data-variant="card"]'), 'the lanes card');
+    expect(all(card, ':scope > [data-list-item] [data-lane-row]').map((r) => r.getAttribute('data-lane-row'))).toEqual(['L0', 'L1', 'L3', 'L2', 'L5']);
 
     const l1 = need(one(lanes, '[data-lane-row="L1"]'), '[data-lane-row="L1"]');
-    expect(text(l1)).toContain('Diagrams');
-    expect(text(l1)).toContain('L1');
-    expect(text(l1)).toContain('2.1');
-    expect(text(l1)).toContain('Structure view on the shell');
-    expect(text(one(l1, '[data-state]'))).toBe('working');
-    expect(text(l1)).toContain('38 min');
+    // No codename yet (#395): the code stands in, beside the assistant.
+    expect(text(one(l1, '[data-part="name"]'))).toBe('Diagrams L1 · Claude Code 2.1');
+    expect(text(one(l1, '[data-task-title]'))).toBe('Structure view on the shell (tests r1)');
+    // The holder's reported progress, from the read's current_step and counts (#418).
+    expect(text(one(l1, '[data-lane-progress]'))).toBe('2 of 5 steps done · Writing the failing specs');
+    expect(state(c, 'L1')).toBe('working');
+    expect(text(one(l1, '[data-part="when"]'))).toBe('38 min');
 
-    expect(text(one(lanes, '[data-lane-row="L3"] [data-state]'))).toBe('needs your answer');
-    expect(text(one(lanes, '[data-lane-row="L2"] [data-state]'))).toBe('lease lost');
+    expect(state(c, 'L3')).toBe('needs your answer');
+    expect(state(c, 'L2')).toBe('lease lost');
     const idle = need(one(lanes, '[data-lane-row="L5"]'), '[data-lane-row="L5"]');
-    // Queue cutover: work is claimed, never assigned.
-    expect(text(idle)).toContain('Nothing claimed');
-    expect(text(one(idle, '[data-state]'))).toBe('idle');
+    expect(text(one(idle, '[data-part="task"]'))).toBe('Nothing assigned');
+    expect(state(c, 'L5')).toBe('idle');
   });
 
   it('the role mark: 指 for the coordinator, 手 for a contributor', async () => {
@@ -328,48 +464,56 @@ describe('Relay · Now — Lanes', () => {
     expect(text(one(c, '[data-lane-row="L1"] [data-lane-role]'))).toBe('手');
   });
 
-  it('a model the lane did not report reads "model not reported", never blank', async () => {
+  it('an assistant that reported no version reads its family alone, never blank', async () => {
     const { c } = await open({
-      now: F.ok(F.now({ lanes: [F.lane({ code: 'L3', family: 'muse', version: null, model: null })] })),
+      now: F.ok(F.now({ lanes: [F.lane({ code: 'L3', family: 'cursor', version: null, model: null })] })),
     });
     const row = need(one(c, '[data-lane-row="L3"]'), '[data-lane-row="L3"]');
-    expect(text(row)).toContain('model not reported');
+    expect(text(one(row, '[data-part="name"]'))).toBe('Diagrams L3 · Cursor');
     expect(text(row)).not.toMatch(/null|undefined/);
   });
 
-  it('a lane on a task opens the task view; an idle lane opens nothing', async () => {
+  it('a lane on a task is one link to the task view; an idle lane opens nothing', async () => {
     const { c } = await open({ now: F.ok(crew()) });
-    expect(one(c, `[data-lane-row="L1"] a[href="/workspace/w1/relay/${F.CREW_ID}/t-structure"]`)).not.toBeNull();
-    expect(one(c, '[data-lane-row="L5"] a')).toBeNull();
+    const l1 = need(one(c, '[data-lane-row="L1"]'), 'L1').closest('[data-list-item]')!;
+    expect(l1.tagName).toBe('A');
+    expect(l1.getAttribute('href')).toBe(`/workspace/w1/relay/${F.CREW_ID}/t-structure`);
+    const l5 = need(one(c, '[data-lane-row="L5"]'), 'L5').closest('[data-list-item]')!;
+    expect(l5.tagName).toBe('DIV');
+    expect(l5.querySelector('a, button')).toBeNull();
   });
 });
 
 // ─── Now · Completed today ──────────────────────────────────────────────────
 
-describe('Relay · Now — Completed today', () => {
-  it('one row each: title, lane, merged or approved, and it opens the task', async () => {
+describe('Relay · Now — Completed today (#422: CompletedList from the selectors)', () => {
+  it('one row each: time, title, objective · codename, merged or approved — one link to the task', async () => {
     const { c } = await open();
     const done = need(section(c, 'completed'), 'the completed section');
-    expect(done).not.toBeNull();
-    expect(text(done)).toContain('Completed today · 2');
+    expect(text(one(done, '[data-section-heading]'))).toBe('Completed today · 2');
     const rows = all(done, '[data-completed-row]');
     expect(rows).toHaveLength(2);
-    expect(text(rows[0])).toContain('Diagrams header on ScreenShell');
-    expect(text(rows[0])).toContain('Diagrams');
-    expect(text(one(rows[0], '[data-state]'))).toBe('merged');
-    expect(text(one(rows[1], '[data-state]'))).toBe('approved');
-    expect(one(rows[0], `a[href="/workspace/w1/relay/${F.CREW_ID}/t-header"]`)).not.toBeNull();
+    expect(text(one(rows[0], '[data-part="title"]'))).toBe('Diagrams header on ScreenShell');
+    expect(text(one(rows[0], '[data-part="lane"]'))).toBe('Diagrams · L1');
+    expect(text(one(rows[0], '[data-part="outcome"]'))).toBe('merged');
+    expect(text(one(rows[1], '[data-part="outcome"]'))).toBe('approved');
+    const link = rows[0].closest('[data-list-item]')!;
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe(`/workspace/w1/relay/${F.CREW_ID}/t-header`);
+    expect(all(rows[0], 'a')).toHaveLength(0);
   });
 });
 
 // ─── Queue ──────────────────────────────────────────────────────────────────
 
 describe('Relay · Queue', () => {
-  it('the Queue tab shows its count, and opens Triage, then Backlog', async () => {
+  it('the Queue button carries its count (the badge and the accessible name), and opens Triage, then Backlog', async () => {
     const { c } = await open();
     const queueTab = tab(c, 'Queue');
     expect(queueTab).not.toBeNull();
-    expect(text(queueTab)).toContain('4');
+    // The badge is rokkit's count badge (the item's `count`); the name folds the count in.
+    expect(queueTab!.querySelector('[data-toolbar-count]')?.textContent).toBe('4');
+    expect(queueTab!.getAttribute('aria-label')).toBe('Queue · 4');
     expect(isActive(tab(c, 'Now'))).toBe(true);
 
     queueTab!.click();
@@ -384,6 +528,21 @@ describe('Relay · Queue', () => {
     expect(isActive(tab(c, 'Now'))).toBe(false);
   });
 
+  it('picking backlog items shows Create run · N in the toolbar; it opens the run form (the queue cutover trigger, lost in #420)', async () => {
+    const { c } = await open();
+    need(tab(c, 'Queue'), 'the Queue tab').click();
+    await tick();
+    expect(toolbarButton(c, 'Create run · 1')).toBeNull();
+    need(one(need(section(c, 'backlog'), 'Backlog'), '[data-relay-select]'), 'a backlog row’s checkbox').click();
+    await tick();
+    need(toolbarButton(c, 'Create run · 1'), 'Create run · 1').click();
+    await tick();
+    const form = need(one(c, '[data-create-sprint]'), 'the run form');
+    // One name for it, button and form alike.
+    expect(text(one(form, 'h2'))).toBe('Create run · 1');
+    expect(text(one(form, '[data-sprint-submit]'))).toBe('Create run');
+  });
+
   it('a triage row: title, kind first then tags, the ticket button, and +', async () => {
     const { c } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
@@ -391,8 +550,10 @@ describe('Relay · Queue', () => {
     const [ticketed, manual] = triageRows(c);
 
     expect(text(ticketed)).toContain('Sync shows "synced" for a refused repository');
-    const tags = all(ticketed, '[data-tag]').map(text);
+    // The kind first, as a toned pill, then the tags (#423).
+    const tags = all(ticketed, '[data-queue-pills] > *').map(text);
     expect(tags[0]).toBe('bug');
+    expect(one(ticketed, '[data-queue-pills] [data-pill]')?.getAttribute('data-tone')).toBe('danger');
     expect(tags).toContain('sprint 47');
     const ticket = need(one(ticketed, 'a[data-ticket]'), 'a[data-ticket]');
     expect(ticket.getAttribute('href')).toBe('https://acme.atlassian.net/browse/SEN-58');
@@ -401,34 +562,28 @@ describe('Relay · Queue', () => {
       'Add to backlog: Sync shows "synced" for a refused repository',
     );
 
-    expect(all(manual, '[data-tag]').map(text)).toContain('added by you');
+    expect(all(manual, '[data-queue-pills] > *').map(text)).toContain('added by you');
     expect(one(manual, 'a[data-ticket]')).toBeNull();
     expect(one(manual, '[data-add-to-backlog]')).not.toBeNull();
   });
 
-  it('+ adds a tracker task by its identity, then the re-read queue shows it in Backlog', async () => {
+  it('+ adds a tracker task by its identity; its item events move it to Backlog with no read (#418)', async () => {
     const { c, api } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
-    api.tryGetQueue.mockResolvedValue(
-      F.ok(
-        F.queue({
-          triage: [F.queue().triage[1]],
-          backlog: [...F.queue().backlog, F.backlogItem({ item_id: 'item-58', title: 'Sync shows "synced" for a refused repository', position: 3 })],
-        }),
-      ),
-    );
-
     const [ticketed] = triageRows(c);
     need(one(ticketed, '[data-add-to-backlog]'), '[data-add-to-backlog]').click();
-
+    await vi.waitFor(() => expect(api.tryAddToBacklog).toHaveBeenCalledTimes(1));
+    expect(api.tryAddToBacklog).toHaveBeenCalledWith({ ticket_provider: 'jira', ticket_key: 'SEN-58' });
+    // The daemon's confirmation: out of triage by the ticket id, into the backlog with its row.
+    relay.streams[0].fire({ action: 'remove', entity: 'item', data: { op: 'backlogged', id: 'jira:SEN-58', stage: 'triage' } });
+    const row = F.backlogItem({ item_id: 'item-58', title: 'Sync shows "synced" for a refused repository', position: 3 });
+    relay.streams[0].fire({ action: 'add', entity: 'item', data: { ...row, op: 'backlogged', id: 'item-58', stage: 'backlog' } });
     await vi.waitFor(() =>
       expect(text(section(c, 'backlog'))).toContain('Sync shows "synced" for a refused repository'),
     );
-    expect(api.tryAddToBacklog).toHaveBeenCalledTimes(1);
-    expect(api.tryAddToBacklog).toHaveBeenCalledWith({ ticket_provider: 'jira', ticket_key: 'SEN-58' });
-    expect(api.tryGetQueue).toHaveBeenCalledTimes(2);
     expect(all(need(section(c, 'triage'), 'the triage section'), '[data-queue-row]')).toHaveLength(1);
+    expect(api.tryGetQueue).toHaveBeenCalledTimes(1);
   });
 
   it('+ adds a manual item by its id', async () => {
@@ -439,6 +594,26 @@ describe('Relay · Queue', () => {
     need(one(manual, '[data-add-to-backlog]'), '[data-add-to-backlog]').click();
     await vi.waitFor(() => expect(api.tryAddToBacklog).toHaveBeenCalledTimes(1));
     expect(api.tryAddToBacklog).toHaveBeenCalledWith({ item_id: 'item-manual' });
+  });
+
+  it('the person adds an open item to triage: the form under the card sends it, and its item event shows it (#423, #418)', async () => {
+    const { c, api } = await open();
+    api.tryAddTriage.mockResolvedValue(F.ok({ item_id: 'item-9' }));
+    need(tab(c, 'Queue'), 'the Queue tab').click();
+    await tick();
+    const form = need(one(section(c, 'triage')!, '[data-add-item]'), 'the add-an-item form');
+    const title = need(one(form, 'input[data-add-item-title]'), 'the title') as HTMLInputElement;
+    title.value = 'Hook skips the dōjō tests';
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+    need(one(form, '[data-add-item-submit]'), 'Add').click();
+    await vi.waitFor(() => expect(api.tryAddTriage).toHaveBeenCalledTimes(1));
+    expect(api.tryAddTriage).toHaveBeenCalledWith({ title: 'Hook skips the dōjō tests', kind: 'issue', tags: [], repo_key: null, workspace_id: 'w1' });
+    // Its item event confirms it (#418).
+    const row = F.manualItem({ item_id: 'item-9', title: 'Hook skips the dōjō tests' });
+    relay.streams[0].fire({ action: 'add', entity: 'item', data: { ...row, op: 'triaged', id: 'item-9', stage: 'triage' } });
+    await vi.waitFor(() => expect(text(section(c, 'triage'))).toContain('Hook skips the dōjō tests'));
+    expect(api.tryGetQueue).toHaveBeenCalledTimes(1);
   });
 
   it('a refused + says why and keeps the row in Triage', async () => {
@@ -718,17 +893,103 @@ describe('Relay — a navigation replaces what is shown', () => {
   });
 });
 
+describe('Relay — the Crew view with a crew (#424)', () => {
+  it('the run card over the members by role, then Add a member for contributors', async () => {
+    const { c } = await open({ now: F.ok(F.now({ runs: [F.sprint()], lanes: [F.coordinatorLane(), F.lane()] })) });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await tick();
+    const crew = need(section(c, 'crew'), 'the crew section');
+    const card = need(one(crew, '[data-run-card]'), 'the run card');
+    expect(text(one(card, '[data-run-title]'))).toContain(`Run ${F.RUN_ID.slice(-4)}`);
+    expect(all(card, '[data-member]').map((m) => m.getAttribute('data-member'))).toEqual(['L0', 'L1']);
+    const add = need(one(crew, '[data-add-member]'), 'Add a member');
+    expect(text(one(add, '[data-add-member-title]'))).toBe('Add a member');
+    // #419: the line names the crew, so it works with several crews open.
+    expect(text(one(add, '[data-paste-text]'))).toBe(`register with sensei as contributor in crew ${F.CREW_ID}`);
+  });
+
+  it('a member’s Message opens the compose band', async () => {
+    const { c } = await open({ now: F.ok(F.now({ runs: [F.sprint()] })) });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await tick();
+    need(one(c, '[data-member="L1"] [data-member-message]'), 'Message on L1').click();
+    await tick();
+    expect(one(c, '[data-compose]')).not.toBeNull();
+  });
+});
+
+describe('Relay — a draft run starts from the Crew view; past runs below (#424)', () => {
+  const crewNoRun = () => F.ok(F.now({ runs: [], lanes: [F.coordinatorLane({ presence: 'idle' }), F.lane({ presence: 'idle' })] }));
+
+  it('opening Crew reads the runs: the draft on the run card, Past runs below', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    expect(api.tryGetRuns).not.toHaveBeenCalled();
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
+    expect(api.tryGetRuns).toHaveBeenCalledTimes(1);
+    const card = need(one(c, '[data-run-card]'), 'the run card');
+    expect(text(one(card, '[data-run-title]'))).toBe(`Run ${F.DRAFT_RUN_ID.slice(-4)} draft`);
+    const past = need(section(c, 'past-runs'), 'Past runs');
+    expect(all(past, '[data-past-run]').map((r) => r.getAttribute('data-past-run'))).toEqual([F.PAST_RUN_ID]);
+    // Each opens its run, read-only, under this window's Relay.
+    expect(one(past, '[data-past-run]')!.closest('a[data-list-item]')?.getAttribute('href')).toBe(`/workspace/w1/relay/runs/${F.PAST_RUN_ID}`);
+  });
+
+  it('Start starts the draft on the screen’s crew, then reads the runs again', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
+    need(one(c, '[data-run-start]'), 'Start').click();
+    await vi.waitFor(() => expect(api.tryStartRun).toHaveBeenCalledWith(F.DRAFT_RUN_ID, F.CREW_ID));
+    await vi.waitFor(() => expect(api.tryGetRuns).toHaveBeenCalledTimes(2));
+  });
+
+  it('a failed read of the runs says so, with Retry; nothing is invented in its place', async () => {
+    const { c, api } = await open({ now: crewNoRun(), runs: F.fail(503, 'daemon busy') });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-runs-error]')).not.toBeNull());
+    expect(text(one(c, '[data-runs-error]'))).toContain("Couldn't read the runs");
+    // The daemon's reason is behind Why?, as on every read failure here.
+    need(one(c, '[data-runs-error] [data-action="toggle"]'), 'Why?').click();
+    await tick();
+    expect(text(one(c, '[data-runs-error]'))).toContain('daemon busy');
+    expect(one(c, '[data-run-start]')).toBeNull();
+    expect(section(c, 'past-runs')).toBeNull();
+    api.tryGetRuns.mockResolvedValue(F.ok(F.runList()));
+    need(one(c, '[data-runs-error] [data-action="retry-runs"]'), 'Retry').click();
+    await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
+    expect(one(c, '[data-runs-error]')).toBeNull();
+  });
+
+  it('a refused start shows on the card', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    api.tryStartRun.mockResolvedValue(F.fail(409, 'the crew has no live lane'));
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-run-start]')).not.toBeNull());
+    need(one(c, '[data-run-start]'), 'Start').click();
+    await vi.waitFor(() => expect(text(one(c, '[data-run-error]'))).toContain('the crew has no live lane'));
+  });
+});
+
 describe('Relay — no crew yet', () => {
-  it('the info band frames it: the two paste lines, and "Listening · 0 of 2 to start"; the body is empty', async () => {
-    const { c } = await open({ now: F.ok(F.noCrew()) });
+  it('the info band frames it ("No crew yet", what to do); the Crew view is the landing: set up the crew, step 1 of 2 (#424)', async () => {
+    // No run drafted either: the landing is the set-up alone.
+    const { c, api } = await open({ now: F.ok(F.noCrew()), runs: F.ok(F.runList({ active: [], archived: [] })) });
+    await vi.waitFor(() => expect(api.tryGetRuns).toHaveBeenCalled());
+    await tick();
     const info = need(one(c, '[data-screen-info]'), '[data-screen-info]');
-    expect(info).not.toBeNull();
     expect(text(info)).toContain('No crew yet');
-    expect(all(info, '[data-paste-line]').map((l) => text(one(l, '[data-paste-text]')))).toEqual([
-      'register with sensei as coordinator',
-      'register with sensei as contributor',
-    ]);
-    expect(text(info)).toContain('Listening · 0 of 2 to start');
+    expect(text(info)).toContain('Set it up below');
+    // CONTRACT §1b/§1h (r1): the setup is the Crew view, the landing while there is no
+    // run; the Crew button is the pressed one.
+    expect(isActive(tab(c, 'Crew'))).toBe(true);
+    const crew = need(section(c, 'crew'), 'the crew section');
+    const add = need(one(crew, '[data-add-member]'), 'the set-up card');
+    expect(text(one(add, '[data-add-member-title]'))).toBe('Start a run: set up your crew');
+    expect(text(one(add, '[data-command-step]'))).toBe('Step 1 of 2.');
+    expect(all(add, '[data-paste-line]').map((l) => text(one(l, '[data-paste-text]')))).toEqual(['register with sensei as coordinator']);
+    expect(text(one(add, '[data-listening]'))).toBe('Listening · 0 of 2 to start a run');
+    expect(one(crew, '[data-run-card]')).toBeNull();
 
     expect(section(c, 'needs-you')).toBeNull();
     expect(section(c, 'lanes')).toBeNull();
@@ -737,14 +998,24 @@ describe('Relay — no crew yet', () => {
     expect(toolbarButton(c, 'Message the crew')).toBeNull();
   });
 
-  it('Copy puts its line on the clipboard', async () => {
+  it('a run drafted before the crew: its card above the set-up, Start waiting for the crew (#424)', async () => {
+    const { c } = await open({ now: F.ok(F.noCrew()) });
+    await vi.waitFor(() => expect(one(c, '[data-run-card]')).not.toBeNull());
+    const card = need(one(c, '[data-run-card]'), 'the draft card');
+    expect(text(one(card, '[data-run-title]'))).toBe(`Run ${F.DRAFT_RUN_ID.slice(-4)} draft`);
+    expect((one(card, '[data-run-start]') as HTMLButtonElement).disabled).toBe(true);
+    expect(text(one(card, '[data-run-note]'))).toBe('Set up your crew to start it.');
+    expect(one(c, '[data-add-member]')).not.toBeNull();
+  });
+
+  it('choosing Contributor shows its line; Copy puts the shown line on the clipboard', async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     const { c } = await open({ now: F.ok(F.noCrew()) });
-    const lines = all(c, '[data-paste-line]');
-    expect(lines, 'the two paste lines').toHaveLength(2);
-    const [, contributor] = lines;
-    need(one(contributor, '[data-paste-copy]'), '[data-paste-copy]').click();
+    need(one(c, '[data-role-option="contributor"]'), 'Contributor').click();
+    await tick();
+    expect(text(one(c, '[data-paste-line] [data-paste-text]'))).toBe('register with sensei as contributor');
+    need(one(c, '[data-paste-copy]'), '[data-paste-copy]').click();
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('register with sensei as contributor'));
   });
 
@@ -758,15 +1029,15 @@ describe('Relay — no crew yet', () => {
 // ─── The shell (D87) ────────────────────────────────────────────────────────
 
 describe('Relay — the shell (D87)', () => {
-  it('rokkit’s shell for workspace.relay: mark 継, title Relay, no stats band', async () => {
+  it('rokkit’s shell for workspace.relay: mark 継, title Relay, the four stat cards on Now (§1c-0)', async () => {
     const { c } = await open();
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     const props = shellProps();
     expect(props).toMatchObject({ viewId: 'workspace.relay', title: 'Relay', mark: { kanji: '継' } });
-    expect(props.stats).toBeUndefined();
+    expect((props.stats as Array<{ id: string }>).map((s) => s.id)).toEqual(['working', 'waiting', 'blocked', 'done']);
     expect(one(c, '[data-screen-shell]')?.getAttribute('data-view')).toBe('workspace.relay');
     expect(text(one(c, '[data-screen-title]'))).toBe('Relay');
-    expect(one(c, '[data-screen-stats]')).toBeNull();
+    expect(one(c, '[data-screen-stats]')).not.toBeNull();
   });
 
   it('the context names this crew by the end of its id (a uuid v7 starts with the clock)', async () => {
@@ -813,11 +1084,12 @@ describe('Relay — the shell (D87)', () => {
     expect(text(one(icon.c, '[data-lane-row="L0"] [data-lane-role]'))).not.toBe('指');
   });
 
-  it('the e2e anchor: data-screen="relay" around the shell', async () => {
+  it('the e2e anchor: data-screen="relay" is the shell itself (no wrapper: the shell fills its container)', async () => {
     const { c } = await open();
     const anchor = one(c, '[data-screen="relay"]');
     expect(anchor).not.toBeNull();
-    expect(one(anchor!, '[data-screen-shell]')).not.toBeNull();
+    expect(anchor!.hasAttribute('data-screen-shell'), 'the anchor is the shell root').toBe(true);
+    expect(anchor!.classList.contains('h-full'), 'the shell fills its container (#420)').toBe(true);
   });
 });
 
@@ -853,32 +1125,30 @@ describe('Relay — the footer resource line', () => {
 // ─── Phone width (CONTRACT §1f), where jsdom can tell ───────────────────────
 
 describe('Relay — rows at phone width', () => {
-  it('a lane row: mark, lane and state on line 1; the task and its time on line 2', async () => {
+  it('a lane row is the mockup’s parts in order: mark, name, task, state, time, chevron (#422)', async () => {
     const { c } = await open();
     const row = need(one(c, '[data-lane-row="L1"]'), '[data-lane-row="L1"]');
-    const line1 = need(one(row, '[data-row-line="1"]'), '[data-row-line="1"]');
-    const line2 = need(one(row, '[data-row-line="2"]'), '[data-row-line="2"]');
-    expect(line1).not.toBeNull();
-    expect(line2).not.toBeNull();
-    expect(one(line1, '[data-lane-role]')).not.toBeNull();
-    expect(text(line1)).toContain('Diagrams');
-    expect(one(line1, '[data-state]')).not.toBeNull();
-    expect(text(line2)).toContain('Structure view on the shell');
-    expect(text(line2)).toContain('38 min');
+    expect(row.closest('a[data-list-item]')).not.toBeNull();
+    expect([...row.children].map((el) => el.getAttribute('data-part'))).toEqual(['mark', 'name', 'task', 'state', 'when', 'chevron']);
+    expect(one(row, '[data-part="mark"] [data-lane-role]')).not.toBeNull();
+    expect(text(one(row, '[data-part="name"]'))).toContain('Diagrams');
+    expect(text(one(row, '[data-part="task"]'))).toContain('Structure view on the shell');
+    expect(text(one(row, '[data-part="when"]'))).toBe('38 min');
   });
 
-  it('a queue row keeps its buttons beside the title; the ticket button can drop the provider', async () => {
+  it('a queue row: the title over its pills, the ticket pill and + beside it; on a phone the ticket drops its provider (#423)', async () => {
     const { c } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
     const [row] = triageRows(c);
-    const line1 = need(one(row, '[data-row-line="1"]'), '[data-row-line="1"]');
-    expect(one(line1, '[data-queue-title]')).not.toBeNull();
-    expect(one(line1, 'a[data-ticket]')).not.toBeNull();
-    expect(one(line1, '[data-add-to-backlog]')).not.toBeNull();
+    expect(one(row, '[data-queue-title]')).not.toBeNull();
+    expect(one(row, '[data-queue-pills]')).not.toBeNull();
+    expect(one(row, 'a[data-ticket]')).not.toBeNull();
+    expect(one(row, '[data-add-to-backlog]')).not.toBeNull();
     const provider = need(one(row, '[data-ticket-provider]'), '[data-ticket-provider]');
     expect(text(provider)).toBe('Jira');
-    expect(provider.className).toMatch(/(^|\s)(max-sm:hidden|hidden sm:inline(-flex)?)(\s|$)/);
+    expect(provider.className).toMatch(/(^|\s)hidden md:inline(\s|$)/);
+    expect(text(one(row, '[data-ticket-key]'))).toBe('SEN-58');
   });
 });
 
@@ -902,12 +1172,16 @@ describe('Relay r2 — the header (F1, F2, L4)', () => {
   it('the header’s controls are exactly Now, Queue, Message the crew and the info toggle', async () => {
     const { c } = await open();
     const header = need(one(c, '[data-screen-header]'), 'the shell header');
+    // The stats band lives in the header too; its cards are its own controls (§1c-0).
     const controls = all(header, 'button, a, [role="tab"]')
+      .filter((el) => !el.closest('[data-screen-stats]'))
       .map((el) => el.getAttribute('aria-label') || text(el))
-      .map((label) => (label.startsWith('Queue') ? 'Queue' : label))
+      .map((label) => (label.startsWith('Queue') || label.startsWith('Crew') ? label.split(' · ')[0] : label))
       .sort();
-    // No stats / filters / side toggles, and no other action (CONTRACT §1a, user r1).
-    expect(controls).toEqual(['Message the crew', 'Now', 'Queue', 'What it’s for']);
+    // The three views, Message the crew and the info toggle; no stats / filters / side
+    // toggles and no other action (CONTRACT §1a, user r1; the view buttons carry the
+    // counts, the info toggle its own label).
+    expect(controls).toEqual(['Crew', 'Hide info', 'Message the crew', 'Now', 'Queue']);
   });
 
   it('the context is the workspace, then the crew', async () => {
@@ -933,6 +1207,9 @@ describe('Relay r2 — one write per press (F4)', () => {
     answer.click();
     answer.click();
     pending.resolve(F.ok({ action_id: 'act-answer' }));
+    await vi.waitFor(() => expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1));
+    // The event the answer causes takes it out of Needs you (#421).
+    relay.streams[0].fire({ action: 'update', entity: 'task', data: { op: 'answer', task_id: 't-structure' } });
     await vi.waitFor(() => expect(one(c, '[data-decision]')).toBeNull());
     expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1);
   });
@@ -948,7 +1225,8 @@ describe('Relay r2 — one write per press (F4)', () => {
     add.click();
     add.click();
     pending.resolve(F.ok({ item_id: 'item-58' }));
-    await vi.waitFor(() => expect(api.tryGetQueue).toHaveBeenCalledTimes(2));
+    await pending.promise;
+    await tick();
     expect(api.tryAddToBacklog).toHaveBeenCalledTimes(1);
   });
 });
@@ -983,7 +1261,11 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
     state: 'working' as const,
     round: 1,
     state_changed_at: F.minutesAgo(12),
+    current_step: null as string | null,
+    steps_done: 0,
+    steps_total: 0,
     needs_answer: false,
+    last_nudge: null,
     ...over,
   });
 
@@ -998,8 +1280,8 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
         }),
       ),
     });
-    expect(text(one(c, '[data-lane-row="L4"] [data-state]'))).toBe('blocked');
-    expect(text(one(c, '[data-lane-row="L3"] [data-state]'))).toBe('needs your answer');
+    expect(text(one(c, '[data-lane-row="L4"] [data-part="state"]'))).toBe('blocked');
+    expect(text(one(c, '[data-lane-row="L3"] [data-part="state"]'))).toBe('needs your answer');
   });
 
   it('the lane lease drives "lease lost", with the time it expired; a task interrupted under a live lease reads "interrupted"', async () => {
@@ -1015,9 +1297,9 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
       ),
     });
     const lost = need(one(c, '[data-lane-row="L2"]'), 'the L2 row');
-    expect(text(one(lost, '[data-state]'))).toBe('lease lost');
+    expect(text(one(lost, '[data-part="state"]'))).toBe('lease lost');
     expect(text(lost)).toContain(`at ${hhmm(expired)}`);
-    expect(text(one(c, '[data-lane-row="L5"] [data-state]'))).toBe('interrupted');
+    expect(text(one(c, '[data-lane-row="L5"] [data-part="state"]'))).toBe('interrupted');
   });
 
   it('a limit-paused lane reads "paused" with scope and resume time — never "lease lost" on a live lease', async () => {
@@ -1033,11 +1315,11 @@ describe('Relay r2 — what drives a lane’s state pill (F7)', () => {
       ),
     });
     const paused = need(one(c, '[data-lane-row="L2"]'), 'the L2 row');
-    expect(text(one(paused, '[data-state]'))).toBe('paused');
+    expect(text(one(paused, '[data-part="state"]'))).toBe('paused');
     expect(text(paused)).toContain('weekly');
     expect(text(paused)).toContain(`until ${hhmm(resumes)}`);
     const unknown = need(one(c, '[data-lane-row="L5"]'), 'the L5 row');
-    expect(text(one(unknown, '[data-state]'))).toBe('paused');
+    expect(text(one(unknown, '[data-part="state"]'))).toBe('paused');
     expect(text(unknown)).toContain('resume unknown');
   });
 });
@@ -1058,7 +1340,7 @@ describe('Relay r2 — Completed today rows (L1)', () => {
     const rows = all(need(section(c, 'completed'), 'the completed section'), '[data-completed-row]');
     expect(rows).toHaveLength(2);
     expect(text(rows[0]).startsWith(hhmm(at))).toBe(true);
-    expect(text(one(rows[1], '[data-state]'))).toBe('done');
+    expect(text(one(rows[1], '[data-part="outcome"]'))).toBe('done');
   });
 });
 
@@ -1071,6 +1353,9 @@ describe('Relay follow-up — a re-read that fails after a write (N8)', () => {
     need(one(row, '[data-option="file"]'), 'the file option').click();
     await tick();
     need(one(row, '[data-decision-answer]'), 'Answer').click();
+    await vi.waitFor(() => expect(api.tryAnswerDecision).toHaveBeenCalledTimes(1));
+    // The answer's event names ids only today: Now is read again, and that read fails.
+    relay.streams[0].fire({ action: 'update', entity: 'task', data: { op: 'answer', task_id: 't-structure' } });
 
     await vi.waitFor(() => expect(one(c, '[data-relay-error]')).not.toBeNull());
     const notice = need(one(c, '[data-relay-error]'), 'the fault Notice after a failed re-read');
@@ -1083,17 +1368,13 @@ describe('Relay follow-up — a re-read that fails after a write (N8)', () => {
     expect(one(c, '[data-relay-error]')).toBeNull();
   });
 
-  it('an add whose queue re-read fails is the queue’s fault Notice', async () => {
+  it('a reconnect whose queue read fails is the queue’s fault Notice', async () => {
     const { c, api } = await open();
     need(tab(c, 'Queue'), 'the Queue tab').click();
     await tick();
     api.tryGetQueue.mockResolvedValueOnce(F.fail(503, 'the daemon dropped the read'));
-
-    const row = need(
-      triageRows(c).find((r) => one(r, '[data-add-to-backlog]')),
-      'a triage row with +',
-    );
-    need(one(row, '[data-add-to-backlog]'), '[data-add-to-backlog]').click();
+    // The stream comes back: a broadcast replays nothing, so the queue is read again.
+    relay.streams[0].open();
 
     await vi.waitFor(() => expect(one(c, '[data-relay-queue-error]')).not.toBeNull());
     const notice = need(one(c, '[data-relay-queue-error]'), 'the queue’s fault Notice after a failed re-read');

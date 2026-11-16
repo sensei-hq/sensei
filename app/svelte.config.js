@@ -15,6 +15,8 @@ const config = {
       '@sensei/ui': '../packages/ui/index.js',
       // The Code map (M17), shared with the dōjō.
       '@sensei/codemap': '../packages/codemap/index.ts',
+      // Domain state shared with the dōjō (#414): the relay domain first (#421).
+      '@sensei/state': '../packages/state/index.ts',
     },
     typescript: {
       // The shared packages import rokkit, which each host installs; their own

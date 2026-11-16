@@ -5,7 +5,7 @@
  */
 
 import { failureNotice } from '@sensei/ui';
-import { ReactiveStageContext } from './stage.svelte.js';
+import { ReactiveStageContext } from '@sensei/state';
 import { EventManager } from './events.js';
 import { senseiApi, dataOrThrow, failureReason, type ApiResult } from './api.js';
 import { appState } from './appstate.svelte.js';

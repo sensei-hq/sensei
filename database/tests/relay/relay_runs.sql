@@ -49,10 +49,11 @@ declare
   v_state text;
   v_config jsonb;
 begin
-  -- A run minted with defaults is planning, configless, stamped, not started.
+  -- A run minted with defaults is a draft (#419: no crew until started),
+  -- configless, stamped, not started.
   select state::text, config into v_state, v_config from relay.runs
    where id = '11111111-1111-7000-8000-00000000fa21';
-  if v_state is distinct from 'planning' or v_config is distinct from '{}'::jsonb then
+  if v_state is distinct from 'draft' or v_config is distinct from '{}'::jsonb then
     raise exception 'run defaults wrong: state %, config %.', v_state, v_config;
   end if;
   select count(*) into n from relay.runs

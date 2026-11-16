@@ -54,15 +54,20 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
   - `capabilities` is e.g. `rust`, `sql`, `ts`, `mockups`, `can-push`, `can-run-hooks`.
   - It returns a **lane token** and the lane it was given: the first open lane whose requirements its
     capabilities meet.
-  - It returns a **`guidance` block** (F9): `version` (schema, currently `"1"`) + `generic`, the
-    self-sufficient join-time contract (300s lease/heartbeat cadence, poll paths, report → review → merge
-    flow, re-offer/`wait` pickup, no-transcript rule) + `family_notes`, the override for the request's
+  - It returns a **`guidance` block** (F9): `version` (schema, currently `"2"`) + `generic`, the
+    self-sufficient join-time contract (300s lease/heartbeat cadence, poll paths, the claim → report → review →
+    merge flow, re-offer/`wait` pickup, text caps, no-transcript rule; and, since #419, the lane's codename in
+    `suggested_name`, a nudge as a message about the task that waits on it, and a crew the person closed:
+    `410 relay_lane_gone`, then `409 "crew is closed"` on reregister — stop, do not retry) + `family_notes`, the override for the request's
     `family`/`model`. Four families have notes: `muse`, `claude` (prefix match, so `claude-code` counts),
     `opencode`, `freebuff`; the family wins, else the model id is matched the same way, else `family_notes`
     is null and the block is generic-only. MCP `relay_register` surfaces the block verbatim.
 - **Leases, not just unregister.** A lane holds a lease renewed **only by `heartbeat`** (no other call touches
   it). When a lease expires (crash, restart, closed session) the lane is **suspended**, its in-flight task is
   marked `interrupted` with its last checkpoint, and after a grace period it goes back to the queue.
+  `GET /relay/now` lists only the live lanes (`unregistered_at` null) of open crews, each with its
+  **presence** (#419): `active` (lease live, holding a task or a review), `idle` (lease live, holding
+  nothing) or `not_responding` (no live lease); a dead lane leaves the list, and the run's archive keeps it.
 - `re-register(lane_token)` resumes the same lane after a restart or a context clear, and gets the task's
   checkpoint back. `unregister` releases the lane cleanly.
 - **Fewer workers → rebalance.** Tasks queued for a lane that's gone are re-offered to live lanes whose
@@ -222,6 +227,17 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 `relay_merge_task`, `relay_cancel_task`, `relay_handover_task`, `relay_close_crew` (coordinator) ·
 `relay_post_step`. A sprint run is the person's (`POST /relay/runs`), not a lane tool. The guidance `register`
 answers (v2) spells the loop out.
+**The person's routes (#419), not lane tools:** `POST /relay/runs` drafts a run (`start: true` starts it at once) ·
+`POST /relay/runs/{id}/start` (binds the crew, which needs a live lane; mints Task 0) · `POST /relay/runs/{id}/cancel`
+(cancels its open tasks, gives its planned items back to the backlog) · `GET /relay/runs` · `GET /relay/runs/{id}` ·
+`POST /relay/crews/{id}/close` (refused while the crew has a planning or active run; releases every live lane — the
+session stays open and takes no work — then closes the crew) · `POST /relay/messages` with `nudge` (§15) ·
+`POST /relay/backlog` with `ticket_provider` + `ticket_key` (the ticket a synced tracker holds under that key or a key
+it had: title and kind snapshotted from the tracker, workspace the tracker's; not synced → 404, no title → 422, open
+already → 409; GitLab tickets wait for a `gitlab` relay provider) · `DELETE /relay/items/{id}` (a triage or backlog
+item closes; the row stays) · `PATCH /relay/items/{id}` (`title` for hand-added items; `position` 1-based in the
+backlog, the rest renumbered). A lane
+sees each of these only through what it already reads: a cancelled task, a released lane (`410` on its next call).
 The existing `start_run` / `register_plan` / `update_task_status` / `report_run_outcome` /
 `run_status` / `pause_run` are reused where they already fit, and not cloned.
 
@@ -285,6 +301,10 @@ row, and must make waiting visible.
   (the daemon speaks) — on the sweeper's pass, delivered on every lane's next `wait_for_task` / `get_tasks`. There
   is no party to wait on any more: any non-author lane claims the review (`claim_next` offers it first). The person
   may still message the crew at any time.
+- **The person's nudge (as built, #419).** `POST /relay/messages` with `nudge: true`, a `reason` (`review_unassigned`
+  · `verdict_unread` · `merge_pending` · `no_work` · `decision` · `resource` · `review_floating`) and optionally
+  `waiting_min` writes the message with those props. A reason or a wait without `nudge: true` is refused (422), and so
+  is a nudge to the person. The task's history shows the flag, the reason and the wait on the message row.
 - **Why (observed 2026-11-05/06):** four reports sat without a reviewer for 30 min to 3 h, because the coordinator
   scanned by time instead of matching reports to reviews. Two lanes idled on verdicts that had already been filed. One
   lane got a stale review of a round it had already replaced. Each was a lost hand-off that a row and a clock would have
@@ -299,6 +319,12 @@ Lanes read better as names than as codes. The broker mints each lane a stable co
 show the codename as the primary human handle next to the objective title ("Beige Aster · Diagrams"); the code (L1)
 stays for compact and technical contexts. Slice 1 ships code + objective title as contracted; codenames land as a
 tests-first slice-2 item (model column + minting rule + uniqueness, in `lanes-data.md` and `relay-api.ts` then).
+**As built (#419):** a lane that offers no `suggested_name` at register gets one minted: lowercase `colour-star`
+(`cobalt-lyra`, as the mockup draws them; `relay::CODENAME_COLOURS` × `CODENAME_STARS`, 576 pairs), the first not
+already held in the crew, starting where the new lane's id points. An offered name is kept as given and stays the
+title; a minted one leaves the title as `L4 · family`. The codename is answered by register and served on every lane
+shape: `relay.now` lanes, the task view's `task.lane` and `lanes[]`. With every pair taken the lane goes unnamed
+(logged) and screens fall back to its code.
 Handshake is negotiated, not assumed. At register the broker probes what the assistant family supports: the probe
 itself, session-minted codenames, and direct session-to-session handshakes (as Muse sessions do today). Where an
 assistant (freebuff, opencode, claude, cowork, chatgpt, …) lacks direct-handshake support, traffic falls back to the

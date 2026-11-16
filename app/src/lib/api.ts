@@ -49,13 +49,9 @@ export type { DaySessions, DrilldownSession, ToolUsage };
 
 import type { PersonaWire } from './personas.svelte.js';
 
-/** `body` is the daemon's parsed error body, when a caller needs more than the
- *  code in `message` (e.g. which workspace already owns a board). */
-export type ApiError =
-  | { status: number; message: string; body?: Record<string, unknown> }
-  | { status: 0; message: string };
-
-export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
+// The result shapes and their reason live in @sensei/state (#421), shared with the relay source.
+import { failureReason, type ApiError, type ApiResult } from '@sensei/state';
+export { failureReason, type ApiError, type ApiResult };
 
 /** What accepting a recommendation would write (`…/recommendations/{id}/preview`). */
 export interface RecommendationPreview {
@@ -65,8 +61,6 @@ export interface RecommendationPreview {
   name?: string; path?: string; content?: string; consent_required?: boolean;
 }
 
-/** Why a read failed, for the screen to say: the status text, else the status. */
-export const failureReason = (error: ApiError): string => error.message || `HTTP ${error.status}`;
 
 /** A failure in words for a screen: an unreachable daemon is said as such,
  *  else the status the daemon returned. */
