@@ -38,8 +38,20 @@ export const mockupRunDetails = (): RelayRunDetailsView => ({
 });
 
 export const mockupHandoff = (): RelayHandoffView => ({
-  label: 'Handed off · 06:00 by the coordinator',
+  label: 'Handed off by atlas-rigel · 06:00 → cobalt-lyra',
   brief:
     'Move the diagrams header onto the shared ScreenShell (D87): mark, title, context and toolbar in the title bar, the info band in the first-session look, panels remembered per view id. Nothing the header does today may be lost — every existing spec stays green unedited — and the report carries a before → after parity list.',
   docs: ['coord/mockups/screen-shell/CONTRACT.md', 'coord/briefs/L1-diagrams-shell.md'],
+});
+
+/** A lane registered without a codename and none minted: its code alone (#425). */
+export const mockupTaskHeaderUnnamed = (): RelayTaskHeaderView => ({
+  ...mockupTaskHeader(),
+  facts: mockupTaskHeader().facts.map((f) => (f.k === 'Lane' ? { ...f, v: 'Diagrams · L1' } : f)),
+});
+
+/** A brief no lane has taken yet: who handed it off, and no taker (#425). */
+export const mockupHandoffUntaken = (): RelayHandoffView => ({
+  ...mockupHandoff(),
+  label: 'Handed off by atlas-rigel · 06:00',
 });

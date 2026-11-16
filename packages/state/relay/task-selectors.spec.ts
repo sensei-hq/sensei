@@ -94,7 +94,10 @@ describe('toTaskView · Run details', () => {
 describe('toTaskView · Handed off', () => {
   it('when, the brief and its docs; none, none', () => {
     const at = '2026-11-12T06:00:00Z';
-    const v = toTaskView(F.taskView({ handoff: { at, body_md: 'Move the header onto the shell.', docs: ['coord/a.md'] } }), opts);
+    const v = toTaskView(
+      F.taskView({ handoff: { at, body_md: 'Move the header onto the shell.', docs: ['coord/a.md'], by_lane: null, to_lane: null } }),
+      opts,
+    );
     expect(v.handoff).toEqual({ label: `Handed off · ${hhmm(at)}`, brief: 'Move the header onto the shell.', docs: ['coord/a.md'] });
     expect(toTaskView(F.taskView({ handoff: null }), opts).handoff).toBeNull();
   });

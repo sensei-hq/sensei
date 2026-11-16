@@ -43,7 +43,8 @@ export {
 } from './relay/relay-selectors.js';
 export { RelayTaskState, type TaskReads } from './relay/task-state.svelte.js';
 export {
-  codeOf,
+  nameOf,
+  nameOfCode,
   crewGroups,
   crewRepoLabel,
   crewSizeContext,

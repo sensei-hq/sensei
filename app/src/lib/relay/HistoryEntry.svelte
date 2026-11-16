@@ -8,7 +8,7 @@
   import { Pill } from '@rokkit/ui';
   import type { RelayAction, RelayLaneRef } from '$lib/relay-api.js';
   import type { RelayTone } from '@sensei/state';
-  import { codeOf, hhmm } from './relay-format.js';
+  import { hhmm, nameOf, nameOfCode } from './relay-format.js';
   import { historyTone } from './relay-timeline.js';
 
   let {
@@ -17,7 +17,7 @@
     messageState = null,
   }: {
     action: RelayAction;
-    /** The crew's lanes, so a uuid in props reads as its code. */
+    /** The crew's lanes, so a uuid or a code reads as the lane's codename (#425). */
     lanes: RelayLaneRef[];
     /** A message's receipts, folded: sent, delivered or read. */
     messageState?: 'sent' | 'delivered' | 'read' | null;
@@ -31,9 +31,9 @@
   // Q12 puts lanes in this history: they send messages and ask other lanes. `lane_code`
   // is who acted (null = the person); `asked_of` is `person` or the lane asked.
   const messageTitle = (a: Extract<RelayAction, { kind: 'message' }>) =>
-    a.lane_code ? `Message from ${a.lane_code}` : 'Message from you';
+    a.lane_code ? `Message from ${nameOfCode(lanes, a.lane_code)}` : 'Message from you';
   const askTitle = (a: Extract<RelayAction, { kind: 'asked' }>) =>
-    a.props.asked_of === 'person' ? 'Asked you' : `Asked ${codeOf(lanes, a.props.asked_of)}`;
+    a.props.asked_of === 'person' ? 'Asked you' : `Asked ${nameOf(lanes, a.props.asked_of)}`;
 
   /** The entry's tone: the edge of what was said, the outcome pill (the dot is the timeline's). */
   const tone = $derived<RelayTone>(historyTone(action));
@@ -77,18 +77,18 @@
       {:else if action.kind === 'message'}{messageTitle(action)}
       {:else if action.kind === 'brief_updated'}Brief updated
       {:else if action.kind === 'interrupted'}Lease lost
-      {:else if action.kind === 'reoffered'}{action.props.to_lane ? `Re-offered to ${codeOf(lanes, action.props.to_lane)}` : 'Returned to the queue'}
+      {:else if action.kind === 'reoffered'}{action.props.to_lane ? `Re-offered to ${nameOf(lanes, action.props.to_lane)}` : 'Returned to the queue'}
       {:else if action.kind === 'started'}Started
       {:else if action.kind === 'asked'}{askTitle(action)}
       {:else if action.kind === 'answered'}Answered
       {:else if action.kind === 'compacted'}Compacted
-      {:else if action.kind === 'handed_over'}Handed over from {codeOf(lanes, action.props.from_lane)} to {codeOf(lanes, action.props.to_lane)}
+      {:else if action.kind === 'handed_over'}Handed over from {nameOf(lanes, action.props.from_lane)} to {nameOf(lanes, action.props.to_lane)}
       {/if}
     </p>
     {#if outcome}<span data-entry-outcome><Pill value={outcome.label} tone={outcome.tone} size="sm" /></span>{/if}
     <span data-entry-time class="ml-auto font-mono text-xs text-ink-mute">{hhmm(action.created_at)}</span>
   </div>
-  {#if action.lane_code}<p data-entry-by class="m-0 text-xs text-ink-soft">{action.lane_code}</p>{/if}
+  {#if action.lane_code}<p data-entry-by title={action.lane_code} class="m-0 text-xs text-ink-soft">{nameOfCode(lanes, action.lane_code)}</p>{/if}
 
   {#if action.kind === 'assigned'}
     {@render say(null, action.body_md)}
@@ -133,7 +133,7 @@
 
   {:else if action.kind === 'message'}
     <p class="text-xs text-ink-mute m-0">
-      To {action.props.to.kind === 'lane' ? codeOf(lanes, action.props.to.lane_id) : action.props.to.kind}
+      To {action.props.to.kind === 'lane' ? nameOf(lanes, action.props.to.lane_id) : action.props.to.kind}
       <span class="rounded-sm bg-paper-soft px-1" data-message-state={messageState ?? 'sent'}>{messageState ?? 'sent'}</span>
     </p>
     {@render say(null, action.body_md)}

@@ -101,10 +101,17 @@ export const roundsLabel = (rounds: { phase: string; count: number }[]): string 
 export const taskHref = (base: string, crewId: string, taskId: string): string =>
   `${base}/${encodeURIComponent(crewId)}/${encodeURIComponent(taskId)}`;
 
-/** A lane's members by code, so a uuid in props is read by its code. */
-export function codeOf(lanes: RelayLaneRef[], id: string | null | undefined): string {
-  if (!id) return '—';
-  return lanes.find((l) => l.id === id)?.code ?? '—';
+/** A lane named for a person (#425): its codename, else its code; a uuid in props that
+ *  names no lane of the crew reads as a dash. */
+export function nameOf(lanes: RelayLaneRef[], id: string | null | undefined): string {
+  const lane = id ? lanes.find((l) => l.id === id) : undefined;
+  return lane ? (lane.suggested_name ?? lane.code) : '—';
+}
+
+/** As `nameOf`, for a history entry that carries the lane's code: the code itself when
+ *  the crew's lanes do not name it. */
+export function nameOfCode(lanes: RelayLaneRef[], code: string): string {
+  return lanes.find((l) => l.code === code)?.suggested_name ?? code;
 }
 
 /** The crews' lane rows in the order the read gave them, each under its own crew. */

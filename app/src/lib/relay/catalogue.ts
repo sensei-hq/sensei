@@ -28,7 +28,7 @@ import TaskHeader from './TaskHeader.svelte';
 import TaskHistory from './TaskHistory.svelte';
 import RunDetails from './RunDetails.svelte';
 import HandoffCard from './HandoffCard.svelte';
-import { mockupHandoff, mockupRunDetails, mockupTaskHeader } from './task.fixtures.js';
+import { mockupHandoff, mockupHandoffUntaken, mockupRunDetails, mockupTaskHeader, mockupTaskHeaderUnnamed } from './task.fixtures.js';
 import AddMember from './AddMember.svelte';
 import { addContributor, mockupGroups, mockupRunCard, setupStep1, setupStep2 } from './crew.fixtures.js';
 import { mockupBacklog, mockupTriage } from './queue.fixtures.js';
@@ -207,8 +207,10 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
   entry('AddMember/setup-step2', 'the coordinator in: step 2 of 2, a contributor; the line names the crew (#419, beyond the mockup line)', AddMember, { view: setupStep2(), oncopy: () => {}, onrole: () => {} }),
   entry('AddMember/add', 'a crew at work: Add a member, contributors only', AddMember, { view: addContributor(), oncopy: () => {}, onrole: () => {} }),
   entry('TaskHeader/merged', 'the task header: back, title and state, the ticket pill, the facts', TaskHeader, { header: mockupTaskHeader() }),
+  entry('TaskHeader/unnamed', 'the task header: a lane with no codename reads its code alone', TaskHeader, { header: mockupTaskHeaderUnnamed() }),
   entry('RunDetails/folded', 'Run details, folded to its line (open it: a value nobody reported reads so)', RunDetails, { run: mockupRunDetails() }),
-  entry('HandoffCard/brief', 'Handed off: when, the brief, its docs', HandoffCard, { handoff: mockupHandoff() }),
+  entry('HandoffCard/brief', 'Handed off: by whom, when, to whom; the brief, its docs', HandoffCard, { handoff: mockupHandoff() }),
+  entry('HandoffCard/untaken', 'Handed off: no lane has taken it yet', HandoffCard, { handoff: mockupHandoffUntaken() }),
   entry('TaskHistory/merged', 'a merged task’s history, newest first: merge, messages, reviews, turns', TaskHistory, { history: history(), lanes: laneRefs() }),
   entry('QueueSection/backlog', 'Backlog: the mockup’s four rows, in order', QueueSection, {
     id: 'backlog',
