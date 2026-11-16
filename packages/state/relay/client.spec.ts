@@ -12,7 +12,14 @@ describe('relayClient · a refusal', () => {
   it('carries the daemon’s reason (message), not its code', async () => {
     answer(409, { error: 'relay_conflict', message: 'a run is already open in this workspace' });
     const r = await relayClient('http://daemon').tryCreateRun({} as never);
-    expect(r).toEqual({ ok: false, error: { status: 409, message: 'a run is already open in this workspace' } });
+    expect(r).toEqual({
+      ok: false,
+      error: {
+        status: 409,
+        message: 'a run is already open in this workspace',
+        body: { error: 'relay_conflict', message: 'a run is already open in this workspace' },
+      },
+    });
   });
 
   it('a body with a code and no message: the code; no body: the status text', async () => {

@@ -50,7 +50,7 @@ export type { DaySessions, DrilldownSession, ToolUsage };
 import type { PersonaWire } from './personas.svelte.js';
 
 // The result shapes and their reason live in @sensei/state (#421), shared with the relay source.
-import { failureReason, type ApiError, type ApiResult } from '@sensei/state';
+import { failureFrom, failureReason, type ApiError, type ApiResult } from '@sensei/state';
 export { failureReason, type ApiError, type ApiResult };
 
 /** What accepting a recommendation would write (`…/recommendations/{id}/preview`). */
@@ -105,7 +105,7 @@ export function senseiApi(port: number) {
         body: JSON.stringify(body),
       });
       if (res.ok) return { ok: true, data: undefined };
-      return { ok: false, error: { status: res.status, message: res.statusText } };
+      return { ok: false, error: await failureFrom(res) };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
@@ -115,7 +115,7 @@ export function senseiApi(port: number) {
     try {
       const res = await fetch(`${base}${path}`, { method: 'DELETE' });
       if (res.ok) return { ok: true, data: undefined };
-      return { ok: false, error: { status: res.status, message: res.statusText } };
+      return { ok: false, error: await failureFrom(res) };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
@@ -127,7 +127,7 @@ export function senseiApi(port: number) {
     try {
       const res = await fetch(`${base}${path}`, { method: 'DELETE' });
       if (res.ok) return { ok: true, data: await res.json() as T };
-      return { ok: false, error: { status: res.status, message: res.statusText } };
+      return { ok: false, error: await failureFrom(res) };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
@@ -137,7 +137,7 @@ export function senseiApi(port: number) {
     try {
       const res = await fetch(`${base}${path}`);
       if (res.ok) return { ok: true, data: await res.json() as T };
-      return { ok: false, error: { status: res.status, message: res.statusText } };
+      return { ok: false, error: await failureFrom(res) };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
@@ -151,16 +151,15 @@ export function senseiApi(port: number) {
         body: JSON.stringify(body),
       });
       if (res.ok) return { ok: true, data: await res.json() as T };
-      return { ok: false, error: { status: res.status, message: res.statusText } };
+      return { ok: false, error: await failureFrom(res) };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
   }
 
-  // Error-propagating request that returns the parsed response body. On a
-  // non-ok it surfaces the daemon's `{ "error": "..." }` code as the message
-  // when present (else the status text) and keeps the whole parsed body beside
-  // it, for refusals that carry more than a code. A 204 resolves `undefined`.
+  // Error-propagating request that returns the parsed response body. A refusal
+  // is `failureFrom`'s: the daemon's reason, with the parsed body kept beside it
+  // for refusals whose code a screen maps (#451). A 204 resolves `undefined`.
   async function tryJson<T>(method: string, path: string, body?: unknown): Promise<ApiResult<T>> {
     try {
       const res = await fetch(`${base}${path}`, {
@@ -171,14 +170,7 @@ export function senseiApi(port: number) {
       });
       if (res.status === 204) return { ok: true, data: undefined as T };
       if (res.ok) return { ok: true, data: await res.json() as T };
-      try {
-        const j = await res.json() as Record<string, unknown> | null;
-        if (j && typeof j === 'object') {
-          const code = typeof j.error === 'string' && j.error ? j.error : res.statusText;
-          return { ok: false, error: { status: res.status, message: code, body: j } };
-        }
-      } catch { /* non-JSON error body — keep the status text */ }
-      return { ok: false, error: { status: res.status, message: res.statusText } };
+      return { ok: false, error: await failureFrom(res) };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
