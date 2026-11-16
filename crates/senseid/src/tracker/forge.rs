@@ -147,6 +147,52 @@ pub fn unknown_keys(session: &SessionText, known: &[KnownTask]) -> Vec<String> {
 
 // ── JSON readers shared by the forge adapters (GitLab, GitHub) ──────────────
 
+/// Who can see a repository or project, from its `visibility` (GitHub repository,
+/// GitLab project): only `private` is private; `public`, `internal` and a missing value
+/// are not (tracker-forge-comment-writeback F7).
+pub(crate) fn audience_of(v: &serde_json::Value) -> crate::tracker::Audience {
+    if text(v, "visibility") == Some("private") {
+        crate::tracker::Audience::Private
+    } else {
+        crate::tracker::Audience::Visible
+    }
+}
+
+/// A numeric `id` field as text (a note's, comment's or issue's), or `None`.
+pub(crate) fn id_text(v: &serde_json::Value) -> Option<String> {
+    v.get("id").and_then(|x| x.as_u64()).map(|n| n.to_string())
+}
+
+/// The id of a comment sensei wrote as `owner`, or `None` (F4, F5, F6): the author's
+/// numeric id (`author_pointer`) is the owner's, the body starts with the marker, and
+/// it is no GitLab system note. Both the author and the marker must match.
+pub(crate) fn sensei_comment(
+    c: &serde_json::Value,
+    author_pointer: &str,
+    owner: &crate::tracker::AccountRef,
+) -> Option<String> {
+    let by_owner = c.pointer(author_pointer).and_then(|a| a.as_u64()).map(|a| a.to_string())
+        == Some(owner.as_str().to_string());
+    let marked = text(c, "body").is_some_and(crate::tracker::writeback::is_marked);
+    let system = c.get("system").and_then(|s| s.as_bool()) == Some(true);
+    (by_owner && marked && !system).then(|| id_text(c)).flatten()
+}
+
+/// F6b: the issue now at a ticket's address is still that ticket. A renamed, moved or
+/// transferred repository can hand the path to another one, whose `#n` is unrelated;
+/// its id then differs from the stored `external_id` (GitLab's global `id`, GitHub's
+/// REST `id` = the `databaseId` sync stored), and the ticket is gone from this address.
+pub(crate) fn same_ticket(
+    issue: &serde_json::Value,
+    task: &crate::tracker::TaskRef<'_>,
+) -> Result<(), crate::tracker::TrackerError> {
+    match id_text(issue) {
+        Some(id) if id == task.external_id => Ok(()),
+        Some(_) => Err(crate::tracker::TrackerError::NotFound),
+        None => Err(crate::tracker::TrackerError::Decode),
+    }
+}
+
 /// A string field, or `None`.
 pub(crate) fn text<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     v.get(key).and_then(|x| x.as_str())
@@ -257,6 +303,18 @@ pub fn candidates_for_key<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_private_visibility_is_private() {
+        use crate::tracker::Audience;
+        let of = |v: serde_json::Value| audience_of(&v);
+        assert_eq!(of(serde_json::json!({"visibility": "private"})), Audience::Private);
+        assert_eq!(of(serde_json::json!({"visibility": "public"})), Audience::Visible);
+        assert_eq!(of(serde_json::json!({"visibility": "internal"})), Audience::Visible);
+        assert_eq!(of(serde_json::json!({"visibility": "PRIVATE"})), Audience::Visible);
+        assert_eq!(of(serde_json::json!({})), Audience::Visible, "unstated is not private");
+        assert_eq!(of(serde_json::json!({"private": true})), Audience::Visible);
+    }
 
     fn task(id: &str, key: &str, scope: &str) -> KnownTask {
         KnownTask {
