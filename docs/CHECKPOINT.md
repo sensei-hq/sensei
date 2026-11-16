@@ -42,8 +42,13 @@ and build OpenSpec specs before continuing. OpenSpec 0.17.2 initialized (`opensp
 `update-correction-detection-intent` (#447). Decided: crew→run→tasks, agent = lane, implementer + reviewer
 (#422); phone layout phased — guard, rokkit shell, sidebar drawer, Relay first (#420).
 
-**Next command:** the user approves the drafts (and answers #396 Q1–Q2, #447 Q1–Q3), then
-`/openspec:apply update-phone-layout` phase 1, red-first.
+**#420 phase 1 done (red→green):** phone-layout guard (24 files to fix, 3 fine); rokkit 1.15.7 (#186: shell
+mobile-first, labels wrap); ShellScreen info band closed on a phone; Rail drawer below md (menu + backdrop/Esc/
+navigation close); LaneRow name 8rem floor, facts wrap. Relay body at 430px starts ~390px down (was ~1100px).
+#396 narrowed to the lane host (classification → #455); #447 daily + backfill (floors after the baseline).
+**Next command:** #450 `fix-relay-read-merge` (red-first), then #451, #425, #422, #449, #396, #446, #447;
+#420 phase 2 (screens §4.2–4.7) and the 430px e2e pass (§5.1) in between.
+
 
 **Open questions (user):** #396 scope and host source; #447 cost, floors, backfill; the build order.
 
