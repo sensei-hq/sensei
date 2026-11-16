@@ -3380,6 +3380,7 @@ mod tests {
         assert!(review.contains("gate"), "{review}");
         let register = tool_named(&ts, "relay_register");
         assert!(register["inputSchema"]["properties"]["suggested_name"].is_object());
+        assert!(register["inputSchema"]["properties"]["host"].is_object(), "#396: the editor the session runs in");
         assert!(
             register["inputSchema"]["properties"]["role"]["description"]
                 .as_str()
@@ -3472,13 +3473,14 @@ mod tests {
     fn register_dispatch_forwards_suggested_name_and_omits_role_when_absent() {
         let req = daemon_request_for(
             "relay_register",
-            &json!({"family": "claude-code", "suggested_name": "worker-alpha"}),
+            &json!({"family": "claude-code", "suggested_name": "worker-alpha", "host": "cursor"}),
             "/cwd",
             None,
         )
         .unwrap();
         let body = req.body.as_ref().unwrap();
         assert_eq!(body["suggested_name"], "worker-alpha");
+        assert_eq!(body["host"], "cursor", "#396: the host rides register");
         assert!(
             body.get("role").is_none(),
             "absent stays absent: the daemon defaults to contributor"
