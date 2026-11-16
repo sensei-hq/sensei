@@ -12796,6 +12796,136 @@ mod tests {
         assert_eq!(positions, vec![1, 2]);
     }
 
+    /// #422: Now carries every task of an open run, with what the run groups order
+    /// and attribute by — Task 0, the item's backlog position, when it was claimed
+    /// and completed, the step, and the implementing and reviewing lanes.
+    #[tokio::test]
+    async fn now_serves_open_runs_tasks_with_priority_and_attribution() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (run, draft) = (v7(0x5a0), v7(0x5a1));
+        fx_run(&pg, u1(), run, c1, "active").await;
+        fx_run(&pg, u1(), draft, c1, "draft").await;
+        let (i_low, i_high) = (v7(0x5a2), v7(0x5a3));
+        fx_item(&pg, u1(), i_low, "backlog", Some("github.com/o/r"), Some(3)).await;
+        fx_item(&pg, u1(), i_high, "backlog", Some("github.com/o/r"), Some(1)).await;
+        let (t0, done, w_low, w_high, gone, other) =
+            (v7(0x5b0), v7(0x5b1), v7(0x5b2), v7(0x5b3), v7(0x5b4), v7(0x5b5));
+        fx_task(&pg, u1(), t0, c1, Some(a1), "done", "planning", 1).await;
+        fx_task(&pg, u1(), done, c1, Some(a2), "done", "impl", 1).await;
+        fx_task(&pg, u1(), w_low, c1, None, "ready", "impl", 1).await;
+        fx_task(&pg, u1(), w_high, c1, None, "ready", "impl", 1).await;
+        fx_task(&pg, u1(), gone, c1, None, "cancelled", "impl", 1).await;
+        fx_task(&pg, u1(), other, c1, None, "ready", "impl", 1).await;
+        let set = |sql: &'static str, t: Uuid| {
+            let pg = &pg;
+            async move {
+                sqlx_core::query::query(sql).bind(t).execute(pg.pool()).await.unwrap();
+            }
+        };
+        for t in [t0, done, w_low, w_high, gone] {
+            sqlx_core::query::query("update relay.tasks set run_id = $1 where id = $2")
+                .bind(run)
+                .bind(t)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        sqlx_core::query::query("update relay.tasks set run_id = $1 where id = $2")
+            .bind(draft)
+            .bind(other)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        for (t, item) in [(w_low, i_low), (w_high, i_high)] {
+            sqlx_core::query::query("update relay.tasks set item_id = $1 where id = $2")
+                .bind(item)
+                .bind(t)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        set(
+            "update relay.tasks set assigned_at = '2026-11-16T10:00:00Z',
+                 completed_at = '2026-11-16T10:30:00Z',
+                 steps = '[{\"key\":\"a\",\"title\":\"Write it\",\"state\":\"done\"}]' where id = $1",
+            done,
+        )
+        .await;
+        set("update relay.lanes set suggested_name = 'cobalt-lyra', model = 'claude-opus-5-5', version = '2.1' where id = $1", a2)
+            .await;
+        fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(done),
+                lane: Some(a1),
+                kind: "reviewed",
+                props: json!({"verdict": "approved", "findings": []}),
+                round: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        let rows = now["run_tasks"].as_array().unwrap_or_else(|| panic!("{now}"));
+        let ids: Vec<&str> = rows.iter().map(|r| r["task_id"].as_str().unwrap()).collect();
+        // The open run's tasks in the plan's order (minted order); the cancelled one
+        // and the draft run's are not on Now.
+        assert_eq!(
+            ids,
+            vec![t0.to_string(), done.to_string(), w_low.to_string(), w_high.to_string()]
+        );
+        let row = |t: Uuid| rows.iter().find(|r| r["task_id"] == t.to_string()).unwrap();
+        assert_eq!(row(t0)["phase"], "planning");
+        assert_eq!(row(t0)["run_id"], run.to_string());
+        assert_eq!(row(t0)["crew_id"], c1.to_string());
+        assert_eq!(row(w_low)["position"], 3);
+        assert_eq!(row(w_high)["position"], 1);
+        assert_eq!(row(t0)["position"], serde_json::Value::Null);
+        let d = row(done);
+        assert_eq!(d["state"], "done");
+        assert_eq!(d["claimed_at"], "2026-11-16T10:00:00Z");
+        assert_eq!(d["completed_at"], "2026-11-16T10:30:00Z");
+        assert_eq!(d["step"], serde_json::Value::Null);
+        assert_eq!(d["lane"]["code"], "L2");
+        assert_eq!(d["lane"]["suggested_name"], "cobalt-lyra");
+        assert_eq!(d["lane"]["family"], "claude-code");
+        assert_eq!(d["lane"]["version"], "2.1");
+        assert_eq!(d["lane"]["model"], "claude-opus-5-5");
+        assert_eq!(d["reviewer"]["code"], "L1");
+        // Not reported stays null, never a default (D83).
+        assert_eq!(d["reviewer"]["model"], serde_json::Value::Null);
+        assert_eq!(row(w_low)["lane"], serde_json::Value::Null);
+        assert_eq!(row(w_low)["reviewer"], serde_json::Value::Null);
+    }
+
+    /// #422: a held task names its current step: the first one still open.
+    #[tokio::test]
+    async fn now_run_task_step_is_the_first_open_step() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let run = v7(0x5c0);
+        fx_run(&pg, u1(), run, c1, "active").await;
+        let t = v7(0x5c1);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "impl", 1).await;
+        sqlx_core::query::query("update relay.tasks set run_id = $1, steps = $2 where id = $3")
+            .bind(run)
+            .bind(json!([
+                {"key": "a", "title": "Scaffold", "state": "done"},
+                {"key": "b", "title": "Wire it up", "state": "open"},
+                {"key": "c", "title": "Docs", "state": "open"},
+            ]))
+            .bind(t)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        assert_eq!(now["run_tasks"][0]["step"], "Wire it up");
+    }
+
     /// #425: a handover's brief is stamped with the lane that took the task; who
     /// handed it off is the handover's from-lane, and it went to its to-lane.
     #[tokio::test]
