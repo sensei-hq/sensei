@@ -74,10 +74,11 @@ only reads.
 **Eyebrow:** `札 · TICKETS`. **Header:** the board name (`board_name`, else
 `board #<board_ref>`). **Sub-line:** "Active AI time and tokens per ticket and sprint,
 from AI sessions whose branch or prompt names the ticket. Read from the connected
-tracker. On Jira tickets assigned to you, sensei writes these numbers back, as set on
-Integrations." (Superseded 2026-10-26 by tracker-metrics-writeback W-UI, and 2026-11-07
-by `tracker-gitlab.md`, which made the copy kind-neutral; the screen itself still calls
-no write route.)
+tracker. On tickets assigned to you, sensei writes these numbers back, as set on
+Integrations." (Superseded 2026-10-26 by tracker-metrics-writeback W-UI, 2026-11-07
+by `tracker-gitlab.md`, which made the copy kind-neutral, and 2026-11-14 by
+`tracker-forge-comment-writeback.md`, which dropped "Jira" because every tracker kind
+writes the comment; the screen itself still calls no write route.)
 
 ## States
 

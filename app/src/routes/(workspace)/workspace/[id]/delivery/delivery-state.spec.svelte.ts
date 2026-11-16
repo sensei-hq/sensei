@@ -31,7 +31,7 @@ const tracker: TrackerConnection = {
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
   counts: { tasks: 3, sprints: 2 },
-  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, not_private: 0, supports: { comment: true, fields: true }, error: null },
   sdlc_project: projectSdlc({ predictability: 12.5, tokens_per_ticket: 1500, prompts_per_ticket: 2, reasons: {} }),
 };
 

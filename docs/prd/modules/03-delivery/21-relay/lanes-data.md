@@ -223,10 +223,17 @@ review → the report it reviews) · `created_at`.
   query.
 
 ## Derived reads (security-invoker views; the screen never adds up numbers itself)
-- `relay.now`: open `asked` actions for the person · the triage count by tracker and sprint · one row per lane with its
-  active task, lease, `suggested_name` and the review it holds (`reviewing`) · `sprint_summary` (one row per open run
+- `relay.now`: open `asked` actions for the person · the triage count by tracker and sprint · one row per **live** lane
+  (`unregistered_at` null, its crew not closed; #419) with its active task, lease, `suggested_name`, the review it holds
+  (`reviewing`) and its `presence` — `active` (a live lease, i.e. granted and not past `expires_at`, holding a task or
+  a review) · `idle` (a live lease, nothing held) · `not_responding` (no live lease) · `sprint_summary` (one row per open run
   with its tasks counted by state) · `floating_review` (one row per report waiting for a reviewer) · today's completed
   tasks.
+- `relay.run_list` (#419): one row per sprint run, open (`draft` · `planning` · `active`) or ended (`completed` ·
+  `cancelled`), with `total_tasks`, `done_tasks`, `members` (lanes that wrote on its tasks) and `delete_after`
+  (`completed_at + 30 days`, ended runs only; cancel stamps `completed_at`). Served by `GET /relay/runs`
+  (`{active, archived}`) and, with `tasks_by_state` and `members`, by `GET /relay/runs/{id}`. The archive schema and
+  the daily purge job of the crew brief are not built: an ended run stays in `relay.runs` past `delete_after`.
 - `relay.task_queue`: the claimable work, read-only (F01) — one row per `ready` or `in_review` task with
   `claim_eligibility` (`review_floating` · `review_claimed` · `ready_unblocked` · `ready_claim_early`) and
   `unmet_deps`.

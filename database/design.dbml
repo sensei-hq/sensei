@@ -831,6 +831,7 @@ Enum "sensei"."tracker_writeback_status" {
   "not_found"
   "rate_limited"
   "error"
+  "not_private"
 }
 
 Enum "sensei"."watch_status" {

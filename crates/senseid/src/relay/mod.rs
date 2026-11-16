@@ -16,6 +16,7 @@
 pub mod envelope;
 pub mod gate;
 pub mod plan;
+pub mod rows;
 
 use serde::{Deserialize, Serialize};
 
@@ -615,10 +616,29 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
             allow(&["to", "surface", "nudge", "reason", "waiting_min", "task_id"])?;
             check_to_shape(present("to").ok_or_else(|| missing("to"))?)?;
             check_surface(present("surface").ok_or_else(|| missing("surface"))?)?;
-            if let Some(v) = present("nudge")
-                && v.as_bool().is_none()
-            {
-                return Err(props_err("nudge must be a bool".into()));
+            let nudge = match present("nudge") {
+                Some(v) => v.as_bool().ok_or_else(|| props_err("nudge must be a bool".into()))?,
+                None => false,
+            };
+            // A nudge names why; the reason and the wait belong to a nudge only.
+            match (nudge, present("reason")) {
+                (true, None) => return Err(missing("reason")),
+                (true, Some(v)) if !v.as_str().is_some_and(|r| NUDGE_REASONS.contains(&r)) => {
+                    return Err(props_err(format!(
+                        "reason must be one of {}",
+                        NUDGE_REASONS.join("|")
+                    )));
+                }
+                (false, Some(_)) => return Err(props_err("reason needs nudge: true".into())),
+                _ => {}
+            }
+            if let Some(v) = present("waiting_min") {
+                if !nudge {
+                    return Err(props_err("waiting_min needs nudge: true".into()));
+                }
+                if v.as_u64().is_none() {
+                    return Err(props_err("waiting_min must be a whole number ≥ 0".into()));
+                }
             }
             if let Some(v) = present("task_id")
                 && v.as_str().is_none_or(|s| !is_uuid_str(s))
@@ -785,6 +805,70 @@ pub const REOFFER_GRACE_SECS: u64 = 900;
 pub const REVIEW_CLAIM_GRACE_SECS: u64 = 60;
 /// A report floating unclaimed this long nudges the crew, once per window.
 pub const NUDGE_AFTER_SECS: u64 = 900;
+/// Why a nudge was sent: the waiting reasons (lanes-data.md §15; CONTRACT
+/// §3f-bis) and the sweeper's floating review (F07).
+pub const NUDGE_REASONS: &[&str] = &[
+    "review_unassigned",
+    "verdict_unread",
+    "merge_pending",
+    "no_work",
+    "decision",
+    "resource",
+    "review_floating",
+];
+
+/// The codename's first word: a colour (lanes.md §16; the mockup's
+/// `cobalt-lyra`).
+pub const CODENAME_COLOURS: &[&str] = &[
+    "amber", "azure", "beige", "cobalt", "coral", "crimson", "ember", "gold", "indigo", "iris",
+    "ivory", "jade", "lilac", "ochre", "olive", "pearl", "plum", "rose", "ruby", "sage", "sand",
+    "slate", "teal", "umber",
+];
+/// The codename's second word: a star.
+pub const CODENAME_STARS: &[&str] = &[
+    "acrux",
+    "altair",
+    "antares",
+    "aster",
+    "bellatrix",
+    "capella",
+    "castor",
+    "deneb",
+    "elnath",
+    "hadar",
+    "izar",
+    "lyra",
+    "markab",
+    "mira",
+    "mizar",
+    "naos",
+    "pollux",
+    "procyon",
+    "rigel",
+    "sirius",
+    "spica",
+    "vega",
+    "wezen",
+    "zosma",
+];
+
+/// A lane's codename (#419; lanes.md §16): `colour-star`, the first one
+/// not in `taken`, starting where `seed` points so crews don't all open on
+/// the same name. `None` once every pair is taken.
+pub fn mint_codename(seed: u64, taken: &[String]) -> Option<String> {
+    let (colours, stars) = (CODENAME_COLOURS.len() as u64, CODENAME_STARS.len() as u64);
+    let pairs = colours * stars;
+    (0..pairs)
+        .map(|step| (seed % pairs + step) % pairs)
+        .map(|i| {
+            format!(
+                "{}-{}",
+                CODENAME_COLOURS[(i % colours) as usize],
+                CODENAME_STARS[(i / colours) as usize]
+            )
+        })
+        .find(|name| !taken.iter().any(|t| t == name))
+}
 
 /// True once `now` reaches the lease's end. Clocks are fed in (tests never
 /// read wall time).
@@ -854,6 +938,15 @@ capped.\n\
 relay_reregister) with your lane_id resumes the same lane and returns the \
 task checkpoint. POST /api/relay/unregister releases the lane cleanly when \
 you leave.\n\
+- Name: register answers with your codename in suggested_name (two words, \
+unique in the crew); the person sees you by it beside your lane code.\n\
+- Nudge: a nudge reaches you as a message, usually with the task_id that \
+waits on you: a review to claim, a question to answer, a report to finish. \
+Act on that task in your next turn; a nudge is not new work.\n\
+- Closed: the person may close the crew, which releases every lane at once. \
+Your calls then answer 410 relay_lane_gone and reregister answers 409 \
+\"crew is closed\": the work is over, so stop the heartbeat and poll loops \
+and do not retry.\n\
 - Silence: no transcripts in any field. Titles, summaries, notes, and \
 messages carry decisions and diffs, never pasted session text.";
 
@@ -1415,6 +1508,35 @@ mod tests {
         assert!(!g.generic.contains("assigns"), "the coordinator no longer assigns: {}", g.generic);
     }
 
+    /// #419: what a person now does to a lane, said where the lane reads it at
+    /// register — the codename it is shown by, a nudge and what it asks, and
+    /// a crew the person closed (410 relay_lane_gone, then reregister refused
+    /// 409 "crew is closed") as the signal to stop rather than to resume.
+    #[test]
+    fn guidance_v2_names_what_a_person_does_to_a_lane() {
+        let g = relay_guidance_for("", None);
+        assert_eq!(g.version, "2");
+        let bullet = |name: &str| {
+            g.generic
+                .lines()
+                .find(|l| l.starts_with(&format!("- {name}:")))
+                .unwrap_or_else(|| panic!("generic guidance carries a '- {name}:' bullet"))
+                .to_string()
+        };
+        let named = bullet("Name");
+        assert!(named.contains("suggested_name"), "where the codename arrives: {named}");
+        let nudge = bullet("Nudge");
+        // A lane's envelope carries a message's text and task_id, not its
+        // props: the bullet names what the lane can see.
+        for word in ["message", "task_id", "answer"] {
+            assert!(nudge.contains(word), "the nudge bullet lacks {word:?}: {nudge}");
+        }
+        let closed = bullet("Closed");
+        for word in ["410", "relay_lane_gone", "409", "crew is closed", "stop"] {
+            assert!(closed.contains(word), "the closed-crew bullet lacks {word:?}: {closed}");
+        }
+    }
+
     #[test]
     fn clamp_wait_timeout_defaults_and_clamps() {
         assert_eq!(clamp_wait_timeout(None), 25_000);
@@ -1631,6 +1753,44 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    fn is_codename(name: &str) -> bool {
+        name.split_once('-').is_some_and(|(colour, star)| {
+            CODENAME_COLOURS.contains(&colour) && CODENAME_STARS.contains(&star)
+        })
+    }
+
+    #[test]
+    fn mint_codename_is_a_colour_and_a_star() {
+        for seed in [0, 1, 7, 575, 576, u64::MAX] {
+            let name = mint_codename(seed, &[]).unwrap();
+            assert!(is_codename(&name), "{seed}: {name}");
+        }
+        // The seed picks where to start: a crew does not always open on one name.
+        assert_ne!(mint_codename(0, &[]), mint_codename(1, &[]));
+        assert_eq!(mint_codename(42, &[]), mint_codename(42, &[]));
+    }
+
+    #[test]
+    fn mint_codename_skips_names_the_crew_has() {
+        let first = mint_codename(9, &[]).unwrap();
+        let second = mint_codename(9, std::slice::from_ref(&first)).unwrap();
+        assert_ne!(first, second);
+        assert!(is_codename(&second), "{second}");
+    }
+
+    #[test]
+    fn mint_codename_is_none_once_every_pair_is_taken() {
+        let all: Vec<String> = CODENAME_COLOURS
+            .iter()
+            .flat_map(|c| CODENAME_STARS.iter().map(move |s| format!("{c}-{s}")))
+            .collect();
+        assert_eq!(mint_codename(3, &all), None);
+        // One left: it is the one.
+        let last = all[100].clone();
+        let rest: Vec<String> = all.iter().filter(|n| **n != last).cloned().collect();
+        assert_eq!(mint_codename(3, &rest), Some(last));
     }
 
     #[test]

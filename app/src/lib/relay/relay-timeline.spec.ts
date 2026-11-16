@@ -1,15 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import type { RelayAction, RelayLaneRef, RelayTaskView } from '$lib/relay-api.js';
-import { buildTimeline, foldReceipts } from './relay-timeline.js';
+import { buildTimeline, foldReceipts, historyTone } from './relay-timeline.js';
 
 // F8: the task timeline — one thin row per broker-known action,
 // oldest first, plus the derived terminal row (a cancel writes no
 // action). Every kind maps; an unmapped kind is a bug, never a gap.
 
 const LANES: RelayLaneRef[] = [
-  { id: 'lane-1', code: 'L1', title: 'Coord' },
-  { id: 'lane-2', code: 'L2', title: 'Worker' },
-  { id: 'lane-3', code: 'L3', title: 'Reviewer' },
+  { id: 'lane-1', code: 'L1', title: 'Coord', suggested_name: null },
+  { id: 'lane-2', code: 'L2', title: 'Worker', suggested_name: null },
+  { id: 'lane-3', code: 'L3', title: 'Reviewer', suggested_name: null },
 ];
 
 let n = 0;
@@ -138,6 +138,23 @@ describe('buildTimeline', () => {
     expect(rows[0].title).toBe('Handed over L2 → L3');
   });
 
+  it('a lane with a codename is named by it (#425)', () => {
+    const rows = buildTimeline({
+      ...view([
+        {
+          ...base('handed_over'),
+          kind: 'handed_over',
+          props: { from_lane: 'lane-2', from_state: 'working', to_lane: 'lane-3' },
+        } as unknown as RelayAction,
+      ]),
+      lanes: [
+        { id: 'lane-2', code: 'L2', title: 'Worker', suggested_name: 'cobalt-lyra' },
+        { id: 'lane-3', code: 'L3', title: 'Reviewer', suggested_name: 'coral-spica' },
+      ],
+    });
+    expect(rows[0].title).toBe('Handed over cobalt-lyra → coral-spica');
+  });
+
   it('a re-offer names its lane, or the queue', () => {
     const toLane = buildTimeline(
       view([{ ...base('reoffered'), kind: 'reoffered', props: { to_lane: 'lane-3' } } as unknown as RelayAction]),
@@ -259,5 +276,21 @@ describe('foldReceipts', () => {
         { id: 'm1', kind: 'message', reply_to: null } as unknown as RelayAction,
       ]),
     ).toEqual({ m1: 'read', m2: 'delivered' });
+  });
+});
+
+describe('historyTone', () => {
+  const act = (kind: string, props: Record<string, unknown> = {}) => ({ id: kind, kind, props }) as unknown as RelayAction;
+  it('reads an entry in its outcome: merged and approved succeed, changes requested and a question warn, a lost lease is danger', () => {
+    expect(historyTone(act('merged'))).toBe('success');
+    expect(historyTone(act('reviewed', { verdict: 'approved' }))).toBe('success');
+    expect(historyTone(act('reviewed', { verdict: 'changes_requested' }))).toBe('warning');
+    expect(historyTone(act('asked'))).toBe('warning');
+    expect(historyTone(act('interrupted'))).toBe('danger');
+  });
+  it('anything else is the accent', () => {
+    for (const kind of ['assigned', 'reported', 'message', 'started', 'answered', 'handed_over']) {
+      expect(historyTone(act(kind)), kind).toBe('accent');
+    }
   });
 });

@@ -1,5 +1,5 @@
-// Relay primitives — the class vocabulary of COMPONENTS.md §3a (Pill, Tag,
-// RoleMark). Pure data: the component specs render the fixtures and pin the
+// Relay primitives — the class vocabulary of COMPONENTS.md §3a (RoleMark; Pill and
+// Tag are rokkit's Pill, #410). Pure data: the component specs render the fixtures and pin the
 // output; this module is what they draw, so a wrong tone, radius or type stop
 // fails here on data instead of inside a DOM snapshot.
 //
@@ -10,55 +10,6 @@
 // not generated).
 
 import type { RelayRole } from '$lib/relay-api.js';
-
-// ── Pill (§3a) ──────────────────────────────────────────────────────────────
-
-export type PillTone = 'accent' | 'warning' | 'danger' | 'success' | 'neutral';
-
-export const PILL_TONES: PillTone[] = ['accent', 'warning', 'danger', 'success', 'neutral'];
-
-const PILL_BASE =
-  'inline-flex items-center text-xs px-2 py-px rounded-full whitespace-nowrap border border-solid text-ink';
-
-/** 11px, 1/8 padding, full radius, nowrap; fill `bg-{tone}-soft`, border at 35%. */
-const PILL_TONE: Record<PillTone, string> = {
-  accent: 'bg-accent-soft border-[color-mix(in_oklch,var(--accent)_35%,var(--paper))]',
-  warning: 'bg-warning-soft border-[color-mix(in_oklch,var(--warning)_35%,var(--paper))]',
-  danger: 'bg-danger-soft border-[color-mix(in_oklch,var(--danger)_35%,var(--paper))]',
-  success: 'bg-success-soft border-[color-mix(in_oklch,var(--success)_35%,var(--paper))]',
-  // The app has no `neutral` colour token; the mute surface is the neutral tone.
-  neutral: 'bg-paper-mute border-paper-edge',
-};
-
-export function pillClass(tone: PillTone): string {
-  return `${PILL_BASE} ${PILL_TONE[tone]}`;
-}
-
-// ── Tag (§3a) ───────────────────────────────────────────────────────────────
-
-export type TagKind = 'family' | 'model' | 'host';
-
-const TAG_BASE = 'inline-flex items-center text-xs px-2 rounded-full whitespace-nowrap';
-
-const TAG_KIND: Record<TagKind, string> = {
-  family: 'py-0.5 bg-paper-mute text-ink',
-  model: 'py-0.5 font-mono border border-solid border-paper-edge text-ink-soft',
-  host: 'py-0 border border-solid border-paper-edge-strong text-ink-soft',
-};
-
-export function tagClass(kind: TagKind): string {
-  return `${TAG_BASE} ${TAG_KIND[kind]}`;
-}
-
-/** A host tag reads "in <editor>"; the other two read their label. */
-export function tagText(kind: TagKind, label: string, editor: string): string {
-  return kind === 'host' ? `in ${editor}` : label;
-}
-
-/** The host tag's title explains what the editor is, since "in Cursor" alone does not. */
-export function tagTitle(kind: TagKind, editor: string): string | undefined {
-  return kind === 'host' ? `${editor} is the editor; the assistant inside it does the work.` : undefined;
-}
 
 // ── RoleMark (§3a) ──────────────────────────────────────────────────────────
 
@@ -82,7 +33,7 @@ const MARK_FRAME = 'shrink-0 inline-flex items-center justify-center rounded-ful
 
 /** A lane mark: 24px, coordinator accent-tinted at 20%, contributor on paper. */
 const LANE_FRAME: Record<RelayRole, string> = {
-  coordinator: 'w-6 h-6 border-paper-edge bg-[color-mix(in_oklch,var(--accent)_20%,var(--paper))]',
+  coordinator: 'w-6 h-6 border-paper-edge bg-[color-mix(in_oklab,var(--accent)_20%,var(--paper))]',
   contributor: 'w-6 h-6 border-paper-edge bg-paper',
 };
 
@@ -91,10 +42,10 @@ const LANE_GLYPH = 'text-xs text-accent';
 /** A crew mark: 30px, filled with the status tone at 14%, bordered at 45%. */
 const CREW_FRAME: Record<RoleStatus, string> = {
   active:
-    'w-[30px] h-[30px] bg-[color-mix(in_oklch,var(--success)_14%,var(--paper))] border-[color-mix(in_oklch,var(--success)_45%,var(--paper))]',
-  idle: 'w-[30px] h-[30px] bg-[color-mix(in_oklch,var(--ink-mute)_14%,var(--paper))] border-[color-mix(in_oklch,var(--ink-mute)_45%,var(--paper))]',
+    'w-[30px] h-[30px] bg-[color-mix(in_oklab,var(--success)_14%,var(--paper))] border-[color-mix(in_oklab,var(--success)_45%,var(--paper))]',
+  idle: 'w-[30px] h-[30px] bg-[color-mix(in_oklab,var(--ink-mute)_14%,var(--paper))] border-[color-mix(in_oklab,var(--ink-mute)_45%,var(--paper))]',
   not_responding:
-    'w-[30px] h-[30px] bg-[color-mix(in_oklch,var(--warning)_14%,var(--paper))] border-[color-mix(in_oklch,var(--warning)_45%,var(--paper))]',
+    'w-[30px] h-[30px] bg-[color-mix(in_oklab,var(--warning)_14%,var(--paper))] border-[color-mix(in_oklab,var(--warning)_45%,var(--paper))]',
 };
 
 const CREW_GLYPH: Record<RoleStatus, string> = {
@@ -127,3 +78,15 @@ export function roleMarkClass(role: RelayRole, status: RoleStatus, size: 24 | 30
     title: ROLE_LABEL[role],
   };
 }
+
+// ── Now rows (§3b) ───────────────────────────────────────────────────────────
+
+/** A lane or completed row's content (mockup `laneRow`): full width, wraps on a phone, gap 4×12.
+ *  Its rokkit List card row (`variant="card"`) pads it 10/14 and draws the hairline. */
+export const NOW_ROW = 'w-full flex flex-wrap items-center gap-x-3 gap-y-1 text-ink text-left';
+
+/** The card a Now list's rows sit in: 1px edge, radius 12, paper; rows split by a mute hairline. */
+export const NOW_CARD = 'm-0 p-0 list-none flex flex-col border border-solid border-paper-edge rounded-xl bg-paper overflow-hidden';
+
+/** A row inside a NOW_CARD. */
+export const NOW_CARD_ROW = 'border-t border-solid border-paper-mute first:border-t-0';

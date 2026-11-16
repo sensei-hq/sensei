@@ -4,7 +4,8 @@
 // honestly as unknown, never silently. A cancel writes no action (F3),
 // so a cancelled task gains a derived row stamped from the header.
 import type { RelayAction, RelayLaneRef, RelayTaskView } from '$lib/relay-api.js';
-import { codeOf } from './relay-format.js';
+import type { RelayTone } from '@sensei/state';
+import { nameOf } from './relay-format.js';
 
 export interface TimelineRow {
   /** Stable: the action id, or 'terminal-cancelled' for the derived row. */
@@ -37,21 +38,21 @@ function titleFor(action: RelayAction, lanes: RelayLaneRef[]): string | null {
     case 'reviewed':
       return action.props.verdict === 'approved' ? 'Review approved' : 'Changes requested';
     case 'asked':
-      return action.props.asked_of === 'person' ? 'Asked you' : `Asked ${codeOf(lanes, action.props.asked_of)}`;
+      return action.props.asked_of === 'person' ? 'Asked you' : `Asked ${nameOf(lanes, action.props.asked_of)}`;
     case 'answered':
       return `Answered: ${action.props.option}`;
     case 'message':
-      return `Message to ${action.props.to.kind === 'lane' ? codeOf(lanes, action.props.to.lane_id) : action.props.to.kind}`;
+      return `Message to ${action.props.to.kind === 'lane' ? nameOf(lanes, action.props.to.lane_id) : action.props.to.kind}`;
     case 'merged':
       return `Merged into ${action.props.into}`;
     case 'interrupted':
       return 'Lease lost';
     case 'reoffered':
-      return action.props.to_lane ? `Re-offered to ${codeOf(lanes, action.props.to_lane)}` : 'Returned to the queue';
+      return action.props.to_lane ? `Re-offered to ${nameOf(lanes, action.props.to_lane)}` : 'Returned to the queue';
     case 'compacted':
       return 'Compacted';
     case 'handed_over':
-      return `Handed over ${codeOf(lanes, action.props.from_lane)} → ${codeOf(lanes, action.props.to_lane)}`;
+      return `Handed over ${nameOf(lanes, action.props.from_lane)} → ${nameOf(lanes, action.props.to_lane)}`;
     // Queue cutover: the lane's own moves on the queue.
     case 'claimed':
       return 'Claimed';
@@ -105,4 +106,22 @@ export function foldReceipts(history: RelayAction[]): Record<string, 'sent' | 'd
     else if (a.kind === 'delivered' && out[a.reply_to] !== 'read') out[a.reply_to] = 'delivered';
   }
   return out;
+}
+
+/** An entry's tone — its timeline dot, the edge of what was said, its outcome pill:
+ *  merged and approved succeed, changes requested and a question warn, a lost lease is
+ *  danger, anything else is the accent. */
+export function historyTone(action: RelayAction): RelayTone {
+  switch (action.kind) {
+    case 'merged':
+      return 'success';
+    case 'reviewed':
+      return action.props.verdict === 'approved' ? 'success' : 'warning';
+    case 'interrupted':
+      return 'danger';
+    case 'asked':
+      return 'warning';
+    default:
+      return 'accent';
+  }
 }

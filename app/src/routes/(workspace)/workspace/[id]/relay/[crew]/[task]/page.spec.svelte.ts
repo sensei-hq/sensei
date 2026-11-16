@@ -119,6 +119,14 @@ describe('Relay · task — the header', () => {
     expect(one(c, '[data-screen="relay"]')).not.toBeNull();
   });
 
+  // #380: the shell fills its container only when nothing wraps it; a bare wrapper
+  // div grows with the content and the window clips it, so the page cannot scroll.
+  it('the e2e anchor is the shell itself, with no wrapper: the body scrolls (#380)', async () => {
+    const { c } = await open();
+    const anchor = need(one(c, '[data-screen="relay"]'), 'the relay anchor');
+    expect(anchor.hasAttribute('data-screen-shell'), 'the anchor is the shell').toBe(true);
+  });
+
   it('back to Relay, the title, its state, and the ticket button (provider + key, external)', async () => {
     const { c } = await open({ workspace: 'w2' });
     expect(one(c, 'a[data-back]')?.getAttribute('href')).toBe('/workspace/w2/relay');
@@ -180,13 +188,14 @@ describe('Relay · task — Run details', () => {
   it('a number nobody reported reads "not reported"; a reported zero reads 0', async () => {
     const { c } = await open();
     const detail = (key: string) => text(one(c, `[data-run-detail="${key}"]`));
-    // tokens_cache and peak_memory_mb are null in the fixture; compactions is 0.
-    expect(detail('tokens_cache')).toContain('not reported');
-    expect(detail('tokens_cache')).not.toMatch(/\b0\b/);
-    expect(detail('peak_memory_mb')).toContain('not reported');
-    expect(detail('compactions')).toMatch(/\b0\b/);
-    expect(detail('compactions')).not.toContain('not reported');
-    expect(detail('repository')).toContain('sensei-hq/sensei');
+    // Tokens cached and peak memory are null in the fixture; compactions is 0 (#425: rows
+    // are keyed by their label).
+    expect(detail('Tokens cached')).toContain('not reported');
+    expect(detail('Tokens cached')).not.toMatch(/\b0\b/);
+    expect(detail('Peak memory')).toContain('not reported');
+    expect(detail('Compactions')).toMatch(/\b0\b/);
+    expect(detail('Compactions')).not.toContain('not reported');
+    expect(detail('Repository')).toContain('sensei-hq/sensei');
   });
 
   it('the totals say how many turns reported', async () => {
@@ -292,7 +301,7 @@ describe('Relay · task — History', () => {
       const { c } = await open({ task: F.ok(F.taskView({ history: receipts(kinds) })) });
       const msg = need(entry(c, 'act-msg'), 'history entry act-msg');
       expect(text(one(msg, '[data-entry-title]'))).toBe('Message from you');
-      expect(text(msg)).toContain('L1');
+      expect(text(msg)).toContain('cobalt-lyra');
       expect(text(msg)).toContain('Keep the old keyboard shortcut for the toolbar working.');
       expect(one(msg, '[data-message-state]')?.getAttribute('data-message-state'), kinds.join('+')).toBe(state);
       expect(entry(c, 'act-read')).toBeNull();
@@ -499,7 +508,7 @@ describe('Relay · task follow-ups — a re-read that fails, and a re-offer with
 
     it('to a lane names it', async () => {
       const { c } = await open({ task: view(F.LANE.L3) });
-      expect(title(c)).toBe('Re-offered to L3');
+      expect(title(c)).toBe('Re-offered to coral-spica');
     });
 
     it('with no lane says it went back to the queue, never "Re-offered to —"', async () => {
@@ -520,7 +529,7 @@ describe('Relay · task r2 — receipts fold per message (F5)', () => {
       expect(one(c, `[data-history-entry="${receipt}"]`), receipt).toBeNull();
     }
     // `to` is stored as the lane's uuid; the reader sees its code.
-    expect(text(second)).toContain('L1');
+    expect(text(second)).toContain('cobalt-lyra');
     expect(text(c)).not.toContain(F.LANE.L1);
   });
 });
@@ -529,7 +538,7 @@ describe('Relay · task r2 — the steps beyond the turns (F8)', () => {
   const stepsView = () =>
     F.taskView({
       history: F.historyWithSteps(),
-      handoff: { body_md: 'Also keep the old keyboard shortcut working.', docs: ['coord/briefs/L1-diagrams-r2.md'], at: F.minutesAgo(120) },
+      handoff: { body_md: 'Also keep the old keyboard shortcut working.', docs: ['coord/briefs/L1-diagrams-r2.md'], at: F.minutesAgo(120), by_lane: F.LANE.L0, to_lane: F.LANE.L1 },
     });
 
   it('a brief update is its own step, and Handed off shows the latest brief', async () => {
@@ -542,11 +551,11 @@ describe('Relay · task r2 — the steps beyond the turns (F8)', () => {
     expect(text(handoff)).not.toContain('Move the diagrams header onto ScreenShell');
   });
 
-  it('a lost lease and its re-offer: "Lease lost", then "Re-offered to L3"', async () => {
+  it('a lost lease and its re-offer: "Lease lost", then "Re-offered to coral-spica"', async () => {
     const { c } = await open({ task: F.ok(stepsView()) });
     expect(text(one(need(one(c, '[data-history-entry="act-interrupted"]'), 'the lease-lost step'), '[data-entry-title]'))).toBe('Lease lost');
     const reoffered = need(one(c, '[data-history-entry="act-reoffered"]'), 'the re-offer step');
-    expect(text(one(reoffered, '[data-entry-title]'))).toBe('Re-offered to L3');
+    expect(text(one(reoffered, '[data-entry-title]'))).toBe('Re-offered to coral-spica');
     expect(text(c)).not.toContain(F.LANE.L3);
   });
 
@@ -602,7 +611,7 @@ describe('Relay · task impl r2 — who a row is from (L4 F2)', () => {
 
     const theirs = need(entry(c, 'act-msg-lane'), 'history entry act-msg-lane');
     expect(text(theirs)).toContain('Sync is refusing the repository.');
-    expect(text(one(theirs, '[data-entry-title]'))).toBe('Message from L3');
+    expect(text(one(theirs, '[data-entry-title]'))).toBe('Message from coral-spica');
     expect(text(theirs)).not.toContain('from you');
   });
 
@@ -626,7 +635,7 @@ describe('Relay · task impl r2 — who a row is from (L4 F2)', () => {
     expect(text(one(need(entry(c, 'act-ask-person'), 'the ask of the person'), '[data-entry-title]'))).toBe('Asked you');
     const atLane = need(entry(c, 'act-ask-lane'), 'the ask of a lane');
     expect(text(atLane)).toContain('Is the billing export ready?');
-    expect(text(one(atLane, '[data-entry-title]'))).toBe('Asked L1');
+    expect(text(one(atLane, '[data-entry-title]'))).toBe('Asked cobalt-lyra');
     // A uuid never reaches the screen.
     expect(text(c)).not.toContain(F.LANE.L1);
   });

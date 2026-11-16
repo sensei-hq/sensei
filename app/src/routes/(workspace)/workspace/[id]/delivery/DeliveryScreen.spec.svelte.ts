@@ -38,7 +38,7 @@ const tracker: TrackerConnection = {
   last_success_at: null,
   last_error: null,
   counts: { tasks: 2, sprints: 2 },
-  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, not_private: 0, supports: { comment: true, fields: true }, error: null },
   sdlc_project: projectSdlc(),
 };
 

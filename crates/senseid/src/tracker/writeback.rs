@@ -12,7 +12,9 @@ use crate::db::pg_store::trackers::{WriteTarget, WritebackTask};
 use crate::tracker::runtime::{SYNC_RETRIES, TransportFactory};
 use crate::tracker::secret::{KEYRING_TIMEOUT, SecretStore, bounded};
 use crate::tracker::usage::Usage;
-use crate::tracker::{AccountRef, GetTransport, TrackerAdapter, TrackerError, WriteTransport};
+use crate::tracker::{
+    AccountRef, GetTransport, TaskRef, TrackerAdapter, TrackerError, WriteTransport,
+};
 
 /// The whole pass, 429 sleeps included (W2).
 pub const WRITEBACK_DEADLINE: Duration = Duration::from_secs(5 * 60);
@@ -31,11 +33,14 @@ pub enum WritebackStatus {
     NotFound,
     RateLimited,
     Error,
+    /// The ticket's repository or project is public or internal: nothing is written,
+    /// and the next pass checks again (tracker-forge-comment-writeback F7).
+    NotPrivate,
 }
 
 impl WritebackStatus {
     /// In the enum's declared order.
-    pub const ALL: [WritebackStatus; 7] = [
+    pub const ALL: [WritebackStatus; 8] = [
         WritebackStatus::Ok,
         WritebackStatus::Forbidden,
         WritebackStatus::FieldInvalid,
@@ -43,6 +48,7 @@ impl WritebackStatus {
         WritebackStatus::NotFound,
         WritebackStatus::RateLimited,
         WritebackStatus::Error,
+        WritebackStatus::NotPrivate,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -54,6 +60,7 @@ impl WritebackStatus {
             WritebackStatus::NotFound => "not_found",
             WritebackStatus::RateLimited => "rate_limited",
             WritebackStatus::Error => "error",
+            WritebackStatus::NotPrivate => "not_private",
         }
     }
     pub fn parse(s: &str) -> Option<WritebackStatus> {
@@ -69,17 +76,20 @@ pub enum WriteOp {
     UpdateComment,
     IssueCheck,
     WriteFields,
+    /// The repository or project visibility read (tracker-forge-comment-writeback F7).
+    Audience,
 }
 
 impl WriteOp {
     /// Every operation, for the exhaustive status table test.
     #[cfg(test)]
-    pub const ALL: [WriteOp; 5] = [
+    pub const ALL: [WriteOp; 6] = [
         WriteOp::FindComment,
         WriteOp::CreateComment,
         WriteOp::UpdateComment,
         WriteOp::IssueCheck,
         WriteOp::WriteFields,
+        WriteOp::Audience,
     ];
 }
 
@@ -92,6 +102,11 @@ pub fn status_for(op: WriteOp, e: TrackerError) -> WritebackStatus {
         // The issue check only tells which object a 404 meant (W5).
         (WriteOp::IssueCheck, E::NotFound) => WritebackStatus::NotFound,
         (WriteOp::IssueCheck, _) => WritebackStatus::Error,
+        // The visibility read (F7) is a GET, and a GET's 403 cannot be told from a rate
+        // limit, so only a 404 (a repository the token cannot see) is final.
+        (WriteOp::Audience, E::NotFound) => WritebackStatus::NotFound,
+        (WriteOp::Audience, E::RateLimited) => WritebackStatus::RateLimited,
+        (WriteOp::Audience, _) => WritebackStatus::Error,
         // A mapped-field write: a 400 is the field the tracker refused (W6, W9).
         (WriteOp::WriteFields, E::BadRequest) => WritebackStatus::FieldInvalid,
         // The comment-list read (W9).
@@ -423,6 +438,61 @@ pub fn render(u: &Usage, updated_at: chrono::DateTime<chrono::Utc>) -> Report {
     }
 }
 
+/// The first line of every forge comment sensei writes: hidden when rendered, and what
+/// marks the comment as sensei's for adoption (tracker-forge-comment-writeback F4).
+pub const COMMENT_MARKER: &str = "<!-- sensei:writeback -->";
+
+/// Pure: a report as the Markdown body of a GitLab note or GitHub comment (F4): the
+/// marker, the title in bold, then one bullet per line. Every string is sanitised.
+pub fn markdown(r: &Report) -> String {
+    let mut parts = vec![COMMENT_MARKER.to_string()];
+    let title = sanitise(&r.title);
+    // An empty title would leave `****`, a thematic break.
+    if !title.is_empty() {
+        parts.push(format!("**{title}**"));
+    }
+    if !r.lines.is_empty() {
+        parts.push(String::new());
+        parts.extend(r.lines.iter().map(|l| format!("- {}", sanitise(l))));
+    }
+    parts.join("\n")
+}
+
+/// Whether a comment body is one sensei wrote (F4).
+pub fn is_marked(body: &str) -> bool {
+    body.starts_with(COMMENT_MARKER)
+}
+
+/// Pure (F4): no line terminator or tab survives, and every ASCII punctuation mark
+/// that can start a Markdown construct, a mention, a reference or an HTML tag gets a
+/// backslash. `. , ' - /` form nothing inside a line and are left as they are.
+fn sanitise(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\r' | '\n' | '\t' | '\u{85}' | '\u{2028}' | '\u{2029}' => out.push(' '),
+            '.' | ',' | '\'' | '-' | '/' => out.push(c),
+            c if c.is_ascii_punctuation() => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    // Text right after `- ` starts a block: a list item (`-`, `1.`), a thematic break
+    // (`---`) or indented code. Leading space goes, and a leading `-` or the `.` after a
+    // leading number is escaped; `+ * #` already are.
+    let out = out.trim_start().to_string();
+    let digits = out.bytes().take_while(u8::is_ascii_digit).count();
+    if out.starts_with('-') {
+        format!("\\{out}")
+    } else if digits > 0 && out[digits..].starts_with('.') {
+        format!("{}\\{}", &out[..digits], &out[digits..])
+    } else {
+        out
+    }
+}
+
 /// The change key of a comment: its lines, never its title (which carries the
 /// "updated" time).
 pub fn comment_hash(r: &Report) -> String {
@@ -513,7 +583,7 @@ pub async fn run(
     deadline: Duration,
     _guard: &tokio::sync::OwnedMutexGuard<()>,
 ) -> PassOutcome {
-    if !adapter.capabilities().writeback {
+    if !adapter.capabilities().comment {
         return PassOutcome::Skipped;
     }
     // Read at pass start: the sync may have just found the owner (W1). The sync's
@@ -649,6 +719,11 @@ impl Pass<'_> {
         };
 
         let (mut written, mut unchanged, mut failed, mut rate_limited) = (0, 0, 0, 0);
+        // One visibility read per repository per pass (F7), its failure included.
+        let mut audiences: std::collections::HashMap<
+            String,
+            Result<crate::tracker::Audience, TrackerError>,
+        > = std::collections::HashMap::new();
         for task in tasks {
             let status = task.status.as_deref().and_then(WritebackStatus::parse);
             // A deleted comment holds back the comment surface only (W4).
@@ -698,6 +773,47 @@ impl Pass<'_> {
                 Ok(WriteTarget::Reassigned) => continue,
                 Ok(WriteTarget::Stop) => return PassOutcome::Superseded,
                 Err(_) => return self.stop(TrackerError::Db.code()).await,
+            }
+            // Never a comment where the repository is public or internal (F7). Checked
+            // once the ticket is a write target, so a reassigned one costs no request.
+            let ticket = TaskRef { external_id: &task.external_id, key: &task.key };
+            if let Some(key) = self.adapter.audience_key(&ticket) {
+                let audience = match audiences.get(&key) {
+                    Some(a) => *a,
+                    None => {
+                        let a = self.adapter.audience(get.as_ref(), &key).await;
+                        audiences.insert(key, a);
+                        a
+                    }
+                };
+                let held = match audience {
+                    Ok(crate::tracker::Audience::Private) => None,
+                    Ok(crate::tracker::Audience::Visible) => Some(WritebackStatus::NotPrivate),
+                    Err(e) => Some(status_for(WriteOp::Audience, e)),
+                };
+                if let Some(status) = held {
+                    match self.pg.record_write_status(task.id, &self.service, status.as_str()).await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => return PassOutcome::Superseded,
+                        Err(_) => return self.stop(TrackerError::Db.code()).await,
+                    }
+                    // A skip is no failure and leaves the run of rate limits as it was; a
+                    // failure counts as a write's would. A cached rate limit counts once
+                    // per ticket it holds back, so a throttled repository ends the pass.
+                    if status != WritebackStatus::NotPrivate {
+                        failed += 1;
+                        if status == WritebackStatus::RateLimited {
+                            rate_limited += 1;
+                            if rate_limited >= RATE_LIMITED_STOP {
+                                return self.stop(TrackerError::RateLimited.code()).await;
+                            }
+                        } else {
+                            rate_limited = 0;
+                        }
+                    }
+                    continue;
+                }
             }
             *in_flight.lock().unwrap() = Some(task.id);
             let clear_refs: Vec<String> = clears.iter().map(|(r, _)| r.clone()).collect();
@@ -794,25 +910,33 @@ impl Pass<'_> {
         owner: &AccountRef,
         report: &Report,
     ) -> Result<String, WritebackStatus> {
-        let ext = task.external_id.as_str();
+        let ticket = &TaskRef { external_id: &task.external_id, key: &task.key };
         let comment_ref = match &task.comment_ref {
             Some(r) => r.clone(),
-            None => match self.adapter.find_comment(get, ext, owner).await {
+            None => match self.adapter.find_comment(get, ticket, owner).await {
                 Ok(Some(r)) => r,
                 Ok(None) => {
-                    return self
-                        .adapter
-                        .create_comment(write, ext, report)
-                        .await
-                        .map_err(|e| status_for(WriteOp::CreateComment, e));
+                    return match self.adapter.create_comment(write, ticket, report).await {
+                        Ok(id) => Ok(id),
+                        // A 404 on a create: the ticket gone, or a token that can read it but
+                        // not comment on it (GitHub answers 404 there; F6a).
+                        Err(TrackerError::NotFound) => {
+                            match self.adapter.issue_exists(get, ticket).await {
+                                Ok(true) => Err(WritebackStatus::Forbidden),
+                                Ok(false) => Err(WritebackStatus::NotFound),
+                                Err(e) => Err(status_for(WriteOp::IssueCheck, e)),
+                            }
+                        }
+                        Err(e) => Err(status_for(WriteOp::CreateComment, e)),
+                    };
                 }
                 Err(e) => return Err(status_for(WriteOp::FindComment, e)),
             },
         };
-        match self.adapter.update_comment(write, ext, &comment_ref, report).await {
+        match self.adapter.update_comment(write, ticket, &comment_ref, report).await {
             Ok(()) => Ok(comment_ref),
             // Which object is gone: the comment, or the whole ticket (W5)?
-            Err(TrackerError::NotFound) => match self.adapter.issue_exists(get, ext).await {
+            Err(TrackerError::NotFound) => match self.adapter.issue_exists(get, ticket).await {
                 Ok(true) => Err(WritebackStatus::CommentRemoved),
                 Ok(false) => Err(WritebackStatus::NotFound),
                 Err(e) => Err(status_for(WriteOp::IssueCheck, e)),
@@ -930,6 +1054,86 @@ mod tests {
         );
     }
 
+    /// tracker-forge-comment-writeback F4 / gate 4: the forge body for golden 1, exactly.
+    #[test]
+    fn golden_1_renders_as_the_forge_markdown_exactly() {
+        let body = markdown(&render(&golden_1(), at(UPDATED)));
+        assert_eq!(
+            body,
+            [
+                "<!-- sensei:writeback -->",
+                r"**Sensei · AI usage from the assignee's sessions \(updated 2026-10-26 14\:30 UTC\)**",
+                "",
+                r"- Sessions\: 3 \(1 shared with other tickets\)",
+                r"- Active time\: 2.05 h \(Claude 1.30 h, you 0.75 h\)",
+                r"- Wall-clock time\: 4.00 h",
+                r"- Cycle time\: 48.00 h",
+                r"- Tokens\: fresh 120000 · cache read 900000 · cache write 30000 · out 45000 · reasoning —",
+                r"- Cost\: metered — · API \$4.32 \(partly priced for 1 session\)",
+            ]
+            .join("\n")
+        );
+        assert!(is_marked(&body));
+    }
+
+    #[test]
+    fn golden_2_renders_as_the_forge_markdown_exactly() {
+        let body = markdown(&render(&golden_2(), at(UPDATED)));
+        let lines: Vec<&str> = body.lines().skip(3).collect();
+        assert_eq!(
+            lines,
+            [
+                r"- Sessions\: 3",
+                r"- Active time\: 2.05 h \(Claude 1.30 h \[2 of 3 sessions\], you 0.75 h\)",
+                r"- Wall-clock time\: 4.00 h \[1 of 3 sessions\]",
+                r"- Cycle time\: 48.00 h",
+                r"- Tokens\: fresh 120000 · cache read 900000 \[2 of 3 sessions\] · cache write — · out 45000 · reasoning —",
+                r"- Cost\: metered 1.50 \[1 of 3 sessions\] · API \$30.00 \[2 of 3 sessions\] \(partly priced for 2 sessions\)",
+            ]
+        );
+        assert!(is_marked(&body));
+    }
+
+    /// F4's sanitising: every ASCII punctuation mark but `. , ' - /` is escaped, and no
+    /// line terminator or tab survives, so report text can never form a Markdown
+    /// construct, a mention or a GitLab quick action.
+    #[test]
+    fn report_text_can_form_no_markdown_construct() {
+        let one = |line: &str| {
+            let r = Report { title: "t".into(), lines: vec![line.into()] };
+            markdown(&r).lines().nth(3).unwrap().to_string()
+        };
+        for c in "!\"#$%&()*+:;<=>?@[\\]^_`{|}~".chars() {
+            assert_eq!(one(&c.to_string()), format!("- \\{c}"), "{c:?} is escaped");
+        }
+        for c in ".,'-/".chars() {
+            assert_eq!(one(&format!("a{c}")), format!("- a{c}"), "{c:?} is left alone in a line");
+        }
+        // What would start a block right after `- ` is defused (W5 review).
+        assert_eq!(one("-"), r"- \-", "no nested list");
+        assert_eq!(one("--- x"), r"- \--- x", "no thematic break");
+        assert_eq!(one("1. x"), r"- 1\. x", "no nested ordered list");
+        assert_eq!(one("12.50 h"), r"- 12\.50 h");
+        assert_eq!(one("    code"), "- code", "no indented code");
+        let untitled = Report { title: String::new(), lines: vec!["a".into()] };
+        assert_eq!(markdown(&untitled), "<!-- sensei:writeback -->\n\n- a", "no `****` break");
+        assert_eq!(one("x\n/close"), "- x /close", "a quick action cannot start a line");
+        assert_eq!(one("@team"), r"- \@team");
+        assert_eq!(one("a\u{2028}b\t&123 {+x+}"), r"- a b \&123 \{\+x\+\}");
+        assert_eq!(one("a\r\u{85}\u{2029}b"), "- a   b");
+        let title = Report { title: "**x**\n# y".into(), lines: vec![] };
+        assert_eq!(markdown(&title), "<!-- sensei:writeback -->\n**\\*\\*x\\*\\* \\# y**");
+        assert_eq!(markdown(&title).lines().count(), 2, "no line break inside the title");
+    }
+
+    #[test]
+    fn only_a_body_that_starts_with_the_marker_is_sensei_s() {
+        assert!(is_marked("<!-- sensei:writeback -->\n**x**"));
+        assert!(!is_marked("**Sensei · AI usage** <!-- sensei:writeback -->"));
+        assert!(!is_marked(" <!-- sensei:writeback -->"));
+        assert!(!is_marked(""));
+    }
+
     #[test]
     fn a_ticket_with_no_sessions_renders_every_value_as_missing() {
         assert_eq!(
@@ -1008,6 +1212,10 @@ mod tests {
                     // The issue check only tells which object a 404 meant (W5).
                     (WriteOp::IssueCheck, E::NotFound) => S::NotFound,
                     (WriteOp::IssueCheck, _) => S::Error,
+                    // The visibility read (F7): only a 404 is final.
+                    (WriteOp::Audience, E::NotFound) => S::NotFound,
+                    (WriteOp::Audience, E::RateLimited) => S::RateLimited,
+                    (WriteOp::Audience, _) => S::Error,
                     // The comment-list read (W9).
                     (WriteOp::FindComment, E::Forbidden | E::Unauthorized) => S::Forbidden,
                     (WriteOp::FindComment, E::NotFound) => S::NotFound,
@@ -1316,6 +1524,12 @@ mod pass_tests {
         async fn pass(&self) -> PassOutcome {
             self.pass_within(WRITEBACK_DEADLINE).await
         }
+        async fn pass_with(&self, adapter: &'static dyn TrackerAdapter) -> PassOutcome {
+            let guard = self.rt.locks.try_lock(self.t).expect("the guard is free");
+            let service = self.pg.tracker_by_id(self.t).await.unwrap().unwrap().secret_service;
+            let io = PassIo::of(&self.rt);
+            run(&self.pg, &io, self.t, &service, adapter, WRITEBACK_DEADLINE, &guard).await
+        }
         /// Link one more session to `key` and re-sync, so its usage changes.
         async fn new_session(&self, key: &str) {
             session_with(&self.pg, Some(self.repo), &[&format!("fix/{key}")], &[]).await;
@@ -1376,6 +1590,31 @@ mod pass_tests {
 
     fn comment_path(ext: &str) -> String {
         format!("/rest/api/3/issue/{ext}/comment")
+    }
+
+    /// tracker-forge-comment-writeback F2: a candidate carries its stored key, so a
+    /// forge adapter can address the ticket by project and number.
+    #[tokio::test]
+    async fn a_candidate_carries_its_key() {
+        let f = fixture([Some("A1"), Some("A1"), None]).await;
+        let mut got: Vec<(String, String)> =
+            f.pg.writeback_candidates(f.t)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|t| (t.external_id, t.key))
+                .collect();
+        got.sort();
+        let keys: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT external_id, key FROM sensei.tracker_tasks
+              WHERE tracker_id = $1 AND assigned_to_me ORDER BY 1",
+        )
+        .bind(f.t)
+        .fetch_all(f.pg.pool())
+        .await
+        .unwrap();
+        assert!(!keys.is_empty(), "the fixture has assigned tickets");
+        assert_eq!(got, keys);
     }
 
     /// The bullet texts of a sent ADF body.
@@ -1501,12 +1740,282 @@ mod pass_tests {
         }
     }
 
+    /// tracker-forge-comment-writeback F7 / gate 10: a ticket whose repository is public
+    /// or internal gets no comment and reads `not_private`; one visibility read serves
+    /// every ticket of the repository in a pass; the next pass checks again.
+    #[tokio::test]
+    async fn a_ticket_in_a_visible_repository_gets_no_comment() {
+        use crate::tracker::Audience;
+        use crate::tracker::test_support::{AudienceScript, JiraDelegate};
+        let f = fixture([Some("A1"), Some("A1"), None]).await;
+        let w = f.writes(RecordingWrites::default());
+        let script = AudienceScript::answering(Ok(Audience::Visible)).arc();
+        let adapter = JiraDelegate::with_audience(script.clone());
+        assert_eq!(
+            f.pass_with(adapter).await,
+            PassOutcome::Done { written: 0, unchanged: 0, failed: 0 },
+            "a skip is not a failure"
+        );
+        assert_eq!(script.asked(), ["acme/platform"], "one read for the repository's two tickets");
+        assert!(w.sent().is_empty(), "no comment is created");
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("not_private"));
+        assert_eq!(f.status_of("10002").await.as_deref(), Some("not_private"));
+
+        // Made private: the next pass checks again and comments.
+        *script.answer.lock().unwrap() = Ok(Audience::Private);
+        assert_eq!(
+            f.pass_with(adapter).await,
+            PassOutcome::Done { written: 2, unchanged: 0, failed: 0 }
+        );
+        assert_eq!(script.calls(), 2);
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+        assert_eq!(w.sent().len(), 2);
+    }
+
+    /// Ticket 10001 as a forge ticket: its key `acme/platform#12`, owned by account 77.
+    /// Re-applied after a re-sync, which rewrites the key and assignment from the Jira
+    /// board the fixture syncs.
+    async fn as_forge_ticket(f: &Fixture) {
+        f.sql("UPDATE sensei.trackers SET owner_ref = '77' WHERE id = $1").await;
+        f.sql(
+            "UPDATE sensei.tracker_tasks SET key = 'acme/platform#12', assigned_to_me = true
+              WHERE tracker_id = $1 AND external_id = '10001'",
+        )
+        .await;
+    }
+
+    fn sent_paths(w: &RecordingWrites) -> Vec<(WriteMethod, String)> {
+        w.sent().into_iter().map(|s| (s.method, s.path)).collect()
+    }
+
+    /// tracker-forge-comment-writeback gate 5, through the pass: the GitLab ticket's
+    /// project is read for its visibility, the ticket for its identity, its notes for an
+    /// adoptable one, and the note is posted; then edited; then left alone.
+    #[tokio::test]
+    async fn the_pass_comments_on_a_gitlab_ticket_by_its_key() {
+        use crate::tracker::gitlab::GitlabAdapter;
+        use crate::tracker::test_support::Canned;
+        let f = fixture([Some("A1"), None, None]).await;
+        as_forge_ticket(&f).await;
+        let project = "/api/v4/projects/acme%2Fplatform";
+        let issue = format!("{project}/issues/12");
+        let gitlab = Arc::new(
+            Canned::default()
+                .answer(project, json!({"visibility": "private"}))
+                .answer(&issue, json!({"id": 10001}))
+                .answer(&format!("{issue}/notes"), json!([])),
+        );
+        f.factory.serve_transport(&f.site, gitlab.clone());
+        let w = f.writes(RecordingWrites::default().forge_ids());
+
+        assert_eq!(
+            f.pass_with(&GitlabAdapter).await,
+            PassOutcome::Done { written: 1, unchanged: 0, failed: 0 }
+        );
+        assert_eq!(
+            gitlab.calls(),
+            [
+                project.to_string(),
+                issue.clone(),
+                format!("{issue}/notes?sort=desc&order_by=created_at&per_page=50"),
+            ]
+        );
+        assert_eq!(sent_paths(&w), [(WriteMethod::Post, format!("{issue}/notes"))]);
+        let posted = w.sent()[0].body["body"].as_str().unwrap().to_string();
+        assert!(posted.starts_with(COMMENT_MARKER), "{posted}");
+        let row = f.state().await[0].clone();
+        assert_eq!((row.1.as_deref(), row.2.as_deref()), (Some("ok"), Some("20000")));
+
+        // A new session changes the figures: one visibility read, then the edit.
+        f.new_session("AUTH-1").await;
+        as_forge_ticket(&f).await;
+        f.pass_with(&GitlabAdapter).await;
+        assert_eq!(gitlab.calls().len(), 4);
+        assert_eq!(gitlab.calls()[3], project);
+        assert_eq!(sent_paths(&w)[1..], [(WriteMethod::Put, format!("{issue}/notes/20000"))]);
+
+        // Nothing changed: no request at all.
+        f.pass_with(&GitlabAdapter).await;
+        assert_eq!((gitlab.calls().len(), w.sent().len()), (4, 2));
+    }
+
+    /// Gate 6, through the pass: 120 comments, so the pass reads pages 3 then 2, adopts
+    /// the owner's marked comment on page 2, and edits it with PATCH.
+    #[tokio::test]
+    async fn the_pass_adopts_and_edits_a_github_comment_by_its_key() {
+        use crate::tracker::github::GithubAdapter;
+        use crate::tracker::test_support::Canned;
+        let f = fixture([Some("A1"), None, None]).await;
+        as_forge_ticket(&f).await;
+        let repo = "/repos/acme/platform";
+        let issue = format!("{repo}/issues/12");
+        let marked = format!("{COMMENT_MARKER}\n**old**");
+        let github = Arc::new(
+            Canned::default()
+                .answer(repo, json!({"visibility": "private"}))
+                .answer(&issue, json!({"id": 10001, "comments": 120}))
+                .answer_request(
+                    &format!("{issue}/comments?per_page=50&page=3"),
+                    json!([{"id": 5001, "user": {"id": 55}, "body": marked}]),
+                )
+                .answer_request(
+                    &format!("{issue}/comments?per_page=50&page=2"),
+                    json!([
+                        {"id": 4242, "user": {"id": 77}, "body": marked},
+                        {"id": 4243, "user": {"id": 77}, "body": "not sensei's"},
+                    ]),
+                ),
+        );
+        f.factory.serve_transport(&f.site, github.clone());
+        let w = f.writes(RecordingWrites::default().forge_ids());
+
+        assert_eq!(
+            f.pass_with(&GithubAdapter).await,
+            PassOutcome::Done { written: 1, unchanged: 0, failed: 0 }
+        );
+        assert_eq!(
+            github.calls(),
+            [
+                repo.to_string(),
+                issue.clone(),
+                format!("{issue}/comments?per_page=50&page=3"),
+                format!("{issue}/comments?per_page=50&page=2"),
+            ]
+        );
+        assert_eq!(sent_paths(&w), [(WriteMethod::Patch, format!("{repo}/issues/comments/4242"))]);
+        let row = f.state().await[0].clone();
+        assert_eq!((row.1.as_deref(), row.2.as_deref()), (Some("ok"), Some("4242")));
+    }
+
+    /// F7: the cache is per repository. A private repository's answer never carries over
+    /// to a public one in the same pass.
+    #[tokio::test]
+    async fn each_repository_is_read_and_answered_on_its_own() {
+        use crate::tracker::Audience;
+        use crate::tracker::test_support::{AudienceScript, JiraDelegate};
+        let f = fixture([Some("A1"), Some("A1"), None]).await;
+        let w = f.writes(RecordingWrites::default());
+        let script = AudienceScript::answering(Err(TrackerError::Decode))
+            .in_repo("10001", "acme/private", Ok(Audience::Private))
+            .in_repo("10002", "acme/public", Ok(Audience::Visible))
+            .arc();
+        f.pass_with(JiraDelegate::with_audience(script.clone())).await;
+        let mut asked = script.asked();
+        asked.sort();
+        assert_eq!(asked, ["acme/private", "acme/public"]);
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+        assert_eq!(f.status_of("10002").await.as_deref(), Some("not_private"));
+        let posts: Vec<_> = w.sent().into_iter().map(|s| s.path).collect();
+        assert_eq!(posts, [comment_path("10001")], "only the private ticket is commented");
+    }
+
+    /// F7: a comment already written stops being edited once its repository goes public.
+    #[tokio::test]
+    async fn a_comment_whose_repository_went_public_is_no_longer_edited() {
+        use crate::tracker::Audience;
+        use crate::tracker::test_support::{AudienceScript, JiraDelegate};
+        let f = fixture([Some("A1"), None, None]).await;
+        let w = f.writes(RecordingWrites::default());
+        let script = AudienceScript::answering(Ok(Audience::Private)).arc();
+        let adapter = JiraDelegate::with_audience(script.clone());
+        f.pass_with(adapter).await;
+        let written = f.state().await[0].clone();
+        assert_eq!(written.1.as_deref(), Some("ok"));
+        assert!(written.2.is_some(), "the comment is held");
+
+        *script.answer.lock().unwrap() = Ok(Audience::Visible);
+        f.new_session("AUTH-1").await;
+        f.pass_with(adapter).await;
+        assert_eq!(w.sent().len(), 1, "no update is sent");
+        let now = f.state().await[0].clone();
+        assert_eq!(now.1.as_deref(), Some("not_private"));
+        assert_eq!(now.2, written.2, "the comment ref is kept");
+    }
+
+    /// F7: a visibility read that fails writes nothing (fail closed). Only a 404 is
+    /// final; a 403 cannot be told from a rate limit on a read, so it is retried.
+    #[tokio::test]
+    async fn a_failed_visibility_read_writes_nothing() {
+        use crate::tracker::test_support::{AudienceScript, JiraDelegate};
+        for (e, want, sticky) in [
+            (TrackerError::NotFound, "not_found", true),
+            (TrackerError::Forbidden, "error", false),
+            (TrackerError::Unauthorized, "error", false),
+            (TrackerError::RateLimited, "rate_limited", false),
+            (TrackerError::Decode, "error", false),
+        ] {
+            let f = fixture([Some("A1"), Some("A1"), None]).await;
+            let w = f.writes(RecordingWrites::default());
+            let script = AudienceScript::answering(Err(e)).arc();
+            let adapter = JiraDelegate::with_audience(script.clone());
+            assert_eq!(
+                f.pass_with(adapter).await,
+                PassOutcome::Done { written: 0, unchanged: 0, failed: 2 },
+                "{e:?}"
+            );
+            assert_eq!(f.status_of("10001").await.as_deref(), Some(want), "{e:?}");
+            assert_eq!(f.status_of("10002").await.as_deref(), Some(want), "{e:?}");
+            assert!(w.sent().is_empty(), "{e:?}: no comment request");
+            assert_eq!(script.calls(), 1, "{e:?}: the failure is cached for the pass");
+            f.pass_with(adapter).await;
+            assert_eq!(script.calls(), if sticky { 1 } else { 2 }, "{e:?}: retried next pass?");
+        }
+    }
+
+    /// tracker-forge-comment-writeback F6a / gate 7: a 404 on a comment create is
+    /// followed by the issue check, as an update's 404 already was. The ticket readable
+    /// means the token may not comment (`forbidden`); the ticket gone is `not_found`.
+    #[tokio::test]
+    async fn a_404_on_a_create_asks_whether_the_ticket_is_still_there() {
+        for (issue_check, want) in [
+            (None, "forbidden"),
+            (Some(TrackerError::NotFound), "not_found"),
+            (Some(TrackerError::HttpError), "error"),
+        ] {
+            let mut served = standard([Some("A1"), None, None]);
+            if let Some(e) = issue_check {
+                served = served.fail("/rest/api/3/issue/10001", e);
+            }
+            let f = fixture_with(standard([Some("A1"), None, None]), served).await;
+            let w = f.writes(RecordingWrites::default().respond(
+                WriteMethod::Post,
+                &comment_path("10001"),
+                404,
+                1,
+            ));
+            f.pass().await;
+            assert_eq!(f.status_of("10001").await.as_deref(), Some(want), "{want}");
+            assert_eq!(w.sent().len(), 1, "{want}: one create, and no retry within the pass");
+        }
+    }
+
+    /// F8 / gate 9 through the pass: a write's 403 carrying `Retry-After` is a rate limit,
+    /// retried next pass, never the sticky `forbidden`.
+    #[tokio::test]
+    async fn a_rate_limited_403_on_a_write_is_retried_next_pass() {
+        let f = fixture([Some("A1"), None, None]).await;
+        let w = f.writes(RecordingWrites::default().respond_after(
+            WriteMethod::Post,
+            &comment_path("10001"),
+            403,
+            Some("30"),
+            1,
+        ));
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("rate_limited"));
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"), "the next pass writes it");
+        assert_eq!(w.sent().len(), 2);
+    }
+
     #[tokio::test]
     async fn every_failed_write_leaves_its_status_and_only_sticky_ones_wait() {
         for (code, want, sticky) in [
             (401, "forbidden", true),
             (403, "forbidden", true),
-            (404, "not_found", true),
+            // F6a: a create's 404 asks the issue check, and this ticket exists, so the
+            // token may read it but not comment on it.
+            (404, "forbidden", true),
             (400, "error", false),
             (500, "error", false),
             (302, "error", false),
@@ -1739,9 +2248,12 @@ mod pass_tests {
         f.sql("INSERT INTO sensei.tracker_tasks (tracker_id, external_id, key, assigned_to_me, writeback_status, removed_at)
                VALUES ($1, '10009', 'AUTH-9', true, 'error', now())")
             .await;
-        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 0)));
+        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 0, 0)));
         f.sql("UPDATE sensei.tracker_tasks SET writeback_status = 'error' WHERE tracker_id = $1 AND external_id = '10001'").await;
-        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 1)));
+        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 1, 0)));
+        // F7: a deliberate skip is counted apart, never as a failure.
+        f.sql("UPDATE sensei.tracker_tasks SET writeback_status = 'not_private' WHERE tracker_id = $1 AND external_id = '10001'").await;
+        assert_eq!(f.pg.writeback_counts(f.t).await, Ok((2, 0, 1)));
     }
 
     #[tokio::test]
@@ -2522,10 +3034,10 @@ mod pass_tests {
         let service = pg.tracker_by_id(t).await.unwrap().unwrap().secret_service;
         let io = crate::tracker::test_support::empty_pass_io();
         let locks = crate::tracker::sync::TrackerLocks::default();
-        let pass = |writeback: bool| {
+        let pass = |comment: bool, fields: bool| {
             let adapter =
                 crate::tracker::test_support::leak(crate::tracker::test_support::FakeAdapter {
-                    capabilities: crate::tracker::Capabilities { history: false, writeback },
+                    capabilities: crate::tracker::Capabilities { history: false, comment, fields },
                     ..crate::tracker::test_support::FakeAdapter::gitlab_like()
                 });
             let (pg, io, service, locks) = (pg.clone(), io.clone(), service.clone(), &locks);
@@ -2534,7 +3046,12 @@ mod pass_tests {
                 run(&pg, &io, t, &service, adapter, WRITEBACK_DEADLINE, &guard).await
             }
         };
-        assert_eq!(pass(false).await, PassOutcome::Skipped);
-        assert_ne!(pass(true).await, PassOutcome::Skipped, "control: a capable adapter proceeds");
+        assert_eq!(pass(false, false).await, PassOutcome::Skipped);
+        assert_eq!(pass(false, true).await, PassOutcome::Skipped, "fields alone are not enough");
+        assert_ne!(
+            pass(true, false).await,
+            PassOutcome::Skipped,
+            "control: an adapter that writes the comment proceeds"
+        );
     }
 }

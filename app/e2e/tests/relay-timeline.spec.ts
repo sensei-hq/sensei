@@ -34,6 +34,8 @@ async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
 interface Lane {
   lane_id: string;
   lane_token: string;
+  /** The codename: offered, else minted by the broker (#419). */
+  suggested_name: string;
 }
 
 async function relayPost<T>(path: string, token: string | null, body: unknown): Promise<T> {
@@ -116,6 +118,10 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       '[data-screen="relay"] [data-task-title]',
     );
     await expect(tauriPage.locator('[data-task-title]')).toContainText(TITLE);
+    // #425: the holder by codename in the facts; Handed off says by whom and to whom.
+    await expect(tauriPage.locator('[data-task-facts]')).toContainText(holder.suggested_name);
+    await expect(tauriPage.locator('[data-handoff-label]')).toContainText(`by ${coord.suggested_name}`);
+    await expect(tauriPage.locator('[data-handoff-label]')).toContainText(`→ ${holder.suggested_name}`);
     await expect(tauriPage.locator('[data-step="scaffold"]')).toHaveAttribute(
       'data-step-state',
       'open',
@@ -174,15 +180,15 @@ test.describe('Relay — timeline + steps over the live stream', () => {
     // Thin rows expand to the full entry the History renders today. Only the
     // clicked row renders a detail, so the bare locator matches exactly one —
     // no .first() on the assertion path (tauri-playwright-testing §6.1).
-    await expect(tauriPage.locator('[data-timeline] [data-timeline-detail]')).toHaveCount(
+    await expect(tauriPage.locator('[data-relay-timeline] [data-timeline-detail]')).toHaveCount(
       0,
     );
     await tauriPage.locator('[data-timeline-toggle]').first().click();
     await expect(
-      tauriPage.locator('[data-timeline] [data-timeline-detail]'),
+      tauriPage.locator('[data-relay-timeline] [data-timeline-detail]'),
     ).toHaveCount(1);
     await expect(
-      tauriPage.locator('[data-timeline] [data-timeline-detail]'),
+      tauriPage.locator('[data-relay-timeline] [data-timeline-detail]'),
     ).toBeVisible();
 
     // The report floats on the review queue; the reviewer claims it, then

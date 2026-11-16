@@ -12,3 +12,6 @@ src-tauri/gen/
 
 # Test artifacts
 test-results/
+
+# Component preview captures (e2e/preview): evidence is never checked in
+e2e/preview/out/

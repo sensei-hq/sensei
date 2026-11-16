@@ -66,6 +66,8 @@ pub struct RelayRegisterOutput {
     pub lane_token: String,
     pub lane_id: Uuid,
     pub lane_title: Option<String>,
+    /// The lane's codename: the one it offered, else minted (#419).
+    pub suggested_name: Option<String>,
     pub crew_id: Uuid,
     pub guidance: RelayGuidance,
 }
@@ -86,6 +88,16 @@ pub struct RelayHeartbeatOutput {
     /// The lane's lease had lapsed (or was swept): this beat granted a
     /// fresh one, so the lane is live again.
     pub regranted: bool,
+}
+
+/// The person's crew close (#419): each released lane, with the task its
+/// leaving suspended, if any. Empty when the crew was already closed.
+#[derive(Debug, Clone)]
+pub struct RelayPersonCloseOutput {
+    pub crew_id: Uuid,
+    /// False when the crew was closed already (a no-op).
+    pub closed_now: bool,
+    pub released: Vec<(Uuid, Option<Uuid>)>,
 }
 
 /// `POST /api/relay/unregister`: the task the leave interrupted, if the
@@ -387,6 +399,9 @@ pub struct RelayGateReport {
     /// The agent task (not the broker task).
     pub task_id: Uuid,
     pub state: RelayTaskState,
+    /// The ask to the person when the gate could not run (#418 streams it).
+    pub asked: Option<Uuid>,
+    pub crew_id: Uuid,
 }
 
 /// The gate's `asked` options when it cannot run at all.
@@ -458,13 +473,24 @@ pub struct RelayCheckpointInput {
     pub steps: Vec<RelayStepInput>,
 }
 
-/// `POST /relay/runs` (person): a sprint run over backlog items. The crew
-/// is the named one, else the user's single active crew. `config` carries
-/// the gate inputs (`base_checkout`, `base_branch`, `verify_cmd`,
+/// What a checkpoint stored: when, and each step as it now stands (the
+/// stream carries them as step events, #418).
+#[derive(Debug, Clone)]
+pub struct RelayCheckpointOutput {
+    pub checkpointed_at: DateTime<Utc>,
+    pub steps: Vec<RelayStepOutput>,
+}
+
+/// `POST /relay/runs` (person): a sprint run over backlog items, drafted
+/// with no crew (#419); `start` starts it in the same step. The crew (at
+/// start) is the named one, else the user's single active crew. `config`
+/// carries the gate inputs (`base_checkout`, `base_branch`, `verify_cmd`,
 /// `auto_merge`) as the handler validated them.
 #[derive(Debug, Clone)]
 pub struct RelayCreateRunInput {
     pub crew_id: Option<Uuid>,
+    /// Start it now (one step when a crew is ready); else a draft.
+    pub start: bool,
     pub title: String,
     pub goal: String,
     pub item_ids: Vec<Uuid>,
@@ -478,9 +504,107 @@ pub struct RelayCreateRunInput {
 #[derive(Debug, Clone)]
 pub struct RelayCreateRunOutput {
     pub run_id: Uuid,
-    /// Task 0: the planning task, ready in the pool.
-    pub planning_task_id: Uuid,
+    /// Set once started: the crew and Task 0 (the planning task, ready in
+    /// the pool). A draft has neither.
+    pub started: Option<RelayStartedRun>,
+}
+
+/// A run's start (#419): the crew it bound and Task 0 it minted.
+/// Starting a run, inside the caller's transaction (#161: typed inputs, not five
+/// positional ones): whose, which run, the crew to bind (None = the one active),
+/// and the clock.
+struct RunStart {
+    user_id: Uuid,
+    run_id: Uuid,
+    crew_id: Option<Uuid>,
+    now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RelayStartedRun {
+    pub run_id: Uuid,
     pub crew_id: Uuid,
+    pub planning_task_id: Uuid,
+}
+
+/// One `relay.run_list` row (#419).
+#[derive(Debug, Clone)]
+struct RunListRow {
+    id: Uuid,
+    crew_id: Option<Uuid>,
+    title: String,
+    goal: String,
+    state: String,
+    repo_key: Option<String>,
+    workspace_id: Option<Uuid>,
+    created_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
+    completed_at: Option<DateTime<Utc>>,
+    delete_after: Option<DateTime<Utc>>,
+    total_tasks: i64,
+    done_tasks: i64,
+    members: i64,
+}
+
+impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for RunListRow {
+    fn from_row(r: &'r sqlx_postgres::PgRow) -> Result<Self, sqlx_core::Error> {
+        use sqlx_core::row::Row;
+        Ok(RunListRow {
+            id: r.try_get("id")?,
+            crew_id: r.try_get("crew_id")?,
+            title: r.try_get("title")?,
+            goal: r.try_get("goal")?,
+            state: r.try_get("state")?,
+            repo_key: r.try_get("repo_key")?,
+            workspace_id: r.try_get("workspace_id")?,
+            created_at: r.try_get("created_at")?,
+            started_at: r.try_get("started_at")?,
+            completed_at: r.try_get("completed_at")?,
+            delete_after: r.try_get("delete_after")?,
+            total_tasks: r.try_get("total_tasks")?,
+            done_tasks: r.try_get("done_tasks")?,
+            members: r.try_get("members")?,
+        })
+    }
+}
+
+const RUN_LIST_SELECT: &str = "select id, crew_id, title, goal, state::text as state, repo_key,
+        workspace_id, created_at, started_at, completed_at, delete_after, total_tasks,
+        done_tasks, members
+   from relay.run_list where user_id = $1";
+const RUN_LIST_SELECT_ALL: &str = "select id, crew_id, title, goal, state::text as state, repo_key,
+        workspace_id, created_at, started_at, completed_at, delete_after, total_tasks,
+        done_tasks, members
+   from relay.run_list where user_id = $1 order by created_at, id";
+
+fn run_list_json(row: &RunListRow) -> serde_json::Value {
+    serde_json::json!({
+        "id": row.id.to_string(),
+        "crew_id": row.crew_id.map(|id| id.to_string()),
+        "title": row.title,
+        "goal": row.goal,
+        "state": row.state,
+        "repo_key": row.repo_key,
+        "workspace_id": row.workspace_id.map(|id| id.to_string()),
+        "created_at": iso(row.created_at),
+        "started_at": row.started_at.map(iso),
+        "completed_at": row.completed_at.map(iso),
+        "delete_after": row.delete_after.map(iso),
+        "total_tasks": row.total_tasks,
+        "done_tasks": row.done_tasks,
+        "members": row.members,
+    })
+}
+
+/// A run's cancel (#419): what it stopped and what it gave back.
+#[derive(Debug, Clone)]
+pub struct RelayCancelledRun {
+    pub run_id: Uuid,
+    /// Null for a draft.
+    pub crew_id: Option<Uuid>,
+    pub cancelled_tasks: Vec<Uuid>,
+    /// Items back on the backlog.
+    pub returned_items: Vec<Uuid>,
 }
 
 /// The acceptance lines Task 0 is minted with: what the peer reviewer
@@ -531,6 +655,8 @@ pub struct RelayAskOutput {
 pub struct RelayAnswerOutput {
     pub action_id: Uuid,
     pub task_id: Option<Uuid>,
+    /// The decision's crew (the stream names it, #418).
+    pub crew_id: Uuid,
 }
 
 /// `POST /api/relay/decisions/{id}/answer` (person and lane share it; the
@@ -565,6 +691,16 @@ pub struct RelayMessageInput {
     pub to: RelayMessageTo,
     pub task_id: Option<Uuid>,
     pub text: String,
+    /// A nudge (lanes.md §15): why, and how long the wait has run.
+    pub nudge: Option<RelayNudge>,
+}
+
+/// The person's nudge on a message (#419; CONTRACT §3f-bis).
+#[derive(Debug, Clone)]
+pub struct RelayNudge {
+    /// One of `relay::NUDGE_REASONS`; the props check holds it.
+    pub reason: String,
+    pub waiting_min: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1115,7 +1251,16 @@ fn history_props(kind: &str, props: &serde_json::Value) -> serde_json::Value {
             })
         }
         "answered" => serde_json::json!({ "option": get("option"), "surface": get("surface") }),
-        "message" => serde_json::json!({ "to": get("to"), "surface": get("surface") }),
+        "message" => {
+            let mut out = serde_json::json!({ "to": get("to"), "surface": get("surface") });
+            // A nudge shows as one in the history ("Nudge · to … · from you").
+            for key in ["nudge", "reason", "waiting_min"] {
+                if let Some(v) = props.get(key) {
+                    out[key] = v.clone();
+                }
+            }
+            out
+        }
         "merged" => {
             let gates = arr("gates")
                 .iter()
@@ -1180,6 +1325,202 @@ fn next_code(codes: &[String]) -> Option<String> {
 }
 
 // ─── The store ───
+
+/// One open person decision as Needs you shows it: the `relay.now`
+/// `open_asked` payload, shaped. `relay_now` lists them;
+/// `relay_decision_row` reads one for the stream (#418).
+fn now_decision_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serde_json::Value {
+    let options = payload
+        .get("options")
+        .and_then(|v| v.as_array())
+        .map(|options| {
+            options
+                .iter()
+                .map(|o| {
+                    serde_json::json!({
+                        "id": o.get("id"),
+                        "label": o.get("label"),
+                        "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "id": id.to_string(),
+        "crew_id": crew_id.to_string(),
+        "task_id": payload.get("task_id"),
+        "task_title": payload.get("task_title"),
+        "question": payload.get("question"),
+        "context": payload.get("context"),
+        "options": options,
+        "recommended": payload.get("recommended"),
+        "asked_at": payload.get("asked_at"),
+    })
+}
+
+/// One crew → person message as Needs you shows it: the `relay.now`
+/// `person_message` payload, shaped. `relay_now` lists them;
+/// `relay_person_message_row` reads one for the stream (#418).
+fn now_person_message_json(
+    id: &Uuid,
+    crew_id: &Uuid,
+    payload: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id.to_string(),
+        "crew_id": crew_id.to_string(),
+        "task_id": payload.get("task_id"),
+        "task_title": payload.get("task_title"),
+        "from_lane_code": payload.get("from_lane_code"),
+        "text": payload
+            .get("text")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .unwrap_or(serde_json::Value::String(String::new())),
+        "sent_at": payload.get("sent_at"),
+    })
+}
+
+/// The columns one queue row is shaped from (`relay.items`).
+type QueueItemCols = (
+    Uuid,
+    Option<String>,
+    Option<Uuid>,
+    String,
+    String,
+    Option<Vec<String>>,
+    Option<Uuid>,
+    Option<String>,
+    Option<String>,
+    Option<i32>,
+);
+
+/// Where a queue row stands: the two halves of `/relay/queue`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueStage {
+    Triage,
+    Backlog,
+}
+
+impl QueueStage {
+    pub fn word(self) -> &'static str {
+        match self {
+            QueueStage::Triage => "triage",
+            QueueStage::Backlog => "backlog",
+        }
+    }
+}
+
+/// One queue row as `/relay/queue` shows it, and the id the screen keys it
+/// by. A triage row has exactly one identity — a manual item by its id, a
+/// ticketed one by its ticket (`provider:key`, slice 2's tracker rows have
+/// no item at all); a backlog row is always an item.
+fn queue_item_json(
+    stage: QueueStage,
+    (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key, position): QueueItemCols,
+) -> Result<(String, serde_json::Value), RelayError> {
+    let ticket = match (&provider, &key) {
+        (Some(provider), Some(key)) => Some(serde_json::json!({
+            "provider": word(parse_provider(provider)?),
+            "key": key,
+            "url": serde_json::Value::Null,
+        })),
+        _ => None,
+    };
+    let kind = word(parse_item_kind(&kind)?);
+    let workspace_id = workspace_id.map(|id| id.to_string());
+    let tags = tags.unwrap_or_default();
+    Ok(match stage {
+        QueueStage::Triage => {
+            let (item_id, screen_id) = match &ticket {
+                Some(t) => (
+                    serde_json::Value::Null,
+                    format!(
+                        "{}:{}",
+                        t["provider"].as_str().unwrap_or_default(),
+                        key.unwrap_or_default()
+                    ),
+                ),
+                None => (serde_json::json!(id.to_string()), id.to_string()),
+            };
+            (
+                screen_id,
+                serde_json::json!({
+                    "repo_key": repo_key,
+                    "workspace_id": workspace_id,
+                    "kind": kind,
+                    "title": title,
+                    "tags": tags,
+                    "sprint": serde_json::Value::Null,
+                    "added_by_you": added_by.is_none(),
+                    "item_id": item_id,
+                    "ticket": ticket.unwrap_or(serde_json::Value::Null),
+                }),
+            )
+        }
+        QueueStage::Backlog => (
+            id.to_string(),
+            serde_json::json!({
+                "item_id": id.to_string(),
+                "repo_key": repo_key,
+                "workspace_id": workspace_id,
+                "kind": kind,
+                "title": title,
+                "tags": tags,
+                "sprint": serde_json::Value::Null,
+                "ticket": ticket.unwrap_or(serde_json::Value::Null),
+                "added_by_you": added_by.is_none(),
+                "position": position.unwrap_or(i32::MAX),
+            }),
+        ),
+    })
+}
+
+/// One open run as the sprint band shows it: the `relay.now`
+/// `sprint_summary` payload with its crew. `relay_now` lists them;
+/// `relay_run_row` reads one for the stream (#418).
+fn now_run_json(crew_id: &Uuid, mut payload: serde_json::Value) -> serde_json::Value {
+    payload["crew_id"] = serde_json::Value::String(crew_id.to_string());
+    payload
+}
+
+/// One lane as the Now screen shows it: the `relay.now` lane payload,
+/// shaped. `relay_now` lists them; `relay_lane_row` reads one for the
+/// stream (#418), so the event and the read never disagree.
+fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serde_json::Value {
+    let lease_state = payload
+        .get("lease")
+        .and_then(|l| l.get("state"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("queued");
+    let lease_expires_at = payload
+        .get("lease")
+        .and_then(|l| l.get("expires_at"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "id": id.to_string(),
+        "crew_id": crew_id.to_string(),
+        "code": payload.get("code"),
+        "title": payload.get("title"),
+        "role": payload.get("role"),
+        "family": payload.get("family"),
+        "version": payload.get("version"),
+        "model": payload.get("model"),
+        "lease_state": lease_state,
+        "lease_expires_at": lease_expires_at,
+        "limit_scope": payload.get("limit_scope"),
+        "limit_resumes_at": payload.get("limit_resumes_at"),
+        "limit_note": payload.get("limit_note"),
+        "task": payload.get("task"),
+        // Queue cutover: the name the assistant offered and the
+        // review the lane holds (both the view's keys).
+        "suggested_name": payload.get("suggested_name"),
+        "reviewing": payload.get("reviewing"),
+        "presence": payload.get("presence"),
+    })
+}
 
 impl PgStore {
     /// Mint-or-join a lane (Q6). Mints the crew, the lane (next free code),
@@ -1246,12 +1587,33 @@ impl PgStore {
         // F2: the lane title is minted here, never null — the assistant's
         // own name when it offered one (queue cutover), else code + family
         // (`L4 · Muse`), else the bare code when the family is empty.
-        let suggested_name =
+        let offered =
             input.suggested_name.as_deref().map(str::trim).filter(|name| !name.is_empty());
-        let title = match suggested_name {
+        let title = match offered {
             Some(name) => name.to_string(),
             None if input.family.is_empty() => code.clone(),
             None => format!("{} · {}", code, input.family),
+        };
+        // #419 (lanes.md §16): a lane that offers no name gets a codename,
+        // unique in its crew; the title stays as minted above.
+        let suggested_name = match offered {
+            Some(name) => Some(name.to_string()),
+            None => {
+                let taken: Vec<String> = sqlx_core::query_scalar::query_scalar(
+                    "select suggested_name from relay.lanes
+                     where user_id = $1 and crew_id = $2 and suggested_name is not null",
+                )
+                .bind(user_id)
+                .bind(crew_id)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                let minted = crate::relay::mint_codename(lane_id.as_u64_pair().1, &taken);
+                if minted.is_none() {
+                    tracing::warn!(%crew_id, "relay register: every codename is taken; lane goes unnamed");
+                }
+                minted
+            }
         };
         let insert_lane = sqlx_core::query::query(
             "insert into relay.lanes
@@ -1273,7 +1635,7 @@ impl PgStore {
         .bind(input.worktree.as_deref())
         .bind(token_hash.as_str())
         .bind(title.as_str())
-        .bind(suggested_name)
+        .bind(suggested_name.as_deref())
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_lane {
@@ -1308,6 +1670,7 @@ impl PgStore {
             lane_token: token,
             lane_id,
             lane_title: Some(title),
+            suggested_name,
             crew_id,
             guidance,
         })
@@ -1585,11 +1948,26 @@ impl PgStore {
             return Err(RelayError::Gone("lane already unregistered".into()));
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let interrupted = Self::relay_unregister_tx(&mut tx, user_id, crew_id, lane_id).await?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayUnregisterOutput { interrupted })
+    }
+
+    /// A lane leaves, inside the caller's transaction: its lease released,
+    /// its held task suspended (`interrupted`, named in the answer), its
+    /// resource grants freed to their next waiters. The lane's own
+    /// unregister and the person's crew close (#419) share it.
+    async fn relay_unregister_tx(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+        lane_id: Uuid,
+    ) -> Result<Option<Uuid>, RelayError> {
         sqlx_core::query::query(
             "update relay.lanes set unregistered_at = current_timestamp where id = $1",
         )
         .bind(lane_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db_err)?;
         sqlx_core::query::query(
@@ -1601,7 +1979,7 @@ impl PgStore {
                order by granted_at desc nulls last, id desc limit 1)",
         )
         .bind(lane_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db_err)?;
         // A voluntary leave suspends the lane's work like a lost lease; the
@@ -1616,7 +1994,7 @@ impl PgStore {
         )
         .bind(user_id)
         .bind(lane_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db_err)?;
         let interrupted = task.as_ref().map(|(task_id, ..)| *task_id);
@@ -1632,7 +2010,7 @@ impl PgStore {
             .bind(word(next))
             .bind(user_id)
             .bind(task_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(db_err)?;
             sqlx_core::query::query(
@@ -1648,7 +2026,7 @@ impl PgStore {
             .bind(lane_id)
             .bind(round)
             .bind(phase)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(db_err)?;
         }
@@ -1663,21 +2041,20 @@ impl PgStore {
              returning resource",
         )
         .bind(lane_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await
         .map_err(db_err)?;
         if !freed.is_empty() {
             let now: DateTime<Utc> =
                 sqlx_core::query_scalar::query_scalar("select current_timestamp")
-                    .fetch_one(&mut *tx)
+                    .fetch_one(&mut **tx)
                     .await
                     .map_err(db_err)?;
             for resource in &freed {
-                grant_next_waiter(&mut tx, resource, now).await?;
+                grant_next_waiter(tx, resource, now).await?;
             }
         }
-        tx.commit().await.map_err(db_err)?;
-        Ok(RelayUnregisterOutput { interrupted })
+        Ok(interrupted)
     }
 
     /// Request a resource lease (item 3, Q1–Q3/Q5/Q6): the lane's live
@@ -3131,6 +3508,7 @@ impl PgStore {
         outcome: &GateOutcome,
         now: DateTime<Utc>,
     ) -> Result<RelayGateReport, RelayError> {
+        let mut asked = None;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         let gate: Option<(Uuid, Uuid, String, String, serde_json::Value)> =
             sqlx_core::query_as::query_as(
@@ -3319,6 +3697,8 @@ impl PgStore {
                 });
                 validate_props(RelayActionKind::Asked, &props)
                     .map_err(|e| RelayError::Internal(format!("gate ask props: {}", e.message)))?;
+                let ask_id = new_id();
+                asked = Some(ask_id);
                 sqlx_core::query::query(
                     "insert into relay.actions
                        (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
@@ -3327,7 +3707,7 @@ impl PgStore {
                              $5::relay.task_phase, $6, $7, $8)",
                 )
                 .bind(user_id)
-                .bind(new_id())
+                .bind(ask_id)
                 .bind(crew_id)
                 .bind(gate_task_id)
                 .bind(phase.as_str())
@@ -3341,7 +3721,7 @@ impl PgStore {
             }
         };
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayGateReport { task_id: spec.task_id, state })
+        Ok(RelayGateReport { task_id: spec.task_id, state, asked, crew_id })
     }
 
     /// The claim guard shared by `claim_next`, `claim` and `claim_review`:
@@ -3935,7 +4315,7 @@ impl PgStore {
         lane_id: Uuid,
         task_id: Uuid,
         input: RelayCheckpointInput,
-    ) -> Result<DateTime<Utc>, RelayError> {
+    ) -> Result<RelayCheckpointOutput, RelayError> {
         if let Some(step) = input.current_step.as_deref() {
             check_summary(step, "current_step")?;
         }
@@ -3963,8 +4343,9 @@ impl PgStore {
         if !matches!(cur, RelayTaskState::Working | RelayTaskState::Rework) {
             return Err(RelayError::Conflict(format!("cannot checkpoint a {} task", word(cur))));
         }
+        let mut steps = Vec::with_capacity(input.steps.len());
         for step in input.steps {
-            self.relay_post_step(user_id, lane_id, task_id, step).await?;
+            steps.push(self.relay_post_step(user_id, lane_id, task_id, step).await?);
         }
         let mut patch = serde_json::Map::new();
         if let Some(step) = input.current_step {
@@ -4007,7 +4388,7 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        Ok(stamp)
+        Ok(RelayCheckpointOutput { checkpointed_at: stamp, steps })
     }
 
     /// End a limit pause early (F03): the lane says it is back. Returns
@@ -4060,28 +4441,6 @@ impl PgStore {
             return Err(RelayError::Validation("repo_key must not be empty".into()));
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
-        // The crew: the named one, else the user's single active crew.
-        let (crew_id, crew_repo, crew_ws): (Uuid, Option<String>, Option<Uuid>) = match input
-            .crew_id
-        {
-            Some(crew_id) => {
-                let row: Option<(Option<String>, Option<Uuid>)> = sqlx_core::query_as::query_as(
-                    "select repo_key, workspace_id from relay.crews
-                             where user_id = $1 and id = $2",
-                )
-                .bind(user_id)
-                .bind(crew_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db_err)?;
-                let Some((repo, ws)) = row else {
-                    return Err(RelayError::NotFound("crew not found".into()));
-                };
-                (crew_id, repo, ws)
-            }
-            None => Self::relay_single_active_crew(&mut tx, user_id).await?,
-        };
-        Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
         // Every item exists and is still open (triage|backlog); the first
         // repository and workspace among them are the run's fallback.
         let mut item_repo: Option<String> = None;
@@ -4106,23 +4465,19 @@ impl PgStore {
             item_repo = item_repo.or(repo);
             item_ws = item_ws.or(ws);
         }
-        let repo_key = input
-            .repo_key
-            .or(crew_repo)
-            .or(item_repo)
-            .ok_or_else(|| RelayError::Validation("a run needs a repository".into()))?;
-        let workspace_id = input.workspace_id.or(crew_ws).or(item_ws);
         let run_id = new_id();
         sqlx_core::query::query(
-            "insert into relay.runs (user_id, id, crew_id, title, goal, state, config, created_at)
-             values ($1, $2, $3, $4, $5, 'planning'::relay.run_state, $6, $7)",
+            "insert into relay.runs
+               (user_id, id, crew_id, title, goal, state, config, repo_key, workspace_id, created_at)
+             values ($1, $2, null, $3, $4, 'draft'::relay.run_state, $5, $6, $7, $8)",
         )
         .bind(user_id)
         .bind(run_id)
-        .bind(crew_id)
         .bind(input.title.as_str())
         .bind(input.goal.as_str())
         .bind(&input.config)
+        .bind(input.repo_key.or(item_repo))
+        .bind(input.workspace_id.or(item_ws))
         .bind(now)
         .execute(&mut *tx)
         .await
@@ -4150,6 +4505,115 @@ impl PgStore {
             .await
             .map_err(db_err)?;
         }
+        let started = if input.start {
+            Some(
+                Self::relay_start_run_tx(
+                    &mut tx,
+                    RunStart { user_id, run_id, crew_id: input.crew_id, now },
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayCreateRunOutput { run_id, started })
+    }
+
+    /// `POST /relay/runs/{id}/start` (#419): a draft binds its crew (the
+    /// named one, else the single active crew), which must hold a live lane,
+    /// and mints Task 0. Anything but a draft is a conflict.
+    pub async fn relay_start_run(
+        &self,
+        user_id: Uuid,
+        run_id: Uuid,
+        crew_id: Option<Uuid>,
+        now: DateTime<Utc>,
+    ) -> Result<RelayStartedRun, RelayError> {
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let started =
+            Self::relay_start_run_tx(&mut tx, RunStart { user_id, run_id, crew_id, now }).await?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(started)
+    }
+
+    async fn relay_start_run_tx(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        start: RunStart,
+    ) -> Result<RelayStartedRun, RelayError> {
+        let RunStart { user_id, run_id, crew_id, now } = start;
+        let run: Option<(String, String, Option<String>, Option<Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "select state::text, title, repo_key, workspace_id from relay.runs
+                 where user_id = $1 and id = $2 for update",
+            )
+            .bind(user_id)
+            .bind(run_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_err)?;
+        let Some((state, title, run_repo, run_ws)) = run else {
+            return Err(RelayError::NotFound("run not found".into()));
+        };
+        if state != "draft" {
+            return Err(RelayError::Conflict(format!("run is {state}, not a draft")));
+        }
+        // The crew: the named one, else the user's single active crew.
+        let (crew_id, crew_repo, crew_ws) = match crew_id {
+            Some(crew_id) => {
+                let row: Option<(Option<String>, Option<Uuid>)> = sqlx_core::query_as::query_as(
+                    "select repo_key, workspace_id from relay.crews
+                     where user_id = $1 and id = $2",
+                )
+                .bind(user_id)
+                .bind(crew_id)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(db_err)?;
+                let Some((repo, ws)) = row else {
+                    return Err(RelayError::NotFound("crew not found".into()));
+                };
+                (crew_id, repo, ws)
+            }
+            None => Self::relay_single_active_crew(tx, user_id).await?,
+        };
+        Self::relay_require_crew_open(tx, user_id, crew_id).await?;
+        // A crew with nobody answering cannot take Task 0: one live lane at
+        // least (registered, its lease granted and not past its end).
+        let live: bool = sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.lanes l
+                join relay.leases ls on ls.user_id = l.user_id and ls.lane_id = l.id
+                                    and ls.kind = 'lane'
+               where l.user_id = $1 and l.crew_id = $2 and l.unregistered_at is null
+                 and ls.state = 'granted' and ls.expires_at > $3)",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .bind(now)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        if !live {
+            return Err(RelayError::Conflict("the crew has no live lane to start the run".into()));
+        }
+        let repo_key = run_repo
+            .or(crew_repo)
+            .ok_or_else(|| RelayError::Validation("a run needs a repository".into()))?;
+        let workspace_id = run_ws.or(crew_ws);
+        sqlx_core::query::query(
+            "update relay.runs set crew_id = $1, state = 'planning'::relay.run_state,
+                    repo_key = $2, workspace_id = $3
+             where user_id = $4 and id = $5",
+        )
+        .bind(crew_id)
+        .bind(repo_key.as_str())
+        .bind(workspace_id)
+        .bind(user_id)
+        .bind(run_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
         // Task 0: the plan, ready in the pool for any lane to claim.
         let planning_task_id = new_id();
         let acceptance: Vec<String> =
@@ -4167,14 +4631,254 @@ impl PgStore {
         .bind(run_id)
         .bind(repo_key.as_str())
         .bind(workspace_id)
-        .bind(format!("Plan: {}", input.title))
+        .bind(format!("Plan: {title}"))
         .bind(acceptance)
         .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(RelayStartedRun { run_id, crew_id, planning_task_id })
+    }
+
+    /// `POST /relay/runs/{id}/cancel` (#419): the person stops a draft,
+    /// planning or active run, lanes on its tasks or not. Every task the
+    /// state machine lets cancel is cancelled (its lane is freed); the
+    /// run's items still planned go back to the backlog. Finished or
+    /// cancelled runs are a conflict.
+    pub async fn relay_cancel_run(
+        &self,
+        user_id: Uuid,
+        run_id: Uuid,
+    ) -> Result<RelayCancelledRun, RelayError> {
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let run: Option<(String, Option<Uuid>)> = sqlx_core::query_as::query_as(
+            "select state::text, crew_id from relay.runs where user_id = $1 and id = $2 for update",
+        )
+        .bind(user_id)
+        .bind(run_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let Some((state, crew_id)) = run else {
+            return Err(RelayError::NotFound("run not found".into()));
+        };
+        if !matches!(state.as_str(), "draft" | "planning" | "active") {
+            return Err(RelayError::Conflict(format!("run is {state}")));
+        }
+        let tasks: Vec<(Uuid, String)> = sqlx_core::query_as::query_as(
+            "select id, state::text from relay.tasks where user_id = $1 and run_id = $2 for update",
+        )
+        .bind(user_id)
+        .bind(run_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let mut cancelled_tasks = Vec::new();
+        for (task_id, task_state) in tasks {
+            let Ok(next) = transition(parse_state(&task_state)?, TaskEvent::Cancelled) else {
+                continue; // done, or already cancelled: it stays as it is
+            };
+            sqlx_core::query::query(
+                "update relay.tasks set state = $1::relay.task_state,
+                        blocked_from_state = null,
+                        state_changed_at = current_timestamp
+                 where user_id = $2 and id = $3",
+            )
+            .bind(word(next))
+            .bind(user_id)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            cancelled_tasks.push(task_id);
+        }
+        let returned_items: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "update relay.items i set state = 'backlog'::relay.item_state
+              from relay.run_items ri
+             where ri.user_id = $1 and ri.run_id = $2
+               and i.user_id = ri.user_id and i.id = ri.item_id and i.state = 'planned'
+             returning i.id",
+        )
+        .bind(user_id)
+        .bind(run_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        // When it ended: the past runs list it, deleted 30 days on (#419).
+        sqlx_core::query::query(
+            "update relay.runs set state = 'cancelled'::relay.run_state,
+                    completed_at = current_timestamp
+             where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(run_id)
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayCreateRunOutput { run_id, planning_task_id, crew_id })
+        Ok(RelayCancelledRun { run_id, crew_id, cancelled_tasks, returned_items })
+    }
+
+    /// `GET /relay/runs` (#419): the open runs (draft, planning, active),
+    /// oldest first, and the ended ones (completed, cancelled), newest
+    /// first, each with `delete_after`.
+    pub async fn relay_runs(&self, user_id: Uuid) -> Result<serde_json::Value, RelayError> {
+        let rows: Vec<RunListRow> = sqlx_core::query_as::query_as(RUN_LIST_SELECT_ALL)
+            .bind(user_id)
+            .fetch_all(self.pool())
+            .await
+            .map_err(db_err)?;
+        let (mut active, mut archived) = (Vec::new(), Vec::new());
+        for row in &rows {
+            if matches!(row.state.as_str(), "completed" | "cancelled") {
+                archived.push(run_list_json(row));
+            } else {
+                active.push(run_list_json(row));
+            }
+        }
+        // The query orders by creation; the archive reads newest first.
+        archived.reverse();
+        Ok(serde_json::json!({ "active": active, "archived": archived }))
+    }
+
+    /// `GET /relay/runs/{id}` (#419): the run's row, its tasks grouped by
+    /// state (each with its lane and step counters; only states that hold
+    /// a task appear), and its members — every lane that wrote on its tasks,
+    /// and while it is open the crew's live lanes.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
+    pub async fn relay_run_detail(
+        &self,
+        user_id: Uuid,
+        run_id: Uuid,
+    ) -> Result<serde_json::Value, RelayError> {
+        let row: Option<RunListRow> =
+            sqlx_core::query_as::query_as(&format!("{RUN_LIST_SELECT} and id = $2"))
+                .bind(user_id)
+                .bind(run_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+        let Some(row) = row else {
+            return Err(RelayError::NotFound("run not found".into()));
+        };
+        let tasks: Vec<(
+            Uuid,
+            String,
+            String,
+            String,
+            i32,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+            Option<String>,
+            i64,
+            i64,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "select t.id, t.title, t.phase::text, t.state::text, t.round, t.state_changed_at,
+                    t.completed_at, t.checkpoint->>'current_step',
+                    (select count(*) from jsonb_array_elements(t.steps) st
+                      where st->>'state' in ('done', 'skipped')),
+                    jsonb_array_length(t.steps)::bigint,
+                    l.id, l.code, l.suggested_name
+               from relay.tasks t
+               left join relay.lanes l on l.user_id = t.user_id and l.id = t.lane_id
+              where t.user_id = $1 and t.run_id = $2
+              order by t.state_changed_at, t.id",
+        )
+        .bind(user_id)
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        let mut by_state = serde_json::Map::new();
+        for (
+            id,
+            title,
+            phase,
+            state,
+            round,
+            changed,
+            completed,
+            current_step,
+            steps_done,
+            steps_total,
+            lane_id,
+            lane_code,
+            lane_name,
+        ) in tasks
+        {
+            let lane = match (lane_id, lane_code) {
+                (Some(id), Some(code)) => serde_json::json!({
+                    "id": id.to_string(), "code": code, "suggested_name": lane_name,
+                }),
+                _ => serde_json::Value::Null,
+            };
+            let entry = serde_json::json!({
+                "id": id.to_string(),
+                "title": title,
+                "phase": phase,
+                "state": state,
+                "round": round,
+                "state_changed_at": iso(changed),
+                "completed_at": completed.map(iso),
+                "current_step": current_step,
+                "steps_done": steps_done,
+                "steps_total": steps_total,
+                "lane": lane,
+            });
+            match by_state.entry(state).or_insert_with(|| serde_json::json!([])) {
+                serde_json::Value::Array(list) => list.push(entry),
+                _ => unreachable!("tasks_by_state holds arrays only"),
+            }
+        }
+        let open = !matches!(row.state.as_str(), "completed" | "cancelled");
+        let members: Vec<(
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "select l.id, l.code, l.role::text, l.title, l.suggested_name, l.family, l.model
+                   from relay.lanes l
+                  where l.user_id = $1
+                    and (exists (
+                           select 1 from relay.actions a
+                             join relay.tasks t on t.user_id = a.user_id and t.id = a.task_id
+                            where a.user_id = l.user_id and a.lane_id = l.id and t.run_id = $2)
+                         or ($3 and l.crew_id = $4 and l.unregistered_at is null))",
+        )
+        .bind(user_id)
+        .bind(run_id)
+        .bind(open)
+        .bind(row.crew_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(db_err)?;
+        let mut members = members;
+        members.sort_by(|a, b| code_rank(&a.1).cmp(&code_rank(&b.1)));
+        Ok(serde_json::json!({
+            "run": run_list_json(&row),
+            "tasks_by_state": by_state,
+            "members": members
+                .iter()
+                .map(|(id, code, role, title, name, family, model)| serde_json::json!({
+                    "id": id.to_string(),
+                    "code": code,
+                    "role": role,
+                    "title": title,
+                    "suggested_name": name,
+                    "family": family,
+                    "model": model,
+                }))
+                .collect::<Vec<_>>(),
+        }))
     }
 
     /// Unpack a validated plan into the queue, inside the caller's
@@ -4652,7 +5356,7 @@ impl PgStore {
             .map_err(db_err)?;
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayAnswerOutput { action_id: answer_id, task_id })
+        Ok(RelayAnswerOutput { action_id: answer_id, task_id, crew_id })
     }
 
     /// Queue a message on the bus — person and lane share it.
@@ -4757,7 +5461,20 @@ impl PgStore {
                 oldest.ok_or_else(|| RelayError::NotFound("no crew".into()))?
             }
         };
-        let props = serde_json::json!({"to": to, "surface": word(surface)});
+        let mut props = serde_json::json!({"to": to, "surface": word(surface)});
+        if let Some(nudge) = &input.nudge {
+            // A nudge goes to the party being waited on — never the person.
+            if matches!(input.to, RelayMessageTo::Person) {
+                return Err(RelayError::Validation(
+                    "a nudge goes to a lane, not the person".into(),
+                ));
+            }
+            props["nudge"] = serde_json::json!(true);
+            props["reason"] = serde_json::json!(nudge.reason);
+            if let Some(min) = nudge.waiting_min {
+                props["waiting_min"] = serde_json::json!(min);
+            }
+        }
         validate_props(RelayActionKind::Message, &props)
             .map_err(|e| RelayError::Validation(e.message))?;
         let message_id = new_id();
@@ -5339,6 +6056,74 @@ impl PgStore {
         }
         tx.commit().await.map_err(db_err)?;
         Ok(RelayCloseOutput { crew_id, status: "closed".to_string() })
+    }
+
+    /// `POST /relay/crews/{id}/close` (#419; CONTRACT §3k): the person
+    /// closes the crew and releases its lanes — each live lane unregisters
+    /// (its session stays open and takes no work) — in one transaction.
+    /// A crew with an open run is refused: the person cancels the run
+    /// first. A closed crew closes again as a no-op.
+    pub async fn relay_person_close_crew(
+        &self,
+        user_id: Uuid,
+        crew_id: Uuid,
+    ) -> Result<RelayPersonCloseOutput, RelayError> {
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let status: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select status from relay.crews where user_id = $1 and id = $2 for update",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let Some(status) = status else {
+            return Err(RelayError::NotFound("crew not found".into()));
+        };
+        let mut released = Vec::new();
+        if status != "closed" {
+            let open_run: bool = sqlx_core::query_scalar::query_scalar(
+                "select exists (
+                   select 1 from relay.runs
+                   where user_id = $1 and crew_id = $2 and state in ('planning', 'active'))",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if open_run {
+                return Err(RelayError::Conflict(
+                    "the crew has an open run: cancel it first".into(),
+                ));
+            }
+            let lanes: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select id from relay.lanes
+                 where user_id = $1 and crew_id = $2 and unregistered_at is null
+                 order by id for update",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            for lane_id in lanes {
+                let interrupted =
+                    Self::relay_unregister_tx(&mut tx, user_id, crew_id, lane_id).await?;
+                released.push((lane_id, interrupted));
+            }
+            sqlx_core::query::query(
+                "update relay.crews set status = 'closed', completed_at = current_timestamp
+                 where user_id = $1 and id = $2",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(RelayPersonCloseOutput { crew_id, closed_now: status != "closed", released })
     }
 
     /// The lane's grouped envelope (Q4): messages, answers, reviews,
@@ -6114,6 +6899,175 @@ impl PgStore {
         .map_err(db_err)
     }
 
+    /// A transaction in the Mac's zone, so timestamps the views render read
+    /// as the screen's day. Fail-closed: without the zone the day is undefined.
+    async fn begin_local_zone(
+        &self,
+    ) -> Result<sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres>, RelayError>
+    {
+        let tz = crate::relay::system_timezone().map_err(RelayError::Internal)?;
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // `system_timezone` allows `[A-Za-z0-9_/+-]` only, so the name cannot
+        // break out of the quotes (`SET` takes no binds).
+        sqlx_core::query::query(&format!("SET LOCAL TIME ZONE '{tz}'"))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        Ok(tx)
+    }
+
+    /// One open person decision's Needs-you row, for the stream (#418);
+    /// `None` when it is answered or was asked of a lane.
+    pub async fn relay_decision_row(
+        &self,
+        decision_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let mut tx = self.begin_local_zone().await?;
+        let row: Option<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+             where v.section = 'open_asked' and v.id = $1",
+        )
+        .bind(decision_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row.map(|(id, crew_id, payload)| now_decision_json(&id, &crew_id, &payload)))
+    }
+
+    /// One unread crew → person message's Needs-you row, for the stream
+    /// (#418); `None` when it is read or was not to the person. Reading it
+    /// here writes no receipt: only the person's own Now read does.
+    pub async fn relay_person_message_row(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let mut tx = self.begin_local_zone().await?;
+        let row: Option<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+             where v.section = 'person_message' and v.id = $1",
+        )
+        .bind(message_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row.map(|(id, crew_id, payload)| now_person_message_json(&id, &crew_id, &payload)))
+    }
+
+    /// One item's queue row for the stream (#418): where it stands, the id
+    /// the screen keys it by, and the row; `None` once it left the queue
+    /// (planned, done) or never was.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
+    pub async fn relay_item_row(
+        &self,
+        item_id: Uuid,
+    ) -> Result<Option<(QueueStage, String, serde_json::Value)>, RelayError> {
+        let row: Option<(
+            String,
+            Uuid,
+            Option<String>,
+            Option<Uuid>,
+            String,
+            String,
+            Option<Vec<String>>,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+        )> = sqlx_core::query_as::query_as(
+            "select state::text, id, repo_key, workspace_id, kind::text, title, tags, added_by,
+                        ticket_provider, ticket_key, position
+                 from relay.items where id = $1 and state in ('triage', 'backlog')",
+        )
+        .bind(item_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some((
+            state,
+            id,
+            repo_key,
+            workspace_id,
+            kind,
+            title,
+            tags,
+            added_by,
+            provider,
+            key,
+            position,
+        )) = row
+        else {
+            return Ok(None);
+        };
+        let stage = if state == "triage" { QueueStage::Triage } else { QueueStage::Backlog };
+        let position = if stage == QueueStage::Triage { None } else { position };
+        let cols =
+            (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key, position);
+        let (screen_id, row) = queue_item_json(stage, cols)?;
+        Ok(Some((stage, screen_id, row)))
+    }
+
+    /// One task's header as the task view serves it, for the stream
+    /// (#418); `None` when the task is not there.
+    pub async fn relay_task_row(
+        &self,
+        task_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let owner: Option<(Uuid, Uuid)> =
+            sqlx_core::query_as::query_as("select user_id, crew_id from relay.tasks where id = $1")
+                .bind(task_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+        let Some((user_id, crew_id)) = owner else {
+            return Ok(None);
+        };
+        let mut view = self.relay_task_view(user_id, crew_id, task_id).await?;
+        Ok(Some(view["task"].take()))
+    }
+
+    /// One open run's band row, for the stream (#418); `None` once the run
+    /// left the band (completed, archived, deleted) or was never there.
+    pub async fn relay_run_row(
+        &self,
+        run_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let mut tx = self.begin_local_zone().await?;
+        let row: Option<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.crew_id, v.payload from relay.now v
+             where v.section = 'sprint_summary' and v.id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row.map(|(crew_id, payload)| now_run_json(&crew_id, payload)))
+    }
+
+    /// One lane's Now row, for the stream (#418); `None` when the lane is
+    /// not there. Keyed by the lane alone: the relay socket is this
+    /// machine's, like every relay event on it.
+    pub async fn relay_lane_row(
+        &self,
+        lane_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, RelayError> {
+        let mut tx = self.begin_local_zone().await?;
+        let row: Option<(Uuid, Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "select v.id, v.crew_id, v.payload from relay.now v
+             where v.section = 'lane' and v.id = $1",
+        )
+        .bind(lane_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(row.map(|(id, crew_id, payload)| now_lane_json(&id, &crew_id, &payload)))
+    }
+
     /// `RelayNow`, exactly per `relay-api.ts` — crews, facets, lanes,
     /// decisions, triage, today's completions, today counts, resources.
     // Wide rows are inherent to the reads: one round trip per shape,
@@ -6127,15 +7081,7 @@ impl PgStore {
         // The completed window is the session-local day, and this is the one
         // relay read with a day window — so the transaction sets the Mac zone
         // locally (the pool stays UTC for metrics; L0 ruling 2026-11-06).
-        // Fail-closed: without the zone the window is undefined.
-        let tz = crate::relay::system_timezone().map_err(RelayError::Internal)?;
-        let mut tx = self.pool().begin().await.map_err(db_err)?;
-        // `system_timezone` allows `[A-Za-z0-9_/+-]` only, so the name cannot
-        // break out of the quotes (`SET` takes no binds).
-        sqlx_core::query::query(&format!("SET LOCAL TIME ZONE '{tz}'"))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+        let mut tx = self.begin_local_zone().await?;
         // The filter selects crews; lanes/decisions/completed/today follow
         // theirs. Facets stay global (the band's choices, not its result).
         let crews: Vec<(
@@ -6161,8 +7107,15 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         let crew_ids: Vec<Uuid> = crews.iter().map(|c| c.0).collect();
+        // What waits on the person — questions, messages — is an open crew's only: a
+        // closed crew's would sit in Needs you with no one to answer (#426).
+        let open_ids: Vec<Uuid> = crews.iter().filter(|c| c.4 != "closed").map(|c| c.0).collect();
+        // A closed crew still scopes what it did today (completed, today's counts),
+        // but it is not a crew on the screen (#426): the screen takes the first crew
+        // as its own, and a closed one would take runs it can never start.
         let crews_json: Vec<serde_json::Value> = crews
             .iter()
+            .filter(|c| c.4 != "closed")
             .map(|(id, repo_key, workspace_id, goal, status, started_at, heartbeat_at)| {
                 serde_json::json!({
                     "id": id.to_string(),
@@ -6212,38 +7165,7 @@ impl PgStore {
         });
         let lanes_json: Vec<serde_json::Value> = lanes
             .iter()
-            .map(|(id, crew_id, payload)| {
-                let lease_state = payload
-                    .get("lease")
-                    .and_then(|l| l.get("state"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("queued");
-                let lease_expires_at = payload
-                    .get("lease")
-                    .and_then(|l| l.get("expires_at"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                serde_json::json!({
-                    "id": id.to_string(),
-                    "crew_id": crew_id.to_string(),
-                    "code": payload.get("code"),
-                    "title": payload.get("title"),
-                    "role": payload.get("role"),
-                    "family": payload.get("family"),
-                    "version": payload.get("version"),
-                    "model": payload.get("model"),
-                    "lease_state": lease_state,
-                    "lease_expires_at": lease_expires_at,
-                    "limit_scope": payload.get("limit_scope"),
-                    "limit_resumes_at": payload.get("limit_resumes_at"),
-                    "limit_note": payload.get("limit_note"),
-                    "task": payload.get("task"),
-                    // Queue cutover: the name the assistant offered and the
-                    // review the lane holds (both the view's keys).
-                    "suggested_name": payload.get("suggested_name"),
-                    "reviewing": payload.get("reviewing"),
-                })
-            })
+            .map(|(id, crew_id, payload)| now_lane_json(id, crew_id, payload))
             .collect();
         // The sprint band: one row per open run with its counts, in the
         // order the person created them (the view's `sprint_summary`).
@@ -6257,13 +7179,8 @@ impl PgStore {
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
-        let runs_json: Vec<serde_json::Value> = runs
-            .into_iter()
-            .map(|(crew_id, mut payload)| {
-                payload["crew_id"] = serde_json::Value::String(crew_id.to_string());
-                payload
-            })
-            .collect();
+        let runs_json: Vec<serde_json::Value> =
+            runs.into_iter().map(|(crew_id, payload)| now_run_json(&crew_id, payload)).collect();
         // The review queue's head: every report waiting for a reviewer,
         // oldest first (the view's `floating_review`).
         let floating: Vec<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
@@ -6289,41 +7206,13 @@ impl PgStore {
              order by v.payload->>'asked_at' desc, v.id desc",
         )
         .bind(user_id)
-        .bind(crew_ids.clone())
+        .bind(open_ids.clone())
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
         let decisions_json: Vec<serde_json::Value> = decisions
             .iter()
-            .map(|(id, crew_id, payload)| {
-                let options = payload
-                    .get("options")
-                    .and_then(|v| v.as_array())
-                    .map(|options| {
-                        options
-                            .iter()
-                            .map(|o| {
-                                serde_json::json!({
-                                    "id": o.get("id"),
-                                    "label": o.get("label"),
-                                    "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
-                                })
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                serde_json::json!({
-                    "id": id.to_string(),
-                    "crew_id": crew_id.to_string(),
-                    "task_id": payload.get("task_id"),
-                    "task_title": payload.get("task_title"),
-                    "question": payload.get("question"),
-                    "context": payload.get("context"),
-                    "options": options,
-                    "recommended": payload.get("recommended"),
-                    "asked_at": payload.get("asked_at"),
-                })
-            })
+            .map(|(id, crew_id, payload)| now_decision_json(id, crew_id, payload))
             .collect();
         // Q2 part 2: crew → person mail for Needs-you, newest first.
         // Reading walks the envelope's receipt ladder for the person
@@ -6336,25 +7225,13 @@ impl PgStore {
                  order by v.payload->>'sent_at' desc, v.id desc",
         )
         .bind(user_id)
-        .bind(crew_ids.clone())
+        .bind(open_ids.clone())
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
         let mut person_json = Vec::with_capacity(person_rows.len());
         for (id, crew_id, payload) in &person_rows {
-            person_json.push(serde_json::json!({
-                "id": id.to_string(),
-                "crew_id": crew_id.to_string(),
-                "task_id": payload.get("task_id"),
-                "task_title": payload.get("task_title"),
-                "from_lane_code": payload.get("from_lane_code"),
-                "text": payload
-                    .get("text")
-                    .filter(|v| !v.is_null())
-                    .cloned()
-                    .unwrap_or(serde_json::Value::String(String::new())),
-                "sent_at": payload.get("sent_at"),
-            }));
+            person_json.push(now_person_message_json(id, crew_id, payload));
             let kinds: Vec<String> = sqlx_core::query_scalar::query_scalar(
                 "select kind::text from relay.actions
                  where user_id = $1 and lane_id is null and reply_to = $2
@@ -6578,19 +7455,9 @@ impl PgStore {
         filter: RelayReadFilter,
     ) -> Result<serde_json::Value, RelayError> {
         // Items are crew-global: the filter narrows their own columns.
-        let triage: Vec<(
-            Uuid,
-            Option<String>,
-            Option<Uuid>,
-            String,
-            String,
-            Option<Vec<String>>,
-            Option<Uuid>,
-            Option<String>,
-            Option<String>,
-        )> = sqlx_core::query_as::query_as(
+        let triage: Vec<QueueItemCols> = sqlx_core::query_as::query_as(
             "select id, repo_key, workspace_id, kind::text, title, tags, added_by,
-                    ticket_provider, ticket_key
+                    ticket_provider, ticket_key, null::int as position
              from relay.items
              where user_id = $1 and state = 'triage'
                and ($2::text is null or repo_key = $2)
@@ -6603,46 +7470,11 @@ impl PgStore {
         .fetch_all(self.pool())
         .await
         .map_err(db_err)?;
-        let mut triage_json = Vec::with_capacity(triage.len());
-        for (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key) in triage {
-            // Exactly one identity: manual items by id, ticketed rows by
-            // ticket (slice 2's tracker pull shows ticketed rows with no
-            // item at all; a ticketed ITEM reads by its ticket too).
-            let (item_id, ticket) = match (provider, key) {
-                (Some(provider), Some(key)) => (
-                    serde_json::Value::Null,
-                    serde_json::json!({
-                        "provider": word(parse_provider(&provider)?),
-                        "key": key,
-                        "url": serde_json::Value::Null,
-                    }),
-                ),
-                _ => (serde_json::json!(id.to_string()), serde_json::Value::Null),
-            };
-            triage_json.push(serde_json::json!({
-                "repo_key": repo_key,
-                "workspace_id": workspace_id.map(|id| id.to_string()),
-                "kind": word(parse_item_kind(&kind)?),
-                "title": title,
-                "tags": tags.unwrap_or_default(),
-                "sprint": serde_json::Value::Null,
-                "added_by_you": added_by.is_none(),
-                "item_id": item_id,
-                "ticket": ticket,
-            }));
-        }
-        let backlog: Vec<(
-            Uuid,
-            Option<String>,
-            Option<Uuid>,
-            String,
-            String,
-            Option<Vec<String>>,
-            Option<Uuid>,
-            Option<String>,
-            Option<String>,
-            Option<i32>,
-        )> = sqlx_core::query_as::query_as(
+        let triage_json = triage
+            .into_iter()
+            .map(|cols| queue_item_json(QueueStage::Triage, cols).map(|(_, row)| row))
+            .collect::<Result<Vec<_>, _>>()?;
+        let backlog: Vec<QueueItemCols> = sqlx_core::query_as::query_as(
             "select id, repo_key, workspace_id, kind::text, title, tags, added_by,
                     ticket_provider, ticket_key, position
              from relay.items
@@ -6657,31 +7489,10 @@ impl PgStore {
         .fetch_all(self.pool())
         .await
         .map_err(db_err)?;
-        let mut backlog_json = Vec::with_capacity(backlog.len());
-        for (id, repo_key, workspace_id, kind, title, tags, added_by, provider, key, position) in
-            backlog
-        {
-            let ticket = match (provider, key) {
-                (Some(provider), Some(key)) => serde_json::json!({
-                    "provider": word(parse_provider(&provider)?),
-                    "key": key,
-                    "url": serde_json::Value::Null,
-                }),
-                _ => serde_json::Value::Null,
-            };
-            backlog_json.push(serde_json::json!({
-                "item_id": id.to_string(),
-                "repo_key": repo_key,
-                "workspace_id": workspace_id.map(|id| id.to_string()),
-                "kind": word(parse_item_kind(&kind)?),
-                "title": title,
-                "tags": tags.unwrap_or_default(),
-                "sprint": serde_json::Value::Null,
-                "ticket": ticket,
-                "added_by_you": added_by.is_none(),
-                "position": position.unwrap_or(i32::MAX),
-            }));
-        }
+        let backlog_json = backlog
+            .into_iter()
+            .map(|cols| queue_item_json(QueueStage::Backlog, cols).map(|(_, row)| row))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(serde_json::json!({"triage": triage_json, "backlog": backlog_json}))
     }
 
@@ -6796,9 +7607,10 @@ impl PgStore {
                     Option<String>,
                     Option<DateTime<Utc>>,
                     Option<String>,
+                    Option<String>,
                 )> = sqlx_core::query_as::query_as(
                     "select code, title, family, version, model, limit_scope::text,
-                            limit_resumes_at, limit_note
+                            limit_resumes_at, limit_note, suggested_name
                      from relay.lanes
                      where user_id = $1 and id = $2",
                 )
@@ -6817,11 +7629,13 @@ impl PgStore {
                         limit_scope,
                         limit_resumes_at,
                         limit_note,
+                        suggested_name,
                     )| {
                         serde_json::json!({
                             "id": lane_id.to_string(),
                             "code": code,
                             "title": title,
+                            "suggested_name": suggested_name,
                             "family": family,
                             "version": version,
                             "model": model,
@@ -7065,9 +7879,9 @@ impl PgStore {
             }
             None => serde_json::Value::Null,
         };
-        let handoff_row: Option<(Option<String>, serde_json::Value, DateTime<Utc>)> =
+        let handoff_row: Option<(Option<String>, serde_json::Value, DateTime<Utc>, Option<Uuid>)> =
             sqlx_core::query_as::query_as(
-                "select body_md, props, created_at from relay.actions
+                "select body_md, props, created_at, lane_id from relay.actions
                  where user_id = $1 and task_id = $2 and kind in ('assigned', 'brief_updated')
                  order by created_at desc, id desc limit 1",
             )
@@ -7077,11 +7891,41 @@ impl PgStore {
             .await
             .map_err(db_err)?;
         let handoff_json = match handoff_row {
-            Some((body, props, at)) => serde_json::json!({
-                "body_md": body.unwrap_or_default(),
-                "docs": props.get("docs").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
-                "at": iso(at),
-            }),
+            Some((body, props, at, writer)) => {
+                // Who handed it off, and to whom (#425). A handover writes its brief
+                // stamped with the lane that took the task, beside a `handed_over` row
+                // at the same moment that names both lanes; any other brief was written
+                // by the lane that handed it off, to the lane holding the task now.
+                let over: Option<serde_json::Value> = sqlx_core::query_scalar::query_scalar(
+                    "select props from relay.actions
+                     where user_id = $1 and task_id = $2 and kind = 'handed_over'
+                       and created_at >= $3
+                     order by created_at desc, id desc limit 1",
+                )
+                .bind(user_id)
+                .bind(task_id)
+                .bind(at)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db_err)?;
+                let lane_ref = |id: Option<Uuid>| {
+                    id.map_or(serde_json::Value::Null, |id| id.to_string().into())
+                };
+                let (by_lane, to_lane) = match over {
+                    Some(p) => (
+                        p.get("from_lane").cloned().unwrap_or(serde_json::Value::Null),
+                        p.get("to_lane").cloned().unwrap_or(serde_json::Value::Null),
+                    ),
+                    None => (lane_ref(writer), lane_ref(lane_id)),
+                };
+                serde_json::json!({
+                    "body_md": body.unwrap_or_default(),
+                    "docs": props.get("docs").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+                    "at": iso(at),
+                    "by_lane": by_lane,
+                    "to_lane": to_lane,
+                })
+            }
             None => serde_json::Value::Null,
         };
         let history: Vec<(
@@ -7121,14 +7965,16 @@ impl PgStore {
                 })
             })
             .collect();
-        let mut lane_refs: Vec<(Uuid, String, Option<String>)> = sqlx_core::query_as::query_as(
-            "select id, code, title from relay.lanes where user_id = $1 and crew_id = $2",
-        )
-        .bind(user_id)
-        .bind(crew_id)
-        .fetch_all(self.pool())
-        .await
-        .map_err(db_err)?;
+        let mut lane_refs: Vec<(Uuid, String, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "select id, code, title, suggested_name from relay.lanes
+             where user_id = $1 and crew_id = $2",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_all(self.pool())
+            .await
+            .map_err(db_err)?;
         lane_refs.sort_by(|a, b| code_rank(&a.1).cmp(&code_rank(&b.1)));
         Ok(serde_json::json!({
             "task": {
@@ -7184,10 +8030,11 @@ impl PgStore {
             "steps": steps,
             "lanes": lane_refs
                 .iter()
-                .map(|(id, code, title)| serde_json::json!({
+                .map(|(id, code, title, suggested_name)| serde_json::json!({
                     "id": id.to_string(),
                     "code": code,
                     "title": title,
+                    "suggested_name": suggested_name,
                 }))
                 .collect::<Vec<_>>(),
         }))
@@ -7271,6 +8118,243 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         Ok(item_id)
+    }
+
+    /// `POST /relay/backlog` with a ticket (#419): the ticket a synced
+    /// tracker of that provider holds under the key (or a key it had)
+    /// joins the backlog, its title and kind snapshotted from the tracker
+    /// and its workspace the tracker's. Not synced or removed is not found;
+    /// a ticket the tracker gave no title is refused (D83: no invented
+    /// title); a ticket already open in the queue is a conflict.
+    // Wide rows are inherent to the reads: one round trip per shape,
+    // destructured at the use site.
+    #[allow(clippy::type_complexity)]
+    pub async fn relay_backlog_add_ticket(
+        &self,
+        user_id: Uuid,
+        provider: RelayTicketProvider,
+        key: &str,
+    ) -> Result<Uuid, RelayError> {
+        let provider = word(provider);
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(RelayError::Validation("ticket_key must not be empty".into()));
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let tickets: Vec<(Uuid, String, Option<String>, Option<String>, Uuid)> =
+            sqlx_core::query_as::query_as(
+                "select tt.id, tt.key, tt.summary, tt.issue_type, t.workspace_id
+                   from sensei.tracker_tasks tt
+                   join sensei.trackers t on t.id = tt.tracker_id
+                  where t.kind::text = $1 and tt.removed_at is null
+                    and (tt.key = $2 or exists (
+                          select 1 from sensei.tracker_task_keys k
+                           where k.task_id = tt.id and k.key = $2))",
+            )
+            .bind(provider.as_str())
+            .bind(key)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let (ticket_id, current_key, summary, issue_type, workspace_id) = match tickets.as_slice() {
+            [] => {
+                return Err(RelayError::NotFound(format!(
+                    "no synced {provider} tracker holds {key}"
+                )));
+            }
+            [one] => one.clone(),
+            _ => {
+                return Err(RelayError::Conflict(format!(
+                    "{key} names more than one synced {provider} ticket"
+                )));
+            }
+        };
+        let Some(title) = summary.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+            return Err(RelayError::Validation(format!("the tracker gave {key} no title")));
+        };
+        // Open already, under its key now or any key it had.
+        let open: bool = sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.items i
+                where i.user_id = $1 and i.ticket_provider = $2
+                  and i.state in ('triage', 'backlog', 'planned')
+                  and (i.ticket_key = $3 or i.ticket_key in (
+                        select k.key from sensei.tracker_task_keys k where k.task_id = $4)))",
+        )
+        .bind(user_id)
+        .bind(provider.as_str())
+        .bind(current_key.as_str())
+        .bind(ticket_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if open {
+            return Err(RelayError::Conflict(format!("{current_key} is already in the queue")));
+        }
+        let max: Option<i32> = sqlx_core::query_scalar::query_scalar(
+            "select max(position) from relay.items where user_id = $1 and state = 'backlog'",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let item_id = new_id();
+        sqlx_core::query::query(
+            "insert into relay.items
+               (user_id, id, workspace_id, repo_key, ticket_provider, ticket_key, title, kind,
+                tags, state, position, added_by)
+             values ($1, $2, $3, null, $4, $5, $6, $7::relay.item_kind, null,
+                     'backlog'::relay.item_state, $8, null)",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .bind(workspace_id)
+        .bind(provider.as_str())
+        .bind(current_key.as_str())
+        .bind(title.as_str())
+        .bind(word(item_kind_of_issue_type(issue_type.as_deref())))
+        .bind(max.unwrap_or(0) + 1)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(item_id)
+    }
+
+    /// `DELETE /relay/items/{id}` (#419): a triage or backlog item closes
+    /// (the row stays: runs and history name it). A planned item is its
+    /// run's; a closed one is closed.
+    pub async fn relay_close_item(&self, user_id: Uuid, item_id: Uuid) -> Result<(), RelayError> {
+        let state: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select state::text from relay.items where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        let Some(state) = state else {
+            return Err(RelayError::NotFound("item not found".into()));
+        };
+        let closed = sqlx_core::query::query(
+            "update relay.items set state = 'closed'::relay.item_state, position = null
+             where user_id = $1 and id = $2 and state in ('triage', 'backlog')",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        if closed.rows_affected() == 0 {
+            return Err(RelayError::Conflict(format!("item is {state}")));
+        }
+        Ok(())
+    }
+
+    /// `PATCH /relay/items/{id}` (#419): retitle a hand-added triage or
+    /// backlog item (a ticket's title is its tracker's), and/or move a
+    /// backlog item to `position` (1-based; the rest renumber in order).
+    /// Answers the items whose position changed.
+    pub async fn relay_patch_item(
+        &self,
+        user_id: Uuid,
+        item_id: Uuid,
+        title: Option<String>,
+        position: Option<i64>,
+    ) -> Result<Vec<Uuid>, RelayError> {
+        if title.is_none() && position.is_none() {
+            return Err(RelayError::Validation("send a title or a position".into()));
+        }
+        let title = title.map(|t| t.trim().to_string());
+        if let Some(t) = &title {
+            if t.is_empty() {
+                return Err(RelayError::Validation("title must not be empty".into()));
+            }
+            check_summary(t, "title")?;
+        }
+        let mut tx = self.pool().begin().await.map_err(db_err)?;
+        let item: Option<(String, Option<String>)> = sqlx_core::query_as::query_as(
+            "select state::text, ticket_provider from relay.items
+             where user_id = $1 and id = $2 for update",
+        )
+        .bind(user_id)
+        .bind(item_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let Some((state, provider)) = item else {
+            return Err(RelayError::NotFound("item not found".into()));
+        };
+        if state != "triage" && state != "backlog" {
+            return Err(RelayError::Conflict(format!("item is {state}")));
+        }
+        if let Some(t) = &title {
+            if provider.is_some() {
+                return Err(RelayError::Conflict("a ticket's title is its tracker's".into()));
+            }
+            sqlx_core::query::query(
+                "update relay.items set title = $1 where user_id = $2 and id = $3",
+            )
+            .bind(t.as_str())
+            .bind(user_id)
+            .bind(item_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        let mut moved = Vec::new();
+        if let Some(position) = position {
+            if state != "backlog" {
+                return Err(RelayError::Conflict("only the backlog is ordered".into()));
+            }
+            let order: Vec<(Uuid, Option<i32>)> = sqlx_core::query_as::query_as(
+                "select id, position from relay.items
+                 where user_id = $1 and state = 'backlog'
+                 order by position nulls last, id for update",
+            )
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            let len = order.len() as i64;
+            if !(1..=len).contains(&position) {
+                return Err(RelayError::Validation(format!("position must be 1 to {len}")));
+            }
+            let mut ids: Vec<Uuid> =
+                order.iter().map(|(id, _)| *id).filter(|id| *id != item_id).collect();
+            ids.insert((position - 1) as usize, item_id);
+            for (index, id) in ids.iter().enumerate() {
+                let next = index as i32 + 1;
+                let was = order.iter().find(|(o, _)| o == id).and_then(|(_, p)| *p);
+                if was == Some(next) {
+                    continue;
+                }
+                sqlx_core::query::query(
+                    "update relay.items set position = $1 where user_id = $2 and id = $3",
+                )
+                .bind(next)
+                .bind(user_id)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                moved.push(*id);
+            }
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(moved)
+    }
+}
+
+/// A tracker's issue type as a queue item's kind (#419): bugs and features
+/// by their common names; anything else, or none, is an `issue`.
+fn item_kind_of_issue_type(issue_type: Option<&str>) -> RelayItemKind {
+    match issue_type.map(|t| t.trim().to_ascii_lowercase()).as_deref() {
+        Some("bug" | "defect") => RelayItemKind::Bug,
+        Some("story" | "feature" | "new feature" | "enhancement" | "user story") => {
+            RelayItemKind::Feature
+        }
+        _ => RelayItemKind::Issue,
     }
 }
 
@@ -8864,8 +9948,8 @@ mod tests {
         // Not the holder: refused, nothing written.
         let err = pg.relay_checkpoint_task(u1(), a2, t, input.clone()).await.unwrap_err();
         assert!(matches!(err, RelayError::Forbidden(_)), "{err:?}");
-        let stamp = pg.relay_checkpoint_task(u1(), a1, t, input.clone()).await.unwrap();
-        assert!(stamp <= Utc::now());
+        let out = pg.relay_checkpoint_task(u1(), a1, t, input.clone()).await.unwrap();
+        assert!(out.checkpointed_at <= Utc::now());
         let (state, checkpoint, steps): (String, serde_json::Value, serde_json::Value) =
             sqlx_core::query_as::query_as(
                 "select state::text, checkpoint, steps from relay.tasks where id = $1",
@@ -8953,6 +10037,7 @@ mod tests {
     fn run_input(crew_id: Option<Uuid>, item_ids: Vec<Uuid>) -> RelayCreateRunInput {
         RelayCreateRunInput {
             crew_id,
+            start: true,
             title: "Sprint 1".into(),
             goal: "Ship the queue".into(),
             item_ids,
@@ -9007,12 +10092,21 @@ mod tests {
         fx_item(pg, u1(), i1, "backlog", Some("github.com/o/r"), Some(1)).await;
         fx_item(pg, u1(), i2, "triage", Some("github.com/o/r"), None).await;
         let out = pg.relay_create_run(u1(), run_input(Some(c1), vec![i1, i2]), t0()).await.unwrap();
-        pg.relay_claim_task(u1(), a2, out.planning_task_id, t0()).await.unwrap();
-        pg.relay_report_task(u1(), a2, out.planning_task_id, task0_report(report_md))
+        pg.relay_claim_task(u1(), a2, out.started.as_ref().unwrap().planning_task_id, t0())
             .await
             .unwrap();
-        pg.relay_claim_review(u1(), a1, out.planning_task_id, t0()).await.unwrap();
-        (out.run_id, out.planning_task_id)
+        pg.relay_report_task(
+            u1(),
+            a2,
+            out.started.as_ref().unwrap().planning_task_id,
+            task0_report(report_md),
+        )
+        .await
+        .unwrap();
+        pg.relay_claim_review(u1(), a1, out.started.as_ref().unwrap().planning_task_id, t0())
+            .await
+            .unwrap();
+        (out.run_id, out.started.as_ref().unwrap().planning_task_id)
     }
 
     #[tokio::test]
@@ -9025,7 +10119,7 @@ mod tests {
         fx_item(&pg, u1(), i2, "triage", None, None).await;
         // No crew named: U1's single active crew is C1.
         let out = pg.relay_create_run(u1(), run_input(None, vec![i1, i2]), t0()).await.unwrap();
-        assert_eq!(out.crew_id, c1);
+        assert_eq!(out.started.as_ref().unwrap().crew_id, c1);
         let (state, title, goal, config, started): (
             String,
             String,
@@ -9078,7 +10172,7 @@ mod tests {
             "select phase::text, state::text, lane_id, run_id, title, repo_key, acceptance, deps
              from relay.tasks where id = $1",
         )
-        .bind(out.planning_task_id)
+        .bind(out.started.as_ref().unwrap().planning_task_id)
         .fetch_one(pg.pool())
         .await
         .unwrap();
@@ -9275,17 +10369,21 @@ mod tests {
             let out = pg.relay_create_run(u1(), run_input(Some(c1), vec![i3]), t0()).await.unwrap();
             // A2 still holds Task 0 (working → in_review floats it): release the review claim on the first so A1 can claim this one.
             pg.relay_release_task(release(a1, task0, None)).await.unwrap();
-            pg.relay_claim_task(u1(), a2, out.planning_task_id, t0()).await.unwrap();
+            pg.relay_claim_task(u1(), a2, out.started.as_ref().unwrap().planning_task_id, t0())
+                .await
+                .unwrap();
             pg.relay_report_task(
                 u1(),
                 a2,
-                out.planning_task_id,
+                out.started.as_ref().unwrap().planning_task_id,
                 task0_report("I planned it in prose.".into()),
             )
             .await
             .unwrap();
-            pg.relay_claim_review(u1(), a1, out.planning_task_id, t0()).await.unwrap();
-            (out.run_id, out.planning_task_id)
+            pg.relay_claim_review(u1(), a1, out.started.as_ref().unwrap().planning_task_id, t0())
+                .await
+                .unwrap();
+            (out.run_id, out.started.as_ref().unwrap().planning_task_id)
         };
         let err = pg.relay_submit_review(u1(), a1, task0b, review_input()).await.unwrap_err();
         assert!(matches!(err, RelayError::PlanInvalid(_)), "{err:?}");
@@ -9524,6 +10622,7 @@ mod tests {
                     to: RelayMessageTo::Everyone,
                     task_id: None,
                     text: text.into(),
+                    nudge: None,
                 },
             )
             .await
@@ -9548,6 +10647,7 @@ mod tests {
                     to: RelayMessageTo::Lane { lane_id: a4 },
                     task_id: None,
                     text: "psst".into(),
+                    nudge: None,
                 },
             )
             .await
@@ -10017,6 +11117,7 @@ mod tests {
                     to: RelayMessageTo::Lane { lane_id: a2 },
                     task_id: None,
                     text: "Hi".into(),
+                    nudge: None,
                 },
             )
             .await
@@ -10050,6 +11151,7 @@ mod tests {
                     to: RelayMessageTo::Coordinator,
                     task_id: None,
                     text: "Ack".into(),
+                    nudge: None,
                 },
             )
             .await
@@ -10071,6 +11173,7 @@ mod tests {
                     to: RelayMessageTo::Coordinator,
                     task_id: None,
                     text: "x".into(),
+                    nudge: None,
                 },
             )
             .await;
@@ -10086,8 +11189,12 @@ mod tests {
         let pg = PgStore::test_store().await;
         let (_, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let caller = || RelayCaller::Lane { lane_id: a2 };
-        let msg =
-            |text: String| RelayMessageInput { to: RelayMessageTo::Everyone, task_id: None, text };
+        let msg = |text: String| RelayMessageInput {
+            to: RelayMessageTo::Everyone,
+            task_id: None,
+            text,
+            nudge: None,
+        };
         let err = pg.relay_send_message(u1(), caller(), msg("x".repeat(601))).await.unwrap_err();
         assert!(matches!(err, RelayError::Validation(_)), "{err:?}");
         let err = pg
@@ -11004,7 +12111,10 @@ mod tests {
         fx_gate(&pg, c1, a2, t, g).await;
         let merged = GateOutcome::Merged { sha: "abc123".into() };
         let rep = pg.relay_gate_outcome(g, &merged, t0()).await.unwrap();
-        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Done });
+        assert_eq!(
+            rep,
+            RelayGateReport { task_id: t, state: RelayTaskState::Done, asked: None, crew_id: c1 }
+        );
         for id in [t, g] {
             let (state, _, completed) = state_round_completed(&pg, id).await;
             assert_eq!(state, "done", "{id}");
@@ -11030,7 +12140,10 @@ mod tests {
         fx_gate(&pg, c1, a2, t, g).await;
         let conflict = GateOutcome::Conflict { detail: "CONFLICT (content): README".into() };
         let rep = pg.relay_gate_outcome(g, &conflict, t0()).await.unwrap();
-        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Rework });
+        assert_eq!(
+            rep,
+            RelayGateReport { task_id: t, state: RelayTaskState::Rework, asked: None, crew_id: c1 }
+        );
         let (state, round, _) = state_round_completed(&pg, t).await;
         assert_eq!((state.as_str(), round), ("rework", 2));
         assert_eq!(task_state(&pg, g).await, "done");
@@ -11058,7 +12171,10 @@ mod tests {
             tail: "boom".into(),
         };
         let rep = pg.relay_gate_outcome(g, &failed, t0()).await.unwrap();
-        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Rework });
+        assert_eq!(
+            rep,
+            RelayGateReport { task_id: t, state: RelayTaskState::Rework, asked: None, crew_id: c1 }
+        );
         let (state, round, _) = state_round_completed(&pg, t).await;
         assert_eq!((state.as_str(), round), ("rework", 2));
         assert_eq!(task_state(&pg, g).await, "done");
@@ -11079,7 +12195,8 @@ mod tests {
         fx_gate(&pg, c1, a2, t, g).await;
         let error = GateOutcome::Error("git not installed".into());
         let rep = pg.relay_gate_outcome(g, &error, t0()).await.unwrap();
-        assert_eq!(rep, RelayGateReport { task_id: t, state: RelayTaskState::Approved });
+        assert_eq!((rep.task_id, rep.state, rep.crew_id), (t, RelayTaskState::Approved, c1));
+        assert!(rep.asked.is_some(), "the ask is reported");
         assert_eq!(task_state(&pg, t).await, "approved");
         let (state, from): (String, Option<String>) = sqlx_core::query_as::query_as(
             "select state::text, blocked_from_state::text from relay.tasks where id = $1",
@@ -11179,6 +12296,39 @@ mod tests {
         let rep = crate::tasks::relay_lease_sweep::pass(&pg, &tx, &fake, t0()).await.unwrap();
         assert!(rep.gate_tasks.is_empty());
         assert_eq!(fake.seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_gate_that_cannot_run_puts_its_ask_on_the_stream() {
+        // #418: the gate's ask to the person is a decision like any other:
+        // Needs you gains its row from the stream.
+        use crate::relay::gate::FakeGateRunner;
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let (t, g) = (v7(0xf1), v7(0xf2));
+        fx_gate(&pg, c1, a2, t, g).await;
+        let (tx, mut rx) = tokio::sync::broadcast::channel(32);
+        let fake = FakeGateRunner::new(GateOutcome::Error("git not installed".into()));
+        crate::tasks::relay_lease_sweep::pass(&pg, &tx, &fake, t0()).await.unwrap();
+        let asked: Uuid = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.actions where kind = 'asked' and task_id = $1",
+        )
+        .bind(g)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        let mut decisions = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            let v = serde_json::to_value(&event).unwrap();
+            if v["entity"] == "decision" {
+                decisions.push(v);
+            }
+        }
+        assert_eq!(decisions.len(), 1, "{decisions:?}");
+        assert_eq!(decisions[0]["action"], "add");
+        assert_eq!(decisions[0]["data"]["id"], asked.to_string());
+        assert_eq!(decisions[0]["data"]["crew_id"], c1.to_string());
+        assert_eq!(decisions[0]["data"]["options"][0]["id"], GATE_RETRY_OPTION);
     }
 
     // ── queue cutover (2.9): the lane queue read, waiters, run activation ──
@@ -11646,6 +12796,109 @@ mod tests {
         assert_eq!(positions, vec![1, 2]);
     }
 
+    /// #425: a handover's brief is stamped with the lane that took the task; who
+    /// handed it off is the handover's from-lane, and it went to its to-lane.
+    #[tokio::test]
+    async fn task_view_handoff_names_a_handovers_lanes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xf6);
+        fx_task(&pg, u1(), t, c1, Some(a1), "working", "tests", 2).await;
+        let stamp = |id: Uuid, at: &'static str| {
+            let pg = &pg;
+            async move {
+                sqlx_core::query::query(
+                    "update relay.actions set created_at = $1::timestamptz where id = $2",
+                )
+                .bind(at)
+                .bind(id)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            }
+        };
+        let first = fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a1),
+                kind: "assigned",
+                body: Some("First."),
+                props: json!({}),
+                round: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        stamp(first, "2026-11-06T10:00:00Z").await;
+        // The handover: its brief (stamped with the taker, as `relay_handover_task` writes
+        // it) and the handed_over row beside it, at the same moment.
+        let brief = fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a1),
+                kind: "assigned",
+                body: Some("Over to you."),
+                props: json!({}),
+                round: Some(2),
+                ..Default::default()
+            },
+        )
+        .await;
+        stamp(brief, "2026-11-06T10:42:00Z").await;
+        let over = fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a1),
+                kind: "handed_over",
+                props: json!({"from_lane": a2.to_string(), "from_state": "working", "to_lane": a1.to_string()}),
+                round: Some(2),
+                ..Default::default()
+            },
+        )
+        .await;
+        stamp(over, "2026-11-06T10:42:00Z").await;
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["handoff"]["body_md"], "Over to you.");
+        assert_eq!(v["handoff"]["by_lane"], a2.to_string());
+        assert_eq!(v["handoff"]["to_lane"], a1.to_string());
+    }
+
+    /// #425: a brief no lane has taken yet names who wrote it and no taker.
+    #[tokio::test]
+    async fn task_view_handoff_with_no_taker() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xf7);
+        fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
+        fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a1),
+                kind: "assigned",
+                body: Some("Pick me up."),
+                props: json!({}),
+                round: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["handoff"]["by_lane"], a1.to_string());
+        assert_eq!(v["handoff"]["to_lane"], serde_json::Value::Null);
+    }
+
     #[tokio::test]
     async fn task_view_serves_header_run_handoff_history() {
         let pg = PgStore::test_store().await;
@@ -11743,6 +12996,9 @@ mod tests {
         assert_eq!(v["task"]["rounds"], json!([{"phase": "tests", "count": 2}]));
         assert_eq!(v["task"]["needs_answer"], false);
         assert_eq!(v["handoff"]["body_md"], "Second.");
+        // #425: who handed it off (the lane that wrote the brief) and who holds it now.
+        assert_eq!(v["handoff"]["by_lane"], a1.to_string());
+        assert_eq!(v["handoff"]["to_lane"], a2.to_string());
         // Run totals skip nulls and say how many reported (derived: a turn
         // reports when its props carry any telemetry key).
         assert_eq!(v["run"]["tokens_in"], 100);

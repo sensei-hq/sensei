@@ -88,6 +88,12 @@ describe('relayApi — the paths', () => {
         (a) => a.tryAddToBacklog({ ticket_provider: 'jira', ticket_key: 'SEN-58' }),
         { ticket_provider: 'jira', ticket_key: 'SEN-58' },
       ],
+      // #423: an open item the person adds to triage.
+      [
+        '/relay/triage',
+        (a) => a.tryAddTriage({ title: 'Hook skips the dōjō tests', kind: 'finding', tags: ['dōjō'], repo_key: null, workspace_id: 'w1' }),
+        { title: 'Hook skips the dōjō tests', kind: 'finding', tags: ['dōjō'], repo_key: null, workspace_id: 'w1' },
+      ],
     ];
     for (const [path, call, body] of cases) {
       const fetch = stub(200, { id: 'x' });
@@ -106,7 +112,7 @@ describe('relayApi — the answers', () => {
     stub(409, { error: 'already answered on the dōjō' });
     expect(await api().tryAnswerDecision({ decision_id: 'ask-1', option: 'db', note: null, surface: 'desktop' })).toEqual({
       ok: false,
-      error: { status: 409, message: 'already answered on the dōjō' },
+      error: { status: 409, message: 'already answered on the dōjō', body: { error: 'already answered on the dōjō' } },
     });
   });
 
@@ -114,7 +120,7 @@ describe('relayApi — the answers', () => {
     stub(500, { error: 42 }, 'Internal Server Error');
     expect(await api().tryGetNow({})).toEqual({
       ok: false,
-      error: { status: 500, message: 'Internal Server Error' },
+      error: { status: 500, message: 'Internal Server Error', body: { error: 42 } },
     });
 
     stub(502, undefined, 'Bad Gateway');

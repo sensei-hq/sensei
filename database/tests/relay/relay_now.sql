@@ -525,4 +525,51 @@ begin
 end $$;
 reset role;
 
+-- Last nudge (#419; CONTRACT §1c-0, §3f-bis): each lane's task carries its newest
+-- nudge — when, and by whom: `you` (the person: no lane, a person surface),
+-- `sensei` (the daemon's sweeper: no lane, surface lane) or `lane`. A plain
+-- message is never a nudge. T1 (L1): Sensei at 10:00, then you at 10:20, then a
+-- plain message at 10:30 → you, 10:20. T8 (L4): Sensei alone → sensei. T7 (L3,
+-- crew C2): none → null.
+insert into relay.actions (user_id, id, crew_id, task_id, lane_id, kind, body_md, props, created_at) values
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000d001',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f931', null, 'message',
+   'Review waiting', '{"to": {"kind": "everyone"}, "surface": "lane", "nudge": true, "reason": "review_floating", "waiting_min": 15}',
+   '2026-11-05T10:00:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000d002',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f931', null, 'message',
+   'Nudge', '{"to": {"kind": "lane", "lane_id": "11111111-1111-7000-8000-00000000f911"}, "surface": "desktop", "nudge": true, "reason": "verdict_unread", "waiting_min": 35}',
+   '2026-11-05T10:20:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000d003',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f931', null, 'message',
+   'Just a note', '{"to": {"kind": "lane", "lane_id": "11111111-1111-7000-8000-00000000f911"}, "surface": "desktop"}',
+   '2026-11-05T10:30:00Z'),
+  ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000d004',
+   '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f938', null, 'message',
+   'Review waiting', '{"to": {"kind": "everyone"}, "surface": "lane", "nudge": true, "reason": "review_floating", "waiting_min": 16}',
+   '2026-11-05T09:00:00Z');
+
+do $$
+declare
+  v_json jsonb;
+begin
+  select payload->'task'->'last_nudge' into v_json from relay.now
+   where section = 'lane' and id = '11111111-1111-7000-8000-00000000f911';
+  if v_json->>'by' is distinct from 'you'
+     or (v_json->>'at')::timestamptz is distinct from '2026-11-05T10:20:00Z'::timestamptz then
+    raise exception 'T1 last_nudge should be you at 10:20 (the plain message is no nudge), saw %.', v_json;
+  end if;
+  select payload->'task'->'last_nudge' into v_json from relay.now
+   where section = 'lane' and id = '11111111-1111-7000-8000-00000000f914';
+  if v_json->>'by' is distinct from 'sensei'
+     or (v_json->>'at')::timestamptz is distinct from '2026-11-05T09:00:00Z'::timestamptz then
+    raise exception 'T8 last_nudge should be sensei at 09:00, saw %.', v_json;
+  end if;
+  select payload->'task'->'last_nudge' into v_json from relay.now
+   where section = 'lane' and id = '11111111-1111-7000-8000-00000000f913';
+  if v_json is distinct from 'null'::jsonb then
+    raise exception 'T7 has no nudge: last_nudge should be null, saw %.', v_json;
+  end if;
+end $$;
+
 rollback;

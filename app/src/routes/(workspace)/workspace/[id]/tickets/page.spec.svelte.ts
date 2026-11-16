@@ -32,7 +32,7 @@ const board = (id: string, name: string) => ({
   last_success_at: null,
   last_error: null,
   counts: { tasks: 1, sprints: 1 },
-  writeback: { enabled: false, state: 'disabled', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
+  writeback: { enabled: false, state: 'disabled', surface: 'comment', mapped: 0, assigned: 0, failing: 0, not_private: 0, supports: { comment: true, fields: true }, error: null },
   sdlc_project: projectSdlc(),
 });
 

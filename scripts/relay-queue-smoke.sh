@@ -90,13 +90,19 @@ for n in A B; do
 done
 echo "   crew=$CREW A=$LANE_A B=$LANE_B"
 
-echo "== 3. the person creates a sprint run over one backlog item =="
+echo "== 3. the person drafts a sprint run over one backlog item, then starts it on the crew =="
 R=$(req POST /relay/triage "" '{"title":"Queue smoke","kind":"gap","repo_key":"github.com/sensei-hq/smoke","tags":[]}')
 expect "$R" 200 "triage"; ITEM=$(body "$R" | jq -r .item_id)
-R=$(req POST /relay/runs "" "{\"crew_id\":\"$CREW\",\"title\":\"Smoke sprint\",\"goal\":\"Prove the queue\",\"item_ids\":[\"$ITEM\"],\"repo_key\":\"github.com/sensei-hq/smoke\",\"config\":{\"base_checkout\":\"$REPO\",\"base_branch\":\"main\",\"verify_cmd\":\"test -f README\",\"auto_merge\":true}}")
-expect "$R" 201 "create run"
-RUN=$(body "$R" | jq -r .run_id); TASK0=$(body "$R" | jq -r .planning_task_id)
-[ "$(body "$R" | jq -r .status)" = planning ] || fail "run status"
+R=$(req POST /relay/runs "" "{\"title\":\"Smoke sprint\",\"goal\":\"Prove the queue\",\"item_ids\":[\"$ITEM\"],\"repo_key\":\"github.com/sensei-hq/smoke\",\"config\":{\"base_checkout\":\"$REPO\",\"base_branch\":\"main\",\"verify_cmd\":\"test -f README\",\"auto_merge\":true}}")
+expect "$R" 201 "draft run"
+RUN=$(body "$R" | jq -r .run_id)
+[ "$(body "$R" | jq -r .status)" = draft ] || fail "run status: $(body "$R")"
+[ "$(body "$R" | jq -r .planning_task_id)" = null ] || fail "a draft minted Task 0: $(body "$R")"
+R=$(req POST "/relay/runs/$RUN/start" "" "{\"crew_id\":\"$CREW\"}")
+expect "$R" 200 "start run"
+TASK0=$(body "$R" | jq -r .planning_task_id)
+[ "$(body "$R" | jq -r .status)" = planning ] || fail "started run status: $(body "$R")"
+[ "$(body "$R" | jq -r .crew_id)" = "$CREW" ] || fail "started on $(body "$R" | jq -r .crew_id), not $CREW"
 N=$(body "$(req GET /relay/now)")
 echo "$N" | jq -e --arg r "$RUN" '.runs[] | select(.run_id == $r and .state == "planning" and .total_tasks == 1)' >/dev/null || fail "now.runs lacks the planning run: $(echo "$N" | jq -c .runs)"
 echo "   run=$RUN task0=$TASK0 (now.runs shows it planning)"

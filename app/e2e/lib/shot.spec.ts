@@ -111,6 +111,17 @@ describe('shot', () => {
     expect(readFileSync(path).equals(GOOD)).toBe(true);
   });
 
+  // #425: no window on screen (a locked or sleeping display) makes the capture
+  // itself throw. The picture is for a person; the DOM assertions are the
+  // evidence — so it is reported, never a failed test.
+  it('reports a capture that throws as unavailable, without failing', async () => {
+    const { page } = mockPage([GOOD]);
+    const gone = { ...page, screenshot: async () => Promise.reject(new Error('no window')) };
+    const path = join(mkdtempSync(join(tmpdir(), 'shot-')), 'a.png');
+    await expect(shot(gone, path, FAST)).resolves.toBe('unavailable');
+    expect(existsSync(path)).toBe(false);
+  });
+
   it('retries a wholly flat capture the same way', async () => {
     const { page, events } = mockPage([BLANK, GOOD]);
     const path = join(mkdtempSync(join(tmpdir(), 'shot-')), 'a.png');

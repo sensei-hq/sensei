@@ -92,6 +92,7 @@ test.describe('Relay — sprint band and floating reviews over the live stream',
       item_ids: [item_id],
       repo_key: REPO,
       config: { auto_merge: false },
+      start: true,
     });
     const band = tauriPage.locator(`[data-sprint-band][data-run-id="${run.run_id}"]`);
     await expect(band).toBeVisible({ timeout: STREAM_TIMEOUT });

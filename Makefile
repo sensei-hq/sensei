@@ -43,6 +43,8 @@
         clean clean-cache
 
 VERSION := $(shell cat VERSION)
+# In-place sed: GNU takes `-i`, BSD (macOS) takes `-i ''`.
+SED_I := $(shell sed --version >/dev/null 2>&1 && echo "sed -i" || echo "sed -i ''")
 
 # Health-bypass is decided at runtime via `window.__TAURI__` — Tauri
 # injects it before any user script runs (`withGlobalTauri: true`).
@@ -695,19 +697,19 @@ bump:
 	@echo "Bumping $$(cat VERSION) → $(_v)"
 	@echo "$(_v)" > VERSION
 	@# Node manifests
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/package.json
+	@$(SED_I) 's/"version": "[^"]*"/"version": "$(_v)"/' app/package.json
 	@# Dōjō web app — the version is stamped into the build (vite reads
 	@# package.json) and shown in the console footer / served at /version.
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' dojo/package.json
+	@$(SED_I) 's/"version": "[^"]*"/"version": "$(_v)"/' dojo/package.json
 	@# Tauri app manifest + Cargo.toml
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/src-tauri/tauri.conf.json
-	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" app/src-tauri/Cargo.toml
+	@$(SED_I) 's/"version": "[^"]*"/"version": "$(_v)"/' app/src-tauri/tauri.conf.json
+	@$(SED_I) "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" app/src-tauri/Cargo.toml
 	@# Rust crates — every published or internally-pathed crate in the
 	@# workspace tracks the monorepo version. Adding a new crate? Append
 	@# its directory name here and to the git-add list below.
 	@for crate in senseid cli mcp bootstrap logger; do \
 	  f="crates/$$crate/Cargo.toml"; \
-	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" "$$f"; \
+	  $(SED_I) "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" "$$f"; \
 	done
 	@# Refresh Cargo.lock files so the new versions are reflected before we
 	@# stage. The pre-commit hook runs `cargo build` and would otherwise
@@ -715,17 +717,17 @@ bump:
 	@cargo check --workspace --offline --quiet 2>/dev/null || cargo check --workspace --quiet
 	@(cd app/src-tauri && cargo check --offline --quiet 2>/dev/null || cargo check --quiet)
 	@# Homebrew formula and cask (SHA256s updated by GitHub Actions after release)
-	@sed -i '' "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Formula/sensei.rb
-	@sed -i '' "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Casks/senseihq.rb
+	@$(SED_I) "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Formula/sensei.rb
+	@$(SED_I) "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Casks/senseihq.rb
 	@# Marketplace — package.json/catalog.json are tooling metadata; the two
 	@# .claude-plugin manifests are what Claude Code actually reads to decide
 	@# whether an installed plugin has an update available. If those two stay
 	@# frozen, `claude plugin update sensei` will always report "up to date"
 	@# even after a real bump.
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/package.json
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/catalog.json
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/.claude-plugin/marketplace.json
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/plugins/sensei/.claude-plugin/plugin.json
+	@$(SED_I) 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/package.json
+	@$(SED_I) 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/catalog.json
+	@$(SED_I) 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/.claude-plugin/marketplace.json
+	@$(SED_I) 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/plugins/sensei/.claude-plugin/plugin.json
 	@# Capture the schema as a versioned snapshot — but ONLY once the project is
 	@# released. Pre-release nothing is written, so `database/snapshots/` does not
 	@# exist and the folder stays clean until there is a baseline worth diffing

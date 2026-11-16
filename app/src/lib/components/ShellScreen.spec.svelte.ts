@@ -60,6 +60,29 @@ const notice = (c: HTMLElement) => c.querySelector('[data-screen-body] [data-com
 // The `@sensei/ui` wrapper over rokkit's ScreenShell (D87, contract §8): it
 // connects the glyph mode to the marks and the view id to the host's panel store.
 describe('ShellScreen', () => {
+  // #420: rokkit's shell is `height: 100%` with the body as the only scroller.
+  // Against an auto-height parent it grows and the window clips it — the Relay
+  // screens wrapped it in a bare div and lost their scroll. The wrapper fills
+  // its container itself, so no screen can get this wrong again.
+  it('fills its container: the shell root carries h-full and min-h-0', () => {
+    const { container, destroy } = mountComponent(Harness, { viewId: 'test.view', glyphs: 'kanji' });
+    cleanup.push(destroy);
+    const root = container.querySelector('[data-screen-shell]');
+    expect(root?.classList.contains('h-full'), 'h-full').toBe(true);
+    expect(root?.classList.contains('min-h-0'), 'min-h-0').toBe(true);
+  });
+
+  // The shell's sidebar scrolls on its own once the shell fills its container. A
+  // scrolling region with nothing focusable in it is out of a keyboard's reach
+  // (axe scrollable-region-focusable, serious — the diagrams sidebar, #420 e2e).
+  it('the sidebar is keyboard-reachable: it takes focus, so it can be scrolled from the keys', () => {
+    const { container, destroy } = mountComponent(Harness, { viewId: 'test.view', glyphs: 'kanji' });
+    cleanup.push(destroy);
+    const side = container.querySelector('[data-screen-sidebar]');
+    expect(side, 'the sidebar').not.toBeNull();
+    expect(side?.getAttribute('tabindex')).toBe('0');
+  });
+
   it('draws the kanji in kanji mode', () => {
     const m = mountComponent(Harness, { glyphs: 'kanji' });
     cleanup.push(m.destroy);
@@ -80,6 +103,34 @@ describe('ShellScreen', () => {
     const m = mountComponent(Harness, { store });
     cleanup.push(m.destroy);
     expect(bands(m.container)).toEqual({ info: true, stats: true, filters: true, side: true });
+  });
+
+  // #420: on a phone the info band would push the body below the first screen.
+  describe('on a phone (below md, 768px)', () => {
+    const phone = (query: string) =>
+      ({ matches: /max-width:\s*767px/.test(query), media: query, onchange: null, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false }) as unknown as MediaQueryList;
+    let before: typeof window.matchMedia;
+    beforeEach(() => {
+      before = window.matchMedia;
+      window.matchMedia = phone;
+    });
+    afterEach(() => {
+      window.matchMedia = before;
+    });
+
+    it('a first visit opens every band but the info band', () => {
+      const { store } = makeStore();
+      const m = mountComponent(Harness, { store });
+      cleanup.push(m.destroy);
+      expect(bands(m.container)).toEqual({ info: false, stats: true, filters: true, side: true });
+    });
+
+    it('a remembered choice still wins: the info band the person opened stays open', () => {
+      const { store } = makeStore({ 'test.view': { info: true } });
+      const m = mountComponent(Harness, { store });
+      cleanup.push(m.destroy);
+      expect(bands(m.container).info).toBe(true);
+    });
   });
 
   it('opens the bands as the store remembers them for this view id', () => {
