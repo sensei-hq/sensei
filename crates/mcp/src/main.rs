@@ -171,7 +171,7 @@ fn main() {
 
         let id = request.get("id").cloned();
         let method = request["method"].as_str().unwrap_or("");
-        let params = request.get("params").cloned().unwrap_or(json!({}));
+        let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
 
         let result = match method {
             "initialize" => handle_initialize(),
@@ -204,7 +204,7 @@ fn handle_call_tool(
     base: &str,
 ) -> Value {
     let tool_name = params["name"].as_str().unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
 
     // A required argument that is missing is the caller's mistake, said as one —
     // sent on as an empty value it came back as an empty, plausible answer.
@@ -258,7 +258,7 @@ fn handle_call_tool(
     };
     // Only read the pin + resolve cwd when there's no explicit arg (explicit wins).
     let (pin, cwd_name) = if explicit.is_some() {
-        (None, String::new())
+        (None, String::default())
     } else {
         (ACTIVE_PIN.lock().unwrap().clone(), resolve_workspace_from_cwd(cwd, client, base))
     };
@@ -266,7 +266,7 @@ fn handle_call_tool(
     let (repo_id, resolution_note) =
         match resolve_default_workspace(explicit.as_deref(), pin.as_ref(), &cwd_name) {
             WorkspaceResolution::Resolved { name, note, .. } => (name, note),
-            WorkspaceResolution::Unresolved => (String::new(), None),
+            WorkspaceResolution::Unresolved => (String::default(), None),
         };
     let resolved = (!repo_id.is_empty()).then_some(repo_id.as_str());
 
@@ -294,218 +294,22 @@ fn handle_call_tool(
             json!({"content": [{"type": "text", "text": reason}], "isError": true})
         }
         // ── Inference tools (direct endpoints, not mcp proxy) ──────────────
-        "infer" => {
-            let prompt = args["prompt"].as_str().unwrap_or("");
-            let system = args["system"].as_str();
-            let model = args["model"].as_str();
-            let max_tokens = args["max_tokens"].as_str().and_then(|s| s.parse::<u32>().ok());
-            let capability = args["capability"].as_str().unwrap_or("text_chat");
+        "infer" => infer_tool(&args, client, base),
 
-            let body = json!({
-                "capability": capability,
-                "prompt": prompt,
-                "system": system,
-                "model": model,
-                "max_tokens": max_tokens,
-            });
+        "embed" => embed_tool(&args, client, base),
 
-            let result = client.post(format!("{}/api/gateway/infer", base)).json(&body).send();
+        "gateway_status" => gateway_status_tool(client, base),
 
-            match result {
-                Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
-                    // Unreadable 2xx → surface it, never pretty-print a fabricated `{}`.
-                    Err(e) => {
-                        json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable inference response: {e}")}], "isError": true})
-                    }
-                    Ok(data) => {
-                        if let Some(content) = data["content"].as_str() {
-                            json!({"content": [{"type": "text", "text": content}]})
-                        } else if let Some(error) = data["error"].as_str() {
-                            json!({"content": [{"type": "text", "text": format!("Inference error: {}", error)}], "isError": true})
-                        } else {
-                            json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-                        }
-                    }
-                },
-                Ok(resp) => {
-                    json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true})
-                }
-                Err(e) => {
-                    json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true})
-                }
-            }
-        }
+        "consensus" => consensus_tool(&args, client, base),
 
-        "embed" => {
-            let texts_str = args["texts"].as_str().unwrap_or("");
-            let texts: Vec<String> = texts_str.split(',').map(|s| s.trim().to_string()).collect();
-            let model = args["model"].as_str();
+        "generate_image" => generate_image_tool(&args, client, cwd, base),
 
-            let body = json!({
-                "texts": texts,
-                "model": model,
-            });
-
-            let result = client.post(format!("{}/api/gateway/embed", base)).json(&body).send();
-
-            daemon_result(result)
-        }
-
-        "gateway_status" => {
-            let result = client.get(format!("{}/api/gateway/status", base)).send();
-            daemon_result(result)
-        }
-
-        "consensus" => {
-            let signal = args["signal"].as_str().unwrap_or("");
-            let context = args["context"].as_str();
-            let proposer = args["proposer_model"].as_str();
-            let challenger = args["challenger_model"].as_str();
-            let synthesizer = args["synthesizer_model"].as_str();
-
-            let body = json!({
-                "signal": signal,
-                "context": context,
-                "proposer_model": proposer,
-                "challenger_model": challenger,
-                "synthesizer_model": synthesizer,
-            });
-
-            // Use longer timeout for consensus (3 model calls)
-            let consensus_client = reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
-                .unwrap_or_else(|_| client.clone());
-
-            let result =
-                consensus_client.post(format!("{}/api/gateway/consensus", base)).json(&body).send();
-
-            match result {
-                Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
-                    // Unreadable 2xx → surface it, never a fabricated `{}`.
-                    Err(e) => {
-                        json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable consensus response: {e}")}], "isError": true})
-                    }
-                    Ok(data) => {
-                        let text = if let Some(conclusion) = data["conclusion"].as_str() {
-                            let confidence = data["confidence"].as_str().unwrap_or("unknown");
-                            let duration = data["total_duration_ms"].as_u64().unwrap_or(0);
-                            format!(
-                                "## Consensus (confidence: {})\n\n{}\n\n---\n\nDuration: {}ms | Models: {}",
-                                confidence,
-                                conclusion,
-                                duration,
-                                serde_json::to_string(&data["models_used"]).unwrap_or_default()
-                            )
-                        } else if let Some(error) = data["error"].as_str() {
-                            format!("Consensus error: {}", error)
-                        } else {
-                            serde_json::to_string_pretty(&data).unwrap_or_default()
-                        };
-                        json!({"content": [{"type": "text", "text": text}]})
-                    }
-                },
-                Ok(resp) => {
-                    json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true})
-                }
-                Err(e) => {
-                    json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true})
-                }
-            }
-        }
-
-        "generate_image" => {
-            let prompt = match args["prompt"].as_str() {
-                Some(p) if !p.is_empty() => p.to_string(),
-                _ => {
-                    return json!({"content": [{"type": "text", "text": "prompt is required"}], "isError": true});
-                }
-            };
-
-            // Resolve relative output_path against CWD so the daemon only sees absolute paths.
-            let output_path = match args.get("output_path").and_then(|v| v.as_str()) {
-                Some(p) => {
-                    let path = std::path::PathBuf::from(p);
-                    if path.is_absolute() {
-                        Some(p.to_string())
-                    } else if cwd.is_empty() {
-                        return json!({
-                            "content": [{
-                                "type": "text",
-                                "text": "cannot resolve relative output_path: CWD is unavailable"
-                            }],
-                            "isError": true,
-                        });
-                    } else {
-                        Some(std::path::PathBuf::from(cwd).join(p).display().to_string())
-                    }
-                }
-                None => None,
-            };
-
-            let mut body = json!({ "prompt": prompt });
-            if let Some(p) = output_path {
-                body["output_path"] = json!(p);
-            }
-            for (key, name) in [
-                (args.get("model"), "model"),
-                (args.get("router"), "router"),
-                (args.get("size"), "size"),
-                (args.get("quality"), "quality"),
-                (args.get("style"), "style"),
-            ] {
-                if let Some(v) = key.and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
-                    body[name] = json!(v);
-                }
-            }
-            if let Some(n_str) = args["n"].as_str()
-                && let Ok(n) = n_str.parse::<u8>()
-            {
-                body["n"] = json!(n);
-            }
-
-            // Use longer timeout for image generation (can take 15-30+ seconds with DALL-E 3 / high-res)
-            let image_client = reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
-                .unwrap_or_else(|_| client.clone());
-
-            let result = image_client
-                .post(format!("{}/api/gateway/image/generate", base))
-                .json(&body)
-                .send();
-            daemon_result(result)
-        }
-
-        "log_event" => {
-            // Route the event into the hook-event sink (activity.assistant_events)
-            // via the EXISTING /hook/event ingest — the same table Claude hooks
-            // write to and the analyzer reads. This is the assistant-agnostic
-            // capture path: any MCP-connected assistant emits here, family-tagged,
-            // so its tool-calls + workflow milestones feed the same analyzer.
-            // The `data` object (if any) is the base payload; the routing fields
-            // are overlaid by build_log_event_body (the pure, tested mapper).
-            let body = build_log_event_body(&args, cwd);
-            let result = client.post(format!("{}/hook/event", base)).json(&body).send();
-            daemon_result(result)
-        }
+        "log_event" => log_event_tool(&args, client, cwd, base),
 
         // ── Relay: the long hold (≤50 s outlives the default 30 s client),
         // so it rides its own client — but through the standard send path,
         // which is what puts the Authorization header on the wire.
-        "relay_wait_for_task" => {
-            let req = build_relay_wait_request(
-                args["lane_id"].as_str().unwrap_or(""),
-                args["lane_token"].as_str().unwrap_or(""),
-                args["timeout_ms"].as_u64(),
-                args["timeout_seconds"].as_u64(),
-            );
-            let wait_client = reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .unwrap_or_else(|_| client.clone());
-            daemon_result(send_daemon_request(&wait_client, &req, base))
-        }
+        "relay_wait_for_task" => relay_wait_tool(&args, client, base),
 
         // Reached only when the library returned `None` — no workspace given
         // and none resolved.
@@ -521,6 +325,231 @@ fn handle_call_tool(
             "isError": true
         }),
     }
+}
+
+/// `infer`: answered by the binary (see `handle_call_tool`).
+fn infer_tool(args: &Value, client: &reqwest::blocking::Client, base: &str) -> Value {
+    let prompt = args["prompt"].as_str().unwrap_or("");
+    let system = args["system"].as_str();
+    let model = args["model"].as_str();
+    let max_tokens = args["max_tokens"].as_str().and_then(|s| s.parse::<u32>().ok());
+    let capability = args["capability"].as_str().unwrap_or("text_chat");
+
+    let body = json!({
+        "capability": capability,
+        "prompt": prompt,
+        "system": system,
+        "model": model,
+        "max_tokens": max_tokens,
+    });
+
+    let result = client.post(format!("{}/api/gateway/infer", base)).json(&body).send();
+
+    match result {
+        Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
+            // Unreadable 2xx → surface it, never pretty-print a fabricated `{}`.
+            Err(e) => {
+                json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable inference response: {e}")}], "isError": true})
+            }
+            Ok(data) => {
+                if let Some(content) = data["content"].as_str() {
+                    json!({"content": [{"type": "text", "text": content}]})
+                } else if let Some(error) = data["error"].as_str() {
+                    json!({"content": [{"type": "text", "text": format!("Inference error: {}", error)}], "isError": true})
+                } else {
+                    json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+                }
+            }
+        },
+        Ok(resp) => {
+            json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true})
+        }
+        Err(e) => {
+            json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true})
+        }
+    }
+}
+
+/// `embed`: answered by the binary (see `handle_call_tool`).
+fn embed_tool(args: &Value, client: &reqwest::blocking::Client, base: &str) -> Value {
+    let texts_str = args["texts"].as_str().unwrap_or("");
+    let texts: Vec<String> = texts_str.split(',').map(|s| s.trim().to_string()).collect();
+    let model = args["model"].as_str();
+
+    let body = json!({
+        "texts": texts,
+        "model": model,
+    });
+
+    let result = client.post(format!("{}/api/gateway/embed", base)).json(&body).send();
+
+    daemon_result(result)
+}
+
+/// `gateway_status`: answered by the binary (see `handle_call_tool`).
+fn gateway_status_tool(client: &reqwest::blocking::Client, base: &str) -> Value {
+    let result = client.get(format!("{}/api/gateway/status", base)).send();
+    daemon_result(result)
+}
+
+/// `consensus`: answered by the binary (see `handle_call_tool`).
+fn consensus_tool(args: &Value, client: &reqwest::blocking::Client, base: &str) -> Value {
+    let signal = args["signal"].as_str().unwrap_or("");
+    let context = args["context"].as_str();
+    let proposer = args["proposer_model"].as_str();
+    let challenger = args["challenger_model"].as_str();
+    let synthesizer = args["synthesizer_model"].as_str();
+
+    let body = json!({
+        "signal": signal,
+        "context": context,
+        "proposer_model": proposer,
+        "challenger_model": challenger,
+        "synthesizer_model": synthesizer,
+    });
+
+    // Use longer timeout for consensus (3 model calls)
+    let consensus_client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| client.clone());
+
+    let result =
+        consensus_client.post(format!("{}/api/gateway/consensus", base)).json(&body).send();
+
+    match result {
+        Ok(resp) if resp.status().is_success() => match resp.json::<Value>() {
+            // Unreadable 2xx → surface it, never a fabricated `{}`.
+            Err(e) => {
+                json!({"content": [{"type": "text", "text": format!("Daemon returned an unreadable consensus response: {e}")}], "isError": true})
+            }
+            Ok(data) => {
+                let text = if let Some(conclusion) = data["conclusion"].as_str() {
+                    let confidence = data["confidence"].as_str().unwrap_or("unknown");
+                    let duration = data["total_duration_ms"].as_u64().unwrap_or(0);
+                    format!(
+                        "## Consensus (confidence: {})\n\n{}\n\n---\n\nDuration: {}ms | Models: {}",
+                        confidence,
+                        conclusion,
+                        duration,
+                        serde_json::to_string(&data["models_used"]).unwrap_or_default()
+                    )
+                } else if let Some(error) = data["error"].as_str() {
+                    format!("Consensus error: {}", error)
+                } else {
+                    serde_json::to_string_pretty(&data).unwrap_or_default()
+                };
+                json!({"content": [{"type": "text", "text": text}]})
+            }
+        },
+        Ok(resp) => {
+            json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true})
+        }
+        Err(e) => {
+            json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true})
+        }
+    }
+}
+
+/// `generate_image`: answered by the binary (see `handle_call_tool`).
+fn generate_image_tool(
+    args: &Value,
+    client: &reqwest::blocking::Client,
+    cwd: &str,
+    base: &str,
+) -> Value {
+    let prompt = match args["prompt"].as_str() {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => {
+            return json!({"content": [{"type": "text", "text": "prompt is required"}], "isError": true});
+        }
+    };
+
+    // Resolve relative output_path against CWD so the daemon only sees absolute paths.
+    let output_path = match args.get("output_path").and_then(|v| v.as_str()) {
+        Some(p) => {
+            let path = std::path::PathBuf::from(p);
+            if path.is_absolute() {
+                Some(p.to_string())
+            } else if cwd.is_empty() {
+                return json!({
+                    "content": [{
+                        "type": "text",
+                        "text": "cannot resolve relative output_path: CWD is unavailable"
+                    }],
+                    "isError": true,
+                });
+            } else {
+                Some(std::path::PathBuf::from(cwd).join(p).display().to_string())
+            }
+        }
+        None => None,
+    };
+
+    let mut body = json!({ "prompt": prompt });
+    if let Some(p) = output_path {
+        body["output_path"] = json!(p);
+    }
+    for (key, name) in [
+        (args.get("model"), "model"),
+        (args.get("router"), "router"),
+        (args.get("size"), "size"),
+        (args.get("quality"), "quality"),
+        (args.get("style"), "style"),
+    ] {
+        if let Some(v) = key.and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+            body[name] = json!(v);
+        }
+    }
+    if let Some(n_str) = args["n"].as_str()
+        && let Ok(n) = n_str.parse::<u8>()
+    {
+        body["n"] = json!(n);
+    }
+
+    // Use longer timeout for image generation (can take 15-30+ seconds with DALL-E 3 / high-res)
+    let image_client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| client.clone());
+
+    let result =
+        image_client.post(format!("{}/api/gateway/image/generate", base)).json(&body).send();
+    daemon_result(result)
+}
+
+/// `log_event`: answered by the binary (see `handle_call_tool`).
+fn log_event_tool(
+    args: &Value,
+    client: &reqwest::blocking::Client,
+    cwd: &str,
+    base: &str,
+) -> Value {
+    // Route the event into the hook-event sink (activity.assistant_events)
+    // via the EXISTING /hook/event ingest — the same table Claude hooks
+    // write to and the analyzer reads. This is the assistant-agnostic
+    // capture path: any MCP-connected assistant emits here, family-tagged,
+    // so its tool-calls + workflow milestones feed the same analyzer.
+    // The `data` object (if any) is the base payload; the routing fields
+    // are overlaid by build_log_event_body (the pure, tested mapper).
+    let body = build_log_event_body(args, cwd);
+    let result = client.post(format!("{}/hook/event", base)).json(&body).send();
+    daemon_result(result)
+}
+
+/// `relay_wait_for_task`: answered by the binary (see `handle_call_tool`).
+fn relay_wait_tool(args: &Value, client: &reqwest::blocking::Client, base: &str) -> Value {
+    let req = build_relay_wait_request(
+        args["lane_id"].as_str().unwrap_or(""),
+        args["lane_token"].as_str().unwrap_or(""),
+        args["timeout_ms"].as_u64(),
+        args["timeout_seconds"].as_u64(),
+    );
+    let wait_client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap_or_else(|_| client.clone());
+    daemon_result(send_daemon_request(&wait_client, &req, base))
 }
 
 /// `use_workspace`: resolve the named workspace (name or uuid) against the daemon,
@@ -586,7 +615,7 @@ fn resolve_workspace_from_cwd(cwd: &str, client: &reqwest::blocking::Client, bas
         Ok(workspaces) => resolve_from_cwd_in(&workspaces, cwd),
         Err(e) => {
             eprintln!("sensei-mcp: cwd workspace resolution skipped — {e}");
-            String::new()
+            String::default()
         }
     }
 }
