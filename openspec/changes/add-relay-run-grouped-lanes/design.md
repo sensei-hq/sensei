@@ -21,3 +21,12 @@ who claimed, reported and reviewed.
   shows the runs directly.
 - "Agent" in By agent = **each lane** (one session): codename, assistant, model, presence.
 - A done task names **implementer and reviewer** on the row.
+
+## Built (2026-11-16)
+- `run_tasks` is a query in `relay_now` (JSON per row, times via `iso()`), not a `relay.now` view section.
+- The reviewer is the lane of the task's latest `reviewed` action (the review claim clears after a review).
+- A run group is headed by the existing `SprintBand`; the standalone Sprints section shows only By agent.
+- Lanes on no run task are labelled "Not on a run task" (a lane may hold a task outside any run); with no
+  open run the lanes are drawn alone, as before. `toLaneGroups` is superseded by `toRunGroups`.
+- By agent rows name only their reviewer: the group already names the lane, its assistant and model.
+- The view choice lives in `RelayState.laneView`, kept through an injected store (the app's localStorage).

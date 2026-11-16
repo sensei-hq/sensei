@@ -220,12 +220,13 @@ async function plannerStage(): Promise<void> {
   const band = `[data-sprint-band][data-run-id="${ids.run}"]`;
   await expect.poll(() => attrOf(band, 'data-run-state'), { timeout: STREAM }).toBe('planning');
 
-  // A lane claims Task 0: its row shows the plan task.
+  // A lane claims Task 0: the run's group shows the plan in progress, by that lane (#422).
   const claim = await a.claimNext();
   expect(claim.claim_type).toBe('task');
   ids.task0 = claim.task!.id;
-  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('cobalt-e2e'), { timeout: STREAM }).toBe(true);
-  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('Plan: Run journey'), { timeout: STREAM }).toBe(true);
+  const task0Row = `${runGroup()} [data-run-stage="active"] [data-run-task="${ids.task0}"]`;
+  await expect.poll(async () => await textsOf(task0Row), { timeout: STREAM }).toContain('Plan: Run journey');
+  expect(await textsOf(`${task0Row} [data-run-task-who]`)).toContain('cobalt-e2e');
 
   // It asks the person; Needs you shows the question, and the person answers in the app.
   const decisionId = await a.ask({
@@ -259,6 +260,13 @@ async function plannerStage(): Promise<void> {
   await evidence('3-planner-active');
 }
 
+/** Press By run or By agent (a filtered tauri locator acts on its first match, so by text here). */
+const pickLaneView = (label: string) =>
+  tauri.evaluate(`[...document.querySelectorAll('[data-lane-view] button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)})?.click()`);
+
+/** The run's group on Now, by run (#422). */
+const runGroup = () => `[data-run-group="${ids.run}"]`;
+
 /** The broker's merge gate runs on the sweeper's pass. */
 const GATE = 200_000;
 const work: { t1: string; t2: string } = { t1: '', t2: '' };
@@ -284,8 +292,9 @@ async function workStage(): Promise<void> {
   const second = await b.claimNext();
   expect(second.task?.deps_status).toBe('early_claim_gated');
   work.t2 = second.task!.id;
-  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('First file'), { timeout: STREAM }).toBe(true);
-  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('Second file'), { timeout: STREAM }).toBe(true);
+  // Both in progress in the run's group, each by its lane (#422).
+  const active = `${runGroup()} [data-run-stage="active"] [data-run-task-title]`;
+  await expect.poll(async () => JSON.parse(await textsOf(active)).sort(), { timeout: STREAM }).toEqual(['First file', 'Second file']);
   // The Working stat counts both lanes on a task (only this crew is open).
   const working = '[data-relay-stat="working"] [data-stat-card-value]';
   await expect.poll(async () => JSON.parse(await textsOf(working))[0], { timeout: STREAM }).toBe('2');
@@ -298,7 +307,8 @@ async function workStage(): Promise<void> {
       { key: 'check', title: 'Check it', state: 'open' },
     ],
   });
-  await expect.poll(async () => (await textsOf('[data-lane-progress]')).includes('1 of 2 steps done'), { timeout: STREAM }).toBe(true);
+  // The holder's first open step reads on its task's row (#422).
+  await expect.poll(async () => await textsOf(`${runGroup()} [data-run-task="${work.t1}"] [data-run-task-detail]`), { timeout: STREAM }).toContain('Check it');
 
   // B's early report is refused until the first is done.
   const early = await b.attempt(() => b.report(work.t2, { phase: 'impl', round: 1, summary: { changed: 't2.txt' }, branch: 'lane/t2' }));
@@ -313,6 +323,26 @@ async function workStage(): Promise<void> {
   expect((await b.review(work.t1, 'approved', 'Good.')).state).toBe('approved');
   await expect.poll(() => countOf(floating1), { timeout: STREAM }).toBe(0);
   await mergedAndCompleted(work.t1, 'First file');
+  // Done in the order they ran, each by the lane that did it and the one that reviewed it (#422).
+  const done = `${runGroup()} [data-run-stage="done"]`;
+  await expect.poll(async () => JSON.parse(await textsOf(`${done} [data-run-task-title]`)), { timeout: STREAM }).toEqual(['Plan: Run journey', 'First file']);
+  const firstWho = JSON.parse(await textsOf(`${done} [data-run-task="${work.t1}"] [data-run-task-who]`))[0] as string;
+  expect(firstWho).toContain('cobalt-e2e');
+  expect(firstWho).toContain('reviewed by coral-e2e');
+  // By agent: each lane with the run tasks it ran, then what it holds; the choice switches back.
+  await pickLaneView('By agent');
+  const agentTasks = async (name: string) =>
+    JSON.parse(
+      String(
+        await tauri.evaluate(`JSON.stringify([...document.querySelectorAll('[data-agent-group]')]
+          .filter((g) => g.querySelector('[data-agent-name]')?.textContent?.trim() === ${JSON.stringify(name)})
+          .flatMap((g) => [...g.querySelectorAll('[data-run-task-title]')].map((t) => t.textContent.trim())))`),
+      ),
+    ) as string[];
+  await expect.poll(() => agentTasks('cobalt-e2e'), { timeout: STREAM }).toEqual(['Plan: Run journey', 'First file']);
+  expect(await agentTasks('coral-e2e')).toEqual(['Second file']);
+  await pickLaneView('By run');
+  await expect.poll(() => countOf(runGroup()), { timeout: STREAM }).toBe(1);
   await evidence('4-work-first-merged');
   execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', 'lane/t1', 'main']);
 
