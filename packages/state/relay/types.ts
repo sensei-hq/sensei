@@ -289,7 +289,7 @@ export interface RelayFacets {
 }
 
 /** A lane as a run task names it (#422): who, which assistant, which model. */
-export interface RelayRunTaskLane {
+export interface RelayNowRunTaskLane {
   id: string;
   code: string;
   suggested_name: string | null;
@@ -300,7 +300,7 @@ export interface RelayRunTaskLane {
 }
 
 /** One task of an open run (#422), as Now orders and attributes it. */
-export interface RelayRunTask {
+export interface RelayNowRunTask {
   task_id: string;
   run_id: string;
   crew_id: string;
@@ -316,9 +316,9 @@ export interface RelayRunTask {
   /** The first step its holder has not finished; null when it reported none. */
   step: string | null;
   /** The lane holding or that implemented it; null while it waits in the pool. */
-  lane: RelayRunTaskLane | null;
+  lane: RelayNowRunTaskLane | null;
   /** The lane whose review came last; null before any review. */
-  reviewer: RelayRunTaskLane | null;
+  reviewer: RelayNowRunTaskLane | null;
 }
 
 /** `relay.now` for a filter. `crews: []` = no crew yet (not a failure). */
@@ -329,7 +329,7 @@ export interface RelayNow {
   /** Open sprint runs in created order (queue cutover): the band above the lanes. */
   runs: RelayRunSummary[];
   /** Every task of an open run, in the plan's order (#422): the run groups on Now. */
-  run_tasks: RelayRunTask[];
+  run_tasks: RelayNowRunTask[];
   /** Reports waiting for a reviewer, oldest first (queue cutover). */
   floating_reviews: RelayFloatingReview[];
   decisions: RelayDecision[];

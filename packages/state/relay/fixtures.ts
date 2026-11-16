@@ -7,8 +7,8 @@
 // only the first, fails.
 import type { ApiResult } from '../result.js';
 import type {
-  RelayRunTask,
-  RelayRunTaskLane,
+  RelayNowRunTask,
+  RelayNowRunTaskLane,
   RelayRunDetail,
   RelayRunList,
   RelayRunListRow,
@@ -801,12 +801,12 @@ export function deferred<T>() {
 }
 
 /** A lane as a run task names it (#422). */
-export function runTaskLane(over: Partial<RelayRunTaskLane> = {}): RelayRunTaskLane {
+export function runTaskLane(over: Partial<RelayNowRunTaskLane> = {}): RelayNowRunTaskLane {
   return { id: LANE.L1, code: 'L1', suggested_name: 'cobalt-lyra', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', ...over };
 }
 
 /** One task of the open run, waiting in the pool unless a spec says otherwise (#422). */
-export function runTask(over: Partial<RelayRunTask> = {}): RelayRunTask {
+export function runTask(over: Partial<RelayNowRunTask> = {}): RelayNowRunTask {
   return {
     task_id: 't-run',
     run_id: RUN_ID,

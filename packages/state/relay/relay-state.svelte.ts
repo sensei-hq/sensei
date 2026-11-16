@@ -24,6 +24,7 @@ import type {
   RelayCrew,
   RelayDecision,
   RelayFacets,
+  RelayNowRunTask,
   RelayFilter,
   RelayFloatingReview,
   RelayNow,
@@ -80,6 +81,7 @@ export type RelaySprintDraft = Omit<RelayCreateRun, 'item_ids' | 'crew_id' | 'st
 interface NowSummary {
   crews: RelayCrew[];
   facets: RelayFacets;
+  run_tasks: RelayNowRunTask[];
   triage: RelayTriageSource[];
   today: RelayToday;
   resources: RelayResources;
@@ -189,6 +191,8 @@ export class RelayState {
     this.#summary = {
       crews: now.crews,
       facets: now.facets,
+      // Every task of an open run (#422): a task event re-reads Now, which brings them.
+      run_tasks: now.run_tasks,
       triage: now.triage,
       today: now.today,
       resources: now.resources,
@@ -209,6 +213,7 @@ export class RelayState {
       facets: s.facets,
       lanes: this.lanes.items,
       runs: this.runs.items.map(runSummary),
+      run_tasks: s.run_tasks,
       floating_reviews: this.tasks.floating,
       decisions: this.decisions.items,
       person_messages: this.messages.items,

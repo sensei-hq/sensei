@@ -75,6 +75,15 @@ export {
   type RelayLaneRowView,
   type RelayTone,
 } from './relay/now-selectors.js';
+export {
+  toAgentGroups,
+  toRunGroups,
+  type RelayAgentGroupView,
+  type RelayCrewAgentsView,
+  type RelayCrewRunsView,
+  type RelayRunGroupView,
+  type RelayRunTaskRowView,
+} from './relay/run-selectors.js';
 export { toQueueRows, type RelayQueueRowView } from './relay/queue-selectors.js';
 export {
   editorTag,

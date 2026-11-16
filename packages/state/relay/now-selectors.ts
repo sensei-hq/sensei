@@ -75,7 +75,7 @@ export interface NowRowOptions {
 }
 
 /** Whether a lane belongs under a stat's filter. */
-function laneIn(lane: RelayLane, only: NowRowOptions['only']): boolean {
+export function laneIn(lane: RelayLane, only: NowRowOptions['only']): boolean {
   if (only === 'working') return isWorking(lane);
   if (only === 'blocked') return isNotResponding(lane) || Boolean(lane.task?.needs_answer);
   return true;
@@ -102,7 +102,7 @@ export function assistantLabel(family: string, version: string | null): string {
 }
 
 /** The lane's codename, or its code until the daemon mints one (#395). */
-const codename = (lane: Pick<RelayLane, 'suggested_name' | 'code'>): string => lane.suggested_name ?? lane.code;
+export const codename = (lane: Pick<RelayLane, 'suggested_name' | 'code'>): string => lane.suggested_name ?? lane.code;
 
 /** The task states in which a lane waits on another lane (a reviewer, its author, a merge). */
 const WAITING: Record<string, string> = {
@@ -119,7 +119,7 @@ function progressOf(task: RelayLane['task']): RelayLaneRowView['progress'] {
   return text ? { text, done, total } : null;
 }
 
-function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRowView {
+export function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRowView {
   const base = {
     id: lane.id,
     code: lane.code,
