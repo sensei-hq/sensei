@@ -16,15 +16,12 @@ const opts: NowRowOptions = {
 const titles = (rows: { title: string }[]) => rows.map((r) => r.title);
 
 describe('toRunGroups · one group per open run', () => {
-  it('the run is headed by its title, its state and its progress', () => {
+  it('the run is headed by its summary (title, state, progress: the band)', () => {
     const [crew] = toRunGroups(F.runNow(), opts);
     expect(crew.label).toBeNull();
     expect(crew.runs).toHaveLength(1);
-    const run = crew.runs[0];
-    expect(run.id).toBe(F.RUN_ID);
-    expect(run.title).toBe('Sprint 14: Broker hardening');
-    expect(run.state.label).toBe('active');
-    expect(run.progress).toBe('2 of 6 done');
+    expect(crew.runs[0].id).toBe(F.RUN_ID);
+    expect(crew.runs[0].run).toMatchObject({ run_id: F.RUN_ID, title: 'Sprint 14: Broker hardening', done_tasks: 2, total_tasks: 6 });
   });
 
   it('waiting tasks in priority order: Task 0 first, then backlog position, then the plan', () => {

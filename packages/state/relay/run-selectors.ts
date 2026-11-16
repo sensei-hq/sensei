@@ -24,13 +24,10 @@ export interface RelayRunTaskRowView {
   detail: string | null;
 }
 
-/** One open run: its header, then its tasks waiting, in progress and done. */
+/** One open run: its summary (the band that heads it), then its tasks waiting, in progress and done. */
 export interface RelayRunGroupView {
   id: string;
-  title: string;
-  state: { label: string; tone: RelayTone };
-  /** "2 of 6 done". */
-  progress: string;
+  run: RelayRunSummary;
   waiting: RelayRunTaskRowView[];
   active: RelayRunTaskRowView[];
   done: RelayRunTaskRowView[];
@@ -112,9 +109,7 @@ function runGroup(run: RelayRunSummary, tasks: RelayNowRunTask[], lanes: RelayLa
   };
   return {
     id: run.run_id,
-    title: run.title,
-    state: { label: run.state, tone: run.state === 'active' ? 'accent' : 'neutral' },
-    progress: `${run.done_tasks} of ${run.total_tasks} done`,
+    run,
     waiting: o.only ? [] : byPriority(of('waiting')).map((t) => taskRow(t, o)),
     active: of('active').filter((t) => !o.only || kept(t)).map((t) => taskRow(t, o)),
     done: o.only ? [] : byRunOrder(of('done')).map((t) => taskRow(t, o)),
