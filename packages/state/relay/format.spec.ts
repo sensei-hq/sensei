@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { crewRepoLabel, crewSizeContext, currentStepKey, taskStateLabel } from './format.js';
+import { crewRepoLabel, crewSizeContext, currentStepKey, nameOf, nameOfCode, taskStateLabel } from './format.js';
 import type { ApiError } from '../result.js';
 import type { RelayLane, RelayTaskStep } from './types.js';
 import * as F from './fixtures.js';
@@ -80,5 +80,23 @@ describe('currentStepKey', () => {
   it('reads null when nothing is open', () => {
     expect(currentStepKey([step('a', 'done'), step('b', 'skipped')])).toBeNull();
     expect(currentStepKey([])).toBeNull();
+  });
+});
+
+describe('nameOf · a lane by its codename (#425)', () => {
+  const lanes = [
+    { id: 'l1', code: 'L1', title: 'Diagrams', suggested_name: 'cobalt-lyra' },
+    { id: 'l3', code: 'L3', title: null, suggested_name: null },
+  ];
+  it('by id: the codename; a lane with none reads its code; an unknown lane a dash', () => {
+    expect(nameOf(lanes, 'l1')).toBe('cobalt-lyra');
+    expect(nameOf(lanes, 'l3')).toBe('L3');
+    expect(nameOf(lanes, 'l9')).toBe('—');
+    expect(nameOf(lanes, null)).toBe('—');
+  });
+  it('by code (a history entry carries the code): the codename, else the code itself', () => {
+    expect(nameOfCode(lanes, 'L1')).toBe('cobalt-lyra');
+    expect(nameOfCode(lanes, 'L3')).toBe('L3');
+    expect(nameOfCode(lanes, 'L9')).toBe('L9');
   });
 });

@@ -18,7 +18,7 @@ describe('toTaskView · the header', () => {
     expect(v.header.state).toEqual({ label: 'done', tone: 'success' });
     expect(v.header.facts.map((f) => f.k)).toEqual(['Lane', 'Assistant', 'Time', 'Rounds']);
     const lane = view.task.lane!;
-    expect(v.header.facts[0].v).toBe(`${lane.title} · ${lane.code}`);
+    expect(v.header.facts[0].v).toBe(`${lane.title} · ${lane.code} · ${lane.suggested_name}`);
     expect(v.header.facts[1].v).toBe(`Claude Code ${lane.version} · ${lane.model}`);
   });
 
@@ -43,11 +43,11 @@ describe('toTaskView · the header', () => {
     const resumes = '2026-11-12T14:00:00Z';
     const lane = { ...F.taskView().task.lane!, limit_scope: 'weekly' as const, limit_resumes_at: resumes };
     expect(toTaskView(F.taskView({ task: { ...F.taskView().task, lane } }), opts).header.facts[0].v).toBe(
-      `Diagrams · L1 · paused · weekly · until ${hhmm(resumes)}`,
+      `Diagrams · L1 · cobalt-lyra · paused · weekly · until ${hhmm(resumes)}`,
     );
     const unknown = { ...lane, limit_scope: 'daily' as const, limit_resumes_at: null };
     expect(toTaskView(F.taskView({ task: { ...F.taskView().task, lane: unknown } }), opts).header.facts[0].v).toBe(
-      'Diagrams · L1 · paused · daily · resume unknown',
+      'Diagrams · L1 · cobalt-lyra · paused · daily · resume unknown',
     );
   });
 
@@ -97,5 +97,26 @@ describe('toTaskView · Handed off', () => {
     const v = toTaskView(F.taskView({ handoff: { at, body_md: 'Move the header onto the shell.', docs: ['coord/a.md'] } }), opts);
     expect(v.handoff).toEqual({ label: `Handed off · ${hhmm(at)}`, brief: 'Move the header onto the shell.', docs: ['coord/a.md'] });
     expect(toTaskView(F.taskView({ handoff: null }), opts).handoff).toBeNull();
+  });
+});
+
+describe('toTaskView · names (#425)', () => {
+  it('a holder with no codename reads its title and code alone, never a placeholder', () => {
+    const lane = { ...F.taskView().task.lane!, suggested_name: null };
+    expect(toTaskView(F.taskView({ task: { ...F.taskView().task, lane } }), opts).header.facts[0].v).toBe('Diagrams · L1');
+  });
+
+  it('Handed off names who handed it off and the lane that took it, by codename', () => {
+    const view = F.taskView();
+    const at = view.handoff!.at;
+    expect(toTaskView(view, opts).handoff?.label).toBe(`Handed off by atlas-rigel · ${hhmm(at)} → cobalt-lyra`);
+  });
+
+  it('a handoff no lane has taken names no taker; one with no known writer names nobody', () => {
+    const base = F.taskView().handoff!;
+    const untaken = F.taskView({ handoff: { ...base, to_lane: null } });
+    expect(toTaskView(untaken, opts).handoff?.label).toBe(`Handed off by atlas-rigel · ${hhmm(base.at)}`);
+    const unsigned = F.taskView({ handoff: { ...base, by_lane: null, to_lane: null } });
+    expect(toTaskView(unsigned, opts).handoff?.label).toBe(`Handed off · ${hhmm(base.at)}`);
   });
 });

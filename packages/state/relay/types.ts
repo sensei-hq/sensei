@@ -419,6 +419,10 @@ export interface RelayHandoff {
   body_md: string;
   docs: string[];
   at: string;
+  /** The lane that handed it off: a handover's from-lane, else the brief's writer (#425). */
+  by_lane: string | null;
+  /** The lane that took it: a handover's to-lane, else the holder; null while none has. */
+  to_lane: string | null;
 }
 
 // ─── Action props, per kind (lanes-data.md `relay.actions` table; the daemon validates the keys) ──

@@ -53,4 +53,12 @@ describe('HistoryEntry', () => {
     expect(fold.open).toBe(false);
     expect(fold.querySelectorAll('[data-turn-file]')).toHaveLength(2);
   });
+
+  it('the by-line names the lane by codename, its code as the title (#425)', () => {
+    const coded = F.history().find((a) => a.lane_code === 'L1')!;
+    const { root } = mount(coded.id);
+    const by = root.querySelector('[data-entry-by]')!;
+    expect(text(by)).toBe('cobalt-lyra');
+    expect(by.getAttribute('title')).toBe('L1');
+  });
 });
