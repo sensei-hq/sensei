@@ -30,33 +30,22 @@ Then `/sensei:complete`, which closes #436–#443.
 
 ---
 
-# Checkpoint — 2026-11-16 (OpenSpec drafts for every open item, on lane/relay-followups)
+# Checkpoint — 2026-11-16 (relay follow-ups: #450 #451 merged; #425 #422 #449 built, e2e pending an install)
 
-**Slice:** spec-first follow-ups after the relay rebuild merged (#452). User (2026-11-16): walk the open items
-and build OpenSpec specs before continuing. OpenSpec 0.17.2 initialized (`openspec/`, `/openspec:*` commands).
+**Slice:** spec-first follow-ups after #452, on `lane/relay-followups` (OpenSpec changes under `openspec/changes/`).
 
-**Done:** develop's hook green again after #453 (two guards; `960e9b5ce`). Nine changes drafted + `--strict` valid:
-`update-phone-layout` (#420, from a ~40-finding phone survey), `add-relay-run-grouped-lanes` (#422),
-`update-relay-task-view-attribution` (#425/#395), `fix-relay-read-merge` (#450), `fix-app-api-error-reason`
-(#451), `add-relay-journey-ticket-item` (#449), `add-relay-lane-host` (#396), `update-sqlx-09-sqlite-cve` (#446),
-`update-correction-detection-intent` (#447). Decided: crew→run→tasks, agent = lane, implementer + reviewer
-(#422); phone layout phased — guard, rokkit shell, sidebar drawer, Relay first (#420).
+**Done:** PR #456 merged to develop (`4206ede46`): OpenSpec, #420 phase 1, #450, #451 (closed), #425 daemon+UI.
+Since, red→green on the lane: #422 Now's Lanes by run (each run's band, waiting by priority, in progress, done in run
+order with implementer + reviewer, lanes on no run task) or by agent, the choice kept per viewer; daemon `run_tasks`;
+`toLaneGroups` superseded; `/preview` by-run/by-agent captured at both widths and themes. #449 the journey seeds a
+Jira ticket (`e2e/lib/seed-ticket.ts`, `sensei_e2e` only) and runs it. README rewritten. Issues #457 (docs → wiki?),
+#458 (adopt OpenSpec; specify what is built).
 
-**#420 phase 1 done (red→green):** phone-layout guard (24 files to fix, 3 fine); rokkit 1.15.7 (#186: shell
-mobile-first, labels wrap); ShellScreen info band closed on a phone; Rail drawer below md (menu + backdrop/Esc/
-navigation close); LaneRow name 8rem floor, facts wrap. Relay body at 430px starts ~390px down (was ~1100px).
-#396 narrowed to the lane host (classification → #455); #447 daily + backfill (floors after the baseline).
+**Next command:** #396 `add-relay-lane-host` (red-first); then one `make install-service` (Keychain re-prompt, #283)
+and run `relay-run.spec.ts` + `relay-timeline.spec.ts` (#422 4.1, #425 4.1, #449 2.1); PR the lane; then #446, #447.
 
-**Built 2026-11-16 (red→green, pushed):** develop merged in (dup allow row dropped). #450 a landing read re-applies
-stream rows from while it was out (no blink, no second read). #451 `failureFrom` in `@sensei/state`: every app API
-helper + the relay client report `message` ?? `error` ?? status text, body kept. #425 task view: lanes by codename
-(`nameOf` replaces `codeOf`), handoff `by_lane`/`to_lane` (daemon) → "Handed off by X · 10:42 → Y". Full desktop
-e2e 134 passed; its 2 failures were #420's (title-bar selector, button audit read `hover:bg-`) — fixed, recheck 35/35.
-**Next command:** #422 `add-relay-run-grouped-lanes`, then #449, #396, #446, #447; after #422/#396 one
-`make install-service` (Keychain re-prompt, #283) and run `relay-timeline.spec.ts` (#425 4.1). #420 phase 2 between.
-
-**Open questions (user):** when to release develop → main (255 commits, incl. the forge write-back whose W8 live
-check is still the user's); #447 floors after the baseline.
+**Open questions (user):** release timing (develop → main; forge write-back W8 live check is theirs); #447 floors after
+the baseline; #457 wiki decision.
 
 ---
 
