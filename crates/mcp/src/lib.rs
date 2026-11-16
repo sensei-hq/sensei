@@ -3383,7 +3383,10 @@ mod tests {
         assert!(review.contains("gate"), "{review}");
         let register = tool_named(&ts, "relay_register");
         assert!(register["inputSchema"]["properties"]["suggested_name"].is_object());
-        assert!(register["inputSchema"]["properties"]["host"].is_object(), "#396: the editor the session runs in");
+        assert!(
+            register["inputSchema"]["properties"]["host"].is_object(),
+            "#396: the editor the session runs in"
+        );
         assert!(
             register["inputSchema"]["properties"]["role"]["description"]
                 .as_str()
