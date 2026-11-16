@@ -701,7 +701,7 @@ mod binary_tool_tests {
             for (status, body) in replies {
                 let (mut conn, _) = listener.accept().unwrap();
                 let mut reader = BufReader::new(conn.try_clone().unwrap());
-                let mut line = String::new();
+                let mut line = String::default();
                 reader.read_line(&mut line).unwrap();
                 let mut parts = line.split_whitespace();
                 let (method, path) = (
@@ -710,7 +710,7 @@ mod binary_tool_tests {
                 );
                 let mut len = 0;
                 loop {
-                    let mut header = String::new();
+                    let mut header = String::default();
                     reader.read_line(&mut header).unwrap();
                     if header == "\r\n" || header.is_empty() {
                         break;
@@ -740,7 +740,7 @@ mod binary_tool_tests {
         result["content"][0]["text"].as_str().unwrap_or("")
     }
     fn is_error(result: &Value) -> bool {
-        result["isError"] == true
+        result["isError"].as_bool() == Some(true)
     }
     fn body_of(seen: &Seen, i: usize) -> Value {
         serde_json::from_str(&seen.lock().unwrap()[i].2).unwrap()
