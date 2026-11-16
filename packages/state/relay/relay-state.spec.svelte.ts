@@ -503,26 +503,97 @@ describe('RelayState · the run list: a draft to start, past runs (#424)', () =>
   });
 });
 
-describe('RelayState · a read that lands after newer events (#426 found it)', () => {
-  it('a row event while Now is being read: the read that lands is followed by a fresh one', async () => {
+describe('RelayState · a read never undoes newer stream rows (#426 found it, #450)', () => {
+  const two = () => F.now({ lanes: [F.coordinatorLane(), F.lane({ id: 'lane-b', code: 'L2' })] });
+  const laneIds = (s: RelayState) => s.lanes.items.map((l) => l.id);
+
+  /** A Now read the test lands by hand; any read after it stays out, so a blink would show. */
+  function slowNow() {
     const stale = F.deferred<ApiResult<RelayNow>>();
-    const two = F.now({ lanes: [F.coordinatorLane(), F.lane({ id: 'lane-b', code: 'L2' })] });
-    const three = F.now({ lanes: [F.coordinatorLane(), F.lane({ id: 'lane-b', code: 'L2' }), F.lane({ id: 'lane-c', code: 'L3' })] });
-    const readNow = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(F.ok(three));
+    const after = F.deferred<ApiResult<RelayNow>>();
+    const readNow = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValue(after.promise);
+    return { stale, readNow };
+  }
+
+  it('a lane that registers during a read is shown when the read lands — no blink, no second read', async () => {
+    const { stale, readNow } = slowNow();
     const { source, emit } = fakeSource({ readNow });
-    const s = new RelayState(source, {}, reads(two));
+    const s = new RelayState(source, {}, reads(two()));
     s.connect();
-    // A read starts (as a re-read would)…
-    const reading = s.reReadNow();
-    // …and while it is out, the third lane's row arrives on the stream.
-    emit({ entity: 'lane', action: 'add', data: { ...F.lane({ id: 'lane-c', code: 'L3' }) } } as unknown as RelayStreamEvent);
-    expect(s.lanes.items.map((l) => l.id)).toContain('lane-c');
-    // The read lands with its older snapshot (two lanes)…
-    stale.resolve(F.ok(two));
-    await reading;
+    void s.reReadNow();
+    emit({ entity: 'lane', action: 'add', data: F.lane({ id: 'lane-c', code: 'L3' }) } as unknown as RelayStreamEvent);
+    expect(laneIds(s)).toContain('lane-c');
+    // The read lands with its older snapshot (two lanes).
+    stale.resolve(F.ok(two()));
     await settle();
-    // …and is followed by a fresh read: the third lane is there in the end.
+    expect(laneIds(s)).toEqual([F.LANE.L0, 'lane-b', 'lane-c']);
+    expect(readNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a lane that leaves during a read stays gone when the read lands', async () => {
+    const { stale, readNow } = slowNow();
+    const { source, emit } = fakeSource({ readNow });
+    const s = new RelayState(source, {}, reads(two()));
+    s.connect();
+    void s.reReadNow();
+    emit({ entity: 'lane', action: 'remove', data: { id: 'lane-b' } } as unknown as RelayStreamEvent);
+    stale.resolve(F.ok(two()));
+    await settle();
+    expect(laneIds(s)).not.toContain('lane-b');
+  });
+
+  it('a lane changed during a read keeps the change when the read lands', async () => {
+    const { stale, readNow } = slowNow();
+    const { source, emit } = fakeSource({ readNow });
+    const s = new RelayState(source, {}, reads(two()));
+    s.connect();
+    void s.reReadNow();
+    emit({ entity: 'lane', action: 'update', data: { id: 'lane-b', title: 'Renamed mid-read' } } as unknown as RelayStreamEvent);
+    stale.resolve(F.ok(two()));
+    await settle();
+    expect(s.lanes.get('lane-b')?.title).toBe('Renamed mid-read');
+  });
+
+  it('a row from before the read started is the read’s to say: a lane back in the snapshot is shown', async () => {
+    const { stale, readNow } = slowNow();
+    const { source, emit } = fakeSource({ readNow });
+    const s = new RelayState(source, {}, reads(two()));
+    s.connect();
+    emit({ entity: 'lane', action: 'remove', data: { id: 'lane-b' } } as unknown as RelayStreamEvent);
+    void s.reReadNow();
+    stale.resolve(F.ok(two()));
+    await settle();
+    expect(laneIds(s)).toContain('lane-b');
+  });
+
+  it('a queue item added during a queue read is shown when the read lands; one removed stays gone', async () => {
+    const stale = F.deferred<ApiResult<RelayQueue>>();
+    const after = F.deferred<ApiResult<RelayQueue>>();
+    const readQueue = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValue(after.promise);
+    const { source, emit } = fakeSource({ readQueue });
+    const s = new RelayState(source, {}, reads());
+    s.connect();
+    void s.reReadQueue();
+    const added = { ...F.backlogItem({ item_id: 'item-99' }), id: 'item-99', stage: 'backlog' };
+    emit({ entity: 'item', action: 'add', data: added } as unknown as RelayStreamEvent);
+    emit({ entity: 'item', action: 'remove', data: { id: 'item-218' } } as unknown as RelayStreamEvent);
+    stale.resolve(F.ok(F.queue()));
+    await settle();
+    const ids = s.items.items.map((i) => i.id);
+    expect(ids).toContain('item-99');
+    expect(ids).not.toContain('item-218');
+    expect(readQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('an event that names ids only during a read still earns one read after it', async () => {
+    const { stale, readNow } = slowNow();
+    const { source, emit } = fakeSource({ readNow });
+    const s = new RelayState(source, {}, reads(two()));
+    s.connect();
+    void s.reReadNow();
+    emit({ entity: 'task', action: 'update', data: { task_id: 't1' } } as RelayStreamEvent);
+    stale.resolve(F.ok(two()));
+    await settle();
     expect(readNow).toHaveBeenCalledTimes(2);
-    expect(s.lanes.items.map((l) => l.id)).toContain('lane-c');
   });
 });
