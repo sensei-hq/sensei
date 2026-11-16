@@ -28,7 +28,35 @@ export function wide(match: RegExpMatchArray): boolean {
 }
 
 /** file (relative to src/) → how many wide layouts it may keep, and why. */
-const ALLOWED: Record<string, { count: number; why: string }> = {};
+const ALLOWED: Record<string, { count: number; why: string }> = {
+  'lib/components/sessions/SessionRow.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'lib/components/settings/InstrumentsSection.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'lib/preview/PreviewComponent.svelte': { count: 2, why: 'dev-only /preview bench chrome (not shipped)' },
+  'routes/(config)/+layout.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(config)/setup/done/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(config)/setup/scan/+page.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(config)/setup/welcome/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(health)/logs/+page.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/RecentSessions.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/activity-logs/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/activity-logs/LogRow.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/activity-logs/ScheduledTaskRow.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/consolidation/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/impact/+page.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/insights/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/instruments/+page.svelte': { count: 9, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/libraries/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/workspaces/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(observatory)/workspaces/WorkspaceCard.svelte': { count: 2, why: 'fine: three short mini-stats fit a phone card' },
+  'routes/(observatory)/workspaces/WorkspaceRow.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(preferences)/settings/InferenceAssignmentsPanel.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(preferences)/settings/metrics/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(workspace)/workspace/[id]/impact/+page.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(workspace)/workspace/[id]/instruments/+page.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(workspace)/workspace/[id]/memories/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(workspace)/workspace/[id]/overview/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'routes/(workspace)/workspace/[id]/tickets/TicketsScreen.svelte': { count: 1, why: 'fine: the grid sits inside an overflow-x-auto wrapper' },
+};
 
 function svelteFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
