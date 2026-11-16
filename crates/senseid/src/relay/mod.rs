@@ -1537,7 +1537,8 @@ mod tests {
         let closed = bullet("Closed");
         for word in ["410", "relay_lane_gone", "409", "crew is closed", "stop"] {
             assert!(closed.contains(word), "the closed-crew bullet lacks {word:?}: {closed}");
-        } // #396: a session in an editor says which, at register.
+        }
+        // #396: a session in an editor says which, at register.
         let host = bullet("Host");
         for word in ["host", "register", "editor"] {
             assert!(host.contains(word), "the host bullet lacks {word:?}: {host}");
