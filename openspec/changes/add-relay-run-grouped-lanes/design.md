@@ -30,3 +30,4 @@ who claimed, reported and reviewed.
   open run the lanes are drawn alone, as before. `toLaneGroups` is superseded by `toRunGroups`.
 - By agent rows name only their reviewer: the group already names the lane, its assistant and model.
 - The view choice lives in `RelayState.laneView`, kept through an injected store (the app's localStorage).
+- The broker's merge gate is a run task (`gate: <title>`, executor broker, no lane): it is listed with the done tasks in run order, with no lane named.

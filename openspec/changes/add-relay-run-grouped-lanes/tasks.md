@@ -13,6 +13,6 @@
 - [x] 3.3 `/preview` fixtures for each group state; capture at both widths and themes
 
 ## 4. Verification
-- [ ] 4.1 Run journey e2e (#426) pins: a claim moves a task, done order and attribution, By agent switch — written;
-  runs after the daemon install batched with #396 (Keychain re-prompt, #283)
+- [x] 4.1 Run journey e2e (#426) pins: a claim moves a task, done order and attribution, By agent switch — written;
+  green 2026-11-16 on the installed daemon
 - [x] 4.2 `openspec validate add-relay-run-grouped-lanes --strict`

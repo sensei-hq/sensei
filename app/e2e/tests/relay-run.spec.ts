@@ -342,7 +342,10 @@ async function workStage(): Promise<void> {
   await mergedAndCompleted(work.t1, 'First file');
   // Done in the order they ran, each by the lane that did it and the one that reviewed it (#422).
   const done = `${runGroup()} [data-run-stage="done"]`;
-  await expect.poll(async () => JSON.parse(await textsOf(`${done} [data-run-task-title]`)), { timeout: STREAM }).toEqual(['Plan: Run journey', 'First file']);
+  // The broker's merge gate is a task of the run too: done after the file it merged.
+  await expect
+    .poll(async () => JSON.parse(await textsOf(`${done} [data-run-task-title]`)), { timeout: STREAM })
+    .toEqual(['Plan: Run journey', 'First file', 'gate: First file']);
   const firstWho = JSON.parse(await textsOf(`${done} [data-run-task="${work.t1}"] [data-run-task-who]`))[0] as string;
   expect(firstWho).toContain('cobalt-e2e');
   expect(firstWho).toContain('reviewed by coral-e2e');
