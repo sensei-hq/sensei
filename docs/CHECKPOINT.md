@@ -1,3 +1,22 @@
+# Checkpoint — 2026-11-17 (#446 merged; #447 baseline measured, floors pending)
+
+**Slice:** spec-first relay/analysis follow-ups (`openspec/changes/`).
+
+**Done:** #456 #460 #480 merged to develop; #395 #396 #422 #425 #446 #449 #450 #451 closed by hand (a develop
+merge does not auto-close). #446: rusqlite 0.43 + dbd v0.27.10 (released; dbd#118/#120) without sqlite — audit
+clean on all three lockfiles; DeepSource Rust on `crates/mcp` fixed (dispatcher split into families + tests).
+#447 (`lane/447-correction-intent`): 189 real prompts labelled (2 blind labellers, κ 0.90), kept LOCAL in
+`~/.sensei/eval/correction-intent-2026-11-17/` (public repo). Phrase list P 0.75 / R ~0.05; gemma4 today
+P 0.64 / R 0.81; with context P 0.47 / R 0.91 (design.md).
+
+**Next command:** on the user's floors (recommended R ≥ 0.80, P ≥ 0.75): sharpen the classifier prompt and
+re-measure (`~/.sensei/eval/…/llm.py` + `score.py`), then build 2.1–3.1 red-first; #420 phase 2 after.
+
+**Open questions (user):** #447 floors; keep the labelled set local (recommended) or commit it anonymised;
+`record_outcome` turns bad `outcomes` JSON into `[]` (masking) — issue or fix?; #457 wiki.
+
+---
+
 # Checkpoint — 2026-11-16 (DeepSource low-hanging fixes on develop; #460 merged)
 
 **Slice:** DeepSource review findings → tracking issues #461–#479, then fix the
