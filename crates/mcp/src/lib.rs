@@ -517,6 +517,8 @@ pub fn daemon_request_for(
                 "workspace_id",
                 // Queue cutover: the name the assistant proposes for itself.
                 "suggested_name",
+                // #396: the editor the session runs in, when it runs in one.
+                "host",
             ] {
                 if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
                     body.insert(k.into(), v.clone());
@@ -1388,6 +1390,7 @@ pub fn handle_list_tools() -> Value {
                 &[
                     ("role", "string", "coordinator | contributor (default contributor)"),
                     ("suggested_name", "string", "The name you propose for yourself: becomes the lane title (the code stays the handle)"),
+                    ("host", "string", "The editor you run inside (cursor, zed), when you run in one; omit in a terminal"),
                     ("version", "string", "Lane version"),
                     ("model", "string", "Model the lane runs"),
                     ("capabilities", "array", "What the lane can do"),
