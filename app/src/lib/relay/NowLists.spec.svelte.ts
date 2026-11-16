@@ -143,8 +143,8 @@ describe('LaneList · LaneRow', () => {
   it('the main window: a group per crew, each under its repository', () => {
     const c = mount(LaneList, {
       crews: [
-        { id: 'c1', label: 'github.com/sensei-hq/sensei', rows: [working()] },
-        { id: 'c2', label: 'github.com/jerrythomas/scratch', rows: [working({ id: 'l9', code: 'L9' })] },
+        { id: 'c1', label: 'github.com/sensei-hq/sensei', runs: [], idle: [working()] },
+        { id: 'c2', label: 'github.com/jerrythomas/scratch', runs: [], idle: [working({ id: 'l9', code: 'L9' })] },
       ],
     });
     expect([...c.querySelectorAll('[data-crew-group]')].map((g) => g.getAttribute('data-crew-group'))).toEqual(['c1', 'c2']);

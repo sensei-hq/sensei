@@ -4,6 +4,7 @@
   import { appState } from '$lib/appstate.svelte.js';
   import { RelayState, relaySseSource } from '@sensei/state';
   import { relayApi, relayStream } from '$lib/relay-api.js';
+  import { relayLaneViewStore } from '$lib/relay/lane-view-store.js';
   import RelayScreen from '$lib/relay/RelayScreen.svelte';
 
   let { data } = $props();
@@ -11,7 +12,9 @@
   /** Re-created when the loader's answer changes, so a navigation never keeps the
    *  old crew or the old queue beside the new one. */
   const state = $derived.by(
-    () => new RelayState(relaySseSource(relayApi(appState.port), () => relayStream(appState.port)), data.filter, data),
+    () => new RelayState(relaySseSource(relayApi(appState.port), () => relayStream(appState.port)), data.filter, data, {
+      laneView: relayLaneViewStore(),
+    }),
   );
 
   // The state listens through its source (#421): a row that arrives changes that row,

@@ -37,6 +37,8 @@ export const STORAGE_KEYS = {
   diagramsControls: `${NS}:diagrams:controls`,
   /** Workspace · Diagrams: whether the side panel is shown ("open" | "closed"). */
   diagramsSide:     `${NS}:diagrams:side`,
+  /** Relay · Now: the Lanes grouped by run or by agent ("run" | "agent", #422). */
+  relayLaneView:    `${NS}:relay:lane-view`,
 } as const;
 
 /** The active Storage, or null when there isn't a usable one. Feature-detects

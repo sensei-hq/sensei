@@ -64,7 +64,6 @@ export {
 export {
   assistantLabel,
   toCompletedRows,
-  toLaneGroups,
   toNeedsYou,
   toWaitRows,
   type NowRowOptions,
@@ -72,7 +71,6 @@ export {
   type RelayWaitRowView,
   type RelayWaitNudge,
   type RelayCompletedRowView,
-  type RelayLaneGroupView,
   type RelayLaneRowView,
   type RelayTone,
 } from './relay/now-selectors.js';
