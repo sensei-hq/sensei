@@ -4,8 +4,8 @@ use std::io::{BufRead, Write};
 use sensei_mcp::{
     ActiveWorkspace, DaemonRequest, HttpMethod, NEEDS_WORKSPACE, WORKSPACES_FOR_RESOLUTION,
     WorkspaceResolution, build_log_event_body, build_relay_wait_request, daemon_request_for,
-    handle_initialize, handle_list_tools, resolve_active_workspace_in, resolve_default_workspace,
-    resolve_from_cwd_in, resolve_workspace_in,
+    handle_initialize, handle_list_tools, record_outcome_body, resolve_active_workspace_in,
+    resolve_default_workspace, resolve_from_cwd_in, resolve_workspace_in,
 };
 
 /// The active-workspace pin for THIS MCP session, held in memory — NOT a file.
@@ -286,6 +286,13 @@ fn handle_call_tool(
     // (longer timeout), bespoke response parsing, or make no daemon call. Plus
     // `get_layered_context`'s one no-workspace guard.
     match tool_name {
+        // Outcomes the library could not read: the reason, as an error (never `[]`).
+        "record_outcome" => {
+            let reason = record_outcome_body(&args)
+                .err()
+                .unwrap_or_else(|| "record_outcome: no daemon call was made".into());
+            json!({"content": [{"type": "text", "text": reason}], "isError": true})
+        }
         // ── Inference tools (direct endpoints, not mcp proxy) ──────────────
         "infer" => {
             let prompt = args["prompt"].as_str().unwrap_or("");

@@ -433,14 +433,10 @@ fn knowledge_request(
             };
             Some(DaemonRequest::post_json(format!("/api/knowledge/proposals/{id}/reject"), body))
         }
-        "record_outcome" => {
-            let outcomes: Value = serde_json::from_str(args["outcomes"].as_str().unwrap_or("[]"))
-                .unwrap_or_else(|_| json!([]));
-            Some(DaemonRequest::post_json(
-                "/api/knowledge/outcomes",
-                json!({ "outcomes": outcomes }),
-            ))
-        }
+        // Outcomes it cannot read are the binary's to refuse (`record_outcome_body`).
+        "record_outcome" => record_outcome_body(args)
+            .ok()
+            .map(|body| DaemonRequest::post_json("/api/knowledge/outcomes", body)),
 
         // `plan` (D-PLANNER) decomposes a goal/spec/issue into a structured plan
         // (phases → features → acceptance criteria) + rendered docs/plan markdown.
@@ -1026,6 +1022,22 @@ fn attach_governance(body: &mut Value, args: &Value, cwd: &str) {
     }
     if let Some(enf) = args["enforcement"].as_str().filter(|s| !s.is_empty()) {
         body["enforcement"] = json!(enf);
+    }
+}
+
+/// The `/api/knowledge/outcomes` body for `record_outcome`: its `outcomes` argument, a JSON
+/// array string, parsed. A missing, unparseable or non-array value is refused with the reason —
+/// never sent as `[]`, which the daemon would record as "no outcomes".
+pub fn record_outcome_body(args: &Value) -> Result<Value, String> {
+    let Some(raw) = args["outcomes"].as_str().filter(|s| !s.trim().is_empty()) else {
+        return Err("record_outcome: outcomes is required (a JSON array string)".into());
+    };
+    match serde_json::from_str::<Value>(raw) {
+        Ok(outcomes @ Value::Array(_)) => Ok(json!({ "outcomes": outcomes })),
+        Ok(_) => {
+            Err("record_outcome: outcomes must be a JSON array of {memory_id, outcome}".into())
+        }
+        Err(e) => Err(format!("record_outcome: outcomes is not valid JSON: {e}")),
     }
 }
 
