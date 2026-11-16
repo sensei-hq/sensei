@@ -510,6 +510,16 @@ pub struct RelayCreateRunOutput {
 }
 
 /// A run's start (#419): the crew it bound and Task 0 it minted.
+/// Starting a run, inside the caller's transaction (#161: typed inputs, not five
+/// positional ones): whose, which run, the crew to bind (None = the one active),
+/// and the clock.
+struct RunStart {
+    user_id: Uuid,
+    run_id: Uuid,
+    crew_id: Option<Uuid>,
+    now: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RelayStartedRun {
     pub run_id: Uuid,
@@ -4496,7 +4506,13 @@ impl PgStore {
             .map_err(db_err)?;
         }
         let started = if input.start {
-            Some(Self::relay_start_run_tx(&mut tx, user_id, run_id, input.crew_id, now).await?)
+            Some(
+                Self::relay_start_run_tx(
+                    &mut tx,
+                    RunStart { user_id, run_id, crew_id: input.crew_id, now },
+                )
+                .await?,
+            )
         } else {
             None
         };
@@ -4515,18 +4531,17 @@ impl PgStore {
         now: DateTime<Utc>,
     ) -> Result<RelayStartedRun, RelayError> {
         let mut tx = self.pool().begin().await.map_err(db_err)?;
-        let started = Self::relay_start_run_tx(&mut tx, user_id, run_id, crew_id, now).await?;
+        let started =
+            Self::relay_start_run_tx(&mut tx, RunStart { user_id, run_id, crew_id, now }).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(started)
     }
 
     async fn relay_start_run_tx(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
-        user_id: Uuid,
-        run_id: Uuid,
-        crew_id: Option<Uuid>,
-        now: DateTime<Utc>,
+        start: RunStart,
     ) -> Result<RelayStartedRun, RelayError> {
+        let RunStart { user_id, run_id, crew_id, now } = start;
         let run: Option<(String, String, Option<String>, Option<Uuid>)> =
             sqlx_core::query_as::query_as(
                 "select state::text, title, repo_key, workspace_id from relay.runs
