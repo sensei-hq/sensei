@@ -144,12 +144,16 @@ pub fn daemon_request_for(
         return None;
     }
 
-    // The relay lane tools and the run tools are their own dispatchers (#396: one
-    // function of every tool was a cyclomatic complexity of 105).
-    if let Some(req) = relay_lane_request(tool, args) {
-        return req;
-    }
-    if let Some(req) = run_request(tool, args, repo_id) {
+    // Each family of tools is its own dispatcher (DeepSource RS-R1000: one function
+    // of every tool had a cyclomatic complexity of 105).
+    if let Some(req) = workspace_request(tool, args, repo_id, cwd)
+        .or_else(|| lookup_request(tool, args, repo_id, cwd))
+        .or_else(|| knowledge_request(tool, args, repo_id, cwd))
+        .or_else(|| relay_claim_request(tool, args))
+        .or_else(|| relay_crew_request(tool, args))
+        .or_else(|| run_control_request(tool, args, repo_id))
+        .or_else(|| playbook_request(tool, args, repo_id))
+    {
         return req;
     }
 
@@ -160,6 +164,38 @@ pub fn daemon_request_for(
         "infer" | "embed" | "gateway_status" | "consensus" | "generate_image" | "log_event"
         | "use_workspace" => None,
 
+        // ── Everything else → the daemon mcp proxy ──────────────────────────
+        _ => {
+            let mut params = build_daemon_params(args, repo_id);
+            // `get_lib_docs` matches docs to the version the ASKING folder
+            // pins (02b S9), so it needs to know which folder is asking. The
+            // model rarely thinks to say, and cwd is the answer it would give
+            // — default it here rather than serve the latest docs to a repository
+            // on an older release and call that an answer.
+            if tool == "get_lib_docs"
+                && args["folder"].as_str().filter(|s| !s.is_empty()).is_none()
+                && !cwd.is_empty()
+                && let Some(obj) = params.as_object_mut()
+            {
+                obj.insert("folder".into(), json!(cwd));
+            }
+            Some(DaemonRequest::post_json(
+                "/api/mcp/call",
+                json!({ "tool": map_daemon_tool(tool), "params": params }),
+            ))
+        }
+    }
+}
+
+/// Workspace discovery, who is working, the stance and the workflow state.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn workspace_request(
+    tool: &str,
+    args: &Value,
+    repo_id: &str,
+    cwd: &str,
+) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Folder-scoped workspace discovery ─────────────────────────────────
         // `find_workspaces` is the folder-scoped view of `list_workspaces`: shape
         // `GET /api/workspaces?under=<path>`, defaulting the scope to the MCP
@@ -219,6 +255,20 @@ pub fn daemon_request_for(
             Some(DaemonRequest::get(format!("/api/state/{workspace}")))
         }
 
+        _ => return None,
+    })
+}
+
+/// Read lookups: patterns, the risk class, library capabilities, tickets, rules,
+/// commands and the layered context.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn lookup_request(
+    tool: &str,
+    args: &Value,
+    repo_id: &str,
+    cwd: &str,
+) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Pattern engine (direct /api/patterns endpoints) ─────────────────
         "match_pattern" => {
             let desc = args["description"].as_str().unwrap_or("");
@@ -277,7 +327,10 @@ pub fn daemon_request_for(
         // `get_ticket` reads the ticket live and starts work on it in the cwd's
         // repository; the key is a path segment (`#12` → `%2312`).
         "get_ticket" => {
-            let key = args["key"].as_str().filter(|s| !s.is_empty())?;
+            // No key, no request — `Some(None)`, not `?`: here `None` means "not this family".
+            let Some(key) = args["key"].as_str().filter(|s| !s.is_empty()) else {
+                return Some(None);
+            };
             let mut body = json!({ "folder": cwd });
             if let Some(sid) = args["session_id"].as_str().filter(|s| !s.is_empty()) {
                 body["session_id"] = json!(sid);
@@ -307,7 +360,9 @@ pub fn daemon_request_for(
         "get_layered_context" => {
             let explicit_pid = args["workspace_id"].as_str().unwrap_or("");
             // `None` → no workspace resolvable; the binary returns a guidance error.
-            let (key, val) = context_workspace_param(explicit_pid, repo_id)?;
+            let Some((key, val)) = context_workspace_param(explicit_pid, repo_id) else {
+                return Some(None);
+            };
             let mut req = DaemonRequest::get("/api/knowledge/context").with_query(key, val);
             if let Some(l) = args["limit"].as_str().filter(|s| !s.is_empty()) {
                 req = req.with_query("limit", l);
@@ -324,6 +379,19 @@ pub fn daemon_request_for(
             Some(req)
         }
 
+        _ => return None,
+    })
+}
+
+/// Knowledge writes, outcomes, planning and checkers.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn knowledge_request(
+    tool: &str,
+    args: &Value,
+    repo_id: &str,
+    cwd: &str,
+) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Knowledge writes ────────────────────────────────────────────────
         "propose_memory" | "save_memory" => {
             let body = build_memory_body(args, cwd, repo_id);
@@ -391,32 +459,13 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/checkers/run", body))
         }
 
-        // ── Everything else → the daemon mcp proxy ──────────────────────────
-        _ => {
-            let mut params = build_daemon_params(args, repo_id);
-            // `get_lib_docs` matches docs to the version the ASKING folder
-            // pins (02b S9), so it needs to know which folder is asking. The
-            // model rarely thinks to say, and cwd is the answer it would give
-            // — default it here rather than serve the latest docs to a repository
-            // on an older release and call that an answer.
-            if tool == "get_lib_docs"
-                && args["folder"].as_str().filter(|s| !s.is_empty()).is_none()
-                && !cwd.is_empty()
-                && let Some(obj) = params.as_object_mut()
-            {
-                obj.insert("folder".into(), json!(cwd));
-            }
-            Some(DaemonRequest::post_json(
-                "/api/mcp/call",
-                json!({ "tool": map_daemon_tool(tool), "params": params }),
-            ))
-        }
-    }
+        _ => return None,
+    })
 }
 
-/// The relay lane tools (L3): the request for `tool`, or `None` when it is not one.
-/// The inner `None` is a tool the binary answers itself (`relay_wait_for_task`).
-fn relay_lane_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>> {
+/// The relay lane loop: register, claim, heartbeat, report and review.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn relay_claim_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>> {
     Some(match tool {
         // ── Relay lanes (L3, slice 1 item 2) ───────────────────────────────
         // `relay_wait_for_task` is inline (a hold of up to 50 s outlives the
@@ -550,6 +599,15 @@ fn relay_lane_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>>
                 args,
             ))
         }
+        _ => return None,
+    })
+}
+
+/// The relay crew calls: decisions, messages, planning and assignment, merges,
+/// handovers, steps, pauses, closing the crew and resources.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn relay_crew_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         "relay_ask_decision" => {
             let mut body = relay_lane_body(args);
             relay_forward(
@@ -708,10 +766,9 @@ fn relay_lane_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>>
     })
 }
 
-/// The run tools — run control, the coordinator contract, intake and the playbook
-/// learning loop: the request for `tool`, or `None` when it is not one of them.
-/// `repo_id` is the cwd-resolved workspace an omitted `workspace` defaults to.
-fn run_request(tool: &str, args: &Value, repo_id: &str) -> Option<Option<DaemonRequest>> {
+/// Run control and the automated-run coordinator contract.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn run_control_request(tool: &str, args: &Value, repo_id: &str) -> Option<Option<DaemonRequest>> {
     Some(match tool {
         // ── Relay run-control (P3.8) → the daemon's /api/runs endpoints ─────
         // `start_run` POSTs a new run; `workspace` defaults to the resolved repo
@@ -801,6 +858,14 @@ fn run_request(tool: &str, args: &Value, repo_id: &str) -> Option<Option<DaemonR
             Some(DaemonRequest::get(format!("/api/runs/{run_id}/nudges")))
         }
 
+        _ => return None,
+    })
+}
+
+/// The front-door intake and the playbook learning loop.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn playbook_request(tool: &str, args: &Value, repo_id: &str) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Front-door intake ────────────────────────────────────────────────
         "get_intake_guide" => Some(DaemonRequest::get("/api/playbook/guide")),
         "recommend_playbook" => {
@@ -2601,6 +2666,9 @@ mod tests {
             .expect("a daemon call");
         assert_eq!(bare.path, "/api/tickets/%2312/fetch");
         assert_eq!(bare.body, Some(json!({ "folder": "/repo/cwd" })), "no session: none sent");
+        // No key: no daemon call — never the generic MCP proxy (the family split
+        // turned a `?` here into "not this family" once; the proxy then answered).
+        assert_eq!(daemon_request_for("get_ticket", &json!({}), "/repo/cwd", None), None);
     }
 
     /// TG5: `get_ticket` is advertised, needs its key, and says it starts the work.
