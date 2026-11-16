@@ -2658,6 +2658,109 @@ mod tests {
     /// TG5 (D63): `get_ticket` fetches the ticket through the daemon and starts work
     /// on it — a POST carrying the caller's cwd (the repository the work is in) and,
     /// when given, the session to link. A key is a path segment, so `#12` is encoded.
+    /// Each family dispatcher's tools, by the request they make: method, path and body.
+    fn request(tool: &str, args: Value) -> DaemonRequest {
+        daemon_request_for(tool, &args, "/repo/cwd", Some("sensei"))
+            .unwrap_or_else(|| panic!("{tool}: a daemon call"))
+    }
+
+    #[test]
+    fn code_lookups_shape_their_requests() {
+        let risk = request("resolve_risk_class", json!({ "paths": ["a.rs"], "task": "t1" }));
+        assert_eq!((risk.method, risk.path.as_str()), (HttpMethod::Post, "/api/review/risk-class"));
+        assert_eq!(risk.body, Some(json!({ "paths": ["a.rs"], "task": "t1" })));
+        // No paths: an empty list, and no task when none is given.
+        assert_eq!(request("resolve_risk_class", json!({})).body, Some(json!({ "paths": [] })));
+
+        assert_eq!(
+            request("list_library_skills", json!({ "name": "rokkit" })).path,
+            "/api/libs/rokkit/skills"
+        );
+        assert_eq!(
+            request("get_library_skill", json!({ "name": "rokkit", "focus": "list" })).path,
+            "/api/libs/rokkit/skills/list"
+        );
+        assert_eq!(
+            request("list_library_agents", json!({ "name": "rokkit" })).path,
+            "/api/libs/rokkit/agents"
+        );
+    }
+
+    #[test]
+    fn knowledge_writes_shape_their_requests() {
+        let outcome =
+            request("record_outcome", json!({ "outcomes": r#"[{"id":"m1","ok":true}]"# }));
+        assert_eq!(
+            (outcome.method, outcome.path.as_str()),
+            (HttpMethod::Post, "/api/knowledge/outcomes")
+        );
+        assert_eq!(outcome.body, Some(json!({ "outcomes": [{ "id": "m1", "ok": true }] })));
+
+        let plan = request("plan", json!({ "goal": "Ship it", "context": "issue #1" }));
+        assert_eq!(plan.path, "/api/planner/generate");
+        assert_eq!(plan.body, Some(json!({ "goal": "Ship it", "context": "issue #1" })));
+        assert_eq!(
+            request("plan", json!({ "goal": "Ship it" })).body,
+            Some(json!({ "goal": "Ship it" }))
+        );
+    }
+
+    #[test]
+    fn run_control_shapes_its_requests() {
+        let status = request(
+            "update_task_status",
+            json!({ "run_id": "r1", "task_id": "t1", "state": "done", "note": "ok" }),
+        );
+        assert_eq!(
+            (status.method, status.path.as_str()),
+            (HttpMethod::Post, "/api/runs/r1/tasks/t1")
+        );
+        assert_eq!(status.body, Some(json!({ "state": "done", "note": "ok" })));
+
+        let outcome = request(
+            "report_run_outcome",
+            json!({ "run_id": "r1", "outcome": "failed", "summary": "gate red" }),
+        );
+        assert_eq!(outcome.path, "/api/runs/r1/outcome");
+        assert_eq!(outcome.body, Some(json!({ "outcome": "failed", "summary": "gate red" })));
+
+        let nudges = request("get_pending_nudges", json!({ "run_id": "r1" }));
+        assert_eq!((nudges.method, nudges.path.as_str()), (HttpMethod::Get, "/api/runs/r1/nudges"));
+    }
+
+    #[test]
+    fn intake_and_playbook_shape_their_requests() {
+        assert_eq!(request("get_intake_guide", json!({})).path, "/api/playbook/guide");
+        let rec = request(
+            "recommend_playbook",
+            json!({ "lifecycle": "build", "intent": "fix", "risk": "low", "feature": "f1", "confirm": "" }),
+        );
+        assert_eq!(rec.path, "/api/playbook/recommend");
+        // The cwd-resolved workspace rides along; an empty optional is not sent.
+        assert_eq!(
+            rec.body,
+            Some(
+                json!({ "lifecycle": "build", "intent": "fix", "risk": "low", "feature": "f1", "workspace": "sensei" })
+            )
+        );
+        assert_eq!(
+            request("list_playbook_rule_proposals", json!({})).path,
+            "/api/playbook/rule-proposals"
+        );
+        let accept = request("accept_playbook_rule", json!({ "id": "p9" }));
+        assert_eq!(
+            (accept.method, accept.path.as_str()),
+            (HttpMethod::Post, "/api/playbook/rule/p9/accept")
+        );
+    }
+
+    #[test]
+    fn log_event_data_that_is_not_an_object_is_kept_under_data() {
+        // JSON that is not an object, and text that is not JSON, both stay whole.
+        assert_eq!(build_log_event_body(&json!({ "data": "[1,2]" }), "/c")["data"], json!([1, 2]));
+        assert_eq!(build_log_event_body(&json!({ "data": "not json" }), "/c")["data"], "not json");
+    }
+
     #[test]
     fn get_ticket_shapes_a_post_with_the_cwd() {
         let req = daemon_request_for(
