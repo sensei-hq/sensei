@@ -1,8 +1,10 @@
 <script lang="ts">
+    import RailMenuButton from '$lib/components/RailMenuButton.svelte';
+    import { railDrawer } from '$lib/components/rail-drawer.svelte.js';
     import { personaList } from '$lib/personas.svelte.js';
     import { onMount } from 'svelte';
     import { page } from '$app/state';
-    import { beforeNavigate, goto } from '$app/navigation';
+    import { beforeNavigate, goto, afterNavigate } from '$app/navigation';
     import { commands } from '@rokkit/states';
     import { shortcuts } from '@rokkit/actions';
     import { CommandPalette } from '@rokkit/ui';
@@ -83,10 +85,13 @@
         nav.cancel();
         void openSettingsWindow(to === '/settings' ? '/settings/general' : to);
     });
+    // A navigation closes the Rail's drawer (#420): left open it would cover the page.
+    afterNavigate(() => railDrawer.navigated());
 </script>
 
 <div class="w-full h-screen flex flex-col bg-paper-soft text-ink overflow-hidden" use:shortcuts={commands}>
-    <div class="drag-region h-8 shrink-0"></div>
+    <!-- Below md the Rail is a drawer; its menu sits in the window's drag strip (#420). -->
+    <div class="drag-region h-8 shrink-0 flex items-center px-2"><RailMenuButton /></div>
 
     <div class="flex-1 flex min-h-0">
         <ObservatorySidebar

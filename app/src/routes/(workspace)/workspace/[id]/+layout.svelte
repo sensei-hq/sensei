@@ -1,4 +1,7 @@
 <script lang="ts">
+    import { afterNavigate } from '$app/navigation';
+    import RailMenuButton from '$lib/components/RailMenuButton.svelte';
+    import { railDrawer } from '$lib/components/rail-drawer.svelte.js';
     import { page } from '$app/state';
     import WorkspaceSidebar from './WorkspaceSidebar.svelte';
     import WorkspaceGlyph from '../../../(observatory)/workspaces/WorkspaceGlyph.svelte';
@@ -26,6 +29,8 @@
     );
     // Keep an absent FTR as null (honest no-data → "—" in the sidebar), never 0.
     const ftr14d = $derived(data.ftrMetrics?.ftr14d ?? null);
+    // A navigation closes the Rail's drawer (#420): left open it would cover the page.
+    afterNavigate(() => railDrawer.navigated());
 </script>
 
 <div data-component="workspace-shell" class="flex flex-col h-screen overflow-hidden bg-paper-soft text-ink">
@@ -38,6 +43,7 @@
          clicking the glyph/name drags too. (No decorative accent stripe: it did
          not aid dragging and read as a stray highlighted top border.) -->
     <div data-component="workspace-titlebar" data-tauri-drag-region class="h-9 flex items-center gap-2 pl-[80px] pr-4 shrink-0">
+        <RailMenuButton />
         <WorkspaceGlyph {icon} />
         <span data-component="workspace-name" class="text-sm font-semibold">{data.workspace?.name ?? '…'}</span>
         <span class="text-xs text-ink-faint">· workspace window</span>
