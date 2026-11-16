@@ -10,6 +10,7 @@
   // way on mount. With no store provided the screen is in memory alone, and
   // nothing is written anywhere.
 
+  import { MediaQuery } from 'svelte/reactivity';
   import { ScreenShell, type FilterState, type PanelId, type PanelState, type ScreenShellProps } from '@rokkit/app';
   import Notice from './Notice.svelte';
   import { useGlyphMode } from './glyph-mode.js';
@@ -58,8 +59,13 @@
     const stored = store?.get(viewId);
     if (stored !== undefined) panels = stored;
   });
+  // On a phone (below md, 768px) the info band would push the body below the first screen
+  // (#420): with no remembered choice it starts closed. A choice the person made still wins,
+  // and a pinned band is still drawn open.
+  const phone = new MediaQuery('(max-width: 767px)');
+  const fitted = $derived<PanelState>(phone.current && !('info' in panels) ? { ...panels, info: false } : panels);
   const shownPanels = $derived<PanelState>(
-    pinned.length ? { ...panels, ...Object.fromEntries(pinned.map((id) => [id, true])) } : panels,
+    pinned.length ? { ...fitted, ...Object.fromEntries(pinned.map((id) => [id, true])) } : fitted,
   );
 
   let saveError = $state<string | null>(null);

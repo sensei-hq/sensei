@@ -1,7 +1,8 @@
 // Relay · the pure readings its screens share live in @sensei/state (#422), beside the
 // selectors that use them; the app's relay components import them from here.
 export {
-  codeOf,
+  nameOf,
+  nameOfCode,
   crewGroups,
   crewRepoLabel,
   crewSizeContext,

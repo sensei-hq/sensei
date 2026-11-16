@@ -112,7 +112,7 @@ describe('relayApi — the answers', () => {
     stub(409, { error: 'already answered on the dōjō' });
     expect(await api().tryAnswerDecision({ decision_id: 'ask-1', option: 'db', note: null, surface: 'desktop' })).toEqual({
       ok: false,
-      error: { status: 409, message: 'already answered on the dōjō' },
+      error: { status: 409, message: 'already answered on the dōjō', body: { error: 'already answered on the dōjō' } },
     });
   });
 
@@ -120,7 +120,7 @@ describe('relayApi — the answers', () => {
     stub(500, { error: 42 }, 'Internal Server Error');
     expect(await api().tryGetNow({})).toEqual({
       ok: false,
-      error: { status: 500, message: 'Internal Server Error' },
+      error: { status: 500, message: 'Internal Server Error', body: { error: 42 } },
     });
 
     stub(502, undefined, 'Bad Gateway');

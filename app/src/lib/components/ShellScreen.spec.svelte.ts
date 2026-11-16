@@ -105,6 +105,34 @@ describe('ShellScreen', () => {
     expect(bands(m.container)).toEqual({ info: true, stats: true, filters: true, side: true });
   });
 
+  // #420: on a phone the info band would push the body below the first screen.
+  describe('on a phone (below md, 768px)', () => {
+    const phone = (query: string) =>
+      ({ matches: /max-width:\s*767px/.test(query), media: query, onchange: null, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false }) as unknown as MediaQueryList;
+    let before: typeof window.matchMedia;
+    beforeEach(() => {
+      before = window.matchMedia;
+      window.matchMedia = phone;
+    });
+    afterEach(() => {
+      window.matchMedia = before;
+    });
+
+    it('a first visit opens every band but the info band', () => {
+      const { store } = makeStore();
+      const m = mountComponent(Harness, { store });
+      cleanup.push(m.destroy);
+      expect(bands(m.container)).toEqual({ info: false, stats: true, filters: true, side: true });
+    });
+
+    it('a remembered choice still wins: the info band the person opened stays open', () => {
+      const { store } = makeStore({ 'test.view': { info: true } });
+      const m = mountComponent(Harness, { store });
+      cleanup.push(m.destroy);
+      expect(bands(m.container).info).toBe(true);
+    });
+  });
+
   it('opens the bands as the store remembers them for this view id', () => {
     const { store } = makeStore({ 'test.view': { info: false, side: false }, other: { stats: false } });
     const m = mountComponent(Harness, { store });

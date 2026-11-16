@@ -2,7 +2,7 @@
 // HandoffCard): from the task's read to what each part draws. Pure. A number nobody
 // reported is null, and the part says "not reported", never 0 (D83).
 
-import { hhmm, providerLabel, roundsLabel, taskStateLabel } from './format.js';
+import { hhmm, nameOf, providerLabel, roundsLabel, taskStateLabel } from './format.js';
 import { assistantLabel, type RelayTone } from './now-selectors.js';
 import type { RelayRunDetails, RelayTaskView } from './types.js';
 
@@ -99,6 +99,15 @@ function runLine(r: RelayRunDetails): string {
   return parts.length ? parts.join(' · ') : 'not reported yet';
 }
 
+/** "Handed off by cobalt-lyra · 10:42 → coral-spica" (#425): who handed it off, when, and
+ *  the lane that took it — each part only when the read names it. */
+function handoffLabel(view: RelayTaskView): string {
+  const h = view.handoff!;
+  const by = h.by_lane ? ` by ${nameOf(view.lanes, h.by_lane)}` : '';
+  const to = h.to_lane ? ` → ${nameOf(view.lanes, h.to_lane)}` : '';
+  return `Handed off${by} · ${hhmm(h.at)}${to}`;
+}
+
 /** The task view's header, Run details and Handed off. */
 export function toTaskView(view: RelayTaskView, o: { back: { label: string; href: string } }): RelayTaskPartsView {
   const t = view.task;
@@ -119,7 +128,8 @@ export function toTaskView(view: RelayTaskView, o: { back: { label: string; href
       state: { label: taskStateLabel(t.state), tone: taskStateTone(t.state) },
       ticket: t.ticket ? { provider: providerLabel(t.ticket.provider), key: t.ticket.key, url: t.ticket.url ?? null } : null,
       facts: [
-        { k: 'Lane', v: lane ? `${lane.title ?? lane.code} · ${lane.code}${paused}` : 'in the pool' },
+        // The holder by codename beside its code (#425); a lane with none reads its code alone.
+        { k: 'Lane', v: lane ? `${lane.title ?? lane.code} · ${lane.code}${lane.suggested_name ? ` · ${lane.suggested_name}` : ''}${paused}` : 'in the pool' },
         { k: 'Assistant', v: lane ? `${assistantLabel(lane.family, lane.version)} · ${lane.model ?? 'model not reported'}` : 'not reported' },
         { k: 'Time', v: time },
         { k: 'Rounds', v: roundsLabel(t.rounds) || 'none yet' },
@@ -130,8 +140,6 @@ export function toTaskView(view: RelayTaskView, o: { back: { label: string; href
       rows: runRows(view.run),
       note: `Totals over the task's turns · ${view.run.reported_turns} of ${view.run.turns} reported`,
     },
-    handoff: view.handoff
-      ? { label: `Handed off · ${hhmm(view.handoff.at)}`, brief: view.handoff.body_md, docs: view.handoff.docs }
-      : null,
+    handoff: view.handoff ? { label: handoffLabel(view), brief: view.handoff.body_md, docs: view.handoff.docs } : null,
   };
 }

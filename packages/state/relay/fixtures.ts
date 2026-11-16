@@ -778,6 +778,8 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       body_md: 'Move the diagrams header onto ScreenShell; behaviour unchanged.',
       docs: ['coord/briefs/L1-diagrams.md', 'docs/prd/modules/diagrams.md'],
       at: minutesAgo(240),
+      by_lane: LANE.L0,
+      to_lane: LANE.L1,
     },
     history: history(),
     steps: [],

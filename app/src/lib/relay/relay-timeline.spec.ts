@@ -138,6 +138,23 @@ describe('buildTimeline', () => {
     expect(rows[0].title).toBe('Handed over L2 → L3');
   });
 
+  it('a lane with a codename is named by it (#425)', () => {
+    const rows = buildTimeline({
+      ...view([
+        {
+          ...base('handed_over'),
+          kind: 'handed_over',
+          props: { from_lane: 'lane-2', from_state: 'working', to_lane: 'lane-3' },
+        } as unknown as RelayAction,
+      ]),
+      lanes: [
+        { id: 'lane-2', code: 'L2', title: 'Worker', suggested_name: 'cobalt-lyra' },
+        { id: 'lane-3', code: 'L3', title: 'Reviewer', suggested_name: 'coral-spica' },
+      ],
+    });
+    expect(rows[0].title).toBe('Handed over cobalt-lyra → coral-spica');
+  });
+
   it('a re-offer names its lane, or the queue', () => {
     const toLane = buildTimeline(
       view([{ ...base('reoffered'), kind: 'reoffered', props: { to_lane: 'lane-3' } } as unknown as RelayAction]),

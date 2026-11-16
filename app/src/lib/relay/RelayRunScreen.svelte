@@ -69,7 +69,7 @@
               {run.banner.text}
             </p>
           </div>
-          <dl class="m-0 flex gap-4.5">
+          <dl class="m-0 flex flex-wrap gap-4.5">
             {#each run.facts as fact (fact.label)}
               <div data-run-fact class="flex flex-col items-end">
                 <dt class="text-xs uppercase tracking-[0.12em] text-ink-mute">{fact.label}</dt>

@@ -256,7 +256,7 @@ and file what is still true as an issue.
     (`Capabilities { history, comment, fields }`; PUT `/fields` → 409 `fields_unsupported`).
     A ticket in a public or internal repository or project gets no comment (`not_private`,
     re-checked each pass). A 403 that names a rate limit is `rate_limited`. Connect stays
-    read-only; write-back needs GitLab `api` or GitHub Issues: read and write.
+    read-only (spec `tracker-metrics-writeback`); write-back needs GitLab `api` or GitHub Issues: read and write.
   - **Still open:** W8 (#443), the live check after merge: probes X2 (the marker comes back
     verbatim), X3 (an edit sends no notification), X5 (a private repo is commented, a
     public one is not) and X6 (a GitHub comment edit after an issue transfer), against test

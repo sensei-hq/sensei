@@ -93,6 +93,8 @@ export interface RelayStateOptions {
 /** An event that carries its row (#418 shape), by the entity state that holds it. */
 const ROW_ENTITIES = ['lane', 'run', 'decision', 'message', 'item'] as const;
 type RowEntity = (typeof ROW_ENTITIES)[number];
+/** One row the stream delivered, its event keys stripped. */
+type RowChange = { entity: RowEntity; action: RelayStreamEvent['action']; row: { id: string } };
 /** Keys a row event carries about the event, not the row (#418): what happened, why,
  *  and the id it is named by today beside `id`. */
 const EVENT_KEYS: Record<RowEntity, readonly string[]> = {
@@ -161,6 +163,10 @@ export class RelayState {
   #nowAgain = false;
   #queueInFlight: Promise<void> | null = null;
   #queueAgain = false;
+  /** Stream rows applied while a read is out, in arrival order: the read's snapshot is
+   *  older than them, so they are applied again on top of it when it lands (#450). */
+  #nowSince: RowChange[] | null = null;
+  #queueSince: RowChange[] | null = null;
   #createInFlight: Promise<string | null> | null = null;
   #runActionInFlight: Promise<string | null> | null = null;
 
@@ -285,6 +291,19 @@ export class RelayState {
     // The event's own keys say what happened; they are not the row's fields.
     const row: Record<string, unknown> & { id: string } = { ...data };
     for (const key of EVENT_KEYS[entity]) delete row[key];
+    const change: RowChange = { entity, action, row };
+    this.#applyChange(change);
+    // A read out while this row arrived holds an older snapshot: the row is applied
+    // again when it lands (#426 found a lane vanish from the crew mid-read; #450).
+    (entity === 'item' ? this.#queueSince : this.#nowSince)?.push(change);
+    // A lane in a crew this screen has not read: a coordinator minted it — read the crew.
+    const crew = entity === 'lane' && action !== 'remove' ? (row as { crew_id?: unknown }).crew_id : undefined;
+    if (typeof crew === 'string' && this.#summary && !this.#summary.crews.some((c) => c.id === crew)) {
+      void this.reReadNow();
+    }
+  }
+
+  #applyChange({ entity, action, row }: RowChange): void {
     const target = {
       lane: this.lanes,
       run: this.runs,
@@ -298,19 +317,6 @@ export class RelayState {
     // The daemon adds a row it may already hold (a lane re-registers): restate it.
     const restate = action === 'add' && target.get(row.id) !== undefined;
     target.apply({ action: restate ? 'update' : action, entity, data: row });
-    // A read out while this row arrived holds an older snapshot; when it lands it
-    // replaces the rows, this one too — so read again after it (#426: a lane that
-    // registered during a re-read vanished from the crew until the next event).
-    if (entity === 'item') {
-      if (this.#queueInFlight) this.#queueAgain = true;
-    } else if (this.#nowInFlight) {
-      this.#nowAgain = true;
-    }
-    // A lane in a crew this screen has not read: a coordinator minted it — read the crew.
-    const crew = entity === 'lane' && action !== 'remove' ? (row as { crew_id?: unknown }).crew_id : undefined;
-    if (typeof crew === 'string' && this.#summary && !this.#summary.crews.some((c) => c.id === crew)) {
-      void this.reReadNow();
-    }
   }
 
   /** Subscribe to the source's stream; returns the teardown (call on destroy). Each open
@@ -361,15 +367,19 @@ export class RelayState {
   }
 
   async #readNow(): Promise<void> {
+    const since: RowChange[] = [];
+    this.#nowSince = since;
     try {
       const answer = await this.source.readNow(this.filter);
       if (answer.ok) {
         this.#hydrateNow(answer.data);
+        for (const change of since) this.#applyChange(change);
         this.nowError = null;
       } else {
         this.nowError = answer.error;
       }
     } finally {
+      this.#nowSince = null;
       this.reading = false;
       this.#nowInFlight = null;
     }
@@ -380,15 +390,19 @@ export class RelayState {
   }
 
   async #readQueue(): Promise<void> {
+    const since: RowChange[] = [];
+    this.#queueSince = since;
     try {
       const answer = await this.source.readQueue(this.filter);
       if (answer.ok) {
         this.#hydrateQueue(answer.data);
+        for (const change of since) this.#applyChange(change);
         this.queueError = null;
       } else {
         this.queueError = answer.error;
       }
     } finally {
+      this.#queueSince = null;
       this.readingQueue = false;
       this.#queueInFlight = null;
     }

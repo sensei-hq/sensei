@@ -173,15 +173,19 @@ async function crewStage(): Promise<void> {
   await expect.poll(() => countOf('[data-member]'), { timeout: STREAM }).toBe(1);
   lanes.a = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'cobalt-e2e' });
   lanes.b = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'coral-e2e' });
-  // Every member's card, by its codename, as the stream brings each in. One poll for
-  // the settled roster: a read that was out while a lane registered lands with its
-  // older snapshot and is followed at once by a fresh one (the roster can blink).
-  await expect
-    .poll(async () => {
-      const cards: string[] = JSON.parse(await textsOf('[data-member]'));
-      return { cards: cards.length, names: ['atlas-e2e', 'cobalt-e2e', 'coral-e2e'].filter((n) => cards.some((c) => c.includes(n))) };
-    }, { timeout: STREAM })
-    .toEqual({ cards: 3, names: ['atlas-e2e', 'cobalt-e2e', 'coral-e2e'] });
+  // Every member's card, by its codename, as the stream brings each in.
+  const roster = async () => {
+    const cards: string[] = JSON.parse(await textsOf('[data-member]'));
+    return { cards: cards.length, names: ['atlas-e2e', 'cobalt-e2e', 'coral-e2e'].filter((n) => cards.some((c) => c.includes(n))) };
+  };
+  const full = { cards: 3, names: ['atlas-e2e', 'cobalt-e2e', 'coral-e2e'] };
+  await expect.poll(roster, { timeout: STREAM }).toEqual(full);
+  // Once all three are in, the roster holds: a read that was out while a lane
+  // registered lands without dropping it (#450 — it used to blink back to two).
+  for (let i = 0; i < 10; i += 1) {
+    expect(await roster()).toEqual(full);
+    await new Promise((r) => setTimeout(r, 200));
+  }
   // The Crew button's badge counts them too (its name carries the count).
   await expect.poll(() => attrOf('[data-screen-tools] [aria-label^="Crew"]', 'aria-label'), { timeout: STREAM }).toBe('Crew · 3');
 
