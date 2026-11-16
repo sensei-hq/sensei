@@ -82,8 +82,8 @@ export class RelayCrew {
   ) {}
 
   async register(body: RegisterBody): Promise<RelayLane> {
-    const r = await call<Registered>(this.fetch, this.base, '/api/relay/register', null, body);
-    return new RelayLane(this, r);
+    const registered = await call<Registered>(this.fetch, this.base, '/api/relay/register', null, body);
+    return new RelayLane(this, registered);
   }
 }
 
@@ -96,12 +96,12 @@ export class RelayLane {
 
   constructor(
     readonly crew: RelayCrew,
-    r: Registered,
+    registered: Registered,
   ) {
-    this.id = r.lane_id;
-    this.crewId = r.crew_id;
-    this.name = r.suggested_name ?? r.lane_title ?? null;
-    this.#token = r.lane_token;
+    this.id = registered.lane_id;
+    this.crewId = registered.crew_id;
+    this.name = registered.suggested_name ?? registered.lane_title ?? null;
+    this.#token = registered.lane_token;
   }
 
   #post<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
@@ -127,8 +127,8 @@ export class RelayLane {
     recommended?: string;
     context?: string;
   }): Promise<string> {
-    const r = await this.#post<{ decision_id: string }>('/api/relay/decisions', { asked_of: 'person', ...body });
-    return r.decision_id;
+    const created = await this.#post<{ decision_id: string }>('/api/relay/decisions', { asked_of: 'person', ...body });
+    return created.decision_id;
   }
 
   report(taskId: string, body: ReportBody): Promise<{ state?: string }> {
@@ -154,7 +154,7 @@ export class RelayLane {
   }
 
   /** Run a call the journey expects may be refused: its result, or the refusal. */
-  async attempt<T>(
+  static async attempt<T>(
     run: () => Promise<T>,
   ): Promise<{ ok: true; value: T } | { ok: false; status: number; error: string | null; body: unknown }> {
     try {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2153 # API_URL/DB_URL arrive via eval of `supabase status` output, which shellcheck cannot see (line-level disable does not suppress this check)
 # P1 relay round-trip harness — proves the daemon↔Worker↔phone loop end-to-end
 # against LOCAL supabase + a running dojo Worker (default :5175).
 #
@@ -180,10 +181,11 @@ echo "$P2" | jq -e '.items[] | select(.id=="'"$INBOX_ID"'" and .status=="answere
   || fail "answer NOT re-surfaced past cursor $CURSOR, or run_id missing ($P2)"
 
 echo "== 6. a retired device token is refused on the daemon routes (401) =="
-for route in "GET relay/inbox?since=0" "GET artifacts" "GET rules"; do
-  set -- $route; M=$1; R=$2
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer relay-dev-device-token")
-  echo "   $M $R → $CODE"; [ "$CODE" = 401 ] || fail "a device token got $CODE on $M $R"
+# All three probes are bodyless GETs: iterate paths, no word-splitting.
+retired_routes=("relay/inbox?since=0" artifacts rules)
+for R in "${retired_routes[@]}"; do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' -X GET "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer relay-dev-device-token")
+  echo "   GET $R → $CODE"; [ "$CODE" = 401 ] || fail "a device token got $CODE on GET $R"
 done
 
 echo "== 7. a signed-in NON-member is refused on the daemon routes (403) =="
@@ -194,9 +196,12 @@ curl -s -o /dev/null -X POST "$API/auth/v1/admin/users" \
 OUT_JWT=$(curl -s -X POST "$API/auth/v1/token?grant_type=password" -H "apikey: $ANON_KEY" -H "$CT" \
   -d "{\"email\":\"$OUT_EMAIL\",\"password\":\"$PASS\"}" | jq -r '.access_token // empty')
 [ -n "$OUT_JWT" ] || fail "no outsider JWT"
-for route in "POST relay/session {\"run_id\":\"$RUN\"}" "POST relay/inbox {\"run_id\":\"$RUN\",\"kind\":\"chat\"}" \
-             "GET relay/inbox?since=0" "POST artifacts {}" "GET artifacts" "GET rules" "GET rules/resolved?ns=personal:dev"; do
-  set -- $route; M=$1; R=$2; B=${3:-}
+# Parallel arrays, not one split string per route: the JSON bodies must survive intact.
+route_methods=(POST POST GET POST GET GET GET)
+route_paths=(relay/session relay/inbox "relay/inbox?since=0" artifacts artifacts rules "rules/resolved?ns=personal:dev")
+route_bodies=("{\"run_id\":\"$RUN\"}" "{\"run_id\":\"$RUN\",\"kind\":\"chat\"}" "" "{}" "" "" "")
+for i in "${!route_methods[@]}"; do
+  M=${route_methods[$i]}; R=${route_paths[$i]}; B=${route_bodies[$i]}
   if [ -n "$B" ]; then CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer $OUT_JWT" -H "$CT" -d "$B")
   else CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer $OUT_JWT"); fi
   echo "   $M $R → $CODE"; [ "$CODE" = 403 ] || fail "non-member got $CODE on $M $R"

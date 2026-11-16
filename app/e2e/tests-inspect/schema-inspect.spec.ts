@@ -36,7 +36,7 @@ async function snap(tauriPage: TauriPageLike, name: string): Promise<void> {
 }
 
 /** Open the sidebar entry named `name` (a rokkit Tree row) and let its page render. */
-async function open(tauriPage: TauriPageLike, name: string): Promise<void> {
+async function openSidebarEntry(tauriPage: TauriPageLike, name: string): Promise<void> {
   await tauriPage.evaluate(`(() => {
     const row = [...document.querySelectorAll('[data-testid="schema-sidebar"] [data-tree-item-content]')]
       .find((n) => n.textContent.trim() === ${JSON.stringify(name)});
@@ -79,11 +79,11 @@ test('schema — sensei, dbd’s viewer over live data', async ({ tauriPage }) =
   console.log(`[inspect] schema stats: ${cards?.replace(/\s+/g, ' ').slice(0, 300)}`);
   expect(await card('Tables')).toBe(n(payload.tables.length));
   if (payload.enums?.length) expect(await card('Enums')).toBe(n(payload.enums.length));
-  expect(await tauriPage.evaluate(`!!document.querySelector('[data-graph-section="counts"]')`)).toBe(false);
-  expect(await tauriPage.evaluate(`!!document.querySelector('[data-graph-design-header]')`), 'only the tabs head the design').toBe(false);
-  expect(await tauriPage.evaluate(`!!document.querySelector('[data-testid="schema-sidebar"] [data-graph-design-home]')`)).toBe(false);
+  expect(await tauriPage.evaluate("!!document.querySelector('[data-graph-section=\"counts\"]')")).toBe(false);
+  expect(await tauriPage.evaluate("!!document.querySelector('[data-graph-design-header]')"), 'only the tabs head the design').toBe(false);
+  expect(await tauriPage.evaluate("!!document.querySelector('[data-testid=\"schema-sidebar\"] [data-graph-design-home]')")).toBe(false);
   const sideIsRight = (await tauriPage.evaluate(
-    `document.querySelector('[data-testid="schema-layout"]')?.lastElementChild?.getAttribute('data-testid') === 'schema-sidebar'`,
+    "document.querySelector('[data-testid=\"schema-layout\"]')?.lastElementChild?.getAttribute('data-testid') === 'schema-sidebar'",
   )) as boolean;
   expect(sideIsRight, 'the sidebar sits on the right').toBe(true);
   await snap(tauriPage, 'schema-overview');
@@ -96,7 +96,7 @@ test('schema — sensei, dbd’s viewer over live data', async ({ tauriPage }) =
   })()`);
   await settle(4000);
   const nodes = (await tauriPage.evaluate(
-    `document.querySelectorAll('[data-testid="schema-diagram"] [data-graph-node]').length`,
+    "document.querySelectorAll('[data-testid=\"schema-diagram\"] [data-graph-node]').length",
   )) as number;
   console.log(`[inspect] schema diagram: ${nodes} nodes for ${payload.tables.length} tables`);
   expect(nodes).toBeGreaterThanOrEqual(payload.tables.length);
@@ -104,13 +104,13 @@ test('schema — sensei, dbd’s viewer over live data', async ({ tauriPage }) =
 
   // A table's page, and an enum's with its values.
   const aTable = payload.tables[0];
-  await open(tauriPage, aTable.name);
-  expect(await tauriPage.evaluate(`document.querySelector('[data-testid="schema-page"]')?.getAttribute('data-page')`)).toBe('table');
+  await openSidebarEntry(tauriPage, aTable.name);
+  expect(await tauriPage.evaluate("document.querySelector('[data-testid=\"schema-page\"]')?.getAttribute('data-page')")).toBe('table');
   await snap(tauriPage, 'schema-table');
   const anEnum = payload.enums?.[0];
   if (anEnum) {
-    await open(tauriPage, anEnum.name);
-    expect(await tauriPage.evaluate(`document.querySelector('[data-testid="schema-page"]')?.getAttribute('data-page')`)).toBe('enum');
+    await openSidebarEntry(tauriPage, anEnum.name);
+    expect(await tauriPage.evaluate("document.querySelector('[data-testid=\"schema-page\"]')?.getAttribute('data-page')")).toBe('enum');
     const page = await text(tauriPage, '[data-testid="schema-page"]');
     expect(page).toContain(anEnum.values[0]);
     await snap(tauriPage, 'schema-enum');

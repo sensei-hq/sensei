@@ -210,9 +210,9 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
     viewId: 'preview.relay.run',
     base: '/relay',
   }, { height: 720, phoneHeight: 1100 }),
-  entry('AddMember/setup', 'no crew yet: step 1 of 2, the coordinator', AddMember, { view: setupStep1(), oncopy: () => {}, onrole: () => {} }),
-  entry('AddMember/setup-step2', 'the coordinator in: step 2 of 2, a contributor; the line names the crew (#419, beyond the mockup line)', AddMember, { view: setupStep2(), oncopy: () => {}, onrole: () => {} }),
-  entry('AddMember/add', 'a crew at work: Add a member, contributors only', AddMember, { view: addContributor(), oncopy: () => {}, onrole: () => {} }),
+  entry('AddMember/setup', 'no crew yet: step 1 of 2, the coordinator', AddMember, { view: setupStep1(), oncopy: () => {}, onrole: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
+  entry('AddMember/setup-step2', 'the coordinator in: step 2 of 2, a contributor; the line names the crew (#419, beyond the mockup line)', AddMember, { view: setupStep2(), oncopy: () => {}, onrole: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
+  entry('AddMember/add', 'a crew at work: Add a member, contributors only', AddMember, { view: addContributor(), oncopy: () => {}, onrole: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
   entry('TaskHeader/merged', 'the task header: back, title and state, the ticket pill, the facts', TaskHeader, { header: mockupTaskHeader() }),
   entry('TaskHeader/unnamed', 'the task header: a lane with no codename reads its code alone', TaskHeader, { header: mockupTaskHeaderUnnamed() }),
   entry('RunDetails/folded', 'Run details, folded to its line (open it: a value nobody reported reads so)', RunDetails, { run: mockupRunDetails() }),

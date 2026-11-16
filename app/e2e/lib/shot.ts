@@ -60,7 +60,7 @@ export async function shot(
   // the settle that matters.
   try {
     await tauriPage.evaluate(
-      `new Promise((r) => { setTimeout(r, 1000); requestAnimationFrame(() => requestAnimationFrame(r)); })`,
+      'new Promise((r) => { setTimeout(r, 1000); requestAnimationFrame(() => requestAnimationFrame(r)); })',
     );
   } catch {
     /* the capture below reports the breakage */

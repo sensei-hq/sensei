@@ -705,6 +705,12 @@ describe('write-back (tracker-metrics-writeback W8, W-UI)', () => {
     );
   });
 
+  it('an unknown write-back state still says something, never undefined', () => {
+    const s = new TrackerIntegration(daemon([{ ok: true, data: [] }]).api, P);
+    const w = wb({ state: 'paused' as unknown as TrackerConnection['writeback']['state'] });
+    expect(s.writebackLine(row({ writeback: w }))).toBe('Write-back is in an unknown state.');
+  });
+
   it('the board stays as it was until the daemon answers, and a second click sends nothing', async () => {
     let answer: (r: ApiResult<TrackerConnection>) => void = () => {};
     let requests = 0;
