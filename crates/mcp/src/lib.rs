@@ -147,7 +147,8 @@ pub fn daemon_request_for(
     // Each family of tools is its own dispatcher (DeepSource RS-R1000: one function
     // of every tool had a cyclomatic complexity of 105).
     if let Some(req) = workspace_request(tool, args, repo_id, cwd)
-        .or_else(|| lookup_request(tool, args, repo_id, cwd))
+        .or_else(|| code_lookup_request(tool, args, repo_id))
+        .or_else(|| context_lookup_request(tool, args, repo_id, cwd))
         .or_else(|| knowledge_request(tool, args, repo_id, cwd))
         .or_else(|| relay_claim_request(tool, args))
         .or_else(|| relay_crew_request(tool, args))
@@ -259,15 +260,10 @@ fn workspace_request(
     })
 }
 
-/// Read lookups: patterns, the risk class, library capabilities, tickets, rules,
-/// commands and the layered context.
+/// Lookups about the code: patterns, duplicates, conventions, the risk class and
+/// library capabilities.
 /// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
-fn lookup_request(
-    tool: &str,
-    args: &Value,
-    repo_id: &str,
-    cwd: &str,
-) -> Option<Option<DaemonRequest>> {
+fn code_lookup_request(tool: &str, args: &Value, repo_id: &str) -> Option<Option<DaemonRequest>> {
     Some(match tool {
         // ── Pattern engine (direct /api/patterns endpoints) ─────────────────
         "match_pattern" => {
@@ -322,6 +318,19 @@ fn lookup_request(
             Some(DaemonRequest::get(format!("/api/libs/{name}/agents")))
         }
 
+        _ => return None,
+    })
+}
+
+/// Lookups about the work: tickets, rules, commands and the layered context.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn context_lookup_request(
+    tool: &str,
+    args: &Value,
+    repo_id: &str,
+    cwd: &str,
+) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Governance rules ────────────────────────────────────────────────
         // ── Tickets (TG5, D63) ───────────────────────────────────────────────
         // `get_ticket` reads the ticket live and starts work on it in the cwd's
