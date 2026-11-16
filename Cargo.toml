@@ -18,7 +18,12 @@ resolver = "2"
 [workspace.dependencies]
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
-dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.27.9" }
+# Postgres and deploy only (#446): sensei never opens a SQLite database through dbd, and
+# dbd's default `sqlite` feature links sqlx-sqlite's libsqlite3-sys, which pins the CVE'd
+# SQLite (RUSTSEC-2026-0459). rusqlite (the transcript readers) is then the one link.
+# dbd 0.27.10 takes sqlx without its default features, which otherwise pulled sqlx-sqlite into
+# this resolution even with dbd's `sqlite` off (sensei-hq/dbd#118).
+dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.27.10", default-features = false, features = ["postgres", "deploy"] }
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sensei-bootstrap = { path = "crates/bootstrap" }
