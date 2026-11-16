@@ -186,7 +186,7 @@ async function crewStage(): Promise<void> {
   lanes.coord = await crew.register({ role: 'coordinator', family: 'e2e', goal: 'run journey crew', repo_key: REPO_KEY, suggested_name: 'atlas-e2e' });
   await expect.poll(() => countOf('[data-member]'), { timeout: STREAM }).toBe(1);
   lanes.a = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'cobalt-e2e' });
-  lanes.b = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'coral-e2e' });
+  lanes.b = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'coral-e2e', host: 'cursor' });
   // Every member's card, by its codename, as the stream brings each in.
   const roster = async () => {
     const cards: string[] = JSON.parse(await textsOf('[data-member]'));
@@ -200,6 +200,9 @@ async function crewStage(): Promise<void> {
     expect(await roster()).toEqual(full);
     await new Promise((r) => setTimeout(r, 200));
   }
+  // The lane in an editor shows its host tag; the terminal lanes show none (#396).
+  const hosts = JSON.parse(await textsOf('[data-member-host]')) as string[];
+  expect(hosts).toEqual(['in Cursor']);
   // The Crew button's badge counts them too (its name carries the count).
   await expect.poll(() => attrOf('[data-screen-tools] [aria-label^="Crew"]', 'aria-label'), { timeout: STREAM }).toBe('Crew · 3');
 

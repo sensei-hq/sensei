@@ -26,6 +26,8 @@ export interface RegisterBody {
   model?: string;
   version?: string;
   capabilities?: string[];
+  /** The editor the session runs in (#396). */
+  host?: string;
 }
 
 interface Registered {
