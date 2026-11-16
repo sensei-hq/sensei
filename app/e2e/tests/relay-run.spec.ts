@@ -28,6 +28,7 @@ import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateToScreen, seedSetupComplete, DAEMON_URL } from '../helpers';
 import { RelayCrew, type RelayLane } from '../lib/relay-crew';
 import { shot } from '../lib/shot';
+import { seedJiraTicket } from '../lib/seed-ticket';
 
 const STREAM = 20_000;
 const EVIDENCE = 'test-results/relay-run';
@@ -35,6 +36,8 @@ const REPO_KEY = 'github.com/sensei-hq/e2e-run';
 // Unique per run: the shared e2e broker keeps every earlier run's items.
 const RUN_TAG = Date.now().toString(36);
 const ITEMS = [`Run journey ${RUN_TAG}: the first file`, `Run journey ${RUN_TAG}: the second file`];
+/** A ticket the e2e broker's seeded tracker holds (#449), unique per run like the items. */
+const TICKET = { key: `E2E-${RUN_TAG.toUpperCase()}`, title: `Run journey ${RUN_TAG}: the ticket` };
 
 /** A person route on the daemon (no lane token). */
 async function person<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -124,7 +127,7 @@ test.afterAll(async () => {
 test('the run, driven from the app end to end, every change from the stream', async ({ tauriPage }) => {
   test.setTimeout(600_000);
   tauri = tauriPage;
-  await test.step('1 · Queue: two items to the backlog, picked; Create run drafts it (no crew yet)', () => queueStage(tauriPage));
+  await test.step('1 · Queue: two items and a ticket to the backlog, picked; Create run drafts it (no crew yet)', () => queueStage(tauriPage));
   await test.step('2 · Crew: a coordinator and two contributors register and appear live; Start starts the draft', () => crewStage());
   await test.step('3 · Planner: Task 0 claimed, the person answers its question, the plan is reviewed and unpacks', () => plannerStage());
   await test.step('4 · Work: claims, steps, a report reviewed and merged by the gate — twice', () => workStage());
@@ -145,9 +148,18 @@ async function queueStage(tauriPage: TauriPageLike): Promise<void> {
     await expect(pickBox(title)).toBeVisible({ timeout: STREAM });
     await expect.poll(() => countOf(`[data-relay-section="triage"] [aria-label="Add to backlog: ${css(title)}"]`), { timeout: STREAM }).toBe(0);
   }
-  for (const title of ITEMS) await pickBox(title).click();
+  // A ticket from a synced tracker joins the backlog by its key (#449). No screen adds one
+  // yet (the tracker pull is slice 2), so the person route does, as a lane's calls do here;
+  // the app shows it from the stream with its ticket pill.
+  await seedJiraTicket(DAEMON_URL, TICKET.key, TICKET.title);
+  await person('POST', '/relay/backlog', { ticket_provider: 'jira', ticket_key: TICKET.key });
+  await expect(pickBox(TICKET.title)).toBeVisible({ timeout: STREAM });
+  const pills = JSON.parse(await textsOf('[data-relay-section="backlog"] [data-ticket]')) as string[];
+  expect(pills.some((p) => p.includes(TICKET.key))).toBe(true);
 
-  await button('Create run · 2').click();
+  for (const title of [...ITEMS, TICKET.title]) await pickBox(title).click();
+
+  await button('Create run · 3').click();
   const form = tauriPage.locator('[data-create-sprint]');
   await expect(form).toBeVisible();
   const field = (name: string) => `[data-create-sprint] [data-sprint-field="${name}"]`;
@@ -158,6 +170,8 @@ async function queueStage(tauriPage: TauriPageLike): Promise<void> {
   await typeInto(field('verify_cmd'), 'test -f README');
   await tauriPage.locator('[data-create-sprint] [data-sprint-submit]').click();
   await expect(form).toBeHidden({ timeout: STREAM });
+  // The ticket is the run's now, with the manual items: it leaves the backlog.
+  await expect.poll(() => countOf(`[data-relay-section="backlog"] [aria-label="Pick for a run: ${css(TICKET.title)}"]`), { timeout: STREAM }).toBe(0);
 
   // No crew: the run waits as a draft on the Crew view, Start waiting for the crew.
   await view('Crew').click();
