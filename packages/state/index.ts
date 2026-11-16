@@ -12,6 +12,7 @@ export {
   type RelayReads,
   type RelaySource,
   type RelaySprintDraft,
+  type RelayLaneView,
   type RelayStateOptions,
 } from './relay/relay-state.svelte.js';
 export {
