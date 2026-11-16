@@ -34,6 +34,8 @@ async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
 interface Lane {
   lane_id: string;
   lane_token: string;
+  /** The codename: offered, else minted by the broker (#419). */
+  suggested_name: string;
 }
 
 async function relayPost<T>(path: string, token: string | null, body: unknown): Promise<T> {
@@ -116,6 +118,10 @@ test.describe('Relay — timeline + steps over the live stream', () => {
       '[data-screen="relay"] [data-task-title]',
     );
     await expect(tauriPage.locator('[data-task-title]')).toContainText(TITLE);
+    // #425: the holder by codename in the facts; Handed off says by whom and to whom.
+    await expect(tauriPage.locator('[data-task-facts]')).toContainText(holder.suggested_name);
+    await expect(tauriPage.locator('[data-handoff-label]')).toContainText(`by ${coord.suggested_name}`);
+    await expect(tauriPage.locator('[data-handoff-label]')).toContainText(`→ ${holder.suggested_name}`);
     await expect(tauriPage.locator('[data-step="scaffold"]')).toHaveAttribute(
       'data-step-state',
       'open',
