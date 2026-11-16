@@ -46,7 +46,7 @@
         <RailMenuButton />
         <WorkspaceGlyph {icon} />
         <span data-component="workspace-name" class="text-sm font-semibold">{data.workspace?.name ?? '…'}</span>
-        <span class="text-xs text-ink-faint">· workspace window</span>
+        <span data-component="workspace-window-label" class="text-xs text-ink-faint">· workspace window</span>
     </div>
 
     <div class="flex flex-1 overflow-hidden">

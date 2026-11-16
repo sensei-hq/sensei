@@ -41,7 +41,9 @@ import { navigateTo, navigateToScreen, installErrorTrap, DAEMON_URL, seedSetupCo
 const AUDIT = `
   (function () {
     var out = { checked: 0, transparent: [] };
-    var wanted = /\\bbg-(ink|paper|paper-soft|paper-mute|primary|accent|accent-soft|success|warning|danger|info)\\b/;
+    // A resting background only: \`hover:bg-…\` asks for one on hover, and a button
+    // transparent at rest (the window's menu button, #420) is not a lost utility.
+    var wanted = /(^|\\s)bg-(ink|paper|paper-soft|paper-mute|primary|accent|accent-soft|success|warning|danger|info)\\b/;
     document.querySelectorAll('button[type="button"]').forEach(function (b) {
       var cls = String(b.className || '');
       if (!wanted.test(cls)) return;

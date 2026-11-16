@@ -159,7 +159,7 @@ test.describe('Workspace window — chrome', () => {
     // Titlebar: workspace name + "· workspace window" sub-label
     await expect(tauriPage.locator('[data-component="workspace-titlebar"]')).toBeVisible();
     const sub = await tauriPage.evaluate(
-      `document.querySelector('[data-component="workspace-titlebar"] span:last-child')?.textContent?.trim()`,
+      `document.querySelector('[data-component="workspace-titlebar"] [data-component="workspace-window-label"]')?.textContent?.trim()`,
     ) as string;
     expect(sub).toBe('· workspace window');
 
