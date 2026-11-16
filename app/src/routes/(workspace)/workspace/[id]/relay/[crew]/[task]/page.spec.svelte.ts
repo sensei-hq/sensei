@@ -119,6 +119,14 @@ describe('Relay · task — the header', () => {
     expect(one(c, '[data-screen="relay"]')).not.toBeNull();
   });
 
+  // #380: the shell fills its container only when nothing wraps it; a bare wrapper
+  // div grows with the content and the window clips it, so the page cannot scroll.
+  it('the e2e anchor is the shell itself, with no wrapper: the body scrolls (#380)', async () => {
+    const { c } = await open();
+    const anchor = need(one(c, '[data-screen="relay"]'), 'the relay anchor');
+    expect(anchor.hasAttribute('data-screen-shell'), 'the anchor is the shell').toBe(true);
+  });
+
   it('back to Relay, the title, its state, and the ticket button (provider + key, external)', async () => {
     const { c } = await open({ workspace: 'w2' });
     expect(one(c, 'a[data-back]')?.getAttribute('href')).toBe('/workspace/w2/relay');
@@ -180,13 +188,14 @@ describe('Relay · task — Run details', () => {
   it('a number nobody reported reads "not reported"; a reported zero reads 0', async () => {
     const { c } = await open();
     const detail = (key: string) => text(one(c, `[data-run-detail="${key}"]`));
-    // tokens_cache and peak_memory_mb are null in the fixture; compactions is 0.
-    expect(detail('tokens_cache')).toContain('not reported');
-    expect(detail('tokens_cache')).not.toMatch(/\b0\b/);
-    expect(detail('peak_memory_mb')).toContain('not reported');
-    expect(detail('compactions')).toMatch(/\b0\b/);
-    expect(detail('compactions')).not.toContain('not reported');
-    expect(detail('repository')).toContain('sensei-hq/sensei');
+    // Tokens cached and peak memory are null in the fixture; compactions is 0 (#425: rows
+    // are keyed by their label).
+    expect(detail('Tokens cached')).toContain('not reported');
+    expect(detail('Tokens cached')).not.toMatch(/\b0\b/);
+    expect(detail('Peak memory')).toContain('not reported');
+    expect(detail('Compactions')).toMatch(/\b0\b/);
+    expect(detail('Compactions')).not.toContain('not reported');
+    expect(detail('Repository')).toContain('sensei-hq/sensei');
   });
 
   it('the totals say how many turns reported', async () => {

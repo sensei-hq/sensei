@@ -1,31 +1,38 @@
-# Checkpoint — 2026-11-12 (lanes/relay-queue on lane/relay-autonomous-queue → develop)
+# Checkpoint — 2026-11-15 (lanes/relay-screen on lane/relay-screen-rebuild)
 
-**Slice:** Relay autonomous queue — phases 1–5 COMPLETE, merged into develop `072ffec80`; `origin/main` merged back
-(`99038648a`, LICENSE), CHANGELOG dated (`f0d4e3f8c`), bumped to v0.22.0 (`8e60fd7c1`), release PR develop → main
-open (user, 2026-11-12: "merge then minor"). Merging the PR and `make release` on main remain the user's. Plan: `docs/plan/2026-11-10-relay-autonomous-queue/{README,2-daemon,3-mcp,4-app}.md`
-(every step ticked, "Executed" notes per task).
+**Slice:** Relay screen rebuild to mockup r1, each component benched against the mockup (desktop + phone ×
+light/dark × kanji/icon). Design `docs/design/2026-11-12-relay-screen-rebuild.md`; issues #418–#429 (#429 = rig).
+User ruling 2026-11-14: one shell — fix rokkit, never patch per screen; reuse rokkit components over local copies.
+Catalogue spec `docs/spec/2026-11-14-shared-component-catalogue.md` approved (dōjō `/preview` too, Rule 6).
 
-**Done:**
-- Phases 1–4: DB `b9eb57ac2` on develop; daemon cutover live + `scripts/relay-queue-smoke.sh` PASSED; seven `relay_*`
-  MCP tools installed; app sprint band / create-sprint / floating reviews, `relay-sprint` e2e PASSED; service + app
-  installed.
-- 5.1 docs sync `616ebf188` (PRD, data model, architecture, journeys, features, design status, CHANGELOG).
-- 5.2 issues: #399 #400 #401 #402 #403 #404 #405 closed with comments; #415 narrowed + retitled; #398 #396 #393
-  noted; backlog row `42de5033e`.
-- 5.3 verification on the final tree: fmt + clippy (CI flags) clean; `make test` green end to end — crates, app unit
-  3418, dōjō unit 2400, svelte-check, plugin, SQL 100 files (after `scripts/deploy-dojo-db.sh` converged the stale
-  local Supabase). Branch-caused failures fixed red-first: `e4dc5f2d2`+`fa82e955b` (walk: blanket `impl<T> … for T`
-  invented a type), `ac4951b65` (#161 typed inputs), `2e5265d39` (ratchet 1,136 → 1,153, measured).
-- README risk "upgrade path on other machines" resolved: v0.21.1 ships no `relay` schema; the installer reconciles.
+**Done (red-first):**
+- Earlier: rokkit 1.15.4 (stat cards, toolbar kind/count, fonts); nudge end to end; `/preview` + rig; scroll test;
+  relay toolbar/Pill on rokkit; TaskHistory on `<Timeline marker="dot">`; MemberCard host tag (`editorTag`, 1.15.5).
+- 2026-11-15: rokkit #184 (List `selectable={false}` + `variant="card"`) + #185 (ScreenInfo spec — rokkit
+  coverage job had been red since 1.15.5) → **rokkit 1.15.6 published**. LaneList + CompletedList on display-only
+  List cards: red `a09b0797b`, green `382022f51`; app + dōjō `^1.15.6`. Catalogue Order step 1 done.
+- StatCard fixtures on the bench (red `b2c8c10cd`, green `8e75d54b3`): eight states from `toRelayShell`, drawn as the
+  stats band draws them; preview fixtures may compute props from the view (`propsFor`).
+- #419 wrap-up: guidance v2 (codename, nudge, closed crew → stop; `ce92c3ba2`), lanes.md §4, live + e2e DBs
+  reconciled (`dbd diff` clean), daemon installed, relay e2e 8/8. Editor tag → #396. #419 closes on lane merge.
+- #424 runs (2026-11-15, red→green each): state `runList`/`startRun`/`cancelRun` (`41bbbefb2`); selectors draft
+  card + `toPastRuns`; RunCard Start/Cancel + PastRunsList + runs-read Notice; past-run view `relay/runs/[run]`
+  (`toArchivedRun`, RelayRunScreen, both windows); bench fixtures. #424 UI done (its e2e pin is #426).
+- #426 journey GREEN (`app/e2e/tests/relay-run.spec.ts`, 5 steps, 3.2 min; relay e2e 9/9): fixed on the way —
+  Create run trigger (#420 regression), silent +, refusal code→reason, closed crews off Now (+their questions),
+  stream row lost to a stale read, vitest TZ pinned. Daemon reinstalled (release, with the now fixes).
+- sensei v0.22.1 released (notarized, tap, dōjō deployed); shipped issues closed (memory: close on merge).
 
-**Remaining (user's call):** fix develop's two pre-existing CI reds (bootstrap `sql_test_runner` on CI; `cargo audit`
-RUSTSEC-2026-0459) so the protected-branch PR goes green → merge the PR → `make release` on main → verify the shipped
-artifact reproduces `scripts/relay-queue-smoke.sh` and the diagrams section.
+**Remaining (in order):** #426 gaps (seeded ticket item; screenshots blank #284) · roster blink (merge reads into
+stream rows) · then catalogue Order 2–5; merge the lane to develop when the rebuild is called done. Then catalogue Order 2–5 (guards, dōjō `/preview`, families; QueueSection and
+dōjō ListSection need their row controls inside display-only rows). Queued: #446 (sqlx 0.9 / SQLite CVE), #447.
 
-**Next command:** `gh pr checks <release PR>`; when green and merged: `git checkout main && git pull && make release`.
+**Next command:** decide with the user: merge the relay rebuild to develop now, or close the #426 gaps first.
 
-**Open questions (user):** none — the release is in flight; the diagrams fix is queued behind it.
+**Open questions (user):** none.
 
-**Known broken:** the diagrams section on a released (main) app against a develop daemon — main ⇄ develop discrepancy,
-queued in `docs/backlog.md` "Open — not yet filed". `sensei_test` (Rust template) is stamped for this DDL tree, which
-develop shares after the merge.
+**Known broken (pre-existing, not from the List change — verified by a capture without it):**
+- Phone `/preview/all`: the fixture index overlaps the samples (preview chrome).
+- Phone LaneList: a long state pill ("approved, not merged") wraps under the name since rokkit 1.15.5's pill.
+- CONTRACT §15 auto-nudge for non-review waits not built (`task.waiting` gap). Dev Vite binds IPv6 `localhost`
+  only. Lane test DB: re-apply a changed view by hand (self-apply skips).

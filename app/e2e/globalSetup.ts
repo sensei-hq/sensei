@@ -25,6 +25,7 @@ import { createConnection } from 'net';
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
 import { isolatedHomeEnv } from './isolated-home';
+import { psqlBin } from './lib/psql';
 
 /** The daemon's `/health` payload — the fields this setup reads. */
 type DaemonHealth = {
@@ -47,17 +48,6 @@ const DAEMON_PORT = 7744;
 const INSTANCE  = 'e2e';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
-/** Resolve psql: PATH first, then the homebrew locations (a spawned app env may not carry the user's PATH). */
-function psqlBin(): string {
-  for (const candidate of ['psql', '/opt/homebrew/bin/psql', '/usr/local/bin/psql']) {
-    try {
-      execFileSync(candidate, ['--version'], { stdio: 'ignore' });
-      return candidate;
-    } catch { /* not here */ }
-  }
-  throw new Error('[globalSetup] psql not found (PATH, /opt/homebrew/bin, /usr/local/bin)');
-}
 
 /**
  * Seed the linked default persona the relay lane API requires. Idempotent:
@@ -224,11 +214,11 @@ export default async function globalSetup(): Promise<void> {
   }
   console.log(`[globalSetup] Daemon DB verified: ${health.dbName}`);
 
-  // 5b. Relay sign-in seed (F8): a linked default persona for the e2e DB,
-  //     which has no sign-ins by design. (Relay itself needs no sign-in —
-  //     local identity runs unlinked — but the seed keeps the linked-state
-  //     arm exercised.) One idempotent row — the same shape the daemon's
-  //     own relay tests seed. A bare linked row carries no tokens, no renewal, and no
+  // 5b. Relay sign-in seed (F8): the lane API requires a linked default
+  //     persona (`relay_signin_required` otherwise), and a fresh e2e DB has
+  //     no sign-ins by design. One idempotent row — the same shape the
+  //     daemon's own relay tests seed — so the relay specs can register
+  //     crews. A bare linked row carries no tokens, no renewal, and no
   //     memberships, so the identity specs' clean-launch expectations hold
   //     (proven by running them with the seed in place).
   await seedRelayPersona(expectedDb);

@@ -3,7 +3,7 @@
   // with the back link to the main Relay.
   import { appState } from '$lib/appstate.svelte.js';
   import { relayApi } from '$lib/relay-api.js';
-  import { RelayTaskState } from '$lib/relay/relay-task-state.svelte.js';
+  import { RelayTaskState } from '@sensei/state';
   import { subscribeTaskStream } from '$lib/relay/relay-task-stream.js';
   import { crewTail } from '$lib/relay/relay-format.js';
   import RelayTaskScreen from '$lib/relay/RelayTaskScreen.svelte';

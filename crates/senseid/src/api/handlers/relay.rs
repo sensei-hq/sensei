@@ -64,11 +64,16 @@ use crate::db::pg_store::relay::{
     RelayCaller, RelayCheckpointInput, RelayClaim, RelayClaimedReview, RelayClaimedTask,
     RelayCreateRunInput, RelayDecisionOption, RelayFileInput, RelayFindingInput, RelayGateInput,
     RelayHandoverInput, RelayHeartbeatOutput, RelayLaneSession, RelayLimitPauseInput,
-    RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayPlanInput, RelayReadFilter,
-    RelayRegisterInput, RelayReleaseInput, RelayReportInput, RelayResourceRequest,
-    RelayReviewInput, RelayStepInput, RelayTicketInput, RelayTriageInput,
+    RelayMergeInput, RelayMessageInput, RelayMessageTo, RelayNudge, RelayPlanInput,
+    RelayReadFilter, RelayRegisterInput, RelayReleaseInput, RelayReportInput, RelayResourceRequest,
+    RelayReviewInput, RelayStartedRun, RelayStepInput, RelayStepOutput, RelayTicketInput,
+    RelayTriageInput,
 };
 use crate::relay::envelope::{LaneEnvelope, empty_envelope};
+use crate::relay::rows::{
+    decision_asked, item_added, item_leaving, message_sent, with_lane_row, with_run_row,
+    with_task_row,
+};
 use crate::relay::{
     DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
     RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
@@ -147,13 +152,42 @@ fn emit(state: &AppState, op: &str) {
 }
 
 /// A task changed: the screen re-reads that task's view (F8).
-fn emit_task(state: &AppState, op: &str, task_id: &Uuid) {
-    let _ = state.event_tx.send(StateEvent::relay_task(op, task_id));
+/// The event carries the task's header (#418).
+async fn emit_task(state: &AppState, op: &str, task_id: &Uuid) {
+    let event = with_task_row(&state.pg, StateEvent::relay_task(op, task_id), task_id).await;
+    let _ = state.event_tx.send(event);
+}
+
+/// A step as the wire carries it (the step route's answer and the step event).
+fn step_json(out: &RelayStepOutput) -> serde_json::Value {
+    serde_json::json!({
+        "key": out.key,
+        "title": out.title,
+        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
+        "reason": out.reason,
+        "updated_at": out.updated_at,
+    })
+}
+
+/// A step was created or restated: the screen applies it without re-reading (F8).
+fn emit_step(state: &AppState, task_id: &Uuid, out: &RelayStepOutput) {
+    let _ = state.event_tx.send(StateEvent::relay_step(task_id, &step_json(out), out.created));
 }
 
 /// A lane's crew membership changed: the Lanes section follows.
-fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uuid) {
-    let _ = state.event_tx.send(StateEvent::relay_lane(change, lane_id, crew_id));
+/// A run reached a lifecycle point: the event carries its band row (#418).
+async fn emit_run(state: &AppState, change: RunChange, run_id: &Uuid, crew_id: &Uuid) {
+    let event =
+        with_run_row(&state.pg, StateEvent::relay_run(change, run_id, crew_id), run_id).await;
+    let _ = state.event_tx.send(event);
+}
+
+/// The event carries the lane's Now row (#418); a removal carries its id.
+async fn emit_lane(state: &AppState, change: LaneChange, lane_id: &Uuid, crew_id: &Uuid) {
+    let removed = matches!(change, LaneChange::Unregistered);
+    let event = StateEvent::relay_lane(change, lane_id, crew_id);
+    let event = if removed { event } else { with_lane_row(&state.pg, event, lane_id).await };
+    let _ = state.event_tx.send(event);
 }
 
 // ─── Wire bodies ───
@@ -257,6 +291,16 @@ pub(crate) struct CreateRunBody {
     repo_key: Option<String>,
     workspace_id: Option<String>,
     config: Option<RunConfigBody>,
+    /// Start it in the same step (#419); else the run is a draft.
+    #[serde(default)]
+    start: bool,
+}
+
+/// `POST /relay/runs/{id}/start` (#419): the crew, when the person names one.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StartRunBody {
+    crew_id: Option<String>,
 }
 
 /// The gate's knobs (F11: an unknown knob is a caller bug, not a silent
@@ -383,11 +427,11 @@ pub(crate) async fn claim_next(
         .map_err(err)?;
     let (claim_type, task) = match &claim {
         RelayClaim::Review(review) => {
-            emit_task(&state, "claim_review", &review.task_id);
+            emit_task(&state, "claim_review", &review.task_id).await;
             ("review", claimed_review_json(review))
         }
         RelayClaim::Task(task) => {
-            emit_task(&state, "claim", &task.task_id);
+            emit_task(&state, "claim", &task.task_id).await;
             ("task", claimed_task_json(task))
         }
         RelayClaim::None => ("none", serde_json::Value::Null),
@@ -409,7 +453,7 @@ pub(crate) async fn claim_task(
         .relay_claim_task(session.user_id, lane_id, task_id, chrono::Utc::now())
         .await
         .map_err(err)?;
-    emit_task(&state, "claim", &task_id);
+    emit_task(&state, "claim", &task_id).await;
     ok(serde_json::json!({ "claim_type": "task", "task": claimed_task_json(&task) }))
 }
 
@@ -435,7 +479,7 @@ pub(crate) async fn checkpoint(
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
-    let checkpointed_at = state
+    let out = state
         .pg
         .relay_checkpoint_task(
             session.user_id,
@@ -445,10 +489,13 @@ pub(crate) async fn checkpoint(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "checkpoint", &task_id);
+    for step in &out.steps {
+        emit_step(&state, &task_id, step);
+    }
+    emit_task(&state, "checkpoint", &task_id).await;
     ok(serde_json::json!({
         "task_id": task_id.to_string(),
-        "checkpointed_at": iso(checkpointed_at),
+        "checkpointed_at": iso(out.checkpointed_at),
     }))
 }
 
@@ -472,7 +519,7 @@ pub(crate) async fn release(
         })
         .await
         .map_err(err)?;
-    emit_task(&state, "release", &task_id);
+    emit_task(&state, "release", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "kind": serde_json::to_value(out.kind).unwrap_or(serde_json::Value::Null),
@@ -495,7 +542,8 @@ pub(crate) async fn limit_resume(
             LaneChange::Resumed(LaneReason::LimitPauseEnded),
             &lane_id,
             &session.crew_id,
-        );
+        )
+        .await;
     }
     ok(serde_json::json!({ "resumed": resumed }))
 }
@@ -544,6 +592,11 @@ pub(crate) async fn create_run(
         .map(|id| parse_uuid(id, "item_ids[]"))
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
+    // Read before the write: each remove names the id the screen holds.
+    let mut leaving = Vec::with_capacity(item_ids.len());
+    for item_id in &item_ids {
+        leaving.extend(item_leaving(&state.pg, item_id, "planned").await);
+    }
     let config = match body.config {
         Some(config) => serde_json::to_value(config)
             .map_err(|e| err(RelayError::Internal(format!("run config: {e}"))))?,
@@ -554,6 +607,7 @@ pub(crate) async fn create_run(
         .relay_create_run(
             user_id,
             RelayCreateRunInput {
+                start: body.start,
                 crew_id: body
                     .crew_id
                     .as_deref()
@@ -576,18 +630,102 @@ pub(crate) async fn create_run(
         )
         .await
         .map_err(err)?;
-    let _ =
-        state.event_tx.send(StateEvent::relay_run(RunChange::Created, &out.run_id, &out.crew_id));
-    emit_task(&state, "plan", &out.planning_task_id);
-    Ok((
-        StatusCode::CREATED,
-        Json(serde_json::json!({
-            "run_id": out.run_id.to_string(),
-            "planning_task_id": out.planning_task_id.to_string(),
-            "crew_id": out.crew_id.to_string(),
-            "status": "planning",
-        })),
-    ))
+    let Some(started) = out.started else {
+        // A draft: no crew, so every stream hears of it (#419).
+        let _ =
+            state.event_tx.send(StateEvent::relay_run_crewless(RunChange::Drafted, &out.run_id));
+        for event in leaving {
+            let _ = state.event_tx.send(event);
+        }
+        return Ok((
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "run_id": out.run_id.to_string(),
+                "planning_task_id": null,
+                "crew_id": null,
+                "status": "draft",
+            })),
+        ));
+    };
+    emit_run(&state, RunChange::Created, &out.run_id, &started.crew_id).await;
+    // The picked items leave the queue (#418).
+    for event in leaving {
+        let _ = state.event_tx.send(event);
+    }
+    emit_task(&state, "plan", &started.planning_task_id).await;
+    Ok((StatusCode::CREATED, Json(started_json(&started))))
+}
+
+fn started_json(started: &RelayStartedRun) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": started.run_id.to_string(),
+        "planning_task_id": started.planning_task_id.to_string(),
+        "crew_id": started.crew_id.to_string(),
+        "status": "planning",
+    })
+}
+
+/// `GET /relay/runs` (#419): the open runs and the ended ones (past runs).
+pub(crate) async fn runs(State(state): State<AppState>) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    ok(state.pg.relay_runs(user_id).await.map_err(err)?)
+}
+
+/// `GET /relay/runs/{id}` (#419): one run, its tasks by state, its members.
+pub(crate) async fn run_detail(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let run_id = parse_uuid(&run_id, "run_id").map_err(err)?;
+    ok(state.pg.relay_run_detail(user_id, run_id).await.map_err(err)?)
+}
+
+/// `POST /relay/runs/{id}/start` (#419): the draft binds the crew (≥ 1 live
+/// lane) and Task 0 joins the pool.
+pub(crate) async fn start_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    body: Option<Json<StartRunBody>>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let run_id = parse_uuid(&run_id, "run_id").map_err(err)?;
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let crew_id =
+        body.crew_id.as_deref().map(|c| parse_uuid(c, "crew_id")).transpose().map_err(err)?;
+    let started = state
+        .pg
+        .relay_start_run(user_id, run_id, crew_id, chrono::Utc::now())
+        .await
+        .map_err(err)?;
+    emit_run(&state, RunChange::Started, &run_id, &started.crew_id).await;
+    emit_task(&state, "plan", &started.planning_task_id).await;
+    ok(started_json(&started))
+}
+
+/// `POST /relay/runs/{id}/cancel` (#419): the person stops the run; its open
+/// tasks are cancelled and its planned items go back to the backlog.
+pub(crate) async fn cancel_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let run_id = parse_uuid(&run_id, "run_id").map_err(err)?;
+    let out = state.pg.relay_cancel_run(user_id, run_id).await.map_err(err)?;
+    let event = match &out.crew_id {
+        Some(crew_id) => StateEvent::relay_run(RunChange::Cancelled, &run_id, crew_id),
+        None => StateEvent::relay_run_crewless(RunChange::Cancelled, &run_id),
+    };
+    let _ = state.event_tx.send(event);
+    for task_id in &out.cancelled_tasks {
+        emit_task(&state, "cancel", task_id).await;
+    }
+    for item_id in &out.returned_items {
+        if let Some(event) = item_added(&state.pg, item_id, "backlogged").await {
+            let _ = state.event_tx.send(event);
+        }
+    }
+    ok(serde_json::json!({ "run_id": run_id.to_string(), "status": "cancelled" }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -703,6 +841,36 @@ pub(crate) struct PersonMessageBody {
     task_id: Option<String>,
     text: String,
     surface: String,
+    /// A nudge (#419; lanes.md §15): `nudge: true` with its `reason`, and
+    /// optionally the wait so far.
+    #[serde(default)]
+    nudge: bool,
+    reason: Option<String>,
+    waiting_min: Option<i64>,
+}
+
+/// The body's nudge. A reason or a wait without `nudge: true` is refused,
+/// not dropped; the reason's vocabulary is the props check's.
+fn person_nudge_of(body: &PersonMessageBody) -> Result<Option<RelayNudge>, RelayError> {
+    let waiting_min = body
+        .waiting_min
+        .map(|m| {
+            u64::try_from(m).map_err(|_| {
+                RelayError::Validation("waiting_min must be a whole number ≥ 0".into())
+            })
+        })
+        .transpose()?;
+    if !body.nudge {
+        if body.reason.is_some() || waiting_min.is_some() {
+            return Err(RelayError::Validation("reason and waiting_min need nudge: true".into()));
+        }
+        return Ok(None);
+    }
+    let reason = body
+        .reason
+        .clone()
+        .ok_or_else(|| RelayError::Validation("a nudge needs a reason".into()))?;
+    Ok(Some(RelayNudge { reason, waiting_min }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -837,11 +1005,12 @@ pub(crate) async fn register(
         )
         .await
         .map_err(err)?;
-    emit_lane(&state, LaneChange::Registered, &out.lane_id, &out.crew_id);
+    emit_lane(&state, LaneChange::Registered, &out.lane_id, &out.crew_id).await;
     ok(serde_json::json!({
         "lane_token": out.lane_token,
         "lane_id": out.lane_id.to_string(),
         "lane_title": out.lane_title,
+        "suggested_name": out.suggested_name,
         "crew_id": out.crew_id.to_string(),
         "guidance": {
             "version": out.guidance.version,
@@ -922,7 +1091,8 @@ pub(crate) async fn heartbeat(
             LaneChange::Resumed(LaneReason::LeaseRegranted),
             &lane_id,
             &session.crew_id,
-        );
+        )
+        .await;
     }
     ok(serde_json::json!({ "expires_at": iso(expires_at) }))
 }
@@ -943,7 +1113,7 @@ pub(crate) async fn reregister(
         .relay_reregister(parse_uuid(&body.lane_id, "lane_id").map_err(err)?, chrono::Utc::now())
         .await
         .map_err(err)?;
-    emit_lane(&state, LaneChange::Reregistered, &out.lane_id, &out.crew_id);
+    emit_lane(&state, LaneChange::Reregistered, &out.lane_id, &out.crew_id).await;
     ok(serde_json::json!({
         "lane_id": out.lane_id.to_string(),
         "crew_id": out.crew_id.to_string(),
@@ -961,9 +1131,9 @@ pub(crate) async fn unregister(
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let out = state.pg.relay_unregister(lane_id).await.map_err(err)?;
     emit(&state, "unregister");
-    emit_lane(&state, LaneChange::Unregistered, &lane_id, &session.crew_id);
+    emit_lane(&state, LaneChange::Unregistered, &lane_id, &session.crew_id).await;
     if let Some(task_id) = out.interrupted {
-        emit_task(&state, "interrupt", &task_id);
+        emit_task(&state, "interrupt", &task_id).await;
     }
     ok(serde_json::json!({ "lane_id": body.lane_id }))
 }
@@ -998,7 +1168,8 @@ pub(crate) async fn limit_pause(
         )
         .await
         .map_err(err)?;
-    emit_lane(&state, LaneChange::Suspended(LaneReason::LimitPause), &lane_id, &session.crew_id);
+    emit_lane(&state, LaneChange::Suspended(LaneReason::LimitPause), &lane_id, &session.crew_id)
+        .await;
     ok(serde_json::json!({
         "scope": out.scope,
         "resumes_at": out.resumes_at.map(iso),
@@ -1159,7 +1330,7 @@ pub(crate) async fn assign(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "assign", &task_id);
+    emit_task(&state, "assign", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "round": out.round,
@@ -1212,7 +1383,7 @@ pub(crate) async fn report(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "report", &task_id);
+    emit_task(&state, "report", &task_id).await;
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
         "round": out.round,
@@ -1233,7 +1404,7 @@ pub(crate) async fn claim_review(
         .relay_claim_review(session.user_id, caller, task_id, chrono::Utc::now())
         .await
         .map_err(err)?;
-    emit_task(&state, "claim_review", &task_id);
+    emit_task(&state, "claim_review", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "title": out.title,
@@ -1290,16 +1461,12 @@ pub(crate) async fn review(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "review", &task_id);
+    emit_task(&state, "review", &task_id).await;
     // An approved Task 0 unpacked its plan: the queue grew and the run is
     // active — both announced beside the review itself.
     if let Some(run_id) = out.run_activated {
-        emit_task(&state, "unpack", &task_id);
-        let _ = state.event_tx.send(StateEvent::relay_run(
-            RunChange::Activated,
-            &run_id,
-            &session.crew_id,
-        ));
+        emit_task(&state, "unpack", &task_id).await;
+        emit_run(&state, RunChange::Activated, &run_id, &session.crew_id).await;
     }
     ok(serde_json::json!({
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
@@ -1349,8 +1516,12 @@ pub(crate) async fn ask(
         .await
         .map_err(err)?;
     match task_id {
-        Some(task_id) => emit_task(&state, "ask", &task_id),
+        Some(task_id) => emit_task(&state, "ask", &task_id).await,
         None => emit(&state, "ask"),
+    }
+    // Asked of the person: Needs you gains the row (#418).
+    if let Some(event) = decision_asked(&state.pg, &out.decision_id, &session.crew_id).await {
+        let _ = state.event_tx.send(event);
     }
     ok(serde_json::json!({ "decision_id": out.decision_id.to_string() }))
 }
@@ -1375,7 +1546,7 @@ pub(crate) async fn lane_answer(
         .await
         .map_err(err)?;
     match out.task_id {
-        Some(task_id) => emit_task(&state, "answer", &task_id),
+        Some(task_id) => emit_task(&state, "answer", &task_id).await,
         None => emit(&state, "answer"),
     }
     ok(serde_json::json!({ "action_id": out.action_id.to_string() }))
@@ -1390,18 +1561,25 @@ pub(crate) async fn lane_message(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let task_id =
         body.task_id.as_deref().map(|t| parse_uuid(t, "task_id")).transpose().map_err(err)?;
+    let to = message_to(&body.to).map_err(err)?;
     let out = state
         .pg
         .relay_send_message(
             session.user_id,
             RelayCaller::Lane { lane_id: caller },
-            RelayMessageInput { to: message_to(&body.to).map_err(err)?, task_id, text: body.text },
+            RelayMessageInput { to: to.clone(), task_id, text: body.text, nudge: None },
         )
         .await
         .map_err(err)?;
     match task_id {
-        Some(task_id) => emit_task(&state, "message", &task_id),
+        Some(task_id) => emit_task(&state, "message", &task_id).await,
         None => emit(&state, "message"),
+    }
+    // To the person: Needs you gains the row (#418).
+    if matches!(to, RelayMessageTo::Person)
+        && let Some(event) = message_sent(&state.pg, &out.message_id, &session.crew_id).await
+    {
+        let _ = state.event_tx.send(event);
     }
     ok(serde_json::json!({ "message_id": out.message_id.to_string() }))
 }
@@ -1434,7 +1612,7 @@ pub(crate) async fn merge(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "merge", &task_id);
+    emit_task(&state, "merge", &task_id).await;
     ok(serde_json::json!({ "task_id": task_id.to_string() }))
 }
 
@@ -1448,7 +1626,7 @@ pub(crate) async fn cancel(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
     let out = state.pg.relay_cancel_task(session.user_id, caller, task_id).await.map_err(err)?;
-    emit_task(&state, "cancel", &task_id);
+    emit_task(&state, "cancel", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
@@ -1475,7 +1653,7 @@ pub(crate) async fn handover(
         )
         .await
         .map_err(err)?;
-    emit_task(&state, "handover", &task_id);
+    emit_task(&state, "handover", &task_id).await;
     ok(serde_json::json!({
         "task_id": out.task_id.to_string(),
         "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
@@ -1508,17 +1686,10 @@ pub(crate) async fn post_step(
         )
         .await
         .map_err(err)?;
-    let step = serde_json::json!({
-        "key": out.key,
-        "title": out.title,
-        "state": serde_json::to_value(out.state).unwrap_or(serde_json::Value::Null),
-        "reason": out.reason,
-        "updated_at": out.updated_at,
-    });
-    let _ = state.event_tx.send(StateEvent::relay_step(&task_id, &step, out.created));
+    emit_step(&state, &task_id, &out);
     ok(serde_json::json!({
         "task_id": task_id.to_string(),
-        "step": step,
+        "step": step_json(&out),
     }))
 }
 
@@ -1527,18 +1698,33 @@ pub(crate) async fn post_step(
 /// view), step events carry the step itself (applied without re-reading),
 /// op-only relay events cover the rest (unregister interrupts). Same
 /// BroadcastStream-over-`event_tx` shape as the scan socket.
+///
+/// `?crew_id=` narrows the stream to one crew (#418): an event naming
+/// another crew is dropped; one naming no crew (a relay op, or a task whose
+/// row could not be read) still arrives, and the screen re-reads its own
+/// crew's view on it. A malformed
+/// id is a 400 from the query extractor.
 pub(crate) async fn relay_events_sse(
     State(state): State<AppState>,
+    Query(filter): Query<RelayEventsFilter>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     let rx = state.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(event) if StateEvent::is_relay_family(&event.entity) => {
+    let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
+        Ok(event)
+            if StateEvent::is_relay_family(&event.entity)
+                && event.admits_crew(filter.crew_id.as_ref()) =>
+        {
             let data = serde_json::to_string(&event).unwrap_or_default();
             Some(Ok(Event::default().data(data)))
         }
         _ => None,
     });
     Sse::new(stream)
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RelayEventsFilter {
+    crew_id: Option<Uuid>,
 }
 
 pub(crate) async fn close_crew(
@@ -1552,11 +1738,7 @@ pub(crate) async fn close_crew(
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
     // A crew's lifecycle event: the crew id stands as the run id (§3k).
-    let _ = state.event_tx.send(StateEvent::relay_run(
-        RunChange::Completed,
-        &out.crew_id,
-        &out.crew_id,
-    ));
+    emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,
@@ -1564,6 +1746,28 @@ pub(crate) async fn close_crew(
 }
 
 // ─── Person routes ───
+
+/// `POST /relay/crews/{id}/close` (#419): the person closes the crew; its
+/// lanes are released and leave Now on the stream.
+pub(crate) async fn person_close_crew(
+    State(state): State<AppState>,
+    Path(crew_id): Path<String>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
+    let out = state.pg.relay_person_close_crew(user_id, crew_id).await.map_err(err)?;
+    for (lane_id, interrupted) in &out.released {
+        emit_lane(&state, LaneChange::Unregistered, lane_id, &out.crew_id).await;
+        if let Some(task_id) = interrupted {
+            emit_task(&state, "interrupt", task_id).await;
+        }
+    }
+    if out.closed_now {
+        // A crew's lifecycle event: the crew id stands as the run id (§3k).
+        emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
+    }
+    ok(serde_json::json!({ "crew_id": out.crew_id.to_string(), "status": "closed" }))
+}
 
 pub(crate) async fn now(
     State(state): State<AppState>,
@@ -1606,17 +1810,23 @@ pub(crate) async fn person_message(
     let surface = parse_word::<RelaySurface>(&body.surface, "surface").map_err(err)?;
     let task_id =
         body.task_id.as_deref().map(|t| parse_uuid(t, "task_id")).transpose().map_err(err)?;
+    let nudge = person_nudge_of(&body).map_err(err)?;
     let out = state
         .pg
         .relay_send_message(
             user_id,
             RelayCaller::Person { surface },
-            RelayMessageInput { to: message_to(&body.to).map_err(err)?, task_id, text: body.text },
+            RelayMessageInput {
+                to: message_to(&body.to).map_err(err)?,
+                task_id,
+                nudge,
+                text: body.text,
+            },
         )
         .await
         .map_err(err)?;
     match task_id {
-        Some(task_id) => emit_task(&state, "message", &task_id),
+        Some(task_id) => emit_task(&state, "message", &task_id).await,
         None => emit(&state, "message"),
     }
     ok(serde_json::json!({ "message_id": out.message_id.to_string() }))
@@ -1628,20 +1838,23 @@ pub(crate) async fn person_answer(
 ) -> RelayResult {
     let user_id = person_user(&state).await.map_err(err)?;
     let surface = parse_word::<RelaySurface>(&body.surface, "surface").map_err(err)?;
+    let decision_id = parse_uuid(&body.decision_id, "decision_id").map_err(err)?;
     let out: RelayAnswerOutput = state
         .pg
         .relay_answer_decision(
             user_id,
             RelayCaller::Person { surface },
-            parse_uuid(&body.decision_id, "decision_id").map_err(err)?,
+            decision_id,
             RelayAnswerInput { option: body.option, note: body.note },
         )
         .await
         .map_err(err)?;
     match out.task_id {
-        Some(task_id) => emit_task(&state, "answer", &task_id),
+        Some(task_id) => emit_task(&state, "answer", &task_id).await,
         None => emit(&state, "answer"),
     }
+    // Answered: the row leaves Needs you (#418).
+    let _ = state.event_tx.send(StateEvent::relay_decision(true, &decision_id, &out.crew_id));
     ok(serde_json::json!({ "action_id": out.action_id.to_string() }))
 }
 
@@ -1671,6 +1884,10 @@ pub(crate) async fn triage(
         )
         .await
         .map_err(err)?;
+    // The queue gains the row (#418).
+    if let Some(event) = item_added(&state.pg, &id, "triaged").await {
+        let _ = state.event_tx.send(event);
+    }
     ok(serde_json::json!({ "item_id": id.to_string() }))
 }
 
@@ -1682,22 +1899,88 @@ pub(crate) async fn backlog(
     let surface = RelaySurface::Desktop;
     match (body.item_id, body.ticket_provider, body.ticket_key) {
         (Some(item_id), None, None) => {
+            let item_id = parse_uuid(&item_id, "item_id").map_err(err)?;
+            // Read before the write: the remove names the id the screen holds.
+            let leaving = item_leaving(&state.pg, &item_id, "backlogged").await;
             let id = state
                 .pg
-                .relay_backlog_add(
-                    user_id,
-                    RelayCaller::Person { surface },
-                    parse_uuid(&item_id, "item_id").map_err(err)?,
-                )
+                .relay_backlog_add(user_id, RelayCaller::Person { surface }, item_id)
                 .await
                 .map_err(err)?;
+            // Out of triage, into the backlog with its row (#418).
+            let added = item_added(&state.pg, &id, "backlogged").await;
+            for event in leaving.into_iter().chain(added) {
+                let _ = state.event_tx.send(event);
+            }
             ok(serde_json::json!({ "item_id": id.to_string() }))
         }
-        (None, Some(_), Some(_)) => Err(err(RelayError::NotImplemented(
-            "the tracker pull is slice 2; a ticketed add names no title the daemon could honestly store".into(),
-        ))),
-        _ => Err(err(RelayError::Validation("send item_id or a ticket, not both or neither".into()))),
+        (None, Some(provider), Some(key)) => {
+            // #419: the synced tracker's ticket, titled as the tracker has it.
+            let provider =
+                parse_word::<RelayTicketProvider>(&provider, "ticket_provider").map_err(err)?;
+            let id =
+                state.pg.relay_backlog_add_ticket(user_id, provider, &key).await.map_err(err)?;
+            if let Some(event) = item_added(&state.pg, &id, "backlogged").await {
+                let _ = state.event_tx.send(event);
+            }
+            ok(serde_json::json!({ "item_id": id.to_string() }))
+        }
+        _ => {
+            Err(err(RelayError::Validation("send item_id or a ticket, not both or neither".into())))
+        }
     }
+}
+
+/// `DELETE /relay/items/{id}` (#419): the item closes and leaves the queue.
+pub(crate) async fn close_item(
+    State(state): State<AppState>,
+    Path(item_id): Path<String>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let item_id = parse_uuid(&item_id, "item_id").map_err(err)?;
+    // Read before the write: the remove names the id the screen holds.
+    let leaving = item_leaving(&state.pg, &item_id, "closed").await;
+    state.pg.relay_close_item(user_id, item_id).await.map_err(err)?;
+    if let Some(event) = leaving {
+        let _ = state.event_tx.send(event);
+    }
+    ok(serde_json::json!({ "item_id": item_id.to_string(), "state": "closed" }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PatchItemBody {
+    title: Option<String>,
+    position: Option<i64>,
+}
+
+/// `PATCH /relay/items/{id}` (#419): retitle a hand-added item, or move a
+/// backlog item; each changed row rides the stream.
+pub(crate) async fn patch_item(
+    State(state): State<AppState>,
+    Path(item_id): Path<String>,
+    Json(body): Json<PatchItemBody>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let item_id = parse_uuid(&item_id, "item_id").map_err(err)?;
+    let edited = body.title.is_some();
+    let moved = state
+        .pg
+        .relay_patch_item(user_id, item_id, body.title, body.position)
+        .await
+        .map_err(err)?;
+    if edited
+        && !moved.contains(&item_id)
+        && let Some(event) = item_added(&state.pg, &item_id, "edited").await
+    {
+        let _ = state.event_tx.send(event);
+    }
+    for id in &moved {
+        if let Some(event) = item_added(&state.pg, id, "moved").await {
+            let _ = state.event_tx.send(event);
+        }
+    }
+    ok(serde_json::json!({ "item_id": item_id.to_string() }))
 }
 
 #[cfg(test)]
@@ -2541,6 +2824,266 @@ mod tests {
         body["item_id"].as_str().unwrap().to_string()
     }
 
+    /// A queue row exactly as `/relay/queue` shows it, in `stage`, found by
+    /// its item id.
+    async fn queue_row(h: &Harness, stage: &str, item_id: &str) -> Value {
+        let (status, queue) = call(h, "GET", "/relay/queue", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{queue}");
+        queue[stage]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["item_id"] == item_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{item_id} not in {stage}: {queue}"))
+    }
+
+    fn item_event(action: &str, op: &str, stage: &str, id: &str, row: Option<Value>) -> Value {
+        let mut data = row.unwrap_or_else(|| json!({}));
+        data["op"] = json!(op);
+        data["id"] = json!(id);
+        data["stage"] = json!(stage);
+        json!({"action": action, "entity": "item", "data": data})
+    }
+
+    // ── #419: the queue's item ops and the ticketed backlog add ──
+
+    /// A Jira board synced into a workspace, with its tickets: AUTH-1 (a
+    /// bug, once called AUTH-OLD), AUTH-2 (no summary), AUTH-3 (removed).
+    async fn synced_jira(h: &Harness) -> String {
+        let ws: uuid::Uuid = sqlx_core::query_scalar::query_scalar(
+            "insert into sensei.workspaces (name) values ('relay-ticket-ws') returning id",
+        )
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        let tracker: uuid::Uuid = sqlx_core::query_scalar::query_scalar(
+            "insert into sensei.trackers
+               (workspace_id, kind, base_url, account, external_scope, board_ref, secret_service)
+             values ($1, 'jira', $2, 'dev@example.com', 'AUTH', '42', 'svc') returning id",
+        )
+        .bind(ws)
+        .bind(format!("https://h{}.atlassian.net", uuid::Uuid::new_v4().simple()))
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        for sql in [
+            "insert into sensei.tracker_tasks (tracker_id, external_id, key, summary, issue_type)
+             values ($1, '1', 'AUTH-1', 'Fix the login redirect', 'Bug')",
+            "insert into sensei.tracker_tasks (tracker_id, external_id, key, summary)
+             values ($1, '2', 'AUTH-2', null)",
+            "insert into sensei.tracker_tasks (tracker_id, external_id, key, summary, removed_at)
+             values ($1, '3', 'AUTH-3', 'Gone', now())",
+            "insert into sensei.tracker_task_keys (task_id, key)
+             select id, 'AUTH-OLD' from sensei.tracker_tasks where tracker_id = $1 and key = 'AUTH-1'",
+        ] {
+            sqlx_core::query::query(sql)
+                .bind(tracker)
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        ws.to_string()
+    }
+
+    async fn ticket_add(h: &Harness, key: &str) -> (StatusCode, Value) {
+        call(
+            h,
+            "POST",
+            "/relay/backlog",
+            Some(json!({"ticket_provider": "jira", "ticket_key": key})),
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_ticket_joins_the_backlog_titled_from_its_synced_tracker() {
+        // The title is the tracker's (D83: never invented); the kind its type.
+        let h = harness().await;
+        let ws = synced_jira(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = ticket_add(&h, "AUTH-1").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let item = body["item_id"].as_str().unwrap().to_string();
+        let row = queue_row(&h, "backlog", &item).await;
+        assert_eq!(row["title"], "Fix the login redirect");
+        assert_eq!(row["kind"], "bug");
+        assert_eq!(row["workspace_id"], ws.as_str());
+        assert_eq!(row["ticket"]["provider"], "jira");
+        assert_eq!(row["ticket"]["key"], "AUTH-1");
+        let added = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(added, item_event("add", "backlogged", "backlog", &item, Some(row)));
+        // Once open in the queue, the same ticket (by any key it had) is a conflict.
+        for key in ["AUTH-1", "AUTH-OLD"] {
+            let (status, body) = ticket_add(&h, key).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{key}: {body}");
+        }
+        // Not synced, removed from the tracker, or without a title: refused.
+        for (key, want) in [
+            ("AUTH-404", StatusCode::NOT_FOUND),
+            ("AUTH-3", StatusCode::NOT_FOUND),
+            ("AUTH-2", StatusCode::UNPROCESSABLE_ENTITY),
+        ] {
+            let (status, body) = ticket_add(&h, key).await;
+            assert_eq!(status, want, "{key}: {body}");
+        }
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/backlog",
+            Some(json!({"ticket_provider": "linear", "ticket_key": "X-1"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_queue_item_is_closed_and_leaves_the_queue() {
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(&h, "DELETE", &format!("/relay/items/{item}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"item_id": item, "state": "closed"}));
+        let gone = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(gone, item_event("remove", "closed", "triage", &item, None));
+        assert_eq!(item_state(&h, &item).await, "closed");
+        let (status, _) = call(&h, "DELETE", &format!("/relay/items/{item}"), None, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        // An item taken by a run is the run's: cancel the run to free it.
+        let planned = triage_item(&h).await;
+        draft_run(&h, &planned).await;
+        let (status, _) = call(&h, "DELETE", &format!("/relay/items/{planned}"), None, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) =
+            call(&h, "DELETE", "/relay/items/01931560-9000-7000-8000-000000000099", None, None)
+                .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    async fn to_backlog(h: &Harness) -> String {
+        let item = triage_item(h).await;
+        let (status, body) =
+            call(h, "POST", "/relay/backlog", Some(json!({"item_id": item})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        item
+    }
+
+    async fn patch_item(h: &Harness, item: &str, body: Value) -> (StatusCode, Value) {
+        call(h, "PATCH", &format!("/relay/items/{item}"), Some(body), None).await
+    }
+
+    #[tokio::test]
+    async fn the_backlog_reorders_and_a_hand_added_title_edits() {
+        let h = harness().await;
+        let (a, b, c) = (to_backlog(&h).await, to_backlog(&h).await, to_backlog(&h).await);
+        let mut rx = h.state.event_tx.subscribe();
+        // C to the top: the rest move down one, in their order.
+        let (status, body) = patch_item(&h, &c, json!({"position": 1})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, queue) = call(&h, "GET", "/relay/queue", None, None).await;
+        let order: Vec<&str> = queue["backlog"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["item_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(order, vec![c.as_str(), a.as_str(), b.as_str()], "{queue}");
+        let positions: Vec<i64> = queue["backlog"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["position"].as_i64().unwrap())
+            .collect();
+        assert_eq!(positions, vec![1, 2, 3]);
+        // Every row that moved rides the stream with its new row.
+        let mut moved = Vec::new();
+        for _ in 0..3 {
+            let event = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+            assert_eq!(event["data"]["op"], "moved", "{event}");
+            let id = event["data"]["id"].as_str().unwrap().to_string();
+            assert_eq!(
+                event,
+                item_event(
+                    "add",
+                    "moved",
+                    "backlog",
+                    &id,
+                    Some(queue_row(&h, "backlog", &id).await)
+                )
+            );
+            moved.push(id);
+        }
+        moved.sort();
+        let mut want = vec![a.clone(), b.clone(), c.clone()];
+        want.sort();
+        assert_eq!(moved, want);
+        // A hand-added item's title edits; the row rides the stream.
+        let (status, body) = patch_item(&h, &a, json!({"title": "Sharper title"})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(queue_row(&h, "backlog", &a).await["title"], "Sharper title");
+        let edited = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(edited["data"]["op"], "edited", "{edited}");
+        // Refusals: nothing to change, an empty title, a position past the end
+        // or below 1, a triage item's position, a ticket's title (the
+        // tracker's), an unknown item.
+        let triage = triage_item(&h).await;
+        let ws = synced_jira(&h).await;
+        let _ = ws;
+        let (_, body) = ticket_add(&h, "AUTH-1").await;
+        let ticketed = body["item_id"].as_str().unwrap().to_string();
+        for (case, item, body, want) in [
+            ("nothing", a.clone(), json!({}), StatusCode::UNPROCESSABLE_ENTITY),
+            ("empty title", a.clone(), json!({"title": " "}), StatusCode::UNPROCESSABLE_ENTITY),
+            ("position 0", a.clone(), json!({"position": 0}), StatusCode::UNPROCESSABLE_ENTITY),
+            ("past the end", a.clone(), json!({"position": 9}), StatusCode::UNPROCESSABLE_ENTITY),
+            ("triage position", triage.clone(), json!({"position": 1}), StatusCode::CONFLICT),
+            ("ticket title", ticketed.clone(), json!({"title": "Mine"}), StatusCode::CONFLICT),
+            (
+                "unknown",
+                "01931560-9000-7000-8000-000000000099".to_string(),
+                json!({"title": "x"}),
+                StatusCode::NOT_FOUND,
+            ),
+        ] {
+            let (status, out) = patch_item(&h, &item, body).await;
+            assert_eq!(status, want, "{case}: {out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn queue_writes_ride_the_stream_as_item_rows() {
+        // #418: each queue write is confirmed by the item events it causes —
+        // the row added to triage; moved to the backlog (out of triage, into
+        // the backlog with its row); taken into a sprint (out of the queue).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let item = triage_item(&h).await;
+        let added = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        let row = queue_row(&h, "triage", &item).await;
+        assert_eq!(added, item_event("add", "triaged", "triage", &item, Some(row)));
+        let (status, body) =
+            call(&h, "POST", "/relay/backlog", Some(json!({"item_id": item})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let out = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        let into = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(out, item_event("remove", "backlogged", "triage", &item, None));
+        let row = queue_row(&h, "backlog", &item).await;
+        assert_eq!(into, item_event("add", "backlogged", "backlog", &item, Some(row)));
+        let run = json!({
+            "title": "Sprint 1", "goal": "Ship", "item_ids": [item],
+            "repo_key": "github.com/o/r", "config": {"auto_merge": false}, "start": true,
+        });
+        let (status, body) = call(&h, "POST", "/relay/runs", Some(run), None).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["crew_id"], coord.2);
+        let planned = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        assert_eq!(planned, item_event("remove", "planned", "backlog", &item, None));
+    }
+
     fn task_op(event: &crate::api::events::StateEvent) -> (String, String, String) {
         (
             event.entity.clone(),
@@ -2672,6 +3215,17 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["task_id"], task_id);
         assert!(body["checkpointed_at"].is_string(), "{body}");
+        // #418: each step lands as a step event carrying the stored step, so the
+        // screen applies it without re-reading; then the task notification.
+        for (key, state) in [("ddl", "done"), ("clippy", "open")] {
+            let step = next_event(&mut rx).await;
+            assert_eq!(step.entity, "step", "{:?}", step.data);
+            assert_eq!(serde_json::to_value(&step.action).unwrap(), "add");
+            assert_eq!(step.data["task_id"], task_id);
+            assert_eq!(step.data["step"]["key"], key);
+            assert_eq!(step.data["step"]["state"], state);
+            assert!(step.data["step"]["updated_at"].is_string(), "{:?}", step.data);
+        }
         assert_eq!(
             task_op(&next_event(&mut rx).await),
             ("task".into(), "checkpoint".into(), task_id.clone())
@@ -2693,6 +3247,52 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    #[tokio::test]
+    async fn now_lane_task_reads_its_current_step_and_step_counts() {
+        // #418: the Now lane row says where the holder is — the checkpoint's
+        // current step and the checklist's settled/total counts (done and
+        // skipped are settled). Nothing reported reads null, never a guess.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let lane_task = |now: &Value| {
+            now["lanes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|l| l["task"]["id"] == task_id)
+                .map(|l| l["task"].clone())
+                .expect("the holder's lane carries the task")
+        };
+        let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        let task = lane_task(&now);
+        assert_eq!(task["current_step"], Value::Null, "{task}");
+        assert_eq!(task["steps_done"], 0, "{task}");
+        assert_eq!(task["steps_total"], 1, "{task}");
+        let save = json!({
+            "current_step": "running clippy",
+            "steps": [
+                {"key": "ddl", "title": "Apply the schema", "state": "done"},
+                {"key": "lint", "title": "Lint", "state": "skipped", "reason": "clippy covers it"},
+            ],
+        });
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/checkpoint"),
+            Some(lane_body(&holder, save)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let task = lane_task(&now);
+        assert_eq!(task["current_step"], "running clippy", "{task}");
+        assert_eq!(task["steps_done"], 2, "{task}");
+        assert_eq!(task["steps_total"], 3, "{task}");
     }
 
     #[tokio::test]
@@ -2788,13 +3388,30 @@ mod tests {
         assert_eq!(body["queue"], json!([]));
     }
 
+    /// #418: a run event carries the run's band row exactly as `/relay/now`
+    /// shows it, named by `id` so the screen applies it in place.
+    async fn assert_carries_run_row(h: &Harness, data: &Value, run_id: &str) {
+        let (status, now) = call(h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        let row = now["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["run_id"] == run_id)
+            .unwrap_or_else(|| panic!("run {run_id} not in the band: {now}"));
+        for (key, value) in row.as_object().unwrap() {
+            assert_eq!(&data[key], value, "{key} in {data}");
+        }
+        assert_eq!(data["id"], run_id, "{data}");
+    }
+
     #[tokio::test]
     async fn create_run_is_201_with_task0_and_emits_run_created() {
         let h = harness().await;
         let item_id = triage_item(&h).await;
         let run_body = json!({
             "title": "Sprint 1", "goal": "Ship the queue", "item_ids": [item_id],
-            "repo_key": "github.com/o/r", "config": {"auto_merge": false},
+            "repo_key": "github.com/o/r", "config": {"auto_merge": false}, "start": true,
         });
         // No active crew: nothing to run in.
         let (status, body) = call(&h, "POST", "/relay/runs", Some(run_body.clone()), None).await;
@@ -2814,6 +3431,7 @@ mod tests {
         assert_eq!(event.data["op"], "created");
         assert_eq!(event.data["run_id"], run_id);
         assert_eq!(event.data["crew_id"], coord.2);
+        assert_carries_run_row(&h, &event.data, &run_id).await;
         // Task 0 waits in the pool for a claim.
         let (lane, token) = register_contributor(&h, &coord.2).await;
         let (status, body) = claim_next(&h, &lane, &token).await;
@@ -2833,6 +3451,366 @@ mod tests {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     }
 
+    // ── #419: draft → start → cancel (design 2026-11-12 §2d; the run journey) ──
+
+    async fn draft_run(h: &Harness, item_id: &str) -> String {
+        let (status, body) = call(
+            h,
+            "POST",
+            "/relay/runs",
+            Some(json!({"title": "Sprint 1", "goal": "Ship", "item_ids": [item_id],
+                        "repo_key": "github.com/o/r"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["status"], "draft", "{body}");
+        body["run_id"].as_str().unwrap().to_string()
+    }
+
+    async fn run_verb(h: &Harness, run_id: &str, verb: &str) -> (StatusCode, Value) {
+        call(h, "POST", &format!("/relay/runs/{run_id}/{verb}"), Some(json!({})), None).await
+    }
+
+    async fn item_state(h: &Harness, item_id: &str) -> String {
+        sqlx_core::query_scalar::query_scalar(
+            "select state::text from relay.items where id = $1::uuid",
+        )
+        .bind(item_id)
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_run_is_drafted_with_its_items_and_no_crew_or_task0() {
+        // The journey's first step: no crew yet, so the run waits as a draft.
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/runs",
+            Some(json!({"title": "Sprint 1", "goal": "Ship", "item_ids": [item],
+                        "repo_key": "github.com/o/r"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["status"], "draft");
+        assert_eq!(body["crew_id"], Value::Null);
+        assert_eq!(body["planning_task_id"], Value::Null);
+        let run_id = body["run_id"].as_str().unwrap().to_string();
+        let tasks: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.tasks where run_id = $1::uuid",
+        )
+        .bind(&run_id)
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(tasks, 0, "a draft mints no Task 0");
+        // Its items are taken for it: they leave the queue.
+        assert_eq!(item_state(&h, &item).await, "planned");
+        let event = event_for_entity(&mut rx, "run").await;
+        assert_eq!(event.data["op"], "drafted", "{:?}", event.data);
+        assert_eq!(event.data["run_id"], run_id.as_str());
+        assert_eq!(event.data["crew_id"], Value::Null);
+        // Not on Now's band until it starts.
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(now["runs"].as_array().unwrap().iter().all(|r| r["run_id"] != run_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn start_binds_the_active_crew_and_mints_task0() {
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let run_id = draft_run(&h, &item).await;
+        let coord = register_coordinator(&h).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/start"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["run_id"], run_id.as_str());
+        assert_eq!(body["status"], "planning");
+        assert_eq!(body["crew_id"], coord.2);
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let event = event_for_entity(&mut rx, "run").await;
+        assert_eq!(event.data["op"], "started", "{:?}", event.data);
+        assert_carries_run_row(&h, &event.data, &run_id).await;
+        // Task 0 waits in the pool, under the run's repository.
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = claim_next(&h, &lane, &token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["task"]["id"], task0);
+        assert_eq!(body["task"]["phase"], "planning");
+        assert_eq!(body["task"]["repo_key"], "github.com/o/r", "{body}");
+        // Started once: a second start is refused.
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/start"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+
+    #[tokio::test]
+    async fn start_needs_a_crew_with_a_live_lane() {
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let run_id = draft_run(&h, &item).await;
+        // No crew at all.
+        let (status, body) = run_verb(&h, &run_id, "start").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        // A crew whose only lane stopped answering.
+        let coord = register_coordinator(&h).await;
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp - interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane'",
+        )
+        .bind(&coord.0)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = run_verb(&h, &run_id, "start").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["message"].as_str().unwrap().contains("live lane"), "{body}");
+        // Still a draft; unknown runs are not found.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/runs/01931560-9000-7000-8000-000000000099/start",
+            Some(json!({})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_draft_gives_its_items_back_to_the_backlog() {
+        let h = harness().await;
+        let item = triage_item(&h).await;
+        let run_id = draft_run(&h, &item).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/cancel"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "cancelled");
+        assert_eq!(item_state(&h, &item).await, "backlog");
+        let event = event_for_entity(&mut rx, "run").await;
+        assert_eq!(event.data["op"], "cancelled", "{:?}", event.data);
+        // The item is back on the backlog list, with its row.
+        let back = serde_json::to_value(event_for_entity(&mut rx, "item").await).unwrap();
+        let row = queue_row(&h, "backlog", &item).await;
+        assert_eq!(back, item_event("add", "backlogged", "backlog", &item, Some(row)));
+        // Cancelled is final.
+        for verb in ["cancel", "start"] {
+            let (status, body) =
+                call(&h, "POST", &format!("/relay/runs/{run_id}/{verb}"), Some(json!({})), None)
+                    .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{verb}: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_started_run_cancels_its_open_tasks() {
+        // The person may stop a run at any time, a lane on its task or not.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let item = triage_item(&h).await;
+        let run_id = draft_run(&h, &item).await;
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/start"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) = claim_next(&h, &lane, &token).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) =
+            call(&h, "POST", &format!("/relay/runs/{run_id}/cancel"), Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task0}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["state"], "cancelled", "{view}");
+        assert_eq!(item_state(&h, &item).await, "backlog");
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(now["runs"].as_array().unwrap().iter().all(|r| r["run_id"] != run_id.as_str()));
+        // The lane is free again: its lane row holds no task.
+        assert_eq!(now_lane(&h, &lane).await["task"], Value::Null);
+    }
+
+    // ── #419: the run list and one run (CONTRACT §1i, §3k) ──
+
+    #[tokio::test]
+    async fn runs_list_the_open_ones_and_the_ended_ones_with_their_delete_date() {
+        // Open: draft, planning, active. Ended (the past runs): completed or
+        // cancelled, each deleted 30 days after it ended.
+        let h = harness().await;
+        let draft = draft_run(&h, &triage_item(&h).await).await;
+        let cancelled = draft_run(&h, &triage_item(&h).await).await;
+        let (status, _) = run_verb(&h, &cancelled, "cancel").await;
+        assert_eq!(status, StatusCode::OK);
+        let completed = draft_run(&h, &triage_item(&h).await).await;
+        sqlx_core::query::query(
+            "update relay.runs set state = 'completed',
+                    completed_at = timestamptz '2026-11-01T10:00:00Z'
+             where id = $1::uuid",
+        )
+        .bind(&completed)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = call(&h, "GET", "/relay/runs", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ids = |key: &str| -> Vec<String> {
+            body[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(ids("active"), vec![draft.clone()], "{body}");
+        let mut ended = ids("archived");
+        ended.sort();
+        let mut want = vec![cancelled.clone(), completed.clone()];
+        want.sort();
+        assert_eq!(ended, want, "{body}");
+        let row = |key: &str, id: &str| {
+            body[key].as_array().unwrap().iter().find(|r| r["id"] == id).unwrap().clone()
+        };
+        let done = row("archived", &completed);
+        assert_eq!(done["state"], "completed");
+        assert_eq!(done["title"], "Sprint 1");
+        assert!(
+            done["delete_after"].as_str().unwrap().starts_with("2026-12-01T10:00:00"),
+            "30 days after it completed: {done}"
+        );
+        let stopped = row("archived", &cancelled);
+        assert_eq!(stopped["state"], "cancelled");
+        assert!(stopped["completed_at"].is_string(), "cancel stamps when it ended: {stopped}");
+        assert!(stopped["delete_after"].is_string(), "{stopped}");
+        let open = row("active", &draft);
+        assert_eq!(open["state"], "draft");
+        assert_eq!(open["delete_after"], Value::Null);
+        assert_eq!(open["crew_id"], Value::Null);
+        assert_eq!((open["total_tasks"].as_i64(), open["done_tasks"].as_i64()), (Some(0), Some(0)));
+    }
+
+    #[tokio::test]
+    async fn one_run_shows_its_tasks_by_state_with_lane_and_steps_and_its_members() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let run_id = draft_run(&h, &triage_item(&h).await).await;
+        let (status, body) = run_verb(&h, &run_id, "start").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let (status, _) = claim_next(&h, &lane, &token).await;
+        assert_eq!(status, StatusCode::OK);
+        let save = json!({"current_step": "Reading the items", "steps": [
+            {"key": "read", "title": "Read the items", "state": "done"},
+            {"key": "plan", "title": "Write the plan", "state": "open"},
+        ]});
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task0}/checkpoint"),
+            Some(lane_body(&lane, save)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, run) = call(&h, "GET", &format!("/relay/runs/{run_id}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["run"]["id"], run_id.as_str());
+        assert_eq!(run["run"]["state"], "planning");
+        assert_eq!(run["run"]["crew_id"], coord.2);
+        assert_eq!(run["run"]["total_tasks"], 1);
+        let working =
+            run["tasks_by_state"]["working"].as_array().unwrap_or_else(|| panic!("{run}"));
+        assert_eq!(working.len(), 1, "{run}");
+        let task = &working[0];
+        assert_eq!(task["id"], task0.as_str());
+        assert_eq!(task["phase"], "planning");
+        assert_eq!(task["lane"]["id"], lane.as_str());
+        assert_codename(&task["lane"]["suggested_name"]);
+        assert_eq!((task["steps_done"].as_i64(), task["steps_total"].as_i64()), (Some(1), Some(2)));
+        assert_eq!(task["current_step"], "Reading the items");
+        // Only states that hold a task appear.
+        assert_eq!(run["tasks_by_state"].as_object().unwrap().len(), 1, "{run}");
+        // The members: the crew's lanes on this run, each named.
+        let members = run["members"].as_array().unwrap();
+        let ids: Vec<&str> = members.iter().map(|m| m["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&lane.as_str()) && ids.contains(&coord.0.as_str()), "{run}");
+        for m in members {
+            assert_codename(&m["suggested_name"]);
+            assert!(m["role"].is_string() && m["code"].is_string(), "{m}");
+        }
+        let (status, body) =
+            call(&h, "GET", "/relay/runs/01931560-9000-7000-8000-000000000099", None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+
+    // ── #419: the person closes a crew (CONTRACT §3k: lanes released) ──
+
+    async fn person_close(h: &Harness, crew_id: &str) -> (StatusCode, Value) {
+        call(h, "POST", &format!("/relay/crews/{crew_id}/close"), Some(json!({})), None).await
+    }
+
+    #[tokio::test]
+    async fn the_person_closes_a_crew_and_its_lanes_leave_now() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane, token) = register_contributor(&h, &coord.2).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = person_close(&h, &coord.2).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"crew_id": coord.2, "status": "closed"}));
+        // Each lane leaves Now on the stream, named by its id.
+        let mut removed = Vec::new();
+        while removed.len() < 2 {
+            let event = event_for_entity(&mut rx, "lane").await;
+            assert_eq!(
+                serde_json::to_value(&event.action).unwrap(),
+                json!("remove"),
+                "{:?}",
+                event.data
+            );
+            removed.push(event.data["id"].as_str().unwrap().to_string());
+        }
+        removed.sort();
+        let mut want = vec![coord.0.clone(), lane.clone()];
+        want.sort();
+        assert_eq!(removed, want);
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(now["lanes"].as_array().unwrap().len(), 0, "{now}");
+        // Released: the session takes no more work.
+        let (status, body) = claim_next(&h, &lane, &token).await;
+        assert!(status.is_client_error(), "{status}: {body}");
+        // Closing a closed crew is a no-op; an unknown crew is not found.
+        let (status, _) = person_close(&h, &coord.2).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = person_close(&h, "01931560-9000-7000-8000-000000000099").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_crew_with_an_open_run_does_not_close() {
+        // The run is stopped first, so closing never strands its tasks.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let run_id = draft_run(&h, &triage_item(&h).await).await;
+        let (status, _) = run_verb(&h, &run_id, "start").await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = person_close(&h, &coord.2).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["message"].as_str().unwrap().contains("open run"), "{body}");
+        let (status, _) = run_verb(&h, &run_id, "cancel").await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = person_close(&h, &coord.2).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
     #[tokio::test]
     async fn approving_task0_emits_unpack_and_run_activated() {
         let h = harness().await;
@@ -2846,7 +3824,7 @@ mod tests {
             "/relay/runs",
             Some(json!({
                 "title": "Sprint 1", "goal": "Ship", "item_ids": [item_id],
-                "repo_key": "github.com/o/r", "config": {"auto_merge": false},
+                "repo_key": "github.com/o/r", "config": {"auto_merge": false}, "start": true,
             })),
             None,
         )
@@ -2906,13 +3884,14 @@ mod tests {
                 && data["task_id"] == task0),
             "{seen:?}"
         );
-        assert!(
-            seen.iter().any(|(entity, data)| entity == "run"
-                && data["op"] == "activated"
-                && data["run_id"] == run_id
-                && data["crew_id"] == coord.2),
-            "{seen:?}"
-        );
+        let activated = seen
+            .iter()
+            .find(|(entity, data)| entity == "run" && data["op"] == "activated")
+            .map(|(_, data)| data.clone())
+            .unwrap_or_else(|| panic!("no run/activated: {seen:?}"));
+        assert_eq!(activated["run_id"], run_id);
+        assert_eq!(activated["crew_id"], coord.2);
+        assert_carries_run_row(&h, &activated, &run_id).await;
         let (status, body) =
             call(&h, "GET", &format!("/api/relay/queue?lane_id={a}"), None, Some(&token_a)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -2948,6 +3927,90 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    // ── #419: codenames (lanes.md §16; CONTRACT §1h) ──
+
+    fn assert_codename(name: &Value) {
+        let name = name.as_str().unwrap_or_else(|| panic!("a codename: {name}"));
+        let (colour, star) = name.split_once('-').unwrap_or_else(|| panic!("colour-star: {name}"));
+        assert!(crate::relay::CODENAME_COLOURS.contains(&colour), "{name}");
+        assert!(crate::relay::CODENAME_STARS.contains(&star), "{name}");
+    }
+
+    #[tokio::test]
+    async fn register_mints_a_codename_when_the_lane_offers_none() {
+        // The broker names every lane; two lanes of a crew never share one.
+        // The title is unchanged: the codename is the "who", not the title.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let mut names = Vec::new();
+        for _ in 0..3 {
+            let (status, body) = call(
+                &h,
+                "POST",
+                "/api/relay/register",
+                Some(json!({"family": "claude-code", "crew_id": coord.2})),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_codename(&body["suggested_name"]);
+            assert!(body["lane_title"].as_str().unwrap().ends_with(" · claude-code"), "{body}");
+            names.push(body["suggested_name"].as_str().unwrap().to_string());
+        }
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let coordinator = now["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["id"] == coord.0.as_str())
+            .unwrap_or_else(|| panic!("coordinator in now: {now}"));
+        assert_codename(&coordinator["suggested_name"]);
+        names.push(coordinator["suggested_name"].as_str().unwrap().to_string());
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn an_offered_name_is_kept_and_answered_back() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"family": "muse", "crew_id": coord.2, "suggested_name": "Gold Antares"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["suggested_name"], "Gold Antares");
+    }
+
+    #[tokio::test]
+    async fn the_task_view_names_its_lanes_by_codename() {
+        // task.lane and lanes[] carry the codename, as the now rows do.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let name_in_now = |id: &str| {
+            now["lanes"].as_array().unwrap().iter().find(|l| l["id"] == id).unwrap()
+                ["suggested_name"]
+                .clone()
+        };
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_codename(&view["task"]["lane"]["suggested_name"]);
+        assert_eq!(view["task"]["lane"]["suggested_name"], name_in_now(&holder), "{view}");
+        for lane in view["lanes"].as_array().unwrap() {
+            assert_codename(&lane["suggested_name"]);
+            assert_eq!(lane["suggested_name"], name_in_now(lane["id"].as_str().unwrap()));
+        }
     }
 
     #[tokio::test]
@@ -3382,6 +4445,51 @@ mod tests {
         assert_eq!(event.data["task_id"], task_id);
     }
 
+    /// #418: a task event carries the task's header exactly as the task view
+    /// serves it, named by `id`.
+    async fn assert_carries_task_row(h: &Harness, data: &Value, crew_id: &str, task_id: &str) {
+        let (status, view) =
+            call(h, "GET", &format!("/relay/tasks/{crew_id}/{task_id}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        for (key, value) in view["task"].as_object().unwrap() {
+            assert_eq!(&data[key], value, "{key} in {data}");
+        }
+        assert_eq!(data["id"], task_id, "{data}");
+    }
+
+    #[tokio::test]
+    async fn task_events_carry_the_task_header() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, _) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/tasks/{task_id}/report"),
+            Some(report_body(&holder)),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let reported = event_for(&mut rx, "task", "report").await;
+        assert_eq!(reported["data"]["task_id"], task_id);
+        assert_carries_task_row(&h, &reported["data"], &coord.2, &task_id).await;
+        // The sweep's events carry it too: a lapsed lease interrupts the task.
+        let (task_id, _, _) = working_task(&h, &coord).await;
+        let past_lease = chrono::Utc::now() + chrono::Duration::seconds(301);
+        crate::tasks::relay_lease_sweep::sweep_at(&h.state.pg, &h.state.event_tx, past_lease)
+            .await
+            .unwrap();
+        let interrupted = loop {
+            let e = event_for(&mut rx, "task", "interrupt").await;
+            if e["data"]["task_id"] == task_id {
+                break e;
+            }
+        };
+        assert_carries_task_row(&h, &interrupted["data"], &coord.2, &task_id).await;
+    }
+
     #[tokio::test]
     async fn relay_step_post_emits_step_event() {
         // F8: step posts stream the step itself (add on create, update on
@@ -3459,6 +4567,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn person_decision_rides_the_stream_as_its_row() {
+        // #418: asked of the person, the decision arrives with its Needs-you
+        // row (exactly as /relay/now shows it); answered, it leaves by id.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &holder,
+                json!({
+                    "task_id": task_id, "question": "Where?",
+                    "options": [{"id": "db", "label": "Db"}],
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let decision_id = body["decision_id"].as_str().unwrap().to_string();
+        let asked = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let mut row = now["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == decision_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("decision not on Now: {now}"));
+        row["op"] = json!("asked");
+        assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/answers",
+            Some(json!({"decision_id": decision_id, "option": "db", "note": null, "surface": "desktop"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let answered = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
+        assert_eq!(
+            answered,
+            json!({"action": "remove", "entity": "decision",
+                   "data": {"op": "answered", "id": decision_id, "crew_id": coord.2}})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_decision_asked_of_a_lane_sends_no_decision_event() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &holder,
+                json!({
+                    "task_id": task_id, "question": "Which?",
+                    "options": [{"id": "a", "label": "A"}],
+                    "blocks": [], "asked_of": coord.0,
+                }),
+            )),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // The task notification arrives; nothing names a decision.
+        assert_eq!(event_for(&mut rx, "task", "ask").await["data"]["task_id"], task_id);
+        while let Ok(event) = rx.try_recv() {
+            assert_ne!(event.entity, "decision", "{:?}", event.data);
+        }
+    }
+
+    /// The next event naming `entity`, skipping others (5 s).
+    async fn event_for_entity(
+        rx: &mut tokio::sync::broadcast::Receiver<crate::api::events::StateEvent>,
+        entity: &str,
+    ) -> crate::api::events::StateEvent {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut seen = Vec::new();
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Ok(event)) if event.entity == entity => return event,
+                Ok(Ok(event)) => seen.push(event.entity),
+                _ => panic!("no {entity} event; saw {seen:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn relay_events_endpoint_streams_event_stream() {
         // F8: GET /api/relay/events speaks SSE (headers only — the stream
         // never ends, so the test never reads the body).
@@ -3473,6 +4679,95 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let content_type = resp.headers()["content-type"].to_str().unwrap().to_string();
         assert!(content_type.starts_with("text/event-stream"), "{content_type}");
+    }
+
+    /// The SSE frames' data, read off a stream until `n` arrive.
+    async fn sse_frames(resp: axum::response::Response, n: usize) -> Vec<Value> {
+        use tokio_stream::StreamExt;
+        let mut stream = resp.into_body().into_data_stream();
+        let mut buf = String::new();
+        let mut out = Vec::new();
+        while out.len() < n {
+            let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .expect("a frame arrives")
+                .expect("stream open")
+                .unwrap();
+            buf.push_str(std::str::from_utf8(&chunk).unwrap());
+            while let Some(end) = buf.find("\n\n") {
+                let frame: String = buf.drain(..end + 2).collect();
+                if let Some(data) = frame.lines().find_map(|l| l.strip_prefix("data:")) {
+                    out.push(serde_json::from_str(data.trim()).unwrap());
+                }
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn relay_events_crew_filter_drops_other_crews() {
+        // #418: `?crew_id=` narrows the stream to one crew. An event naming
+        // another crew never arrives; one naming no crew (a task op) does —
+        // the screen re-reads its own crew's view on it.
+        let h = harness().await;
+        let (crew_a, crew_b) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/api/relay/events?crew_id={crew_a}"))
+            .header("host", "127.0.0.1:7744")
+            .body(Body::empty())
+            .unwrap();
+        let resp = h.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let lane = uuid::Uuid::now_v7();
+        let tx = &h.state.event_tx;
+        use crate::api::events::{LaneChange, StateEvent};
+        tx.send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_b)).unwrap();
+        tx.send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_a)).unwrap();
+        tx.send(StateEvent::relay_task("report", &lane)).unwrap();
+        let frames = sse_frames(resp, 2).await;
+        assert_eq!(frames[0]["entity"], "lane");
+        assert_eq!(frames[0]["data"]["crew_id"], crew_a.to_string());
+        assert_eq!(frames[1]["entity"], "task");
+    }
+
+    #[tokio::test]
+    async fn relay_events_without_crew_filter_carry_every_crew() {
+        let h = harness().await;
+        let (crew_a, crew_b) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/relay/events")
+            .header("host", "127.0.0.1:7744")
+            .body(Body::empty())
+            .unwrap();
+        let resp = h.app.clone().oneshot(req).await.unwrap();
+        let lane = uuid::Uuid::now_v7();
+        use crate::api::events::{LaneChange, StateEvent};
+        h.state
+            .event_tx
+            .send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_b))
+            .unwrap();
+        h.state
+            .event_tx
+            .send(StateEvent::relay_lane(LaneChange::Registered, &lane, &crew_a))
+            .unwrap();
+        let frames = sse_frames(resp, 2).await;
+        assert_eq!(frames[0]["data"]["crew_id"], crew_b.to_string());
+        assert_eq!(frames[1]["data"]["crew_id"], crew_a.to_string());
+    }
+
+    #[tokio::test]
+    async fn relay_events_bad_crew_id_is_400() {
+        let h = harness().await;
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/relay/events?crew_id=nope")
+            .header("host", "127.0.0.1:7744")
+            .body(Body::empty())
+            .unwrap();
+        let resp = h.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -3920,6 +5215,105 @@ mod tests {
         assert!(body["message_id"].is_string());
     }
 
+    // ── #419: the person's nudge (CONTRACT §3f-bis; lanes.md §15) ──
+
+    async fn person_nudge(h: &Harness, body: serde_json::Value) -> (StatusCode, Value) {
+        call(h, "POST", "/relay/messages", Some(body), None).await
+    }
+
+    #[tokio::test]
+    async fn a_person_nudge_is_a_message_with_its_reason_in_the_history() {
+        // A nudge is a message with props.nudge, the reason and the wait so
+        // far; the task's history row says so ("Nudge · to … · from you").
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let (status, body) = person_nudge(
+            &h,
+            json!({
+                "crew_id": coord.2, "to": {"kind": "lane", "lane_id": holder},
+                "task_id": task_id, "text": "Waiting on you: your verdict is filed.",
+                "surface": "desktop", "nudge": true, "reason": "verdict_unread", "waiting_min": 41,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let message_id = body["message_id"].as_str().unwrap().to_string();
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let row = view["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == message_id.as_str())
+            .unwrap_or_else(|| panic!("nudge in history: {view}"));
+        assert_eq!(row["kind"], "message", "{row}");
+        assert_eq!(row["props"]["nudge"], true, "{row}");
+        assert_eq!(row["props"]["reason"], "verdict_unread", "{row}");
+        assert_eq!(row["props"]["waiting_min"], 41, "{row}");
+        assert_eq!(row["props"]["surface"], "desktop", "{row}");
+    }
+
+    #[tokio::test]
+    async fn a_plain_message_carries_no_nudge_in_the_history() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let (status, body) = person_nudge(
+            &h,
+            json!({"to": {"kind": "lane", "lane_id": holder}, "task_id": task_id,
+                   "text": "hi", "surface": "desktop"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let message_id = body["message_id"].as_str().unwrap().to_string();
+        let (_, view) =
+            call(&h, "GET", &format!("/relay/tasks/{}/{task_id}", coord.2), None, None).await;
+        let row = view["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == message_id.as_str())
+            .unwrap_or_else(|| panic!("message in history: {view}"));
+        assert_eq!(
+            row["props"],
+            json!({"to": {"kind": "lane", "lane_id": holder}, "surface": "desktop"})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_person_nudge_needs_a_known_reason_and_a_party_to_nudge() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, _) = working_task(&h, &coord).await;
+        let base = |extra: serde_json::Value| {
+            let mut b = json!({"to": {"kind": "lane", "lane_id": holder}, "task_id": task_id,
+                               "text": "nudge", "surface": "desktop"});
+            b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            b
+        };
+        for (case, body) in [
+            ("no reason", base(json!({"nudge": true}))),
+            ("unknown reason", base(json!({"nudge": true, "reason": "bored"}))),
+            ("reason without nudge", base(json!({"reason": "verdict_unread"}))),
+            ("wait without nudge", base(json!({"waiting_min": 3}))),
+            ("negative wait", base(json!({"nudge": true, "reason": "no_work", "waiting_min": -1}))),
+            (
+                "the person nudging the person",
+                base(json!({"to": {"kind": "person"}, "nudge": true, "reason": "decision"})),
+            ),
+        ] {
+            let (status, out) = person_nudge(&h, body).await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{case}: {out}");
+            assert_eq!(out["error"], "relay_invalid", "{case}: {out}");
+        }
+        // The wait so far is optional: the person may nudge at any time.
+        let (status, out) =
+            person_nudge(&h, base(json!({"nudge": true, "reason": "merge_pending"}))).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+    }
+
     // ── Q2 part 2: crew → person messages in Needs-you ──
 
     async fn send_lane_message(
@@ -3939,6 +5333,35 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_lane_message_to_the_person_rides_the_stream_as_its_row() {
+        // #418: Needs you gains the message from the stream, its row exactly
+        // as /relay/now shows it. A message to a lane is not Needs you's.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        send_lane_message(
+            &h,
+            &holder,
+            &token,
+            Some(&task_id),
+            json!({"kind": "person"}),
+            "Look here",
+        )
+        .await;
+        let sent = serde_json::to_value(event_for_entity(&mut rx, "message").await).unwrap();
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let mut row = now["person_messages"][0].clone();
+        assert_eq!(row["text"], "Look here", "{now}");
+        row["op"] = json!("sent");
+        assert_eq!(sent, json!({"action": "add", "entity": "message", "data": row}));
+        send_lane_message(&h, &holder, &token, None, json!({"kind": "coordinator"}), "ack").await;
+        while let Ok(event) = rx.try_recv() {
+            assert_ne!(event.entity, "message", "{:?}", event.data);
+        }
     }
 
     #[tokio::test]
@@ -4077,6 +5500,144 @@ mod tests {
         let (status, body) = call(h, "GET", "/relay/now", None, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == lane_id).cloned().unwrap()
+    }
+
+    // ── #419: now lists the live lanes, each with its presence (CONTRACT §1h) ──
+
+    async fn now_lane_ids(h: &Harness) -> Vec<String> {
+        let (status, body) = call(h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut ids: Vec<String> = body["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["id"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[tokio::test]
+    async fn now_leaves_out_unregistered_lanes_and_closed_crews() {
+        // A lane that left, and every lane of a closed crew, leave the list
+        // (their rows stay for history; the past-runs archive shows them).
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (stays, _) = register_contributor(&h, &coord.2).await;
+        let (leaves, token) = register_contributor(&h, &coord.2).await;
+        unregister_lane(&h, &leaves, &token).await;
+        let other = register_coordinator(&h).await;
+        assert_ne!(other.2, coord.2, "a second crew");
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", other.2),
+            Some(json!({"lane_id": other.0})),
+            Some(&other.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut expected = vec![coord.0.clone(), stays];
+        expected.sort();
+        assert_eq!(now_lane_ids(&h).await, expected);
+    }
+
+    #[tokio::test]
+    async fn now_leaves_out_a_closed_crews_open_questions() {
+        // #426: a question a lane of a now-closed crew asked stayed in Needs you,
+        // where answering it reaches no one. Now's decisions are the open crews'.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &coord.0,
+                json!({
+                    "question": "Left behind?",
+                    "options": [{"id": "yes", "label": "Yes"}],
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let question = |now: &serde_json::Value| {
+            now["decisions"].as_array().unwrap().iter().any(|d| d["question"] == "Left behind?")
+        };
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(question(&now), "an open crew's question is on Now: {now}");
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(!question(&now), "a closed crew's question is not: {now}");
+    }
+
+    #[tokio::test]
+    async fn now_lists_open_crews_only() {
+        // #426: a closed crew stayed in now.crews, and the screen took the first
+        // crew as its own — a run created there tried to start on a closed crew
+        // ("crew is closed"). Now is the live state; a closed crew is the archive's.
+        let h = harness().await;
+        let open = register_coordinator(&h).await;
+        let closed = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", closed.2),
+            Some(json!({"lane_id": closed.0})),
+            Some(&closed.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let crews: Vec<&str> =
+            body["crews"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert!(crews.contains(&open.2.as_str()), "the open crew is listed: {crews:?}");
+        assert!(!crews.contains(&closed.2.as_str()), "the closed crew is not: {crews:?}");
+    }
+
+    #[tokio::test]
+    async fn now_lanes_carry_their_presence() {
+        // active: on a task (or a review) under a live lease; idle: a live
+        // lease and nothing held; not_responding: the lease is no longer live.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (_, holder, _) = working_task(&h, &coord).await;
+        let (idle, _) = register_contributor(&h, &coord.2).await;
+        let (silent, _) = register_contributor(&h, &coord.2).await;
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp - interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane'",
+        )
+        .bind(&silent)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(now_lane(&h, &holder).await["presence"], "active");
+        assert_eq!(now_lane(&h, &idle).await["presence"], "idle");
+        assert_eq!(now_lane(&h, &silent).await["presence"], "not_responding");
+        // The sweeper's verdict reads the same: an expired lease is not live.
+        sqlx_core::query::query(
+            "update relay.leases set state = 'expired'::relay.lease_state,
+                    expires_at = current_timestamp + interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane'",
+        )
+        .bind(&idle)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(now_lane(&h, &idle).await["presence"], "not_responding");
     }
 
     #[tokio::test]
@@ -4311,8 +5872,8 @@ mod tests {
             call(&h, "POST", "/relay/backlog", Some(json!({"item_id": item_id})), None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["item_id"], item_id);
-        // Slice 2 owns the tracker pull: a ticketed add is 501, never a
-        // fabricated title (derived).
+        // #419: a ticketed add takes its title from the synced tracker; a
+        // ticket no tracker synced is not found — never a fabricated title.
         let (status, body) = call(
             &h,
             "POST",
@@ -4321,8 +5882,7 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
-        assert_eq!(body["error"], "relay_not_implemented");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     }
 
     // ── F3: triage / cancel / close ──
@@ -4680,9 +6240,13 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["crew_id"], coord.2);
         assert_eq!(body["status"], "closed");
+        // A closed crew leaves Now (#426: the screen would take it as its own).
         let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
         assert_eq!(status, StatusCode::OK, "{now}");
-        assert_eq!(now["crews"][0]["status"], "closed");
+        assert!(
+            !now["crews"].as_array().unwrap().iter().any(|c| c["id"] == coord.2),
+            "the closed crew is not on Now: {now}"
+        );
         // The census crew row carries no completed_at (out of brief scope
         // to add one); the stamp itself is pinned at the store level
         // (`close_crew_stamps_completed_at`).
@@ -4879,15 +6443,39 @@ mod tests {
         }
     }
 
-    fn lane_event(action: &str, op: &str, lane_id: &str, crew_id: &str) -> Value {
-        json!({
-            "action": action, "entity": "lane",
-            "data": {"op": op, "lane_id": lane_id, "crew_id": crew_id},
-        })
+    /// A lane event as #418 shapes it: the lane's row exactly as `/relay/now`
+    /// shows it, plus the op, the lane id and (on suspend/resume) the reason.
+    async fn lane_event(
+        h: &Harness,
+        action: &str,
+        op: &str,
+        lane_id: &str,
+        crew_id: &str,
+    ) -> Value {
+        let (status, now) = call(h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{now}");
+        let mut data = now["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["id"] == lane_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("lane {lane_id} not on Now: {now}"));
+        assert_eq!(data["crew_id"], crew_id);
+        data["op"] = json!(op);
+        data["lane_id"] = json!(lane_id);
+        json!({"action": action, "entity": "lane", "data": data})
     }
 
-    fn lane_event_why(action: &str, op: &str, lane_id: &str, crew_id: &str, reason: &str) -> Value {
-        let mut event = lane_event(action, op, lane_id, crew_id);
+    async fn lane_event_why(
+        h: &Harness,
+        action: &str,
+        op: &str,
+        lane_id: &str,
+        crew_id: &str,
+        reason: &str,
+    ) -> Value {
+        let mut event = lane_event(h, action, op, lane_id, crew_id).await;
         event["data"]["reason"] = json!(reason);
         event
     }
@@ -4901,7 +6489,7 @@ mod tests {
         let mut rx = h.state.event_tx.subscribe();
         let (lane_id, _) = register_contributor(&h, &coord.2).await;
         let event = event_for(&mut rx, "lane", "registered").await;
-        assert_eq!(event, lane_event("add", "registered", &lane_id, &coord.2));
+        assert_eq!(event, lane_event(&h, "add", "registered", &lane_id, &coord.2).await);
     }
 
     #[tokio::test]
@@ -4911,7 +6499,7 @@ mod tests {
         let mut rx = h.state.event_tx.subscribe();
         let coord = register_coordinator(&h).await;
         let event = event_for(&mut rx, "lane", "registered").await;
-        assert_eq!(event, lane_event("add", "registered", &coord.0, &coord.2));
+        assert_eq!(event, lane_event(&h, "add", "registered", &coord.0, &coord.2).await);
     }
 
     #[tokio::test]
@@ -4931,7 +6519,12 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let event = event_for(&mut rx, "lane", "unregistered").await;
-        assert_eq!(event, lane_event("remove", "unregistered", &lane_id, &coord.2));
+        // A removal names the row by its id: the screen drops it in place.
+        assert_eq!(
+            event,
+            json!({"action": "remove", "entity": "lane",
+                   "data": {"op": "unregistered", "id": lane_id, "lane_id": lane_id, "crew_id": coord.2}})
+        );
     }
 
     #[tokio::test]
@@ -5001,7 +6594,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let event = event_for(&mut rx, "lane", "reregistered").await;
-        assert_eq!(event, lane_event("add", "reregistered", &lane_id, &coord.2));
+        assert_eq!(event, lane_event(&h, "add", "reregistered", &lane_id, &coord.2).await);
     }
 
     #[tokio::test]
@@ -5014,7 +6607,10 @@ mod tests {
             limit_pause(&h, &lane_id, &token, "daily", serde_json::Value::Null, None).await;
         assert_eq!(status, StatusCode::OK);
         let event = event_for(&mut rx, "lane", "suspended").await;
-        assert_eq!(event, lane_event_why("update", "suspended", &lane_id, &coord.2, "limit_pause"));
+        assert_eq!(
+            event,
+            lane_event_why(&h, "update", "suspended", &lane_id, &coord.2, "limit_pause").await
+        );
     }
 
     #[tokio::test]
@@ -5080,8 +6676,8 @@ mod tests {
         ];
         suspended.sort_by_key(|e| e["data"]["lane_id"].as_str().unwrap().to_string());
         let mut expected = vec![
-            lane_event_why("update", "suspended", &coord.0, &coord.2, "lease_expired"),
-            lane_event_why("update", "suspended", &lane_id, &coord.2, "lease_expired"),
+            lane_event_why(&h, "update", "suspended", &coord.0, &coord.2, "lease_expired").await,
+            lane_event_why(&h, "update", "suspended", &lane_id, &coord.2, "lease_expired").await,
         ];
         expected.sort_by_key(|e| e["data"]["lane_id"].as_str().unwrap().to_string());
         assert_eq!(suspended, expected);
@@ -5098,7 +6694,7 @@ mod tests {
         let event = event_for(&mut rx, "lane", "resumed").await;
         assert_eq!(
             event,
-            lane_event_why("update", "resumed", &lane_id, &coord.2, "lease_regranted")
+            lane_event_why(&h, "update", "resumed", &lane_id, &coord.2, "lease_regranted").await
         );
     }
 

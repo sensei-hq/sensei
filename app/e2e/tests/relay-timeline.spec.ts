@@ -174,15 +174,15 @@ test.describe('Relay — timeline + steps over the live stream', () => {
     // Thin rows expand to the full entry the History renders today. Only the
     // clicked row renders a detail, so the bare locator matches exactly one —
     // no .first() on the assertion path (tauri-playwright-testing §6.1).
-    await expect(tauriPage.locator('[data-timeline] [data-timeline-detail]')).toHaveCount(
+    await expect(tauriPage.locator('[data-relay-timeline] [data-timeline-detail]')).toHaveCount(
       0,
     );
     await tauriPage.locator('[data-timeline-toggle]').first().click();
     await expect(
-      tauriPage.locator('[data-timeline] [data-timeline-detail]'),
+      tauriPage.locator('[data-relay-timeline] [data-timeline-detail]'),
     ).toHaveCount(1);
     await expect(
-      tauriPage.locator('[data-timeline] [data-timeline-detail]'),
+      tauriPage.locator('[data-relay-timeline] [data-timeline-detail]'),
     ).toBeVisible();
 
     // The report floats on the review queue; the reviewer claims it, then

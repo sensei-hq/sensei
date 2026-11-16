@@ -60,6 +60,14 @@ const rows = (c: HTMLElement): HTMLElement[] =>
   [...c.querySelectorAll('[data-timeline-row]')] as HTMLElement[];
 
 describe('RelayTimeline', () => {
+  // rokkit's theme styles a bare [data-timeline]; the relay's hook is its own (#425).
+  it('carries its own hook, never rokkit’s data-timeline', () => {
+    const m = mountComponent(RelayTimeline, { view: smallView([action('reported', { id: 'act-x', created_at: '2026-11-06T10:12:00Z' })]) });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-relay-timeline]')).not.toBeNull();
+    expect(m.container.querySelector('[data-timeline]')).toBeNull();
+  });
+
   it('reads one thin line per entry: time · actor · title', () => {
     const m = mountComponent(RelayTimeline, {
       view: smallView([

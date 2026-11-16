@@ -6,7 +6,7 @@
   import { untrack } from 'svelte';
   import { Notice } from '@sensei/ui';
   import type { RelayBacklogItem } from '$lib/relay-api.js';
-  import type { RelaySprintDraft } from './relay-state.svelte.js';
+  import type { RelaySprintDraft } from '@sensei/state';
 
   let {
     selected,
@@ -62,7 +62,7 @@
 
 <div class="flex flex-col gap-3 border-b border-paper-edge bg-paper-soft p-4" data-create-sprint>
   <div class="flex items-center gap-2">
-    <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Create sprint · {selected.length}</h2>
+    <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Create run · {selected.length}</h2>
     <button type="button" class="ml-auto text-xs underline" data-sprint-cancel onclick={oncancel}>Cancel</button>
   </div>
 
@@ -76,7 +76,7 @@
     <span>Title</span>
     <input
       class="rounded-sm border border-paper-edge bg-paper py-1 px-2 text-sm text-ink"
-      data-field="title"
+      data-sprint-field="title"
       placeholder="Sprint 14: Broker hardening"
       bind:value={title}
     />
@@ -85,7 +85,7 @@
     <span>Goal · what Task 0 decomposes</span>
     <textarea
       class="min-h-16 rounded-sm border border-paper-edge bg-paper py-2 px-3 text-sm text-ink"
-      data-field="goal"
+      data-sprint-field="goal"
       placeholder="Resolve the high-severity findings and add the claim queue"
       bind:value={goal}
     ></textarea>
@@ -96,7 +96,7 @@
       <span>Base branch</span>
       <input
         class="rounded-sm border border-paper-edge bg-paper py-1 px-2 text-sm text-ink"
-        data-field="base_branch"
+        data-sprint-field="base_branch"
         bind:value={baseBranch}
       />
     </label>
@@ -104,7 +104,7 @@
       <span>Base checkout{autoMerge ? ' · required for the merge gate' : ''}</span>
       <input
         class="rounded-sm border border-paper-edge bg-paper py-1 px-2 text-sm text-ink"
-        data-field="base_checkout"
+        data-sprint-field="base_checkout"
         placeholder="/path/to/the/checkout on the base branch"
         bind:value={baseCheckout}
       />
@@ -113,12 +113,12 @@
       <span>Verify command</span>
       <input
         class="rounded-sm border border-paper-edge bg-paper py-1 px-2 text-sm text-ink"
-        data-field="verify_cmd"
+        data-sprint-field="verify_cmd"
         bind:value={verifyCmd}
       />
     </label>
     <label class="flex items-center gap-2 text-xs text-ink-mute self-end">
-      <input type="checkbox" data-field="auto_merge" bind:checked={autoMerge} />
+      <input type="checkbox" data-sprint-field="auto_merge" bind:checked={autoMerge} />
       <span>Auto-merge approved tasks through the gate</span>
     </label>
   </div>
@@ -132,7 +132,7 @@
       disabled={!ready || busy}
       onclick={() => void submit()}
     >
-      Create sprint
+      Create run
     </button>
   </div>
 </div>

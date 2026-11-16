@@ -5,7 +5,7 @@
 import { readFileSync, rmSync } from 'node:fs';
 import { isUniformPng, PAGE_BAND } from './png-blank';
 
-export type ShotVerdict = 'ok' | 'blank' | 'unpainted';
+export type ShotVerdict = 'ok' | 'blank' | 'unpainted' | 'unavailable';
 
 /** Quiet after the settle frames before the first capture (WKWebView paints
  *  the page area some time after the DOM settles; relay-conformance needed
@@ -32,6 +32,8 @@ export interface ShotOptions {
  *   the `sensei-dev` certificate the grant then survives rebuilds).
  * - `unpainted`: the frame and docked devtools paint, the page area does not —
  *   the capture landed while the compositor had no fresh webview surface.
+ * - `unavailable`: the capture itself failed — no window on screen (a locked or
+ *   sleeping display).
  *
  * The paint is settled for before the first capture, and a flat frame is
  * recaptured rather than reported at once: a capture taken the moment the DOM
@@ -67,7 +69,14 @@ export async function shot(
   let result: ShotVerdict = 'unpainted';
   for (let attempt = 1; attempt <= tries; attempt++) {
     if (attempt > 1) await new Promise((r) => setTimeout(r, retryGapMs));
-    await tauriPage.screenshot({ path });
+    try {
+      await tauriPage.screenshot({ path });
+    } catch (e) {
+      // No window on screen to capture (a locked or sleeping display, #425): a
+      // recapture a breath later finds none either, so it is reported at once.
+      console.warn(`[shot] ${path}: no capture — ${e instanceof Error ? e.message : String(e)} (#284)`);
+      return 'unavailable';
+    }
     const png = readFileSync(path);
     result = isUniformPng(png) ? 'blank' : isUniformPng(png, PAGE_BAND) ? 'unpainted' : 'ok';
     if (result === 'ok') return 'ok';

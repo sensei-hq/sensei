@@ -116,7 +116,7 @@ begin
     from pg_catalog.pg_enum e join pg_catalog.pg_type t on t.oid = e.enumtypid
     join pg_catalog.pg_namespace s on s.oid = t.typnamespace
    where s.nspname = 'relay' and t.typname = 'run_state';
-  if v_labels is distinct from array['planning', 'active', 'completed', 'cancelled'] then
+  if v_labels is distinct from array['planning', 'active', 'completed', 'cancelled', 'draft'] then
     raise exception 'run_state labels wrong, saw %.', v_labels;
   end if;
 
