@@ -3237,6 +3237,30 @@ mod tests {
         assert_eq!(body["outcomes"][0]["outcome"], "applied");
     }
 
+    /// Outcomes that cannot be read are refused with the reason — never sent as an
+    /// empty list, which would read as "no outcomes" (no fabrication on a failure path).
+    #[test]
+    fn record_outcome_refuses_outcomes_it_cannot_read() {
+        let refused = |args: Value| record_outcome_body(&args).expect_err("refused");
+        assert!(refused(json!({})).contains("outcomes is required"), "missing");
+        assert!(refused(json!({ "outcomes": "  " })).contains("outcomes is required"), "blank");
+        assert!(refused(json!({ "outcomes": "[{oops" })).contains("not valid JSON"), "unparseable");
+        assert!(
+            refused(json!({ "outcomes": r#"{"memory_id":"m1"}"# })).contains("JSON array"),
+            "an object"
+        );
+        // An empty array is a real (if idle) call, not a failure.
+        assert_eq!(
+            record_outcome_body(&json!({ "outcomes": "[]" })),
+            Ok(json!({ "outcomes": [] }))
+        );
+        // No daemon call is shaped for a refusal: the binary answers it as an error.
+        assert_eq!(
+            daemon_request_for("record_outcome", &json!({ "outcomes": "[{oops" }), "/cwd", None),
+            None
+        );
+    }
+
     #[test]
     fn unknown_tool_defaults_to_the_mcp_proxy() {
         // Behavior-preserving: an unrecognized tool still routes to /api/mcp/call
