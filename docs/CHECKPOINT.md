@@ -30,19 +30,19 @@ Then `/sensei:complete`, which closes #436–#443.
 
 ---
 
-# Checkpoint — 2026-11-16 (relay follow-ups: #450 #451 merged; #425 #422 #449 built, e2e pending an install)
+# Checkpoint — 2026-11-16 (relay follow-ups 2: PR #460 open, held for the v0.23.0 release decision)
 
-**Slice:** spec-first follow-ups after #452, on `lane/relay-followups` (OpenSpec changes under `openspec/changes/`).
+**Slice:** spec-first relay follow-ups on `lane/relay-followups` (`openspec/changes/`).
 
-**Done:** PR #456 merged to develop (`4206ede46`): OpenSpec, #420 phase 1, #450, #451 (closed), #425 daemon+UI.
-Since, red→green on the lane: #422 Now's Lanes by run (each run's band, waiting by priority, in progress, done in run
-order with implementer + reviewer, lanes on no run task) or by agent, the choice kept per viewer; daemon `run_tasks`;
-`toLaneGroups` superseded; `/preview` by-run/by-agent captured at both widths and themes. #449 the journey seeds a
-Jira ticket (`e2e/lib/seed-ticket.ts`, `sensei_e2e` only) and runs it. README rewritten. Issues #457 (docs → wiki?),
-#458 (adopt OpenSpec; specify what is built).
+**Done:** #456 merged (#450 #451 closed). PR #460 → develop: #422 Lanes by run / by agent (daemon `run_tasks`,
+`toRunGroups`, kept per viewer), #425 e2e, #396 lane host (`relay.lanes.host`, register/guidance/MCP/command, "in
+Cursor"), #449 the journey's seeded ticket, README. Relay e2e green on the installed daemon; live `sensei` and
+`sensei_e2e` reconciled (two passes: dbd#117). Issues #457 (docs → wiki), #458 (adopt OpenSpec).
+**#446** parked on `wip/446-sqlite-cve`: rusqlite 0.43 + dbd-core without sqlite clears RUSTSEC-2026-0459
+(`cargo audit` red → green shown), but sqlx's default features pull sqlx-sqlite → fixed in sensei-hq/dbd#118; the
+`dbd_pins` guard needs a dbd **tag** (a tag publishes to crates.io).
 
-**Next command:** #396 `add-relay-lane-host` (red-first); then one `make install-service` (Keychain re-prompt, #283)
-and run `relay-run.spec.ts` + `relay-timeline.spec.ts` (#422 4.1, #425 4.1, #449 2.1); PR the lane; then #446, #447.
+**Next command:** on the user's word — merge #460 (now, joining release PR #459, or after it); merge dbd#118 + release
+dbd v0.27.10, then move all four dbd pins and land `wip/446-sqlite-cve`; then #447 (labelled set + baseline).
 
-**Open questions (user):** release timing (develop → main; forge write-back W8 live check is theirs); #447 floors after
-the baseline; #457 wiki decision.
+**Open questions (user):** #460 into v0.23.0 or after; the dbd release; #447 floors after the baseline; #457.
