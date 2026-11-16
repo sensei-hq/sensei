@@ -76,6 +76,11 @@ describe('RunCard', () => {
     expect(root.querySelector('[data-run-cancel]')).toBeNull();
   });
 
+  it('the facts wrap on a phone instead of running off the card (#420)', () => {
+    const c = mount(RunCard, { card: card(), groups: groups(), onmessage: vi.fn() });
+    expect(c.querySelector('[data-run-card] dl')!.classList).toContain('flex-wrap');
+  });
+
   const draft = (over: Partial<NonNullable<RelayRunCardView['draft']>> = {}): RelayRunCardView => ({
     ...card(),
     title: 'Run ab12',
