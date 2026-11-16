@@ -156,7 +156,11 @@ export function toAgentGroups(now: RelayNow | null, o: NowRowOptions): RelayCrew
           name: codename(l),
           who: `${assistantLabel(l.family, l.version)} · ${modelOf(l.model)}`,
           state: laneRow(l, now, o).state,
-          tasks: [...ran, ...holds].map((t) => taskRow(t, o)),
+          // The group names the lane; a row adds only who reviewed it.
+          tasks: [...ran, ...holds].map((t) => ({
+            ...taskRow(t, o),
+            who: stageOf(t) === 'done' && t.reviewer ? `reviewed by ${codename(t.reviewer)}` : null,
+          })),
         };
       }),
   }));
