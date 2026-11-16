@@ -78,6 +78,7 @@ export function lane(over: Partial<RelayLane> = {}): RelayLane {
     limit_resumes_at: null,
     limit_note: null,
     suggested_name: null,
+    host: null,
     reviewing: null,
     task: {
       id: 't-structure',

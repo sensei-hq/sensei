@@ -159,6 +159,8 @@ export interface RelayLane {
   task: RelayLaneTask | null;
   /** The name the assistant proposed for itself (queue cutover); null when it offered none. */
   suggested_name: string | null;
+  /** The editor the session runs in, as it said at register (#396); null for none. */
+  host: string | null;
   /** The review this lane holds (`review_claimed_by`), beside its own task; null when none. */
   reviewing: RelayLaneReview | null;
   /** The session's presence, the daemon's call on its lease and what it holds (#419; CONTRACT §1h). */
