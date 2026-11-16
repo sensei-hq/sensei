@@ -46,11 +46,17 @@ and build OpenSpec specs before continuing. OpenSpec 0.17.2 initialized (`opensp
 mobile-first, labels wrap); ShellScreen info band closed on a phone; Rail drawer below md (menu + backdrop/Esc/
 navigation close); LaneRow name 8rem floor, facts wrap. Relay body at 430px starts ~390px down (was ~1100px).
 #396 narrowed to the lane host (classification → #455); #447 daily + backfill (floors after the baseline).
-**Next command:** #450 `fix-relay-read-merge` (red-first), then #451, #425, #422, #449, #396, #446, #447;
-#420 phase 2 (screens §4.2–4.7) and the 430px e2e pass (§5.1) in between.
 
+**Built 2026-11-16 (red→green, pushed):** develop merged in (dup allow row dropped). #450 a landing read re-applies
+stream rows from while it was out (no blink, no second read). #451 `failureFrom` in `@sensei/state`: every app API
+helper + the relay client report `message` ?? `error` ?? status text, body kept. #425 task view: lanes by codename
+(`nameOf` replaces `codeOf`), handoff `by_lane`/`to_lane` (daemon) → "Handed off by X · 10:42 → Y". Full desktop
+e2e 134 passed; its 2 failures were #420's (title-bar selector, button audit read `hover:bg-`) — fixed, recheck 35/35.
+**Next command:** #422 `add-relay-run-grouped-lanes`, then #449, #396, #446, #447; after #422/#396 one
+`make install-service` (Keychain re-prompt, #283) and run `relay-timeline.spec.ts` (#425 4.1). #420 phase 2 between.
 
-**Open questions (user):** #396 scope and host source; #447 cost, floors, backfill; the build order.
+**Open questions (user):** when to release develop → main (255 commits, incl. the forge write-back whose W8 live
+check is still the user's); #447 floors after the baseline.
 
 ---
 
