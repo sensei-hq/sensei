@@ -2706,6 +2706,27 @@ mod tests {
     }
 
     #[test]
+    fn register_plan_sends_the_graph_and_its_concurrency_cap() {
+        let req = request(
+            "register_plan",
+            json!({ "goal": "g", "plan": r#"{"tasks":[]}"#, "plan_ref": "docs/plan.md", "max_concurrency": "3" }),
+        );
+        assert_eq!(req.path, "/api/runs/plan");
+        assert_eq!(
+            req.body,
+            Some(
+                json!({ "goal": "g", "plan": { "tasks": [] }, "workspace": "sensei", "plan_ref": "docs/plan.md", "max_concurrency": 3 })
+            )
+        );
+        // A cap that is not a number is not sent (the daemon applies its own).
+        let no_cap = request(
+            "register_plan",
+            json!({ "goal": "g", "plan": "{}", "max_concurrency": "many" }),
+        );
+        assert!(no_cap.body.unwrap().get("max_concurrency").is_none());
+    }
+
+    #[test]
     fn run_control_shapes_its_requests() {
         let status = request(
             "update_task_status",
