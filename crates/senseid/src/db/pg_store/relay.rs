@@ -12766,6 +12766,109 @@ mod tests {
         assert_eq!(positions, vec![1, 2]);
     }
 
+    /// #425: a handover's brief is stamped with the lane that took the task; who
+    /// handed it off is the handover's from-lane, and it went to its to-lane.
+    #[tokio::test]
+    async fn task_view_handoff_names_a_handovers_lanes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xf6);
+        fx_task(&pg, u1(), t, c1, Some(a1), "working", "tests", 2).await;
+        let stamp = |id: Uuid, at: &'static str| {
+            let pg = &pg;
+            async move {
+                sqlx_core::query::query(
+                    "update relay.actions set created_at = $1::timestamptz where id = $2",
+                )
+                .bind(at)
+                .bind(id)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            }
+        };
+        let first = fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a1),
+                kind: "assigned",
+                body: Some("First."),
+                props: json!({}),
+                round: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        stamp(first, "2026-11-06T10:00:00Z").await;
+        // The handover: its brief (stamped with the taker, as `relay_handover_task` writes
+        // it) and the handed_over row beside it, at the same moment.
+        let brief = fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a1),
+                kind: "assigned",
+                body: Some("Over to you."),
+                props: json!({}),
+                round: Some(2),
+                ..Default::default()
+            },
+        )
+        .await;
+        stamp(brief, "2026-11-06T10:42:00Z").await;
+        let over = fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a1),
+                kind: "handed_over",
+                props: json!({"from_lane": a2.to_string(), "from_state": "working", "to_lane": a1.to_string()}),
+                round: Some(2),
+                ..Default::default()
+            },
+        )
+        .await;
+        stamp(over, "2026-11-06T10:42:00Z").await;
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["handoff"]["body_md"], "Over to you.");
+        assert_eq!(v["handoff"]["by_lane"], a2.to_string());
+        assert_eq!(v["handoff"]["to_lane"], a1.to_string());
+    }
+
+    /// #425: a brief no lane has taken yet names who wrote it and no taker.
+    #[tokio::test]
+    async fn task_view_handoff_with_no_taker() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, _, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xf7);
+        fx_task(&pg, u1(), t, c1, None, "assigned", "tests", 1).await;
+        fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a1),
+                kind: "assigned",
+                body: Some("Pick me up."),
+                props: json!({}),
+                round: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        let v = pg.relay_task_view(u1(), c1, t).await.unwrap();
+        assert_eq!(v["handoff"]["by_lane"], a1.to_string());
+        assert_eq!(v["handoff"]["to_lane"], serde_json::Value::Null);
+    }
+
     #[tokio::test]
     async fn task_view_serves_header_run_handoff_history() {
         let pg = PgStore::test_store().await;
@@ -12863,6 +12966,9 @@ mod tests {
         assert_eq!(v["task"]["rounds"], json!([{"phase": "tests", "count": 2}]));
         assert_eq!(v["task"]["needs_answer"], false);
         assert_eq!(v["handoff"]["body_md"], "Second.");
+        // #425: who handed it off (the lane that wrote the brief) and who holds it now.
+        assert_eq!(v["handoff"]["by_lane"], a1.to_string());
+        assert_eq!(v["handoff"]["to_lane"], a2.to_string());
         // Run totals skip nulls and say how many reported (derived: a turn
         // reports when its props carry any telemetry key).
         assert_eq!(v["run"]["tokens_in"], 100);
