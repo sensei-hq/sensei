@@ -3,7 +3,7 @@
 // Row data, the shape the @sensei/state selectors produce.
 import type {
   RelayCompletedRowView,
-  RelayLaneGroupView,
+  RelayCrewRunsView,
   RelayLaneRowView,
   RelayNeedsYouView,
   RelayWaitRowView,
@@ -24,11 +24,12 @@ const lane = (
 ): RelayLaneRowView => ({ id: code, code, role, name, who, task, state, when: { text: when, over }, href, progress });
 
 /** The mockup's seven lanes, in its order. */
-export const mockupLanes = (): RelayLaneGroupView[] => [
+export const mockupLanes = (): RelayCrewRunsView[] => [
   {
     id: 'crew',
     label: null,
-    rows: [
+    runs: [],
+    idle: [
       lane('L0', 'coordinator', 'Planning & review', 'atlas-rigel · Claude Code 2.1', 'Review · Notice polish (impl r1)', { label: 'reviewing', tone: 'accent' }, '24 min'),
       lane('L4', 'contributor', 'ER diagrams', 'iris-deneb · Claude Code 2.1', 'ER sidebar on the shell (impl r1)', { label: 'approved, not merged', tone: 'warning' }, '52 min', true),
       lane('L1', 'contributor', 'Diagrams', 'cobalt-lyra · Claude Code 2.1', 'Structure view on the shell (tests r1)', { label: 'waiting · no reviewer', tone: 'warning' }, '26 min', true),
@@ -41,12 +42,13 @@ export const mockupLanes = (): RelayLaneGroupView[] => [
 ];
 
 /** The main window: two crews, each under its repository. */
-export const mainWindowLanes = (): RelayLaneGroupView[] => [
-  { id: 'crew-a', label: 'github.com/sensei-hq/sensei', rows: mockupLanes()[0].rows.slice(0, 2) },
+export const mainWindowLanes = (): RelayCrewRunsView[] => [
+  { id: 'crew-a', label: 'github.com/sensei-hq/sensei', runs: [], idle: mockupLanes()[0].idle.slice(0, 2) },
   {
     id: 'crew-b',
     label: 'github.com/jerrythomas/scratch',
-    rows: [
+    runs: [],
+    idle: [
       lane('L8', 'coordinator', 'Scratch planning', 'L8 · Codex', 'Nothing assigned', { label: 'idle', tone: 'neutral' }, '', false, null),
       lane('L9', 'contributor', 'Scratch parser', 'L9 · Claude Code 2.1', 'Prototype the scratch parser (impl r1)', { label: 'working', tone: 'accent' }, '12 min'),
     ],
@@ -55,11 +57,12 @@ export const mainWindowLanes = (): RelayLaneGroupView[] => [
 
 /** Step progress (#418) — not in the r1 mockup: what each holder reported, from both
  *  counts and the step down to the step alone; the last row reported nothing. */
-export const progressLanes = (): RelayLaneGroupView[] => [
+export const progressLanes = (): RelayCrewRunsView[] => [
   {
     id: 'crew',
     label: null,
-    rows: [
+    runs: [],
+    idle: [
       lane('L1', 'contributor', 'Diagrams', 'cobalt-lyra · Claude Code 2.1', 'Structure view on the shell (tests r1)', { label: 'working', tone: 'accent' }, '38 min', false, '/relay/c/L1', { text: '2 of 5 steps done · Writing the failing specs', done: 2, total: 5 }),
       lane('L3', 'contributor', 'Activity logs', 'jade-altair · Muse', 'Activity logs (impl r2)', { label: 'working', tone: 'accent' }, '12 min', false, '/relay/c/L3', { text: '5 of 5 steps done', done: 5, total: 5 }),
       lane('L5', 'contributor', 'Docs pages', 'coral-spica · Freebuff 1.4', 'Libraries page (docs r4)', { label: 'working', tone: 'accent' }, '4 min', false, '/relay/c/L5', { text: 'Reading the brief', done: 0, total: 0 }),
@@ -69,11 +72,12 @@ export const progressLanes = (): RelayLaneGroupView[] => [
 ];
 
 /** A lane paused on a quota, and one whose objective and task run long (the ellipsis). */
-export const edgeLanes = (): RelayLaneGroupView[] => [
+export const edgeLanes = (): RelayCrewRunsView[] => [
   {
     id: 'crew',
     label: null,
-    rows: [
+    runs: [],
+    idle: [
       lane('L7', 'contributor', 'Release notes', 'L7 · Claude Code 2.1', 'Draft the release notes (docs r1)', { label: 'paused', tone: 'warning' }, 'until 14:00'),
       lane(
         'L8',

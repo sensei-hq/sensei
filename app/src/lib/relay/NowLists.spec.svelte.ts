@@ -4,7 +4,7 @@
 // @sensei/state selectors) and nothing else — no reads, no clocks.
 import { describe, it, expect, afterEach } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
-import type { RelayCompletedRowView, RelayLaneGroupView, RelayLaneRowView } from '@sensei/state';
+import type { RelayCompletedRowView, RelayCrewRunsView, RelayLaneRowView } from '@sensei/state';
 import SectionHeading from './SectionHeading.svelte';
 import LaneList from './LaneList.svelte';
 import CompletedList from './CompletedList.svelte';
@@ -40,7 +40,7 @@ const working = (over: Partial<RelayLaneRowView> = {}): RelayLaneRowView => ({
   ...over,
 });
 
-const group = (rows: RelayLaneRowView[], label: string | null = null): RelayLaneGroupView => ({ id: 'crew-1', label, rows });
+const group = (rows: RelayLaneRowView[], label: string | null = null): RelayCrewRunsView => ({ id: 'crew-1', label, runs: [], idle: rows });
 
 describe('SectionHeading', () => {
   it('the label and the count, as one heading', () => {
@@ -57,7 +57,7 @@ describe('SectionHeading', () => {
 
 describe('LaneList · LaneRow', () => {
   it('the heading counts every lane; one card of rows, in order', () => {
-    const c = mount(LaneList, { groups: [group([working(), working({ id: 'l2', code: 'L2' })])] });
+    const c = mount(LaneList, { crews: [group([working(), working({ id: 'l2', code: 'L2' })])] });
     expect(text(c.querySelector('[data-section-heading]'))).toBe('Lanes · 2');
     // rokkit List: one display-only card, each row a link or a plain row.
     const card = c.querySelector('nav[data-list][data-variant="card"]');
@@ -67,7 +67,7 @@ describe('LaneList · LaneRow', () => {
   });
 
   it('a row on a task is one link with the mockup’s parts: mark, name, task, state, when, chevron', () => {
-    const c = mount(LaneList, { groups: [group([working()])] });
+    const c = mount(LaneList, { crews: [group([working()])] });
     const li = c.querySelector('[data-lane-row="L1"]')!;
     const link = rowOf(c, '[data-lane-row="L1"]');
     expect(link.tagName).toBe('A');
@@ -83,7 +83,7 @@ describe('LaneList · LaneRow', () => {
 
   it('step progress (#418): a second line under the task — the words, and a track filled to the counts', () => {
     const c = mount(LaneList, {
-      groups: [group([working({ progress: { text: '2 of 5 steps done · Writing the failing specs', done: 2, total: 5 } })])],
+      crews: [group([working({ progress: { text: '2 of 5 steps done · Writing the failing specs', done: 2, total: 5 } })])],
     });
     const task = part(c.querySelector('[data-lane-row="L1"]')!, 'task')!;
     expect(text(task.querySelector('[data-task-title]'))).toBe('Structure view on the shell (tests r1)');
@@ -98,16 +98,16 @@ describe('LaneList · LaneRow', () => {
   });
 
   it('a step with no counts is words only, no track; nothing reported is no line', () => {
-    const stepOnly = mount(LaneList, { groups: [group([working({ progress: { text: 'Reading the brief', done: 0, total: 0 } })])] });
+    const stepOnly = mount(LaneList, { crews: [group([working({ progress: { text: 'Reading the brief', done: 0, total: 0 } })])] });
     const line = stepOnly.querySelector('[data-lane-progress]')!;
     expect(text(line)).toBe('Reading the brief');
     expect(line.querySelector('[data-lane-progress-fill]')).toBeNull();
-    expect(mount(LaneList, { groups: [group([working()])] }).querySelector('[data-lane-progress]')).toBeNull();
+    expect(mount(LaneList, { crews: [group([working()])] }).querySelector('[data-lane-progress]')).toBeNull();
   });
 
   it('an idle lane is no link and has no chevron', () => {
     const c = mount(LaneList, {
-      groups: [group([working({ task: 'Nothing assigned', state: { label: 'idle', tone: 'neutral' }, when: { text: '', over: false }, href: null })])],
+      crews: [group([working({ task: 'Nothing assigned', state: { label: 'idle', tone: 'neutral' }, when: { text: '', over: false }, href: null })])],
     });
     const li = c.querySelector('[data-lane-row="L1"]')!;
     const row = rowOf(c, '[data-lane-row="L1"]');
@@ -122,7 +122,7 @@ describe('LaneList · LaneRow', () => {
   });
 
   it('on a phone the name shrinks, so the state pill stays on its line (#420)', () => {
-    const c = mount(LaneList, { groups: [group([working()])] });
+    const c = mount(LaneList, { crews: [group([working()])] });
     const name = c.querySelector('[data-lane-row="L1"] [data-part="name"]')!;
     // No basis that reserves room for the rest: the name takes what is left, and gives it up
     // first — but keeps an 8rem floor, so a short pill ("idle") never pulls the task up beside
@@ -133,7 +133,7 @@ describe('LaneList · LaneRow', () => {
   });
 
   it('a wait past the threshold is marked, not only coloured', () => {
-    const c = mount(LaneList, { groups: [group([working({ when: { text: '52 min', over: true } })])] });
+    const c = mount(LaneList, { crews: [group([working({ when: { text: '52 min', over: true } })])] });
     const when = part(c.querySelector('[data-lane-row="L1"]')!, 'when')!;
     expect(when.getAttribute('data-over')).toBe('true');
     expect(when.className).toMatch(/text-warning/);
@@ -142,7 +142,7 @@ describe('LaneList · LaneRow', () => {
 
   it('the main window: a group per crew, each under its repository', () => {
     const c = mount(LaneList, {
-      groups: [
+      crews: [
         { id: 'c1', label: 'github.com/sensei-hq/sensei', rows: [working()] },
         { id: 'c2', label: 'github.com/jerrythomas/scratch', rows: [working({ id: 'l9', code: 'L9' })] },
       ],
