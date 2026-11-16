@@ -7181,6 +7181,52 @@ impl PgStore {
         .map_err(db_err)?;
         let runs_json: Vec<serde_json::Value> =
             runs.into_iter().map(|(crew_id, payload)| now_run_json(&crew_id, payload)).collect();
+        // #422: every task of an open run, so Now groups its lanes by run — waiting
+        // tasks by priority (Task 0, then the item's backlog position), done ones in
+        // the order they ran — attributed to the implementing lane and the lane whose
+        // review came last. Minted order (uuid v7) is the plan's order. A value
+        // nobody reported stays null (D83).
+        let run_task_rows: Vec<(serde_json::Value, Option<DateTime<Utc>>, Option<DateTime<Utc>>)> =
+            sqlx_core::query_as::query_as(
+            "select jsonb_build_object(
+                 'task_id', t.id, 'run_id', t.run_id, 'crew_id', t.crew_id,
+                 'title', t.title, 'phase', t.phase, 'state', t.state, 'round', t.round,
+                 'position', i.position,
+                 'step', (select s->>'title' from jsonb_array_elements(t.steps) with ordinality e(s, n)
+                          where s->>'state' = 'open' order by n limit 1),
+                 'lane', case when l.id is null then null else jsonb_build_object(
+                     'id', l.id, 'code', l.code, 'suggested_name', l.suggested_name,
+                     'family', l.family, 'version', l.version, 'model', l.model) end,
+                 'reviewer', case when rv.id is null then null else jsonb_build_object(
+                     'id', rv.id, 'code', rv.code, 'suggested_name', rv.suggested_name,
+                     'family', rv.family, 'version', rv.version, 'model', rv.model) end),
+                 t.assigned_at, t.completed_at
+             from relay.tasks t
+             join relay.runs r on r.user_id = t.user_id and r.id = t.run_id
+                              and r.state in ('planning', 'active')
+             left join relay.items i on i.user_id = t.user_id and i.id = t.item_id
+             left join relay.lanes l on l.user_id = t.user_id and l.id = t.lane_id
+             left join lateral (
+                 select a.lane_id from relay.actions a
+                 where a.user_id = t.user_id and a.task_id = t.id and a.kind = 'reviewed'
+                 order by a.created_at desc, a.id desc limit 1) ra on true
+             left join relay.lanes rv on rv.user_id = t.user_id and rv.id = ra.lane_id
+             where t.user_id = $1 and t.crew_id = any($2) and t.state <> 'cancelled'
+             order by t.id",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let run_tasks: Vec<serde_json::Value> = run_task_rows
+            .into_iter()
+            .map(|(mut row, claimed_at, completed_at)| {
+                row["claimed_at"] = claimed_at.map(iso).into();
+                row["completed_at"] = completed_at.map(iso).into();
+                row
+            })
+            .collect();
         // The review queue's head: every report waiting for a reviewer,
         // oldest first (the view's `floating_review`).
         let floating: Vec<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
@@ -7420,6 +7466,7 @@ impl PgStore {
             },
             "lanes": lanes_json,
             "runs": runs_json,
+            "run_tasks": run_tasks,
             "floating_reviews": floating_json,
             "decisions": decisions_json,
             "person_messages": person_json,
