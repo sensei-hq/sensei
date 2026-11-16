@@ -15,7 +15,7 @@
 
 <span data-lane-row={row.code} class={NOW_ROW}>
   <span data-part="mark" class="flex-[0_0_24px]"><RoleMark role={row.role} /></span>
-  <span data-part="name" class="order-1 md:order-none flex flex-col min-w-0 flex-[1_1_calc(100%-190px)] md:flex-[0_0_170px]">
+  <span data-part="name" class="order-1 md:order-none flex flex-col min-w-0 flex-[1_1_8rem] md:flex-[0_0_170px]">
     <strong class="text-sm font-semibold truncate">{row.name}</strong>
     <span class="text-xs text-ink-mute truncate">{row.who}</span>
   </span>

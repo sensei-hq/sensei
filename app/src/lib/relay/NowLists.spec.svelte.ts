@@ -124,10 +124,12 @@ describe('LaneList · LaneRow', () => {
   it('on a phone the name shrinks, so the state pill stays on its line (#420)', () => {
     const c = mount(LaneList, { groups: [group([working()])] });
     const name = c.querySelector('[data-lane-row="L1"] [data-part="name"]')!;
-    // No basis that reserves room for the rest: the name takes what is left, and gives it up first.
+    // No basis that reserves room for the rest: the name takes what is left, and gives it up
+    // first — but keeps an 8rem floor, so a short pill ("idle") never pulls the task up beside
+    // it and squeezes the name out.
     expect(name.className).not.toMatch(/calc\(/);
     expect(name.classList).toContain('min-w-0');
-    expect(name.className).toMatch(/flex-\[1_1_0\]/);
+    expect(name.className).toMatch(/flex-\[1_1_8rem\]/);
   });
 
   it('a wait past the threshold is marked, not only coloured', () => {
