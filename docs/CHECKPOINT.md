@@ -30,6 +30,25 @@ Then `/sensei:complete`, which closes #436–#443.
 
 ---
 
+# Checkpoint — 2026-11-16 (OpenSpec drafts for every open item, on lane/relay-followups)
+
+**Slice:** spec-first follow-ups after the relay rebuild merged (#452). User (2026-11-16): walk the open items
+and build OpenSpec specs before continuing. OpenSpec 0.17.2 initialized (`openspec/`, `/openspec:*` commands).
+
+**Done:** develop's hook green again after #453 (two guards; `960e9b5ce`). Nine changes drafted + `--strict` valid:
+`update-phone-layout` (#420, from a ~40-finding phone survey), `add-relay-run-grouped-lanes` (#422),
+`update-relay-task-view-attribution` (#425/#395), `fix-relay-read-merge` (#450), `fix-app-api-error-reason`
+(#451), `add-relay-journey-ticket-item` (#449), `add-relay-lane-host` (#396), `update-sqlx-09-sqlite-cve` (#446),
+`update-correction-detection-intent` (#447). Decided: crew→run→tasks, agent = lane, implementer + reviewer
+(#422); phone layout phased — guard, rokkit shell, sidebar drawer, Relay first (#420).
+
+**Next command:** the user approves the drafts (and answers #396 Q1–Q2, #447 Q1–Q3), then
+`/openspec:apply update-phone-layout` phase 1, red-first.
+
+**Open questions (user):** #396 scope and host source; #447 cost, floors, backfill; the build order.
+
+---
+
 # Checkpoint — 2026-11-16 (relay screen rebuild MERGED to develop: #452, `231cbc660`)
 
 **Slice:** Relay screen rebuild to mockup r1 (#418–#429). Design `docs/design/2026-11-12-relay-screen-rebuild.md`;
