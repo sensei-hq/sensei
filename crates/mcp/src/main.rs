@@ -679,3 +679,186 @@ mod daemon_url_flag_tests {
         assert_eq!(parse_daemon_url_flag(&argv(&["--daemon-url", "--other"])), None);
     }
 }
+
+/// The tools the binary answers itself, against a fake daemon: a local listener that
+/// records each request (method, path, body) and answers with a canned status and body.
+#[cfg(test)]
+mod binary_tool_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    type Seen = Arc<Mutex<Vec<(String, String, String)>>>;
+
+    /// A daemon on a free local port answering each request in turn with `replies`.
+    fn fake_daemon(replies: Vec<(u16, &'static str)>) -> (String, Seen) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen: Seen = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for (status, body) in replies {
+                let (mut conn, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(conn.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let mut parts = line.split_whitespace();
+                let (method, path) = (
+                    parts.next().unwrap_or("").to_string(),
+                    parts.next().unwrap_or("").to_string(),
+                );
+                let mut len = 0;
+                loop {
+                    let mut header = String::new();
+                    reader.read_line(&mut header).unwrap();
+                    if header == "\r\n" || header.is_empty() {
+                        break;
+                    }
+                    if let Some(v) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap();
+                    }
+                }
+                let mut buf = vec![0; len];
+                reader.read_exact(&mut buf).unwrap();
+                log.lock().unwrap().push((method, path, String::from_utf8(buf).unwrap()));
+                write!(
+                    conn,
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        (base, seen)
+    }
+
+    fn client() -> reqwest::blocking::Client {
+        reqwest::blocking::Client::new()
+    }
+    fn text(result: &Value) -> &str {
+        result["content"][0]["text"].as_str().unwrap_or("")
+    }
+    fn is_error(result: &Value) -> bool {
+        result["isError"] == true
+    }
+    fn body_of(seen: &Seen, i: usize) -> Value {
+        serde_json::from_str(&seen.lock().unwrap()[i].2).unwrap()
+    }
+    /// A port nothing listens on.
+    fn closed_base() -> String {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        drop(l);
+        base
+    }
+
+    #[test]
+    fn infer_sends_the_prompt_and_reads_content_error_status_and_unreachable() {
+        let (base, seen) = fake_daemon(vec![
+            (200, r#"{"content":"hello"}"#),
+            (200, r#"{"error":"no model"}"#),
+            (200, r#"{"other":1}"#),
+            (503, "{}"),
+        ]);
+        let args = json!({ "prompt": "hi", "max_tokens": "64" });
+        let ok = infer_tool(&args, &client(), &base);
+        assert_eq!((text(&ok), is_error(&ok)), ("hello", false));
+        let (method, path, _) = seen.lock().unwrap()[0].clone();
+        assert_eq!((method.as_str(), path.as_str()), ("POST", "/api/gateway/infer"));
+        assert_eq!(body_of(&seen, 0)["max_tokens"], 64);
+        assert_eq!(body_of(&seen, 0)["capability"], "text_chat");
+        let err = infer_tool(&args, &client(), &base);
+        assert!(is_error(&err) && text(&err).contains("no model"));
+        assert!(text(&infer_tool(&args, &client(), &base)).contains("\"other\""));
+        let status = infer_tool(&args, &client(), &base);
+        assert!(is_error(&status) && text(&status).contains("503"));
+        let down = infer_tool(&args, &client(), &closed_base());
+        assert!(is_error(&down) && text(&down).contains("Cannot reach senseid daemon"));
+    }
+
+    #[test]
+    fn embed_status_log_event_and_relay_wait_reach_their_routes() {
+        let (base, seen) =
+            fake_daemon(vec![(200, "{}"), (200, r#"{"ok":true}"#), (200, "{}"), (200, "{}")]);
+        embed_tool(&json!({ "texts": "a, b" }), &client(), &base);
+        gateway_status_tool(&client(), &base);
+        log_event_tool(&json!({ "type": "checkpoint" }), &client(), "/repo", &base);
+        relay_wait_tool(
+            &json!({ "lane_id": "l1", "lane_token": "t", "timeout_ms": 5 }),
+            &client(),
+            &base,
+        );
+        let seen_now = seen.lock().unwrap().clone();
+        let routes: Vec<(&str, &str)> =
+            seen_now.iter().map(|(m, p, _)| (m.as_str(), p.split('?').next().unwrap())).collect();
+        assert_eq!(
+            routes,
+            [
+                ("POST", "/api/gateway/embed"),
+                ("GET", "/api/gateway/status"),
+                ("POST", "/hook/event"),
+                ("GET", "/api/relay/tasks/wait"),
+            ]
+        );
+        assert_eq!(body_of(&seen, 0)["texts"], json!(["a", "b"]));
+        assert_eq!(body_of(&seen, 2)["hook_event_name"], "checkpoint");
+        assert!(seen_now[3].1.contains("lane_id=l1"));
+    }
+
+    #[test]
+    fn consensus_formats_its_conclusion_and_surfaces_errors() {
+        let (base, seen) = fake_daemon(vec![
+            (
+                200,
+                r#"{"conclusion":"ship it","confidence":"high","total_duration_ms":12,"models_used":["a"]}"#,
+            ),
+            (200, r#"{"error":"no models"}"#),
+            (500, "{}"),
+        ]);
+        let args = json!({ "signal": "s" });
+        let ok = consensus_tool(&args, &client(), &base);
+        assert!(
+            text(&ok).contains("confidence: high")
+                && text(&ok).contains("ship it")
+                && text(&ok).contains("12ms")
+        );
+        assert_eq!(seen.lock().unwrap()[0].1, "/api/gateway/consensus");
+        assert!(
+            text(&consensus_tool(&args, &client(), &base)).contains("Consensus error: no models")
+        );
+        let failed = consensus_tool(&args, &client(), &base);
+        assert!(is_error(&failed) && text(&failed).contains("500"));
+    }
+
+    #[test]
+    fn generate_image_needs_a_prompt_and_resolves_a_relative_path_against_the_cwd() {
+        let none = generate_image_tool(&json!({}), &client(), "/repo", &closed_base());
+        assert!(is_error(&none) && text(&none).contains("prompt is required"));
+        let no_cwd = generate_image_tool(
+            &json!({ "prompt": "p", "output_path": "out.png" }),
+            &client(),
+            "",
+            &closed_base(),
+        );
+        assert!(is_error(&no_cwd) && text(&no_cwd).contains("CWD is unavailable"));
+
+        let (base, seen) = fake_daemon(vec![(200, r#"{"paths":["/repo/out.png"]}"#)]);
+        let args = json!({ "prompt": "p", "output_path": "out.png", "size": "1024x1024", "n": "2", "style": "" });
+        let ok = generate_image_tool(&args, &client(), "/repo", &base);
+        assert!(!is_error(&ok));
+        assert_eq!(seen.lock().unwrap()[0].1, "/api/gateway/image/generate");
+        assert_eq!(
+            body_of(&seen, 0),
+            json!({ "prompt": "p", "output_path": "/repo/out.png", "size": "1024x1024", "n": 2 })
+        );
+    }
+
+    #[test]
+    fn record_outcome_with_unreadable_outcomes_is_an_error_without_a_daemon_call() {
+        let params = json!({ "name": "record_outcome", "arguments": { "outcomes": "[{oops" } });
+        let result = handle_call_tool(&params, &client(), "/repo", &closed_base());
+        assert!(is_error(&result));
+        assert!(text(&result).contains("not valid JSON"), "{result}");
+    }
+}
