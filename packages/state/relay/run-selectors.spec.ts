@@ -115,6 +115,12 @@ describe('toAgentGroups · one group per lane', () => {
     expect(titles(l1.tasks)).toEqual(['Header on the shell', 'Structure view on the shell']);
   });
 
+  it('a task row does not repeat its own lane: a done one names its reviewer alone', () => {
+    const l1 = toAgentGroups(F.runNow(), opts)[0].agents[1];
+    expect(l1.tasks.map((t) => t.who)).toEqual(['reviewed by coral-spica', null]);
+    expect(l1.tasks[1].detail).toBe('Writing the failing specs');
+  });
+
   it('a lane that ran nothing in a run has no tasks', () => {
     const now = F.runNow();
     now.run_tasks = [];
