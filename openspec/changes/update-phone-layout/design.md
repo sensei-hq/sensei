@@ -12,4 +12,5 @@ mobile-first.
 ## Open Questions
 - Q1: Is the phone target the desktop app (Tauri window resized) and the dōjō in a phone browser,
   or also a future mobile shell? (Affects whether the Rail drawer is enough.)
-- Q2: Order: shells and Relay first, then the rest screen by screen — or all in one change?
+- Resolved (user, 2026-11-16): **phased** — the guard, the rokkit ScreenShell fix, the sidebar
+  drawer and Relay land first; the other screens follow in slices, each shrinking the allowlist.

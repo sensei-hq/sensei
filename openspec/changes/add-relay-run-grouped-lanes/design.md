@@ -15,9 +15,9 @@ who claimed, reported and reviewed.
 - Priority: item position at the time the run started is not stored; use the current position
   (the person may reprioritise the backlog; the run reflects it).
 
-## Open Questions
-- Q1: Does "By run" replace the crew grouping entirely, or do several crews (main window) show
-  crew → run → tasks?
-- Q2: "Agent" = the lane (one session) — or should By agent aggregate lanes by assistant/model?
-- Q3: Should a done task show both implementer and reviewer, or only the implementer with the
-  reviewer on the task view?
+## Resolved (user, 2026-11-16)
+- Several crews (main window): **crew → run → tasks** — each crew stays the outer group under its
+  repository heading, its runs inside, then its lanes on no task. The workspace window (one crew)
+  shows the runs directly.
+- "Agent" in By agent = **each lane** (one session): codename, assistant, model, presence.
+- A done task names **implementer and reviewer** on the row.

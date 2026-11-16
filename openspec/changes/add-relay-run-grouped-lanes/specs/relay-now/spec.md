@@ -17,6 +17,12 @@ lanes on no run task.
 - **WHEN** the person opens Now
 - **THEN** it is listed under "Not on a task" after every run group, with its presence
 
+#### Scenario: The main window with two crews
+- **GIVEN** the main window holds two crews, each with an open run
+- **WHEN** the person opens Now
+- **THEN** each crew is an outer group under its repository heading
+- **AND** inside each, that crew's run groups, then its lanes on no task
+
 #### Scenario: No open run
 - **GIVEN** a crew with lanes and no open run
 - **WHEN** the person opens Now
