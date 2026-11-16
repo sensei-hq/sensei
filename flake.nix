@@ -60,6 +60,8 @@
 
           nativeBuildInputs = with pkgs; [
             pkg-config
+            # llama.cpp's build script (senseid/embedded-llama-cpp)
+            cmake
             # libclang for bindgen (pg_query's build script)
             rustPlatform.bindgenHook
           ];
