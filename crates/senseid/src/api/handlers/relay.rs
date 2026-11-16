@@ -5582,6 +5582,52 @@ mod tests {
         assert!(!question(&now), "a closed crew's question is not: {now}");
     }
 
+    /// #396: a session in an editor says so at register; the lane keeps its host and
+    /// Now serves it. No host given (or a blank one) is no host, never a guess.
+    #[tokio::test]
+    async fn register_keeps_the_host_editor_and_now_serves_it() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let mut lanes = Vec::new();
+        for host in [json!("cursor"), json!("  "), Value::Null] {
+            let (status, body) = call(
+                &h,
+                "POST",
+                "/api/relay/register",
+                Some(json!({"family": "claude-code", "crew_id": coord.2, "host": host})),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            lanes.push(body["lane_id"].as_str().unwrap().to_string());
+        }
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let host = |id: &str| {
+            body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == id).unwrap()["host"]
+                .clone()
+        };
+        assert_eq!(host(&lanes[0]), "cursor");
+        assert_eq!(host(&lanes[1]), Value::Null);
+        assert_eq!(host(&lanes[2]), Value::Null);
+    }
+
+    /// #396: a host is an editor's name, not prose — a long one is refused.
+    #[tokio::test]
+    async fn register_refuses_a_host_longer_than_a_name() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"family": "claude-code", "crew_id": coord.2, "host": "x".repeat(65)})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+
     #[tokio::test]
     async fn now_lists_open_crews_only() {
         // #426: a closed crew stayed in now.crews, and the screen took the first
