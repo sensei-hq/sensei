@@ -15,6 +15,38 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-11-16
+
+### Added
+
+- **Relay runs end to end.** Runs draft without a crew, start on a live crew and
+  cancel at any time; the Crew view starts or cancels a draft, and **Past runs**
+  open read-only in both windows (`GET /relay/runs`, `/relay/runs/{id}`) (#419, #424).
+  The whole journey — Queue → draft → crew → Start → planner ask/answer → plan
+  review → claims and steps → reviews → gate merge → Past runs — is covered by an
+  end-to-end test (#426).
+- **Codenames.** Registering a lane mints a colour-star codename; the task view
+  names lanes by it, and *Handed off* says by whom and to whom (#419, #425).
+- **Nudges.** Every wait offers *Nudge {party}*, and Sensei's last nudge shows
+  beside a long wait (#419).
+- **Queue management.** Queue items close, reorder and retitle; a ticket joins the
+  backlog from its tracker; the person can close a crew, releasing its lanes (#419).
+- **Tracker comment write-back.** GitLab and GitHub write back the usage comment,
+  and the app shows it. Sensei never comments on a ticket in a public or internal
+  repository; a rate-limit 403 on a write is retried (#436–#441).
+- **Phone layout.** Below `md` the Rail is a drawer and the shell's info band starts
+  closed (#420).
+- **`/preview`** replaces `/gallery`: a page per component with fixture tabs and
+  theme · marks · width toggles (#429).
+
+### Fixed
+
+- A stream row that lands while a read is in flight is no longer lost — the roster
+  stops blinking while a crew joins (#426, #450).
+- Every API helper reports the daemon's reason for a refusal, not just its code (#451).
+- Now and Needs you list open crews only; a closed crew's questions leave Needs you (#426).
+- `make bump` runs on Linux (GNU sed) as well as macOS.
+
 ## [0.22.1] — 2026-11-15
 
 ### Fixed
