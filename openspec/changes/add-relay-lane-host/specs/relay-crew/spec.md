@@ -12,12 +12,3 @@ it and every lane shape SHALL serve it; a lane registered without one has no hos
 #### Scenario: A terminal lane
 - **GIVEN** a lane registers with no host
 - **THEN** its member card shows no host tag
-
-### Requirement: Assistants and editors are told apart
-Each tool sensei has seen SHALL be classified as an assistant or an editor; a session in an editor
-SHALL be attributed to the assistant and model that did the work, with the editor as its host.
-
-#### Scenario: A Cursor session using Claude
-- **GIVEN** a transcript from Cursor whose turns were produced by claude-sonnet-4-5
-- **THEN** the session's assistant is the model's assistant and its host is Cursor
-- **AND** metrics count it for the assistant, not for "cursor"

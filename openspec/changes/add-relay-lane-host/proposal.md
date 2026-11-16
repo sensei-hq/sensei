@@ -1,4 +1,4 @@
-# Change: Tell assistants from editors; a lane names the editor it runs in (#396)
+# Change: A lane names the editor it runs in — the host tag (#396; classification is #455)
 
 ## Why
 Transcripts are processed for assistants and editors alike (`assistant_family` mixes `claude-code`,
@@ -7,14 +7,13 @@ the assistant (model); the editor is only the host. The member card's host tag (
 and benched) stays empty because the daemon never reports a lane's editor.
 
 ## What Changes
-- A seen tool is classified `kind: assistant | editor` (CONTRACT §3l); sessions and transcripts carry
-  the `host` editor when one was involved, and attribute work to the assistant (model).
-- Register accepts an optional `host` (the editor the session runs in); the lane stores and serves
-  it; the member card shows "in <editor>" with its explaining title.
-- AddMember's picker lists **Assistants** and **Editors** from what this machine has seen (the
-  catalogue's first cut: names and when last seen; launch templates later).
+- Register accepts an optional `host` (the editor the session runs in), self-reported by the
+  session; the lane stores and serves it; the member card shows "in <editor>" with its title.
+- `/sensei:register` and the register guidance tell an editor-hosted session to pass `host`.
+- Not here (user, 2026-11-16): classifying assistants vs editors in transcripts, attribution, the
+  AddMember picker, and detecting the host from the environment — follow-up #455.
 
 ## Impact
 - Specs: `relay-crew` (+ the transcript attribution it relies on).
-- Code: senseid register (host), lane DDL + now/crew reads, session/transcript classification,
-  `@sensei/state` crew selectors (`editorTag` already exists), AddMember picker.
+- Code: senseid register (host), lane DDL + now/crew reads, `@sensei/state` crew selectors
+  (`editorTag` already exists), the register command and guidance.
