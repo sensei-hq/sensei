@@ -148,7 +148,7 @@ fields:
 | # | Label | Input | Help text |
 |---|---|---|---|
 | 1 | Project URL | text | "Open the project on GitHub and copy the address bar, e.g. https://github.com/orgs/acme/projects/3." |
-| 2 | Access token | `type="password"`, never echoed | "Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project's repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can't read shows as not found. Write-back also needs Issues: read and write." (amended 2026-11-14, tracker-forge-comment-writeback) Connect itself needs only read access. The `unauthorized` alert links to `https://github.com/settings/personal-access-tokens/new`. |
+| 2 | Access token | `type="password"`, never echoed | "Create a fine-grained, read-only token with Projects: read on the owner and Issues: read on the project's repositories. A classic token with repo and read:project also works, but can write to every repository it reaches. A ticket in a repository the token can't read shows as not found. Write-back also needs Issues: read and write." (amended 2026-11-14, tracker-forge-comment-writeback) Connect itself needs only read access. The `unauthorized` alert links to `https://github.com/settings/personal-access-tokens/new`. (spec `tracker-metrics-writeback`) |
 | 3 | Iteration field (optional) | text | "Only when the project has more than one Iteration field: its name, as the project shows it." |
 
 The GitHub form sends `{board_url, api_token}`, plus `iteration_field` when one was typed.
@@ -308,7 +308,7 @@ moved)."), `rate_limited`, `bad_request` and the reach codes (`transport`, `http
 5. Daemon stopped → the daemon-error state with Retry, never the not-connected form.
 6. a11y: every input has a programmatic label; the status and alert regions are announced (axe check passes on all three states).
 7. Write-back: each card's checkbox reflects `writeback.enabled` and sends one PATCH; the state line has the text above for its state; a refused PATCH leaves the checkbox as it was and shows the alert (component tests).
-8. GitLab (component tests, `tracker-gitlab.md` D16): the GitLab radio is enabled; a GitLab tracker with `unauthorized` and its card render no "Jira"; the card shows the "Write back to GitLab" checkbox, the comment-only note and no **Fields** (amended 2026-11-14, tracker-forge-comment-writeback); the source-change notice shows within 14 days of `sprint_source_changed_at`.
+8. GitLab (component tests, `tracker-gitlab.md` D16): the GitLab radio is enabled; a GitLab tracker with `unauthorized` and its card render no "Jira"; the card shows the "Write back to GitLab" checkbox (spec `tracker-metrics-writeback`), the comment-only note and no **Fields** (amended 2026-11-14, tracker-forge-comment-writeback); the source-change notice shows within 14 days of `sprint_source_changed_at`.
 
 ## Wrong gate
 
