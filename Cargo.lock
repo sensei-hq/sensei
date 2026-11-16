@@ -4885,7 +4885,7 @@ dependencies = [
 [[package]]
 name = "sensei-cloud-providers"
 version = "0.7.0"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#cec8af920bdd382a8d44b39a3d4fdb6f20411389"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -4905,7 +4905,7 @@ dependencies = [
 [[package]]
 name = "sensei-gateway"
 version = "0.7.0"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#cec8af920bdd382a8d44b39a3d4fdb6f20411389"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4925,7 +4925,7 @@ dependencies = [
 [[package]]
 name = "sensei-kernel"
 version = "0.7.0"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#cec8af920bdd382a8d44b39a3d4fdb6f20411389"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4943,7 +4943,7 @@ dependencies = [
 [[package]]
 name = "sensei-local-engine"
 version = "0.7.0"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#cec8af920bdd382a8d44b39a3d4fdb6f20411389"
 dependencies = [
  "async-trait",
  "futures",
@@ -4960,7 +4960,7 @@ dependencies = [
 [[package]]
 name = "sensei-local-providers"
 version = "0.7.0"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#cec8af920bdd382a8d44b39a3d4fdb6f20411389"
 dependencies = [
  "async-trait",
  "futures",
