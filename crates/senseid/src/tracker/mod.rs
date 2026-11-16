@@ -915,7 +915,7 @@ pub mod test_support {
             FakeAdapter {
                 scopes: [String::new(), String::new()],
                 validated: None,
-                params_extra: Default::default(),
+                params_extra: serde_json::Map::new(),
                 capabilities: Capabilities { history: true, comment: true, fields: true },
             }
         }
@@ -1025,8 +1025,8 @@ pub mod test_support {
         pub fn answering(answer: Result<crate::tracker::Audience, TrackerError>) -> Self {
             AudienceScript {
                 answer: Mutex::new(answer),
-                repos: Default::default(),
-                asked: Default::default(),
+                repos: HashMap::new(),
+                asked: Mutex::new(Vec::new()),
             }
         }
         /// Put ticket `external_id` in `repo`, whose visibility answers `answer`.

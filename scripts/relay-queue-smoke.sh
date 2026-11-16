@@ -111,6 +111,7 @@ echo "== 4. A claims Task 0 and reports a two-task plan; B claims the review and
 R=$(req POST /api/relay/tasks/claim_next "$TOKEN_A" "{\"lane_id\":\"$LANE_A\"}"); expect "$R" 200 "A claim_next"
 [ "$(body "$R" | jq -r .claim_type)" = task ] && [ "$(body "$R" | jq -r .task.id)" = "$TASK0" ] || fail "A did not get Task 0: $(body "$R")"
 PLAN='{"tasks":[{"key":"t1","title":"First file","phase":"impl","owned_paths":["t1.txt"],"acceptance":["t1.txt exists"],"deps":[]},{"key":"t2","title":"Second file","phase":"impl","owned_paths":["t2.txt"],"acceptance":["t2.txt exists"],"deps":["t1"]}]}'
+# shellcheck disable=SC2016 # printf format: the \n escapes must stay literal so printf interprets them
 REPORT_MD=$(printf 'Plan:\n\n```json\n%s\n```\n' "$PLAN" | jq -Rs .)
 R=$(req POST "/api/relay/tasks/$TASK0/report" "$TOKEN_A" "{\"lane_id\":\"$LANE_A\",\"phase\":\"planning\",\"round\":1,\"summary\":{\"changed\":\"Planned two files.\"},\"report_md\":$REPORT_MD}")
 expect "$R" 200 "Task 0 report"
@@ -121,7 +122,7 @@ R=$(req POST /api/relay/tasks/claim_next "$TOKEN_B" "{\"lane_id\":\"$LANE_B\"}")
 N=$(body "$(req GET /relay/now)")
 echo "$N" | jq -e --arg l "$LANE_B" --arg t "$TASK0" '.lanes[] | select(.id == $l and .reviewing.id == $t)' >/dev/null || fail "now.lanes lacks B reviewing Task 0"
 R=$(req POST "/api/relay/tasks/$TASK0/review" "$TOKEN_B" "{\"lane_id\":\"$LANE_B\",\"verdict\":\"approved\",\"summary\":\"Sound plan.\"}")
-expect "$R" 200 "Task 0 approval"; [ "$(body "$R" | jq -r .state)" = done ] || fail "Task 0 not done: $(body "$R")"
+expect "$R" 200 "Task 0 approval"; [ "$(body "$R" | jq -r .state)" = "done" ] || fail "Task 0 not done: $(body "$R")"
 Q=$(body "$(req GET "/api/relay/queue?lane_id=$LANE_A" "$TOKEN_A")")
 [ "$(echo "$Q" | jq '.queue | length')" = 2 ] || fail "queue should hold two ready tasks: $Q"
 T1=$(echo "$Q" | jq -r '.queue[] | select(.title == "First file") | .task_id')
@@ -152,7 +153,7 @@ R=$(req POST /api/relay/tasks/claim_next "$TOKEN_B" "{\"lane_id\":\"$LANE_B\"}")
 R=$(req POST "/api/relay/tasks/$T1/review" "$TOKEN_B" "{\"lane_id\":\"$LANE_B\",\"verdict\":\"approved\",\"summary\":\"Good.\"}")
 expect "$R" 200 "t1 approval"; [ "$(body "$R" | jq -r .state)" = approved ] || fail "t1 should hold approved for the gate: $(body "$R")"
 echo "   waiting up to ${GATE_WAIT}s for the sweeper's gate pass…"
-wait_state "$T1" done "$GATE_WAIT" || fail "t1 not merged by the gate within ${GATE_WAIT}s (state $(task_state "$T1"))"
+wait_state "$T1" "done" "$GATE_WAIT" || fail "t1 not merged by the gate within ${GATE_WAIT}s (state $(task_state "$T1"))"
 V=$(body "$(req GET "/relay/tasks/$CREW/$T1")")
 echo "$V" | jq -e '.history[] | select(.kind == "merged" and .lane_code == null)' >/dev/null || fail "t1 lacks the gate's merged row: $(echo "$V" | jq -c '[.history[].kind]')"
 git -C "$REPO" merge-base --is-ancestor lane/t1 main || fail "lane/t1 not merged into main"
@@ -165,7 +166,7 @@ R=$(req POST /api/relay/tasks/claim_next "$TOKEN_A" "{\"lane_id\":\"$LANE_A\"}")
 [ "$(body "$R" | jq -r .task.id)" = "$T2" ] || fail "A should get t2's review: $(body "$R")"
 R=$(req POST "/api/relay/tasks/$T2/review" "$TOKEN_A" "{\"lane_id\":\"$LANE_A\",\"verdict\":\"approved\",\"summary\":\"Good.\"}")
 expect "$R" 200 "t2 approval"
-wait_state "$T2" done "$GATE_WAIT" || fail "t2 not merged by the gate within ${GATE_WAIT}s (state $(task_state "$T2"))"
+wait_state "$T2" "done" "$GATE_WAIT" || fail "t2 not merged by the gate within ${GATE_WAIT}s (state $(task_state "$T2"))"
 git -C "$REPO" merge-base --is-ancestor lane/t2 main || fail "lane/t2 not merged into main"
 i=0; until [ $i -ge "$GATE_WAIT" ]; do
   N=$(body "$(req GET /relay/now)")

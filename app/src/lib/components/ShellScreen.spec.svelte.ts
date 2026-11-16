@@ -108,7 +108,7 @@ describe('ShellScreen', () => {
   // #420: on a phone the info band would push the body below the first screen.
   describe('on a phone (below md, 768px)', () => {
     const phone = (query: string) =>
-      ({ matches: /max-width:\s*767px/.test(query), media: query, onchange: null, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false }) as unknown as MediaQueryList;
+      ({ matches: /max-width:\s*767px/.test(query), media: query, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: () => false }) as unknown as MediaQueryList;
     let before: typeof window.matchMedia;
     beforeEach(() => {
       before = window.matchMedia;

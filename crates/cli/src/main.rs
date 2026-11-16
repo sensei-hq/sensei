@@ -1821,14 +1821,14 @@ mod tests {
     #[test]
     fn transcript_export_parses_sessions_missing_and_out() {
         let cli =
-            Cli::parse_from(["sensei", "transcript", "export", "s1", "s2", "--out", "/tmp/x"]);
+            Cli::parse_from(["sensei", "transcript", "export", "s1", "s2", "--out", "x.jsonl"]);
         match cli.command {
             Some(Commands::Transcript {
                 cmd: TranscriptCommands::Export { sessions, missing, out },
             }) => {
                 assert_eq!(sessions, ["s1", "s2"]);
                 assert!(!missing);
-                assert_eq!(out.as_deref(), Some("/tmp/x"));
+                assert_eq!(out.as_deref(), Some("x.jsonl"));
             }
             other => panic!("expected Transcript export, got {:?}", other.is_some()),
         }

@@ -57,9 +57,14 @@ echo "db-backup-essential: → $out"
 # is the database as it was. Neither name present is a failure, never a skip.
 exists() { [ "$(psql "$url" -Atc "select to_regclass('$1') is not null")" = "t" ]; }
 export_renamed() { # NEW OLD
+  # NOTE on the 2>&1-before->/dev/null order below (and in the export loop): it is
+  # deliberate — stdout is discarded while stderr is captured into $err, so a failed
+  # export reports its error instead of failing silently.
   if exists "$1"; then
+    # shellcheck disable=SC2069 # stderr capture is the intent (see NOTE above)
     DATABASE_URL="$url" dbd export -n "$1" --format jsonl --output "$out" --source database 2>&1 >/dev/null
   elif exists "$2"; then
+    # shellcheck disable=SC2069 # stderr capture is the intent (see NOTE above)
     mkdir -p "$out/${2%%.*}" &&
       psql "$url" -Atc "\\copy (select row_to_json(t) from $2 t) to '$out/${2%%.*}/${2#*.}.jsonl'" 2>&1 >/dev/null
   else
@@ -89,6 +94,7 @@ if (( ${#failed[@]} > 0 )); then
 fi
 
 # Only now, with a complete new snapshot on disk, drop the oldest beyond KEEP.
+# shellcheck disable=SC2012 # entries are machine-made %Y%m%d-%H%M%S stamps, never hostile names
 ls -1t "$dir" | tail -n +"$((keep + 1))" | while read -r d; do rm -rf "${dir:?}/$d"; done
 
 echo "db-backup-essential: complete — $(du -sh "$out" | awk '{print $1}')"

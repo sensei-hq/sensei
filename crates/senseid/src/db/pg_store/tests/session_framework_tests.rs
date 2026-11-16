@@ -159,7 +159,7 @@ async fn edits_count_only_inside_the_session_repo() {
     let s = PgStore::test_store().await;
     let dir = tempfile::tempdir().unwrap();
     let a = dir.path().join("a");
-    std::fs::create_dir(&a).unwrap();
+    std::fs::create_dir_all(&a).unwrap();
     let a = a.to_str().unwrap().to_string();
     let folder = repo(&s, &a).await;
     let inside =

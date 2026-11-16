@@ -1,48 +1,25 @@
-# Checkpoint — 2026-11-14 (forge comment write-back: W1–W7 built on feature/forge-comment-writeback)
+# Checkpoint — 2026-11-16 (DeepSource low-hanging fixes on develop; #460 merged)
 
-**Slice:** comment write-back for GitLab and GitHub (spec
-`docs/spec/daemon/tracker-forge-comment-writeback.md`, plan
-`docs/plans/2026-11-14-forge-comment-writeback.md`, issues #436–#443, D93). Built unattended
-(user, 2026-11-14).
+**Slice:** DeepSource review findings → tracking issues #461–#479, then fix the
+low-hanging ones on `develop` (this session, rebased over #460).
 
-**Done (pushed):** W1 `7305d36c3`, W3 `cb0d3dfb7`, W4 `fcad91d78`, W2+W5+W6 `867687b79`,
-W7 `de85312c6`. Each feature had red-first or mutation-checked tests, fmt and clippy
-(`-D warnings`) clean, and an adversarial review whose CRITICAL/HIGH/MEDIUM findings were
-fixed. Full senseid suite: 4902 passed (before the W5 review fixes; tracker and handler
-tests 409 after). App: 172 unit tests, svelte-check clean. CLI: 100 tests.
+**Done (pushed):** `2e9b6c91d` (20 files: shell quoting/disables, Rust
+T::new/as_bool/create_dir_all/tmp-free fixtures, static attempt, attrOf move,
+writebackText default via TDD, quote swaps, openSidebarEntry, vi.fn mocks,
+skipcq with reasons, `.deepsource.toml` with test_patterns + 2 .mjs excludes)
+and `df9649198` (the 2 rustfmt violations #460 landed with; CI lint was red).
+Full suite green: cargo 5532/0, vitest 3739/0, svelte-check, clippy, fmt,
+test-fast, 3× audit. Closed #466, #468–#470, #472–#478.
+Kept open with verdicts: #462–#464, #467, #471 (dashboard ignore-clicks or
+test_patterns confirmation on next run), #461, #465 (next batch), #479
+(umbrella: secrets scanners clean, dashboard triage needed).
 
-**Amended at build (all recorded in the spec and `.sensei/slice-state.json`):**
-- `Patch` and W2 moved into W5; the forge visibility reads moved into W4 (clippy dead code).
-- The visibility check runs after `writeback_target` returns Go.
-- A failed visibility read is final only on 404.
-- A rate-limit 403 is `rate_limited` on reads too; 410 → `NotFound`.
-- `issue_exists` checks identity.
-- The sanitiser defuses line-start blocks.
-- GitLab keys need a namespace.
-- `github::is_repo_name` refuses `.` and `..`.
+**Carried forward:** release PR #459 open (develop→main v0.23.0); #460 merged.
+dbd#118 + dbd v0.27.10 release, then move the four dbd pins and land
+`wip/446-sqlite-cve` (#446); then #447, #457.
 
-**Next command:** open a PR `feature/forge-comment-writeback` → `develop`. After merge, W8
-(#443, the user's): the live check X2, X3, X5, X6 on gitlab.com and github.com test projects.
-Then `/sensei:complete`, which closes #436–#443.
+**Next command:** review + merge #459; dashboard ignore-clicks for
+#462–#464, #467, #471; then #461 (need() sweep) and #465 (refactors).
 
-**Open questions (user):** none.
-
-
----
-
-# Checkpoint — 2026-11-16 (relay follow-ups 2: PR #460 open, held for the v0.23.0 release decision)
-
-**Slice:** spec-first relay follow-ups on `lane/relay-followups` (`openspec/changes/`).
-
-**Done:** #456 merged (#450 #451 closed). PR #460 → develop: #422 Lanes by run / by agent (daemon `run_tasks`,
-`toRunGroups`, kept per viewer), #425 e2e, #396 lane host (`relay.lanes.host`, register/guidance/MCP/command, "in
-Cursor"), #449 the journey's seeded ticket, README. Relay e2e green on the installed daemon; live `sensei` and
-`sensei_e2e` reconciled (two passes: dbd#117). Issues #457 (docs → wiki), #458 (adopt OpenSpec).
-**#446** parked on `wip/446-sqlite-cve`: rusqlite 0.43 + dbd-core without sqlite clears RUSTSEC-2026-0459
-(`cargo audit` red → green shown), but sqlx's default features pull sqlx-sqlite → fixed in sensei-hq/dbd#118; the
-`dbd_pins` guard needs a dbd **tag** (a tag publishes to crates.io).
-
-**Next command:** on the user's word — merge #460 (now, joining release PR #459, or after it); merge dbd#118 + release
-dbd v0.27.10, then move all four dbd pins and land `wip/446-sqlite-cve`; then #447 (labelled set + baseline).
-
-**Open questions (user):** #460 into v0.23.0 or after; the dbd release; #447 floors after the baseline; #457.
+**Open questions (user):** v0.23.0 release decision; the dbd release; #447
+floors; #457.

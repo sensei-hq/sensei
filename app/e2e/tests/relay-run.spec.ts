@@ -26,7 +26,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateToScreen, seedSetupComplete, DAEMON_URL } from '../helpers';
-import { RelayCrew, type RelayLane } from '../lib/relay-crew';
+import { RelayCrew, RelayLane } from '../lib/relay-crew';
 import { shot } from '../lib/shot';
 import { seedJiraTicket } from '../lib/seed-ticket';
 
@@ -93,6 +93,9 @@ async function evidence(name: string): Promise<void> {
 /** The text of every element a selector matches, read in the page. */
 const textsOf = (selector: string) =>
   tauri.evaluate(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.textContent.replace(/\\s+/g, ' ').trim()))`) as Promise<string>;
+/** An attribute of the first element a selector matches, read in the page. */
+const attrOf = (selector: string, name: string) =>
+  tauri.evaluate(`document.querySelector(${JSON.stringify(selector)})?.getAttribute(${JSON.stringify(name)}) ?? null`) as Promise<string | null>;
 const button = (label: string) => tauri.locator(`[data-screen-tools] [aria-label="${label}"]`);
 /** A view button: its accessible name starts with the view (a count may follow). */
 const view = (name: 'Now' | 'Queue' | 'Crew') => tauri.locator(`[data-screen-tools] [aria-label^="${name}"]`);
@@ -120,7 +123,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  for (const lane of Object.values(lanes)) await lane?.unregister().catch(() => {});
+  for (const lane of Object.values(lanes)) await lane?.unregister().catch(() => {}); // skipcq - afterAll cleanup is best-effort; failures surface in the owning tests
   if (repo) rmSync(repo, { recursive: true, force: true });
 });
 
@@ -214,10 +217,6 @@ async function crewStage(): Promise<void> {
   await expect(tauri.locator('[data-run-card] [data-run-title]')).toContainText('planning', { timeout: STREAM });
   expect(await countOf('[data-run-card] [data-run-start]')).toBe(0);
 }
-
-/** An attribute of the first element a selector matches, read in the page. */
-const attrOf = (selector: string, name: string) =>
-  tauri.evaluate(`document.querySelector(${JSON.stringify(selector)})?.getAttribute(${JSON.stringify(name)}) ?? null`) as Promise<string | null>;
 
 const PLAN = {
   tasks: [
@@ -328,7 +327,7 @@ async function workStage(): Promise<void> {
   await expect.poll(async () => await textsOf(`${runGroup()} [data-run-task="${work.t1}"] [data-run-task-detail]`), { timeout: STREAM }).toContain('Check it');
 
   // B's early report is refused until the first is done.
-  const early = await b.attempt(() => b.report(work.t2, { phase: 'impl', round: 1, summary: { changed: 't2.txt' }, branch: 'lane/t2' }));
+  const early = await RelayLane.attempt(() => b.report(work.t2, { phase: 'impl', round: 1, summary: { changed: 't2.txt' }, branch: 'lane/t2' }));
   expect(early).toMatchObject({ ok: false, status: 409, error: 'relay_upstream_deps_unmet' });
 
   // A reports; the report waits for a reviewer; B claims and approves; the gate merges.
