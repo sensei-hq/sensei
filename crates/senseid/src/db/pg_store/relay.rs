@@ -55,7 +55,13 @@ pub struct RelayRegisterInput {
     /// The name the assistant proposed for itself (queue cutover): kept on
     /// the lane and used as its title; the code stays the handle.
     pub suggested_name: Option<String>,
+    /// The editor the session runs in, as the session says (#396); none for a
+    /// terminal session. Never guessed.
+    pub host: Option<String>,
 }
+
+/// An editor's name is short: a longer host is prose, not a name (#396).
+const HOST_MAX_CHARS: usize = 64;
 
 /// The register response. `crew_id` is always present (Q16-REC): minted or
 /// joined, the coordinator needs it for the paste line. The raw token is
@@ -1517,6 +1523,8 @@ fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serd
         // Queue cutover: the name the assistant offered and the
         // review the lane holds (both the view's keys).
         "suggested_name": payload.get("suggested_name"),
+        // #396: the editor the session runs in, as it said; null when it said none.
+        "host": payload.get("host"),
         "reviewing": payload.get("reviewing"),
         "presence": payload.get("presence"),
     })
@@ -1589,6 +1597,13 @@ impl PgStore {
         // (`L4 · Muse`), else the bare code when the family is empty.
         let offered =
             input.suggested_name.as_deref().map(str::trim).filter(|name| !name.is_empty());
+        // #396: the host as the session named it; blank is none.
+        let host = input.host.as_deref().map(str::trim).filter(|h| !h.is_empty());
+        if host.is_some_and(|h| h.chars().count() > HOST_MAX_CHARS) {
+            return Err(RelayError::Validation(format!(
+                "host names the editor in at most {HOST_MAX_CHARS} characters"
+            )));
+        }
         let title = match offered {
             Some(name) => name.to_string(),
             None if input.family.is_empty() => code.clone(),
@@ -1618,9 +1633,9 @@ impl PgStore {
         let insert_lane = sqlx_core::query::query(
             "insert into relay.lanes
                (user_id, id, crew_id, code, role, family, version, model,
-                capabilities, repo, worktree, token_hash, title, suggested_name)
+                capabilities, repo, worktree, token_hash, title, suggested_name, host)
              values ($1, $2, $3, $4, $5::relay.lane_role, $6, $7, $8, $9, $10, $11, $12, $13,
-                     $14)",
+                     $14, $15)",
         )
         .bind(user_id)
         .bind(lane_id)
@@ -1636,6 +1651,7 @@ impl PgStore {
         .bind(token_hash.as_str())
         .bind(title.as_str())
         .bind(suggested_name.as_deref())
+        .bind(host)
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_lane {
@@ -8765,6 +8781,7 @@ mod tests {
             repo_key: None,
             workspace_id: None,
             suggested_name: None,
+            host: None,
         }
     }
 

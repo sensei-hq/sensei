@@ -198,6 +198,8 @@ pub(crate) struct RegisterBody {
     role: Option<String>,
     /// The name the assistant proposes for itself: the lane's title.
     suggested_name: Option<String>,
+    /// The editor the session runs in (#396), when it runs in one.
+    host: Option<String>,
     family: String,
     version: Option<String>,
     model: Option<String>,
@@ -1000,6 +1002,7 @@ pub(crate) async fn register(
                     .transpose()
                     .map_err(err)?,
                 suggested_name: body.suggested_name,
+                host: body.host,
             },
             chrono::Utc::now(),
         )
@@ -5625,7 +5628,8 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        // A refusal of the body's values is relay_invalid, 422, like every other.
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     }
 
     #[tokio::test]

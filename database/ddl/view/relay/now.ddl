@@ -13,7 +13,7 @@ select l.user_id, 'lane'::text as section, l.crew_id, l.id,
   jsonb_build_object(
     'code', l.code, 'title', l.title, 'suggested_name', l.suggested_name,
     'role', l.role, 'family', l.family,
-    'version', l.version, 'model', l.model,
+    'version', l.version, 'model', l.model, 'host', l.host,
     'limit_scope', l.limit_scope, 'limit_resumes_at', l.limit_resumes_at,
     'limit_note', l.limit_note,
     'lease', case when ls.id is null then null
