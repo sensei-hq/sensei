@@ -9,7 +9,7 @@
 import { createRawSnippet } from 'svelte';
 import { Pill, StatCard } from '@rokkit/ui';
 import type { PreviewEntry, PreviewView } from '$lib/preview/catalogue.js';
-import { toPastRuns, toRunCard } from '@sensei/state';
+import { toAgentGroups, toPastRuns, toRunCard, toRunGroups, type NowRowOptions } from '@sensei/state';
 import * as RF from '$lib/test-stubs/relay-fixtures.js';
 import { decision, floatingReview, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
 import PastRunsList from './PastRunsList.svelte';
@@ -50,6 +50,11 @@ import {
   needsYouUnassigned,
   progressLanes,
 } from './now-lists.fixtures.js';
+
+
+/** Sprint 14 as Now groups it (#422), through the selectors the screen uses. */
+const laneOpts: NowRowOptions = { at: Date.now(), threshold: 30, href: (crew, task) => `/relay/${crew}/${task}`, byCrew: false };
+const laneViews = () => ({ crews: toRunGroups(RF.runNow(), laneOpts), agents: toAgentGroups(RF.runNow(), laneOpts) });
 
 
 const entry = (
@@ -133,10 +138,12 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
   entry('StatCard/blocked', 'on you, or lease lost: danger', StatCard, statCard(loadedNow, 'blocked')),
   entry('StatCard/blocked-none', 'nothing blocked: ink', StatCard, statCard(calm, 'blocked')),
   entry('StatCard/done', 'completed today, with how many passed review first time', StatCard, statCard(loadedNow, 'done')),
-  entry('LaneList/mockup', 'the mockup’s seven lanes: working, waits past the threshold, lease lost, a question, idle', LaneList, { groups: mockupLanes() }),
-  entry('LaneList/main-window', 'the main window: a card per crew under its repository', LaneList, { groups: mainWindowLanes() }),
-  entry('LaneList/edges', 'a quota pause, and an objective and task that need the ellipsis', LaneList, { groups: edgeLanes() }),
-  entry('LaneList/progress', 'NOT IN THE MOCKUP (#418): step progress under the task — counts and step, counts only, step only, nothing reported', LaneList, { groups: progressLanes() }),
+  entry('LaneList/mockup', 'the mockup’s seven lanes: working, waits past the threshold, lease lost, a question, idle', LaneList, { crews: mockupLanes() }),
+  entry('LaneList/main-window', 'the main window: a card per crew under its repository', LaneList, { crews: mainWindowLanes() }),
+  entry('LaneList/edges', 'a quota pause, and an objective and task that need the ellipsis', LaneList, { crews: edgeLanes() }),
+  entry('LaneList/progress', 'NOT IN THE MOCKUP (#418): step progress under the task — counts and step, counts only, step only, nothing reported', LaneList, { crews: progressLanes() }),
+  entry('LaneList/by-run', 'NOT IN THE MOCKUP (#422): a run’s band, then waiting by priority, in progress, done in run order with who did and reviewed each, then the lanes on no run task', LaneList, { ...laneViews(), view: 'run', onview: () => {} }),
+  entry('LaneList/by-agent', 'NOT IN THE MOCKUP (#422): one group per lane — codename, assistant and model, state — and the run tasks it ran', LaneList, { ...laneViews(), view: 'agent', onview: () => {} }),
   entry('NeedsYou/mockup', 'a decision, three long waits, the triage line', NeedsYou, {
     view: mockupNeedsYou(),
     href: (crew: string, task: string) => `/relay/${crew}/${task}`,

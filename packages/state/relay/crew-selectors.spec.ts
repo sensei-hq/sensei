@@ -229,9 +229,19 @@ describe('editorTag · the host a session runs in (COMPONENTS §3e)', () => {
     });
   });
 
-  it('no member carries an editor while the daemon reports none (D83: not invented)', () => {
+  it('a lane with no host carries no editor (D83: not invented)', () => {
     const groups = toMemberGroups(F.now());
     expect(groups.flatMap((g) => g.members).every((m) => m.editor === null)).toBe(true);
+  });
+
+  it('a lane in an editor names it, by its name, and whose transcripts the work counts for (#396)', () => {
+    const now = F.now({ lanes: [F.lane({ host: 'cursor', model: 'claude-sonnet-4-5' })] });
+    expect(toMemberGroups(now).flatMap((g) => g.members)[0].editor).toEqual(editorTag('Cursor', 'claude-sonnet-4-5'));
+  });
+
+  it('a lane in an editor with no model reported says so in the title', () => {
+    const now = F.now({ lanes: [F.lane({ host: 'zed', model: null })] });
+    expect(toMemberGroups(now).flatMap((g) => g.members)[0].editor?.title).toContain('model not reported');
   });
 });
 

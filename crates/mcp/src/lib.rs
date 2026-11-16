@@ -517,6 +517,8 @@ pub fn daemon_request_for(
                 "workspace_id",
                 // Queue cutover: the name the assistant proposes for itself.
                 "suggested_name",
+                // #396: the editor the session runs in, when it runs in one.
+                "host",
             ] {
                 if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
                     body.insert(k.into(), v.clone());
@@ -1388,6 +1390,7 @@ pub fn handle_list_tools() -> Value {
                 &[
                     ("role", "string", "coordinator | contributor (default contributor)"),
                     ("suggested_name", "string", "The name you propose for yourself: becomes the lane title (the code stays the handle)"),
+                    ("host", "string", "The editor you run inside (cursor, zed), when you run in one; omit in a terminal"),
                     ("version", "string", "Lane version"),
                     ("model", "string", "Model the lane runs"),
                     ("capabilities", "array", "What the lane can do"),
@@ -3380,6 +3383,7 @@ mod tests {
         assert!(review.contains("gate"), "{review}");
         let register = tool_named(&ts, "relay_register");
         assert!(register["inputSchema"]["properties"]["suggested_name"].is_object());
+        assert!(register["inputSchema"]["properties"]["host"].is_object(), "#396: the editor the session runs in");
         assert!(
             register["inputSchema"]["properties"]["role"]["description"]
                 .as_str()
@@ -3472,13 +3476,14 @@ mod tests {
     fn register_dispatch_forwards_suggested_name_and_omits_role_when_absent() {
         let req = daemon_request_for(
             "relay_register",
-            &json!({"family": "claude-code", "suggested_name": "worker-alpha"}),
+            &json!({"family": "claude-code", "suggested_name": "worker-alpha", "host": "cursor"}),
             "/cwd",
             None,
         )
         .unwrap();
         let body = req.body.as_ref().unwrap();
         assert_eq!(body["suggested_name"], "worker-alpha");
+        assert_eq!(body["host"], "cursor", "#396: the host rides register");
         assert!(
             body.get("role").is_none(),
             "absent stays absent: the daemon defaults to contributor"

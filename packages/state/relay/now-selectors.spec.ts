@@ -2,7 +2,8 @@
 // read to the rows LaneList and CompletedList draw. Pure: the read and a clock in, row
 // data out. A number or name the daemon did not give is not invented (D83).
 import { describe, it, expect } from 'vitest';
-import { toCompletedRows, toLaneGroups, toNeedsYou, toWaitRows, assistantLabel, type NowRowOptions } from './now-selectors.js';
+import { toCompletedRows, toNeedsYou, toWaitRows, assistantLabel, type NowRowOptions } from './now-selectors.js';
+import { toRunGroups } from './run-selectors.js';
 import { hhmm } from './format.js';
 import * as F from './fixtures.js';
 
@@ -14,11 +15,12 @@ const opts = (over: Partial<NowRowOptions> = {}): NowRowOptions => ({
   ...over,
 });
 
-const rowsOf = (now = F.now(), o = opts()) => toLaneGroups(now, o).flatMap((g) => g.rows);
+// A read with no open run: every lane is a row of its crew's lanes on no run task (#422).
+const rowsOf = (now = F.now(), o = opts()) => toRunGroups(now, o).flatMap((g) => g.idle);
 const one = (lane: ReturnType<typeof F.lane>, extra: Partial<ReturnType<typeof F.now>> = {}, o = opts()) =>
   rowsOf(F.now({ lanes: [lane], ...extra }), o)[0];
 
-describe('toLaneGroups · a lane row (CONTRACT §1c-2)', () => {
+describe('a lane row (CONTRACT §1c-2)', () => {
   it('on a task: objective, codename · assistant, the task with its phase and round, working, time in state, a link', () => {
     const row = one(F.lane({ suggested_name: 'cobalt-lyra' }));
     expect(row).toEqual({
@@ -122,23 +124,19 @@ describe('toLaneGroups · a lane row (CONTRACT §1c-2)', () => {
   });
 });
 
-describe('toLaneGroups · groups', () => {
+describe('toRunGroups · the crews with no open run', () => {
   it('the workspace window: one group, no heading, every lane in the read’s order', () => {
-    const groups = toLaneGroups(F.now(), opts());
+    const groups = toRunGroups(F.now(), opts());
     expect(groups).toHaveLength(1);
     expect(groups[0].label).toBeNull();
-    expect(groups[0].rows.map((r) => r.code)).toEqual(['L0', 'L1']);
+    expect(groups[0].idle.map((r) => r.code)).toEqual(['L0', 'L1']);
   });
 
   it('the main window: a group per crew that has lanes, headed by its repository', () => {
-    const groups = toLaneGroups(F.mainNow(), opts({ byCrew: true }));
+    const groups = toRunGroups(F.mainNow(), opts({ byCrew: true }));
     expect(groups.map((g) => g.id)).toEqual([F.CREW_ID, F.LOOSE_CREW_ID]);
     expect(groups.map((g) => g.label)).toEqual([F.REPO, F.LOOSE_REPO]);
-    expect(groups[1].rows.map((r) => r.code)).toEqual(['L8', 'L9']);
-  });
-
-  it('no read, no groups', () => {
-    expect(toLaneGroups(null, opts())).toEqual([]);
+    expect(groups[1].idle.map((r) => r.code)).toEqual(['L8', 'L9']);
   });
 });
 
@@ -327,7 +325,7 @@ describe('toNeedsYou · messages to the person', () => {
   });
 });
 
-describe('toLaneGroups · a stat’s filter narrows the lanes (CONTRACT §1c-0)', () => {
+describe('toRunGroups · a stat’s filter narrows the lanes (CONTRACT §1c-0)', () => {
   const now = () =>
     F.now({
       lanes: [
@@ -337,7 +335,7 @@ describe('toLaneGroups · a stat’s filter narrows the lanes (CONTRACT §1c-0)'
         F.lane({ id: 'l4', code: 'L4', task: null }),
       ],
     });
-  const codes = (only: NowRowOptions['only']) => toLaneGroups(now(), opts({ only })).flatMap((g) => g.rows.map((r) => r.code));
+  const codes = (only: NowRowOptions['only']) => toRunGroups(now(), opts({ only })).flatMap((g) => g.idle.map((r) => r.code));
 
   it('Working: the lanes on a task or holding a review', () => {
     expect(codes('working')).toEqual(['L1']);

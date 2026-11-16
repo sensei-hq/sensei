@@ -159,6 +159,8 @@ export interface RelayLane {
   task: RelayLaneTask | null;
   /** The name the assistant proposed for itself (queue cutover); null when it offered none. */
   suggested_name: string | null;
+  /** The editor the session runs in, as it said at register (#396); null for none. */
+  host: string | null;
   /** The review this lane holds (`review_claimed_by`), beside its own task; null when none. */
   reviewing: RelayLaneReview | null;
   /** The session's presence, the daemon's call on its lease and what it holds (#419; CONTRACT §1h). */
@@ -288,6 +290,39 @@ export interface RelayFacets {
   workspaces: { id: string; name: string }[];
 }
 
+/** A lane as a run task names it (#422): who, which assistant, which model. */
+export interface RelayNowRunTaskLane {
+  id: string;
+  code: string;
+  suggested_name: string | null;
+  family: string;
+  version: string | null;
+  /** Null when the lane reported none: "model not reported", never a default (D83). */
+  model: string | null;
+}
+
+/** One task of an open run (#422), as Now orders and attributes it. */
+export interface RelayNowRunTask {
+  task_id: string;
+  run_id: string;
+  crew_id: string;
+  title: string;
+  phase: RelayTaskPhase;
+  state: RelayTaskState;
+  round: number;
+  /** The backlog position of the item it came from; null for Task 0 or an unranked item. */
+  position: number | null;
+  /** When a lane took it; null while it waits. */
+  claimed_at: string | null;
+  completed_at: string | null;
+  /** The first step its holder has not finished; null when it reported none. */
+  step: string | null;
+  /** The lane holding or that implemented it; null while it waits in the pool. */
+  lane: RelayNowRunTaskLane | null;
+  /** The lane whose review came last; null before any review. */
+  reviewer: RelayNowRunTaskLane | null;
+}
+
 /** `relay.now` for a filter. `crews: []` = no crew yet (not a failure). */
 export interface RelayNow {
   crews: RelayCrew[];
@@ -295,6 +330,8 @@ export interface RelayNow {
   lanes: RelayLane[];
   /** Open sprint runs in created order (queue cutover): the band above the lanes. */
   runs: RelayRunSummary[];
+  /** Every task of an open run, in the plan's order (#422): the run groups on Now. */
+  run_tasks: RelayNowRunTask[];
   /** Reports waiting for a reviewer, oldest first (queue cutover). */
   floating_reviews: RelayFloatingReview[];
   decisions: RelayDecision[];

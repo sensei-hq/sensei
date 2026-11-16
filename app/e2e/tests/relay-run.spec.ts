@@ -28,6 +28,7 @@ import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateToScreen, seedSetupComplete, DAEMON_URL } from '../helpers';
 import { RelayCrew, type RelayLane } from '../lib/relay-crew';
 import { shot } from '../lib/shot';
+import { seedJiraTicket } from '../lib/seed-ticket';
 
 const STREAM = 20_000;
 const EVIDENCE = 'test-results/relay-run';
@@ -35,6 +36,8 @@ const REPO_KEY = 'github.com/sensei-hq/e2e-run';
 // Unique per run: the shared e2e broker keeps every earlier run's items.
 const RUN_TAG = Date.now().toString(36);
 const ITEMS = [`Run journey ${RUN_TAG}: the first file`, `Run journey ${RUN_TAG}: the second file`];
+/** A ticket the e2e broker's seeded tracker holds (#449), unique per run like the items. */
+const TICKET = { key: `E2E-${RUN_TAG.toUpperCase()}`, title: `Run journey ${RUN_TAG}: the ticket` };
 
 /** A person route on the daemon (no lane token). */
 async function person<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -124,7 +127,7 @@ test.afterAll(async () => {
 test('the run, driven from the app end to end, every change from the stream', async ({ tauriPage }) => {
   test.setTimeout(600_000);
   tauri = tauriPage;
-  await test.step('1 · Queue: two items to the backlog, picked; Create run drafts it (no crew yet)', () => queueStage(tauriPage));
+  await test.step('1 · Queue: two items and a ticket to the backlog, picked; Create run drafts it (no crew yet)', () => queueStage(tauriPage));
   await test.step('2 · Crew: a coordinator and two contributors register and appear live; Start starts the draft', () => crewStage());
   await test.step('3 · Planner: Task 0 claimed, the person answers its question, the plan is reviewed and unpacks', () => plannerStage());
   await test.step('4 · Work: claims, steps, a report reviewed and merged by the gate — twice', () => workStage());
@@ -145,9 +148,18 @@ async function queueStage(tauriPage: TauriPageLike): Promise<void> {
     await expect(pickBox(title)).toBeVisible({ timeout: STREAM });
     await expect.poll(() => countOf(`[data-relay-section="triage"] [aria-label="Add to backlog: ${css(title)}"]`), { timeout: STREAM }).toBe(0);
   }
-  for (const title of ITEMS) await pickBox(title).click();
+  // A ticket from a synced tracker joins the backlog by its key (#449). No screen adds one
+  // yet (the tracker pull is slice 2), so the person route does, as a lane's calls do here;
+  // the app shows it from the stream with its ticket pill.
+  await seedJiraTicket(DAEMON_URL, TICKET.key, TICKET.title);
+  await person('POST', '/relay/backlog', { ticket_provider: 'jira', ticket_key: TICKET.key });
+  await expect(pickBox(TICKET.title)).toBeVisible({ timeout: STREAM });
+  const pills = JSON.parse(await textsOf('[data-relay-section="backlog"] [data-ticket]')) as string[];
+  expect(pills.some((p) => p.includes(TICKET.key))).toBe(true);
 
-  await button('Create run · 2').click();
+  for (const title of [...ITEMS, TICKET.title]) await pickBox(title).click();
+
+  await button('Create run · 3').click();
   const form = tauriPage.locator('[data-create-sprint]');
   await expect(form).toBeVisible();
   const field = (name: string) => `[data-create-sprint] [data-sprint-field="${name}"]`;
@@ -158,6 +170,8 @@ async function queueStage(tauriPage: TauriPageLike): Promise<void> {
   await typeInto(field('verify_cmd'), 'test -f README');
   await tauriPage.locator('[data-create-sprint] [data-sprint-submit]').click();
   await expect(form).toBeHidden({ timeout: STREAM });
+  // The ticket is the run's now, with the manual items: it leaves the backlog.
+  await expect.poll(() => countOf(`[data-relay-section="backlog"] [aria-label="Pick for a run: ${css(TICKET.title)}"]`), { timeout: STREAM }).toBe(0);
 
   // No crew: the run waits as a draft on the Crew view, Start waiting for the crew.
   await view('Crew').click();
@@ -172,7 +186,7 @@ async function crewStage(): Promise<void> {
   lanes.coord = await crew.register({ role: 'coordinator', family: 'e2e', goal: 'run journey crew', repo_key: REPO_KEY, suggested_name: 'atlas-e2e' });
   await expect.poll(() => countOf('[data-member]'), { timeout: STREAM }).toBe(1);
   lanes.a = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'cobalt-e2e' });
-  lanes.b = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'coral-e2e' });
+  lanes.b = await crew.register({ family: 'e2e', crew_id: lanes.coord.crewId, suggested_name: 'coral-e2e', host: 'cursor' });
   // Every member's card, by its codename, as the stream brings each in.
   const roster = async () => {
     const cards: string[] = JSON.parse(await textsOf('[data-member]'));
@@ -186,6 +200,9 @@ async function crewStage(): Promise<void> {
     expect(await roster()).toEqual(full);
     await new Promise((r) => setTimeout(r, 200));
   }
+  // The lane in an editor shows its host tag; the terminal lanes show none (#396).
+  const hosts = JSON.parse(await textsOf('[data-member-host]')) as string[];
+  expect(hosts).toEqual(['in Cursor']);
   // The Crew button's badge counts them too (its name carries the count).
   await expect.poll(() => attrOf('[data-screen-tools] [aria-label^="Crew"]', 'aria-label'), { timeout: STREAM }).toBe('Crew · 3');
 
@@ -220,12 +237,13 @@ async function plannerStage(): Promise<void> {
   const band = `[data-sprint-band][data-run-id="${ids.run}"]`;
   await expect.poll(() => attrOf(band, 'data-run-state'), { timeout: STREAM }).toBe('planning');
 
-  // A lane claims Task 0: its row shows the plan task.
+  // A lane claims Task 0: the run's group shows the plan in progress, by that lane (#422).
   const claim = await a.claimNext();
   expect(claim.claim_type).toBe('task');
   ids.task0 = claim.task!.id;
-  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('cobalt-e2e'), { timeout: STREAM }).toBe(true);
-  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('Plan: Run journey'), { timeout: STREAM }).toBe(true);
+  const task0Row = `${runGroup()} [data-run-stage="active"] [data-run-task="${ids.task0}"]`;
+  await expect.poll(async () => await textsOf(task0Row), { timeout: STREAM }).toContain('Plan: Run journey');
+  expect(await textsOf(`${task0Row} [data-run-task-who]`)).toContain('cobalt-e2e');
 
   // It asks the person; Needs you shows the question, and the person answers in the app.
   const decisionId = await a.ask({
@@ -259,6 +277,13 @@ async function plannerStage(): Promise<void> {
   await evidence('3-planner-active');
 }
 
+/** Press By run or By agent (a filtered tauri locator acts on its first match, so by text here). */
+const pickLaneView = (label: string) =>
+  tauri.evaluate(`[...document.querySelectorAll('[data-lane-view] button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)})?.click()`);
+
+/** The run's group on Now, by run (#422). */
+const runGroup = () => `[data-run-group="${ids.run}"]`;
+
 /** The broker's merge gate runs on the sweeper's pass. */
 const GATE = 200_000;
 const work: { t1: string; t2: string } = { t1: '', t2: '' };
@@ -284,8 +309,9 @@ async function workStage(): Promise<void> {
   const second = await b.claimNext();
   expect(second.task?.deps_status).toBe('early_claim_gated');
   work.t2 = second.task!.id;
-  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('First file'), { timeout: STREAM }).toBe(true);
-  await expect.poll(async () => (await textsOf('[data-lane-row]')).includes('Second file'), { timeout: STREAM }).toBe(true);
+  // Both in progress in the run's group, each by its lane (#422).
+  const active = `${runGroup()} [data-run-stage="active"] [data-run-task-title]`;
+  await expect.poll(async () => JSON.parse(await textsOf(active)).sort(), { timeout: STREAM }).toEqual(['First file', 'Second file']);
   // The Working stat counts both lanes on a task (only this crew is open).
   const working = '[data-relay-stat="working"] [data-stat-card-value]';
   await expect.poll(async () => JSON.parse(await textsOf(working))[0], { timeout: STREAM }).toBe('2');
@@ -298,7 +324,8 @@ async function workStage(): Promise<void> {
       { key: 'check', title: 'Check it', state: 'open' },
     ],
   });
-  await expect.poll(async () => (await textsOf('[data-lane-progress]')).includes('1 of 2 steps done'), { timeout: STREAM }).toBe(true);
+  // The holder's first open step reads on its task's row (#422).
+  await expect.poll(async () => await textsOf(`${runGroup()} [data-run-task="${work.t1}"] [data-run-task-detail]`), { timeout: STREAM }).toContain('Check it');
 
   // B's early report is refused until the first is done.
   const early = await b.attempt(() => b.report(work.t2, { phase: 'impl', round: 1, summary: { changed: 't2.txt' }, branch: 'lane/t2' }));
@@ -313,6 +340,29 @@ async function workStage(): Promise<void> {
   expect((await b.review(work.t1, 'approved', 'Good.')).state).toBe('approved');
   await expect.poll(() => countOf(floating1), { timeout: STREAM }).toBe(0);
   await mergedAndCompleted(work.t1, 'First file');
+  // Done in the order they ran, each by the lane that did it and the one that reviewed it (#422).
+  const done = `${runGroup()} [data-run-stage="done"]`;
+  // The broker's merge gate is a task of the run too: done after the file it merged.
+  await expect
+    .poll(async () => JSON.parse(await textsOf(`${done} [data-run-task-title]`)), { timeout: STREAM })
+    .toEqual(['Plan: Run journey', 'First file', 'gate: First file']);
+  const firstWho = JSON.parse(await textsOf(`${done} [data-run-task="${work.t1}"] [data-run-task-who]`))[0] as string;
+  expect(firstWho).toContain('cobalt-e2e');
+  expect(firstWho).toContain('reviewed by coral-e2e');
+  // By agent: each lane with the run tasks it ran, then what it holds; the choice switches back.
+  await pickLaneView('By agent');
+  const agentTasks = async (name: string) =>
+    JSON.parse(
+      String(
+        await tauri.evaluate(`JSON.stringify([...document.querySelectorAll('[data-agent-group]')]
+          .filter((g) => g.querySelector('[data-agent-name]')?.textContent?.trim() === ${JSON.stringify(name)})
+          .flatMap((g) => [...g.querySelectorAll('[data-run-task-title]')].map((t) => t.textContent.trim())))`),
+      ),
+    ) as string[];
+  await expect.poll(() => agentTasks('cobalt-e2e'), { timeout: STREAM }).toEqual(['Plan: Run journey', 'First file']);
+  expect(await agentTasks('coral-e2e')).toEqual(['Second file']);
+  await pickLaneView('By run');
+  await expect.poll(() => countOf(runGroup()), { timeout: STREAM }).toBe(1);
   await evidence('4-work-first-merged');
   execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', 'lane/t1', 'main']);
 

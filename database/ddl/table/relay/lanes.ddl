@@ -14,6 +14,7 @@ create table if not exists relay.lanes (
   family          text            not null,
   version         text,
   model           text,
+  host            text,
   capabilities    text[]          not null default '{}',
   repo            text,
   worktree        text,
@@ -42,6 +43,7 @@ comment on table relay.lanes is
 'Registered lanes. Liveness is the lane''s lease, not a column.';
 comment on column relay.lanes.code is 'L1.., unique per crew. The person reads codes, never uuids.';
 comment on column relay.lanes.title is 'Set by the coordinator''s first assign; null until then.';
+comment on column relay.lanes.host is 'The editor the session runs in (cursor, zed), as the session said at register (#396). Null for a terminal session or one that said nothing: never guessed. The assistant inside does the work; transcripts count for its model.';
 comment on column relay.lanes.suggested_name is 'The name the assistant proposed at register (worker-alpha). Null when it offered none; the code stays the handle.';
 comment on column relay.lanes.role is 'contributor by default: the broker coordinates. A coordinator lane is optional and one per crew while registered.';
 comment on column relay.lanes.capabilities is 'What the lane declared at register. Empty, never unknown.';

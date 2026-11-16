@@ -14,7 +14,7 @@ work seen **by agent** as an alternative.
   - **In progress** tasks with the lane holding them (codename · assistant · model), the step;
   - **Done** tasks in the **order they ran** (claimed → completed), each attributed to the lane
     and model that implemented it and the one that reviewed it.
-  Lanes on no run task (idle, not responding) sit in a "Not on a task" group after the runs.
+  Lanes on no run task (idle, not responding) sit in a "Not on a run task" group after the runs.
 - An alternative **By agent** view: one group per lane (codename · assistant · model · presence)
   listing the tasks it ran in this run, in the order it ran them, then what it holds now.
 - A "By run | By agent" switch on the Lanes heading; the choice is the person's (kept per viewer).

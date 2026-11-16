@@ -250,8 +250,8 @@ function member(lane: RelayLane): RelayMemberView {
       status === 'not_responding'
         ? `No answer since ${lane.lease_expires_at ? hhmm(lane.lease_expires_at) : 'a time not reported'} · lease lost.`
         : null,
-    // The daemon does not report the editor a session runs in yet (#396: assistant vs editor classification).
-    editor: null,
+    // The editor the session said it runs in (#396), named as people name it; none said, none shown.
+    editor: lane.host ? editorTag(assistantLabel(lane.host, null), lane.model ?? 'model not reported') : null,
   };
 }
 

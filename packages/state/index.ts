@@ -12,6 +12,7 @@ export {
   type RelayReads,
   type RelaySource,
   type RelaySprintDraft,
+  type RelayLaneView,
   type RelayStateOptions,
 } from './relay/relay-state.svelte.js';
 export {
@@ -63,7 +64,6 @@ export {
 export {
   assistantLabel,
   toCompletedRows,
-  toLaneGroups,
   toNeedsYou,
   toWaitRows,
   type NowRowOptions,
@@ -71,10 +71,18 @@ export {
   type RelayWaitRowView,
   type RelayWaitNudge,
   type RelayCompletedRowView,
-  type RelayLaneGroupView,
   type RelayLaneRowView,
   type RelayTone,
 } from './relay/now-selectors.js';
+export {
+  toAgentGroups,
+  toRunGroups,
+  type RelayAgentGroupView,
+  type RelayCrewAgentsView,
+  type RelayCrewRunsView,
+  type RelayRunGroupView,
+  type RelayRunTaskRowView,
+} from './relay/run-selectors.js';
 export { toQueueRows, type RelayQueueRowView } from './relay/queue-selectors.js';
 export {
   editorTag,

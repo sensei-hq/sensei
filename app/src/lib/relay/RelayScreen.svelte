@@ -18,7 +18,8 @@
   import {
     toAddMember,
     toCompletedRows,
-    toLaneGroups,
+    toAgentGroups,
+    toRunGroups,
     toMemberGroups,
     toNeedsYou,
     toQueueRows,
@@ -142,9 +143,10 @@
   const filter = $derived(state.statFilter);
   const FILTER_LABEL = { working: 'Working', waiting: 'Waiting', blocked: 'Blocked', done: 'Completed today' } as const;
   const showing = $derived(filter ? { label: FILTER_LABEL[filter], onclear: () => (state.statFilter = null) } : null);
-  const laneGroups = $derived(
-    toLaneGroups(state.now, { ...rowOptions, only: filter === 'working' || filter === 'blocked' ? filter : undefined }),
-  );
+  // The Lanes section by run or by agent (#422), narrowed by a stat's filter.
+  const laneOptions = $derived<NowRowOptions>({ ...rowOptions, only: filter === 'working' || filter === 'blocked' ? filter : undefined });
+  const runGroups = $derived(toRunGroups(state.now, laneOptions));
+  const agentGroups = $derived(toAgentGroups(state.now, laneOptions));
   const waitRows = $derived(toWaitRows(state.now, rowOptions));
   const needsYou = $derived(toNeedsYou(state.now, state.queue, rowOptions));
 
@@ -268,7 +270,8 @@
       </section>
     {/if}
 
-    {#if !filter && state.now.runs.length > 0}
+    <!-- By run, each run's band heads its group in Lanes; by agent, the bands stand here. -->
+    {#if !filter && state.laneView === 'agent' && state.now.runs.length > 0}
       <section class="flex flex-col gap-2 p-4 pb-0" data-relay-section="sprints">
         <h2 class="text-xs uppercase tracking-wide text-ink-mute m-0">Sprints · {state.now.runs.length}</h2>
         {#each state.now.runs as run (run.run_id)}
@@ -284,7 +287,7 @@
       </section>
     {:else if filter !== 'done'}
       <div class="p-4 pb-0">
-        <LaneList groups={laneGroups} {showing} />
+        <LaneList crews={runGroups} agents={agentGroups} view={state.laneView} onview={(v) => state.setLaneView(v)} {showing} />
       </div>
     {/if}
 

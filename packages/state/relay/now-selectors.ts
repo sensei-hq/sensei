@@ -3,7 +3,7 @@
 // threshold and how a task is linked go in; row data comes out. A codename, a time or
 // a resume the daemon did not give is not invented (D83).
 
-import { crewGroups, crewRepoLabel, hhmm, providerLabel, since } from './format.js';
+import { hhmm, providerLabel, since } from './format.js';
 import { isNotResponding, isWorking, minutesSince } from './relay-selectors.js';
 import type {
   RelayCompletedTask,
@@ -42,14 +42,6 @@ export interface RelayLaneRowView {
   progress: { text: string; done: number; total: number } | null;
 }
 
-/** The lanes of one crew, under its repository in the main window. */
-export interface RelayLaneGroupView {
-  id: string;
-  /** null in the workspace window, which shows one crew's lanes flat. */
-  label: string | null;
-  rows: RelayLaneRowView[];
-}
-
 /** One task finished today, as its row draws it (COMPONENTS §3b CompletedRow). */
 export interface RelayCompletedRowView {
   id: string;
@@ -75,7 +67,7 @@ export interface NowRowOptions {
 }
 
 /** Whether a lane belongs under a stat's filter. */
-function laneIn(lane: RelayLane, only: NowRowOptions['only']): boolean {
+export function laneIn(lane: RelayLane, only: NowRowOptions['only']): boolean {
   if (only === 'working') return isWorking(lane);
   if (only === 'blocked') return isNotResponding(lane) || Boolean(lane.task?.needs_answer);
   return true;
@@ -102,7 +94,7 @@ export function assistantLabel(family: string, version: string | null): string {
 }
 
 /** The lane's codename, or its code until the daemon mints one (#395). */
-const codename = (lane: Pick<RelayLane, 'suggested_name' | 'code'>): string => lane.suggested_name ?? lane.code;
+export const codename = (lane: Pick<RelayLane, 'suggested_name' | 'code'>): string => lane.suggested_name ?? lane.code;
 
 /** The task states in which a lane waits on another lane (a reviewer, its author, a merge). */
 const WAITING: Record<string, string> = {
@@ -119,7 +111,7 @@ function progressOf(task: RelayLane['task']): RelayLaneRowView['progress'] {
   return text ? { text, done, total } : null;
 }
 
-function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRowView {
+export function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRowView {
   const base = {
     id: lane.id,
     code: lane.code,
@@ -186,19 +178,6 @@ function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): RelayLaneRow
   return { ...base, task: taskLine, state: { label, tone }, when: { text: elapsed.text, over: false }, href: taskHref };
 }
 
-/** The lanes as LaneList draws them: one group in the workspace window, one per crew in the main window. */
-export function toLaneGroups(now: RelayNow | null, o: NowRowOptions): RelayLaneGroupView[] {
-  if (!now) return [];
-  const lanes = now.lanes.filter((l) => laneIn(l, o.only));
-  if (!o.byCrew) {
-    return [{ id: now.crews[0]?.id ?? 'lanes', label: null, rows: lanes.map((l) => laneRow(l, now, o)) }];
-  }
-  return crewGroups(now.crews, lanes).map((g) => ({
-    id: g.crew.id,
-    label: crewRepoLabel(g.crew),
-    rows: g.lanes.map((l) => laneRow(l, now, o)),
-  }));
-}
 
 function completedLane(row: RelayCompletedTask, now: RelayNow): string {
   const lane = now.lanes.find((l) => l.crew_id === row.crew_id && l.code === row.lane_code);

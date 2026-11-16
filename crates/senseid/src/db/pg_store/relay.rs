@@ -55,7 +55,13 @@ pub struct RelayRegisterInput {
     /// The name the assistant proposed for itself (queue cutover): kept on
     /// the lane and used as its title; the code stays the handle.
     pub suggested_name: Option<String>,
+    /// The editor the session runs in, as the session says (#396); none for a
+    /// terminal session. Never guessed.
+    pub host: Option<String>,
 }
+
+/// An editor's name is short: a longer host is prose, not a name (#396).
+const HOST_MAX_CHARS: usize = 64;
 
 /// The register response. `crew_id` is always present (Q16-REC): minted or
 /// joined, the coordinator needs it for the paste line. The raw token is
@@ -1517,6 +1523,8 @@ fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serd
         // Queue cutover: the name the assistant offered and the
         // review the lane holds (both the view's keys).
         "suggested_name": payload.get("suggested_name"),
+        // #396: the editor the session runs in, as it said; null when it said none.
+        "host": payload.get("host"),
         "reviewing": payload.get("reviewing"),
         "presence": payload.get("presence"),
     })
@@ -1589,6 +1597,13 @@ impl PgStore {
         // (`L4 · Muse`), else the bare code when the family is empty.
         let offered =
             input.suggested_name.as_deref().map(str::trim).filter(|name| !name.is_empty());
+        // #396: the host as the session named it; blank is none.
+        let host = input.host.as_deref().map(str::trim).filter(|h| !h.is_empty());
+        if host.is_some_and(|h| h.chars().count() > HOST_MAX_CHARS) {
+            return Err(RelayError::Validation(format!(
+                "host names the editor in at most {HOST_MAX_CHARS} characters"
+            )));
+        }
         let title = match offered {
             Some(name) => name.to_string(),
             None if input.family.is_empty() => code.clone(),
@@ -1618,9 +1633,9 @@ impl PgStore {
         let insert_lane = sqlx_core::query::query(
             "insert into relay.lanes
                (user_id, id, crew_id, code, role, family, version, model,
-                capabilities, repo, worktree, token_hash, title, suggested_name)
+                capabilities, repo, worktree, token_hash, title, suggested_name, host)
              values ($1, $2, $3, $4, $5::relay.lane_role, $6, $7, $8, $9, $10, $11, $12, $13,
-                     $14)",
+                     $14, $15)",
         )
         .bind(user_id)
         .bind(lane_id)
@@ -1636,6 +1651,7 @@ impl PgStore {
         .bind(token_hash.as_str())
         .bind(title.as_str())
         .bind(suggested_name.as_deref())
+        .bind(host)
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_lane {
@@ -7181,6 +7197,52 @@ impl PgStore {
         .map_err(db_err)?;
         let runs_json: Vec<serde_json::Value> =
             runs.into_iter().map(|(crew_id, payload)| now_run_json(&crew_id, payload)).collect();
+        // #422: every task of an open run, so Now groups its lanes by run — waiting
+        // tasks by priority (Task 0, then the item's backlog position), done ones in
+        // the order they ran — attributed to the implementing lane and the lane whose
+        // review came last. Minted order (uuid v7) is the plan's order. A value
+        // nobody reported stays null (D83).
+        let run_task_rows: Vec<(serde_json::Value, Option<DateTime<Utc>>, Option<DateTime<Utc>>)> =
+            sqlx_core::query_as::query_as(
+            "select jsonb_build_object(
+                 'task_id', t.id, 'run_id', t.run_id, 'crew_id', t.crew_id,
+                 'title', t.title, 'phase', t.phase, 'state', t.state, 'round', t.round,
+                 'position', i.position,
+                 'step', (select s->>'title' from jsonb_array_elements(t.steps) with ordinality e(s, n)
+                          where s->>'state' = 'open' order by n limit 1),
+                 'lane', case when l.id is null then null else jsonb_build_object(
+                     'id', l.id, 'code', l.code, 'suggested_name', l.suggested_name,
+                     'family', l.family, 'version', l.version, 'model', l.model) end,
+                 'reviewer', case when rv.id is null then null else jsonb_build_object(
+                     'id', rv.id, 'code', rv.code, 'suggested_name', rv.suggested_name,
+                     'family', rv.family, 'version', rv.version, 'model', rv.model) end),
+                 t.assigned_at, t.completed_at
+             from relay.tasks t
+             join relay.runs r on r.user_id = t.user_id and r.id = t.run_id
+                              and r.state in ('planning', 'active')
+             left join relay.items i on i.user_id = t.user_id and i.id = t.item_id
+             left join relay.lanes l on l.user_id = t.user_id and l.id = t.lane_id
+             left join lateral (
+                 select a.lane_id from relay.actions a
+                 where a.user_id = t.user_id and a.task_id = t.id and a.kind = 'reviewed'
+                 order by a.created_at desc, a.id desc limit 1) ra on true
+             left join relay.lanes rv on rv.user_id = t.user_id and rv.id = ra.lane_id
+             where t.user_id = $1 and t.crew_id = any($2) and t.state <> 'cancelled'
+             order by t.id",
+        )
+        .bind(user_id)
+        .bind(crew_ids.clone())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let run_tasks: Vec<serde_json::Value> = run_task_rows
+            .into_iter()
+            .map(|(mut row, claimed_at, completed_at)| {
+                row["claimed_at"] = claimed_at.map(iso).into();
+                row["completed_at"] = completed_at.map(iso).into();
+                row
+            })
+            .collect();
         // The review queue's head: every report waiting for a reviewer,
         // oldest first (the view's `floating_review`).
         let floating: Vec<(Uuid, serde_json::Value)> = sqlx_core::query_as::query_as(
@@ -7420,6 +7482,7 @@ impl PgStore {
             },
             "lanes": lanes_json,
             "runs": runs_json,
+            "run_tasks": run_tasks,
             "floating_reviews": floating_json,
             "decisions": decisions_json,
             "person_messages": person_json,
@@ -8718,6 +8781,7 @@ mod tests {
             repo_key: None,
             workspace_id: None,
             suggested_name: None,
+            host: None,
         }
     }
 
@@ -12794,6 +12858,136 @@ mod tests {
             .map(|r| r["position"].as_i64().unwrap())
             .collect();
         assert_eq!(positions, vec![1, 2]);
+    }
+
+    /// #422: Now carries every task of an open run, with what the run groups order
+    /// and attribute by — Task 0, the item's backlog position, when it was claimed
+    /// and completed, the step, and the implementing and reviewing lanes.
+    #[tokio::test]
+    async fn now_serves_open_runs_tasks_with_priority_and_attribution() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let (run, draft) = (v7(0x5a0), v7(0x5a1));
+        fx_run(&pg, u1(), run, c1, "active").await;
+        fx_run(&pg, u1(), draft, c1, "draft").await;
+        let (i_low, i_high) = (v7(0x5a2), v7(0x5a3));
+        fx_item(&pg, u1(), i_low, "backlog", Some("github.com/o/r"), Some(3)).await;
+        fx_item(&pg, u1(), i_high, "backlog", Some("github.com/o/r"), Some(1)).await;
+        let (t0, done, w_low, w_high, gone, other) =
+            (v7(0x5b0), v7(0x5b1), v7(0x5b2), v7(0x5b3), v7(0x5b4), v7(0x5b5));
+        fx_task(&pg, u1(), t0, c1, Some(a1), "done", "planning", 1).await;
+        fx_task(&pg, u1(), done, c1, Some(a2), "done", "impl", 1).await;
+        fx_task(&pg, u1(), w_low, c1, None, "ready", "impl", 1).await;
+        fx_task(&pg, u1(), w_high, c1, None, "ready", "impl", 1).await;
+        fx_task(&pg, u1(), gone, c1, None, "cancelled", "impl", 1).await;
+        fx_task(&pg, u1(), other, c1, None, "ready", "impl", 1).await;
+        let set = |sql: &'static str, t: Uuid| {
+            let pg = &pg;
+            async move {
+                sqlx_core::query::query(sql).bind(t).execute(pg.pool()).await.unwrap();
+            }
+        };
+        for t in [t0, done, w_low, w_high, gone] {
+            sqlx_core::query::query("update relay.tasks set run_id = $1 where id = $2")
+                .bind(run)
+                .bind(t)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        sqlx_core::query::query("update relay.tasks set run_id = $1 where id = $2")
+            .bind(draft)
+            .bind(other)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        for (t, item) in [(w_low, i_low), (w_high, i_high)] {
+            sqlx_core::query::query("update relay.tasks set item_id = $1 where id = $2")
+                .bind(item)
+                .bind(t)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        set(
+            "update relay.tasks set assigned_at = '2026-11-16T10:00:00Z',
+                 completed_at = '2026-11-16T10:30:00Z',
+                 steps = '[{\"key\":\"a\",\"title\":\"Write it\",\"state\":\"done\"}]' where id = $1",
+            done,
+        )
+        .await;
+        set("update relay.lanes set suggested_name = 'cobalt-lyra', model = 'claude-opus-5-5', version = '2.1' where id = $1", a2)
+            .await;
+        fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(done),
+                lane: Some(a1),
+                kind: "reviewed",
+                props: json!({"verdict": "approved", "findings": []}),
+                round: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        let rows = now["run_tasks"].as_array().unwrap_or_else(|| panic!("{now}"));
+        let ids: Vec<&str> = rows.iter().map(|r| r["task_id"].as_str().unwrap()).collect();
+        // The open run's tasks in the plan's order (minted order); the cancelled one
+        // and the draft run's are not on Now.
+        assert_eq!(
+            ids,
+            vec![t0.to_string(), done.to_string(), w_low.to_string(), w_high.to_string()]
+        );
+        let row = |t: Uuid| rows.iter().find(|r| r["task_id"] == t.to_string()).unwrap();
+        assert_eq!(row(t0)["phase"], "planning");
+        assert_eq!(row(t0)["run_id"], run.to_string());
+        assert_eq!(row(t0)["crew_id"], c1.to_string());
+        assert_eq!(row(w_low)["position"], 3);
+        assert_eq!(row(w_high)["position"], 1);
+        assert_eq!(row(t0)["position"], serde_json::Value::Null);
+        let d = row(done);
+        assert_eq!(d["state"], "done");
+        assert_eq!(d["claimed_at"], "2026-11-16T10:00:00Z");
+        assert_eq!(d["completed_at"], "2026-11-16T10:30:00Z");
+        assert_eq!(d["step"], serde_json::Value::Null);
+        assert_eq!(d["lane"]["code"], "L2");
+        assert_eq!(d["lane"]["suggested_name"], "cobalt-lyra");
+        assert_eq!(d["lane"]["family"], "claude-code");
+        assert_eq!(d["lane"]["version"], "2.1");
+        assert_eq!(d["lane"]["model"], "claude-opus-5-5");
+        assert_eq!(d["reviewer"]["code"], "L1");
+        // Not reported stays null, never a default (D83).
+        assert_eq!(d["reviewer"]["model"], serde_json::Value::Null);
+        assert_eq!(row(w_low)["lane"], serde_json::Value::Null);
+        assert_eq!(row(w_low)["reviewer"], serde_json::Value::Null);
+    }
+
+    /// #422: a held task names its current step: the first one still open.
+    #[tokio::test]
+    async fn now_run_task_step_is_the_first_open_step() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let run = v7(0x5c0);
+        fx_run(&pg, u1(), run, c1, "active").await;
+        let t = v7(0x5c1);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "impl", 1).await;
+        sqlx_core::query::query("update relay.tasks set run_id = $1, steps = $2 where id = $3")
+            .bind(run)
+            .bind(json!([
+                {"key": "a", "title": "Scaffold", "state": "done"},
+                {"key": "b", "title": "Wire it up", "state": "open"},
+                {"key": "c", "title": "Docs", "state": "open"},
+            ]))
+            .bind(t)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        assert_eq!(now["run_tasks"][0]["step"], "Wire it up");
     }
 
     /// #425: a handover's brief is stamped with the lane that took the task; who

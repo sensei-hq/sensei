@@ -24,6 +24,7 @@ import type {
   RelayCrew,
   RelayDecision,
   RelayFacets,
+  RelayNowRunTask,
   RelayFilter,
   RelayFloatingReview,
   RelayNow,
@@ -80,6 +81,7 @@ export type RelaySprintDraft = Omit<RelayCreateRun, 'item_ids' | 'crew_id' | 'st
 interface NowSummary {
   crews: RelayCrew[];
   facets: RelayFacets;
+  run_tasks: RelayNowRunTask[];
   triage: RelayTriageSource[];
   today: RelayToday;
   resources: RelayResources;
@@ -88,7 +90,12 @@ interface NowSummary {
 export interface RelayStateOptions {
   /** Who answers a decision: the desktop, or the dōjō. */
   surface?: 'desktop' | 'dojo';
+  /** Where the person's Lanes view is kept (#422): the surface's own per-viewer store. */
+  laneView?: { read(): string | null; write(view: RelayLaneView): void };
 }
+
+/** Now's Lanes section: grouped by run, or by agent (#422). */
+export type RelayLaneView = 'run' | 'agent';
 
 /** An event that carries its row (#418 shape), by the entity state that holds it. */
 const ROW_ENTITIES = ['lane', 'run', 'decision', 'message', 'item'] as const;
@@ -130,6 +137,10 @@ export class RelayState {
   readingQueue = $state(false);
 
   // ── The screen's own state ──
+  /** Now's Lanes grouped by run or by agent (#422); the person's choice, kept. */
+  laneView = $state<RelayLaneView>('run');
+  readonly #laneViewStore: RelayStateOptions['laneView'];
+
   /** The view the toolbar shows: Now, Queue or Crew (CONTRACT §1a). */
   view = $state<'now' | 'queue' | 'crew'>('now');
   /** The pressed stat on Now, narrowing its lists (CONTRACT §1c-0); null = everything. */
@@ -174,6 +185,9 @@ export class RelayState {
     this.source = source;
     this.filter = filter;
     this.surface = options.surface ?? 'desktop';
+    this.#laneViewStore = options.laneView;
+    const kept = options.laneView?.read();
+    if (kept === 'run' || kept === 'agent') this.laneView = kept;
     if (reads.now) this.#hydrateNow(reads.now);
     this.nowError = reads.nowError;
     if (reads.queue) this.#hydrateQueue(reads.queue);
@@ -189,6 +203,8 @@ export class RelayState {
     this.#summary = {
       crews: now.crews,
       facets: now.facets,
+      // Every task of an open run (#422): a task event re-reads Now, which brings them.
+      run_tasks: now.run_tasks,
       triage: now.triage,
       today: now.today,
       resources: now.resources,
@@ -209,6 +225,7 @@ export class RelayState {
       facets: s.facets,
       lanes: this.lanes.items,
       runs: this.runs.items.map(runSummary),
+      run_tasks: s.run_tasks,
       floating_reviews: this.tasks.floating,
       decisions: this.decisions.items,
       person_messages: this.messages.items,
@@ -254,6 +271,11 @@ export class RelayState {
   /** The Queue's count: both halves, so it never claims an empty queue; null while unread. */
   get queueCount(): number | null {
     return this.#queueRead ? this.items.items.length : null;
+  }
+
+  setLaneView(view: RelayLaneView): void {
+    this.laneView = view;
+    this.#laneViewStore?.write(view);
   }
 
   openQueue(): void {
