@@ -150,6 +150,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::AnalyzeSessionProcess => handlers::analyze_session_process(ctx, task).await,
             TaskKind::ScanDocDrift => handlers::scan_doc_drift(ctx, task).await,
             TaskKind::AggregateCorrections => handlers::aggregate_corrections(ctx, task).await,
+            TaskKind::ClassifyTurnIntent => {
+                handlers::turn_intent::classify_turn_intent(ctx, task).await
+            }
             TaskKind::AggregateToolInsights => handlers::aggregate_tool_insights(ctx, task).await,
             TaskKind::ClassifyPendingVerdicts => {
                 handlers::classify_pending_verdicts(ctx, task).await

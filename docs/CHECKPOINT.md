@@ -1,26 +1,28 @@
-# Checkpoint — 2026-11-17 (relay UI finish-up; PR to develop)
+# Checkpoint — 2026-11-17 (#447 corrections by intent — build done, measuring)
 
-**Slice:** finish the relay UI, then a full e2e run that the screen updates as tasks run.
-Branch `lane/relay-ui-verify` (from develop `1285c3d2d`).
+**Slice:** label user turns by intent (qwen3.8, two stages) instead of key phrases.
+Branch `lane/447-correction-intent` (worktree `lanes/correction-intent`).
 
-**Done:**
-- Task view listens through its state's source (#414): red `482100cda`, green `af29814f7`.
-- #381 ticket links → system browser: green `d457a560a` (`$lib/open-external.ts`).
-- #382: already built in the Crew view (Add a member, crew-named line); e2e pin added.
-- e2e journey: task page live + scroll (#380) + join line, `f700439ff`.
-- Full e2e: 135 passed, 1 failed (settings-editable flake, passes alone → #483), 21 skipped.
-  `relay-run.spec.ts` green (2.8m), incl. `4-task-page-live`.
-- #447 floors recorded on `lane/447-correction-intent` `8344ca279` (worktree
-  `lanes/correction-intent`). Prompt v2 + scorer ready in `~/.sensei/eval/correction-intent-2026-11-17/`.
+**Done (each red → green):**
+- Two-stage classifier + `GatewayIntentModel` (intent chain, temp 0, no fallback) — `prompt_classify.rs`.
+- Seeded `intent` chain: qwen3.8:27b on ollama only (local alias: `ollama cp qwen3.8:latest qwen3.8:27b`).
+- `transcript_turns.intent/intent_source/intent_at` (+ enums), guarded writes, clear on changed prompt.
+- Analysis reads the label: corrections, FTR, outcome, hook-turn flags, evidence; label newer than
+  analysis ⇒ session due.
+- `ClassifyTurnIntent` task: daily window, batches of 10, self-chaining backfill, phrase fallback marked.
+- Correction-prone + recurring corrections read the label; old gemma `classify_batch` deleted.
+- Indexer dangling ratchet back at 1,197 (= base). Clippy clean. openspec validate --strict OK.
+- Ignored harness `intent_labels_a_set` (daemon path over a local set).
 
-**Remaining:**
-1. PR lane/relay-ui-verify → develop; on merge close by hand #378 #379 #380 #381 #382 #383
-   #384 #385 #386 #388.
-2. #447: `python3 -I run_variant.py prompt_v2.txt prompt v2` in the eval dir; iterate to floors;
-   then build tasks 2.1–3.1 red-first in `lanes/correction-intent`.
+**In flight:** daemon-path runs on held-out, fresh (150, κ 0.98, gold 40/2/108) and set 1;
+score with `python3 -I ~/.sensei/eval/score_daemon.py <dir>=<labels.json> ...`.
 
-**Next command:** `gh pr create --base develop --head lane/relay-ui-verify`
+**Remaining:** record scores in design.md; tasks.md ticks; PR to develop; install + live run.
 
-**Open questions (user):** #420 phone header bands (~1100px); #457; #458.
+**Next command:** `python3 -I ~/.sensei/eval/score_daemon.py ~/.sensei/eval/correction-intent-holdout-2026-11-17=…/h_daemon.json`
 
-**Known broken:** #483 (flaky Settings e2e, unrelated).
+**Lane DB:** `TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_447_tpl` (restamp after DDL commit).
+
+**Open questions:** none for #447. Elsewhere: #420, #389, #455, #457, #458.
+
+**Known broken:** #483, #482 (flaky, unrelated); Keychain-approval tests fail in this shell (env).

@@ -1,13 +1,13 @@
 //! Corrections aggregation handler (#65 step 5). Global: pull every user prompt,
-//! keep corrections (regex recall → LLM precision), embed them (lexical fallback),
+//! keep corrections (by intent label, #447; phrase list when unlabelled), embed them (lexical fallback),
 //! deterministically cluster, summarize each surviving cluster (graceful), and
 //! upsert idempotently by signature (then prune stale signatures).
 
 use super::super::Task;
 use super::super::executor::TaskContext;
-use super::analyze::correction_signal;
 use super::corrections_llm::{ClusterSummary, summarize_cluster};
-use super::prompt_classify::{PromptClass, classify_batch};
+use super::prompt_classify::PromptClass;
+use super::turn_intent::prompt_class;
 use crate::corrections::{
     self, Cluster, CorrItem, CorrectionRow, parse_cluster_min, parse_similarity_threshold,
 };
@@ -146,46 +146,26 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
         ctx.pg().get_config("corrections.cluster_min").await.ok().flatten().as_deref(),
     );
 
-    // 1. Pull all user prompts, keep regex-recall corrections.
+    // 1. Pull all user prompts, keep the corrections (#447: by intent label, the
+    //    phrase list for prompts the intent pass has not reached).
     let all = ctx.pg().get_all_user_prompts().await?;
-    let mut candidates: Vec<CorrItem> = all
+    let mut items: Vec<CorrItem> = all
         .into_iter()
-        .filter(|(_, _, _, _, prompt)| correction_signal(prompt).is_some())
-        .map(|(workspace_id, _pname, session_id, ts, prompt)| CorrItem {
-            workspace_id,
-            session_id,
-            ts,
-            prompt,
+        .filter(|r| {
+            prompt_class(&r.prompt.text, r.prompt.intent, r.prompt.answers_reply)
+                == PromptClass::Correction
+        })
+        .map(|r| CorrItem {
+            workspace_id: r.workspace_id,
+            session_id: r.session_id,
+            ts: r.ts,
+            prompt: r.prompt.text,
         })
         .collect();
 
-    if candidates.is_empty() {
+    if items.is_empty() {
         let pruned = ctx.pg().delete_corrections_not_in(&[]).await.unwrap_or(0);
         tracing::info!("aggregate_corrections: no corrective prompts; {pruned} pruned");
-        return Ok(0);
-    }
-
-    // 2. LLM precision pass (graceful): drop regex false positives + principles.
-    let texts: Vec<&str> = candidates.iter().map(|c| c.prompt.as_str()).collect();
-    let refined = classify_batch(&ctx.app_state.gateway, &texts).await;
-    let mut items: Vec<CorrItem> = candidates
-        .drain(..)
-        .enumerate()
-        .filter(|(i, _)| {
-            !matches!(
-                refined.get(*i).copied().flatten(),
-                Some(PromptClass::Principle) | Some(PromptClass::Neither)
-            )
-        })
-        .map(|(_, c)| c)
-        .collect();
-
-    // If the LLM confidently rejected every regex candidate, do NOT prune: a
-    // single (fallible) classification pass shouldn't wipe existing corrections.
-    if items.is_empty() {
-        tracing::info!(
-            "aggregate_corrections: LLM filtered all candidates — preserving existing rows"
-        );
         return Ok(0);
     }
 

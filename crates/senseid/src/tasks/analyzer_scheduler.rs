@@ -82,6 +82,12 @@ async fn enqueue_daily_process(queue: &TaskQueue, pid: &uuid::Uuid) {
     queue.enqueue(Task::new(TaskKind::AnalyzeSessionProcess, "", &pid.to_string())).await;
 }
 
+/// Enqueue the DAILY intent pass (#447): global, so once per full-refresh window,
+/// not per workspace. It queues itself again while candidates remain.
+async fn enqueue_daily_intent(queue: &TaskQueue) {
+    queue.enqueue_unique(Task::new(TaskKind::ClassifyTurnIntent, "", "")).await;
+}
+
 /// Enqueue the once-per-tick global aggregation passes, in dependency order.
 /// Extracted as a small helper (like [`enqueue_due_workspace`]) so the ordering
 /// contract is unit-testable without driving `run`'s infinite loop.
@@ -263,6 +269,8 @@ async fn analyzer_pass(
         for (pid, _) in &activity {
             enqueue_daily_process(queue, pid).await;
         }
+        // Correction intent (#447), daily, global.
+        enqueue_daily_intent(queue).await;
     }
 
     let any_due = !due.is_empty();

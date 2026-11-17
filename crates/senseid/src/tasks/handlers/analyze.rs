@@ -19,7 +19,7 @@
 
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::prompt_classify::{PromptClass, classify_batch};
+use super::prompt_classify::{IntentSource, PromptClass, TurnIntent};
 use crate::db::pg_store::SessionMetricsRow;
 use crate::transcript::TranscriptTurn;
 
@@ -148,6 +148,33 @@ pub fn correction_signal(prompt: &str) -> Option<&'static str> {
         return Some("actually");
     }
     None
+}
+
+/// Why a transcript turn is a correction (#447), or `None`. A turn that answers no
+/// agent reply corrects nothing. A labelled turn counts by its label — `"intent"`
+/// when the model decided it, the phrase cue when the phrase fallback did; an
+/// unlabelled one (not yet reached by the intent pass) by the phrase list.
+pub fn correction_mark(t: &TranscriptTurn, answers_a_reply: bool) -> Option<&'static str> {
+    if !answers_a_reply {
+        return None;
+    }
+    let phrase = || t.user_text.as_deref().and_then(correction_signal);
+    match t.intent {
+        Some(TurnIntent { class: PromptClass::Correction, source: IntentSource::Intent }) => {
+            Some("intent")
+        }
+        Some(TurnIntent { class: PromptClass::Correction, source: IntentSource::Phrase }) => {
+            Some(phrase().unwrap_or("phrase"))
+        }
+        Some(_) => None,
+        None => phrase(),
+    }
+}
+
+/// Each transcript turn's [`correction_mark`], in order: every turn after the
+/// first answers the reply before it.
+fn correction_marks(transcript: &[TranscriptTurn]) -> Vec<Option<&'static str>> {
+    transcript.iter().enumerate().map(|(i, t)| correction_mark(t, i > 0)).collect()
 }
 
 /// Detect an imperative *principle/rule* in a user prompt — the user stating a
@@ -469,13 +496,14 @@ pub fn derive_session_metrics(
     } else {
         // Scheduled, peer and other automated prompts are turns of their own, but
         // not yours: they neither count as a turn nor can correct one.
-        let yours: Vec<&TranscriptTurn> =
-            transcript.iter().filter(|t| t.origin == "human").collect();
-        let c = yours
+        let marks = correction_marks(transcript);
+        let yours = transcript.iter().filter(|t| t.origin == "human").count() as i32;
+        let c = transcript
             .iter()
-            .filter(|t| t.user_text.as_deref().is_some_and(|u| correction_signal(u).is_some()))
+            .zip(&marks)
+            .filter(|(t, mark)| t.origin == "human" && mark.is_some())
             .count() as i32;
-        (yours.len() as i32, c)
+        (yours, c)
     };
     let real_turns = (turn_count as usize).max(turns.len());
     let resumed = was_resumed(events);
@@ -501,16 +529,26 @@ pub fn derive_session_metrics(
     })
 }
 
-/// Label each hook turn with the origin of the transcript turn its prompt started.
+/// Label each hook turn from the transcript turn its prompt started: its origin,
+/// and whether it corrects (#447) — the transcript turn carries the intent label.
+/// A hook turn with no transcript match keeps its phrase-derived flag.
 fn label_origins(turns: &mut [Turn], events: &[HookEvent], transcript: &[TranscriptTurn]) {
-    let by_prompt: std::collections::HashMap<&str, &str> = transcript
+    let marks = correction_marks(transcript);
+    let by_prompt: std::collections::HashMap<&str, (&str, Option<&'static str>)> = transcript
         .iter()
-        .filter_map(|t| Some((t.prompt_id.as_deref()?, t.origin.as_str())))
+        .zip(marks)
+        .filter_map(|(t, mark)| Some((t.prompt_id.as_deref()?, (t.origin.as_str(), mark))))
         .collect();
     let prompts = events.iter().filter(|e| e.event_type == "UserPromptSubmit");
     for (turn, prompt) in turns.iter_mut().zip(prompts) {
-        turn.origin =
-            prompt.prompt_id.as_deref().and_then(|p| by_prompt.get(p)).map(|o| o.to_string());
+        let Some(&(origin, mark)) = prompt.prompt_id.as_deref().and_then(|p| by_prompt.get(p))
+        else {
+            turn.origin = None;
+            continue;
+        };
+        turn.origin = Some(origin.to_string());
+        turn.is_correction = mark.is_some();
+        turn.triage_signal = mark;
     }
 }
 
@@ -653,9 +691,8 @@ pub fn build_session_evidence(
     }
     // First correction — the FTR detractor, quoted from the user turn that flags it
     // (skip when it IS the opening turn, to avoid a duplicate moment).
-    if let Some(corr) = transcript
-        .iter()
-        .find(|t| t.user_text.as_deref().is_some_and(|u| correction_signal(u).is_some()))
+    if let Some(corr) =
+        transcript.iter().zip(correction_marks(transcript)).find_map(|(t, m)| m.map(|_| t))
         && Some(corr.turn_index) != first_turn
     {
         moments.push(serde_json::json!({
@@ -965,44 +1002,28 @@ pub async fn derive_signals(
     }
 
     // 2. Prompt-derived signals: corrections (anti) + rule candidates (pattern).
-    // Cheap regex RECALL → L2 LLM PRECISION (#70): the regex flags candidates,
-    // then one model pass refines them (drops false positives, fixes
-    // correction↔principle mislabels). Falls back to the regex class when no
-    // chat model is configured, so this never blocks the analyzer.
+    // Each prompt's class is its intent label (#447) when the intent pass reached
+    // it, else the phrase list's.
     //
     // Aggregation is at WORKSPACE scope (#82): one `correction-prone` and one
     // `rule-candidates` pattern per workspace — the folder locus survives inside
     // each instance blob for later drill-down, but the row itself rolls up.
-    let mut candidates: Vec<(uuid::Uuid, String, String, PromptClass)> = Vec::new();
-    for (folder_id, session_id, prompt) in
-        ctx.pg().get_workspace_prompts(workspace_id, affected).await?
-    {
-        let regex_class = if correction_signal(&prompt).is_some() {
-            PromptClass::Correction
-        } else if principle_signal(&prompt).is_some() {
-            PromptClass::Principle
-        } else {
-            continue;
-        };
-        candidates.push((folder_id, session_id, prompt, regex_class));
-    }
-    let texts: Vec<&str> = candidates.iter().map(|(_, _, p, _)| p.as_str()).collect();
-    let refined = classify_batch(&ctx.app_state.gateway, &texts).await;
-
     let mut corrections: Vec<serde_json::Value> = Vec::new();
     let mut principles: Vec<serde_json::Value> = Vec::new();
-    for (i, (folder_id, session_id, prompt, regex_class)) in candidates.iter().enumerate() {
-        // LLM-refined class when available for this prompt, else the regex class.
-        let class = refined.get(i).copied().flatten().unwrap_or(*regex_class);
+    for crate::db::pg_store::WorkspacePromptRow { folder_id, session_id, prompt } in
+        ctx.pg().get_workspace_prompts(workspace_id, affected).await?
+    {
+        let class =
+            super::turn_intent::prompt_class(&prompt.text, prompt.intent, prompt.answers_reply);
         let instance = serde_json::json!({
             "folder_id": folder_id,
             "session": session_id,
-            "prompt": prompt_snippet(prompt),
+            "prompt": prompt_snippet(&prompt.text),
         });
         match class {
             PromptClass::Correction => corrections.push(instance),
             PromptClass::Principle => principles.push(instance),
-            PromptClass::Neither => {} // LLM rejected the regex candidate — a false positive
+            PromptClass::Neither => {}
         }
     }
     if corrections.len() >= CORRECTION_MIN {
@@ -1388,6 +1409,107 @@ mod tests {
             "payload": {"prompt": "hi", "prompt_id": "abc"}
         });
         assert_eq!(hook_event_from_row(&row).prompt_id.as_deref(), Some("abc"));
+    }
+
+    // ── #447: corrections by intent ──
+
+    fn labelled(t: TranscriptTurn, class: PromptClass, source: IntentSource) -> TranscriptTurn {
+        TranscriptTurn { intent: Some(TurnIntent { class, source }), ..t }
+    }
+
+    #[test]
+    fn a_correction_with_no_key_phrase_counts_by_its_label() {
+        let events = vec![prompt_ev("edit the config", 1000), ev("Stop", 2000)];
+        let transcript = vec![
+            tt(0, "edit the config", "I edited config/app.toml."),
+            labelled(
+                tt(1, "Hmm, I meant the other config file", "Done."),
+                PromptClass::Correction,
+                IntentSource::Intent,
+            ),
+        ];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        assert_eq!(m.corrections, 1);
+        assert!(!m.ftr, "a corrected session is not first-try-right");
+        assert_eq!(m.outcome, "corrected");
+    }
+
+    #[test]
+    fn a_request_with_a_key_phrase_is_not_a_correction_once_labelled() {
+        let transcript = vec![
+            tt(0, "build the toolbar", "Built it."),
+            labelled(
+                tt(1, "add a revert button to the toolbar", "Added."),
+                PromptClass::Neither,
+                IntentSource::Intent,
+            ),
+        ];
+        let m = derive_session_metrics(&[], &transcript).unwrap();
+        assert_eq!(m.corrections, 0, "the label outranks the phrase");
+        assert!(m.ftr);
+    }
+
+    #[test]
+    fn an_unlabelled_turn_falls_back_to_the_phrase_list() {
+        let transcript =
+            vec![tt(0, "build the toolbar", "Built it."), tt(1, "that's wrong, revert it", "ok")];
+        assert_eq!(derive_session_metrics(&[], &transcript).unwrap().corrections, 1);
+    }
+
+    #[test]
+    fn a_turn_that_answers_no_reply_is_never_a_correction() {
+        let transcript = vec![tt(0, "why did you stop yesterday? carry on", "Continuing.")];
+        assert_eq!(derive_session_metrics(&[], &transcript).unwrap().corrections, 0);
+    }
+
+    #[test]
+    fn a_hook_turn_takes_the_correction_of_its_transcript_prompt() {
+        let prompt = |text: &str, pid: &str, ts: i64| HookEvent {
+            prompt_id: Some(pid.into()),
+            ..prompt_ev(text, ts)
+        };
+        let events = vec![
+            prompt("edit the config", "p1", 0),
+            prompt("Hmm, I meant the other config file", "p2", MIN),
+            prompt("add a revert button", "p3", 2 * MIN),
+        ];
+        let transcript = vec![
+            tt_from(0, "human", "p1", "edit the config"),
+            labelled(
+                tt_from(1, "human", "p2", "Hmm, I meant the other config file"),
+                PromptClass::Correction,
+                IntentSource::Intent,
+            ),
+            labelled(
+                tt_from(2, "human", "p3", "add a revert button"),
+                PromptClass::Neither,
+                IntentSource::Intent,
+            ),
+        ];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        let flags: Vec<(bool, Option<&str>)> =
+            m.turns.iter().map(|t| (t.is_correction, t.triage_signal)).collect();
+        assert_eq!(flags, vec![(false, None), (true, Some("intent")), (false, None)]);
+    }
+
+    #[test]
+    fn the_evidence_quotes_the_first_labelled_correction() {
+        let transcript = vec![
+            tt(0, "edit the config", "I edited config/app.toml."),
+            labelled(
+                tt(1, "that's wrong but leave it", "ok"),
+                PromptClass::Neither,
+                IntentSource::Intent,
+            ),
+            labelled(
+                tt(2, "Hmm, I meant the other config file", "Done."),
+                PromptClass::Correction,
+                IntentSource::Intent,
+            ),
+        ];
+        let ev = build_session_evidence(&transcript, "claude");
+        let corr = ev["moments"].as_array().unwrap().iter().find(|m| m["kind"] == "correction");
+        assert_eq!(corr.unwrap()["turn"], 2);
     }
 
     #[test]
@@ -2097,6 +2219,82 @@ mod tests {
             .await
             .ok();
         assert_eq!(due, vec![ids[0]], "only the session whose transcript grew since");
+    }
+
+    /// #447: the intent pass labels turns after their session was analysed; a label
+    /// newer than the analysis makes the session due, so its corrections, first-try
+    /// and outcome are re-derived from it. An older label does not.
+    #[tokio::test]
+    async fn a_label_newer_than_the_analysis_makes_the_session_due() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg
+            .create_workspace(&format!("_test:intent-{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(
+            pg,
+            &format!("intent-{}", uuid::Uuid::new_v4()),
+        )
+        .await;
+        let mut ids = Vec::new();
+        for labelled in ["now()", "now() - interval '3 hours'"] {
+            let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+            let sid = pg
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &csid,
+                    folder_id: &fid,
+                    workspace_id: Some(&pid),
+                    family: "claude",
+                    is_end: true,
+                })
+                .await
+                .unwrap();
+            // The turn landed before the analysis; only its label can make it due.
+            sqlx_core::query::query(&format!(
+                "INSERT INTO activity.transcript_turns
+                   (source, session_id, family, turn_index, created_at, intent, intent_source, intent_at)
+                 VALUES ('test', $1, 'claude', 0, now() - interval '4 hours',
+                         'correction', 'intent', {labelled})"
+            ))
+            .bind(&csid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET analyzed_at = now() - interval '1 hour' WHERE id = $1",
+            )
+            .bind(sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            ids.push((sid, csid));
+        }
+        let due: Vec<uuid::Uuid> = pg
+            .get_workspace_sessions_needing_enrichment(&pid)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        for (sid, csid) in &ids {
+            sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+                .bind(csid)
+                .execute(pg.pool())
+                .await
+                .ok();
+            sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+                .bind(sid)
+                .execute(pg.pool())
+                .await
+                .ok();
+        }
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .ok();
+        assert_eq!(due, vec![ids[0].0], "only the session labelled since its analysis");
     }
 
     /// R12: a session analysed before the split (active time, no split) is due

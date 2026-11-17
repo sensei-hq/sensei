@@ -24,9 +24,9 @@ available); metrics SHALL be able to tell them apart.
 
 ### Requirement: Measured accuracy
 A labelled set of real prompts SHALL be a test of the classifier's precision and recall, with floors
-the change sets and the test enforces.
+of recall >= 0.80 and precision >= 0.75, population-weighted over the set's strata.
 
 #### Scenario: The labelled set
 - **GIVEN** the labelled prompts (including the issue's missed and false-positive examples)
 - **WHEN** the classifier runs on them
-- **THEN** precision and recall meet their floors
+- **THEN** recall is at least 0.80 and precision at least 0.75
