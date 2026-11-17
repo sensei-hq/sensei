@@ -680,16 +680,6 @@ pub struct CaptureWatermark {
     pub untracked: bool,
 }
 
-/// A user turn the intent classifier should label (#447): its transcript-turn id,
-/// its session, the message, and the agent reply it answers.
-#[derive(Debug, Clone, PartialEq)]
-pub struct IntentCandidateRow {
-    pub id: uuid::Uuid,
-    pub session_id: String,
-    pub user_text: String,
-    pub prev_reply: String,
-}
-
 /// A stored label, when both halves are present and known. The table's check
 /// keeps them together; an unknown enum label is a newer daemon's, read as none.
 pub(super) fn stored_intent(
@@ -698,31 +688,4 @@ pub(super) fn stored_intent(
 ) -> Option<crate::tasks::handlers::prompt_classify::TurnIntent> {
     use crate::tasks::handlers::prompt_classify::{IntentSource, PromptClass, TurnIntent};
     Some(TurnIntent { class: PromptClass::parse(intent?)?, source: IntentSource::parse(source?)? })
-}
-
-/// A captured prompt with what the intent pass knows of it (#447): its label and
-/// whether it answers an agent reply, both from the transcript turn with the same
-/// prompt id — `None` when no transcript turn matched.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LabelledPrompt {
-    pub text: String,
-    pub intent: Option<crate::tasks::handlers::prompt_classify::TurnIntent>,
-    pub answers_reply: Option<bool>,
-}
-
-/// A prompt in one workspace's sessions (the signal deriver's source).
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkspacePromptRow {
-    pub folder_id: uuid::Uuid,
-    pub session_id: String,
-    pub prompt: LabelledPrompt,
-}
-
-/// A prompt across every workspace (the recurring-corrections source).
-#[derive(Debug, Clone, PartialEq)]
-pub struct UserPromptRow {
-    pub workspace_id: uuid::Uuid,
-    pub session_id: String,
-    pub ts: i64,
-    pub prompt: LabelledPrompt,
 }
