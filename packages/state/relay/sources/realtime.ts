@@ -5,7 +5,7 @@
 // this interface and a canned double.
 
 import type { ApiResult } from '../../result.js';
-import type { RelaySource } from '../relay-state.svelte.js';
+import type { RelayEvents, RelaySource } from '../relay-state.svelte.js';
 import type {
   RelayAddToBacklog,
   RelayAddTriage,
@@ -53,12 +53,16 @@ export function relayRealtimeSource(transport: RelayRealtimeTransport): RelaySou
     readRuns: () => transport.readRuns(),
     startRun: (runId, crewId) => transport.startRun(runId, crewId),
     cancelRun: (runId) => transport.cancelRun(runId),
-    events(on, onOpen) {
-      return transport.subscribe(on, (status) => {
-        if (status === 'SUBSCRIBED') onOpen();
-      });
-    },
+    events: realtimeEvents(transport),
   };
+}
+
+/** The dōjō's channel alone, as a stream: each SUBSCRIBED — the first, and again after a drop — is an open. */
+export function realtimeEvents(transport: Pick<RelayRealtimeTransport, 'subscribe'>): RelayEvents {
+  return (on, onOpen) =>
+    transport.subscribe(on, (status) => {
+      if (status === 'SUBSCRIBED') onOpen();
+    });
 }
 
 /** One write the canned transport recorded. */

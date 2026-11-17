@@ -38,6 +38,6 @@ export type RelayApiFactory = (port: number) => RelayApi;
  *  daemon's own refusal text when it sends one (a 409's reason is the useful part). */
 export const relayApi: RelayApiFactory = (port) => relayClient(apiBase(port));
 
-/** The relay socket, owned by the route that subscribes (never by shared state). */
+/** The relay socket, narrowed to a crew when given one (#418); a state's source opens one per subscription. */
 export const relayStream = (port: number, crewId?: string): EventManager<RelayStreamEvent> =>
   relayEvents(apiBase(port), crewId);

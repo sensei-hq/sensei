@@ -7,7 +7,7 @@
   import { Notice } from '@sensei/ui';
   import { TRACKER_NAME } from '$lib/tracker-errors.js';
   import ModalShell from '$lib/components/ModalShell.svelte';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { openExternal } from '$lib/open-external.js';
   import { CREATE_TOKEN_URL, LEVELS, METRICS, type TrackerIntegration } from './integrations-state.svelte.js';
 
   let { screen }: { screen: TrackerIntegration } = $props();
@@ -25,10 +25,10 @@
   /** External pages open in the system browser, not the app's webview. */
   function external(e: MouseEvent, href: string) {
     e.preventDefault();
-    void openUrl(href).catch(() => window.open(href, '_blank', 'noopener'));
+    void openExternal(href);
   }
   function openLink(href: string) {
-    void openUrl(href).catch(() => window.open(href, '_blank', 'noopener'));
+    void openExternal(href);
   }
 
   const input =
