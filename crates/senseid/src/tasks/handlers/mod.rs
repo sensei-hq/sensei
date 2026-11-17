@@ -23,7 +23,7 @@ pub(crate) mod metrics;
 mod model_insight;
 mod orm_schema;
 mod process;
-mod prompt_classify;
+pub(crate) mod prompt_classify;
 mod publish_run;
 mod publish_segments;
 mod rank;

@@ -133,6 +133,60 @@ async fn classify_chunk(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<Promp
     }
 }
 
+impl PromptClass {
+    /// The `sensei.turn_intent` label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PromptClass::Correction => "correction",
+            PromptClass::Principle => "principle",
+            PromptClass::Neither => "neither",
+        }
+    }
+
+    /// A `sensei.turn_intent` label; `None` for anything else.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "correction" => Some(PromptClass::Correction),
+            "principle" => Some(PromptClass::Principle),
+            "neither" => Some(PromptClass::Neither),
+            _ => None,
+        }
+    }
+}
+
+/// Who decided a turn's intent (`sensei.turn_intent_source`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntentSource {
+    /// The measured classifier.
+    Intent,
+    /// The key-phrase fallback, used when the model was unavailable.
+    Phrase,
+}
+
+impl IntentSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IntentSource::Intent => "intent",
+            IntentSource::Phrase => "phrase",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "intent" => Some(IntentSource::Intent),
+            "phrase" => Some(IntentSource::Phrase),
+            _ => None,
+        }
+    }
+}
+
+/// A user turn's stored intent label and who decided it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnIntent {
+    pub class: PromptClass,
+    pub source: IntentSource,
+}
+
 // ── Intent classifier (#447) ──
 //
 // Every user turn that follows an agent reply is a candidate, and the model —

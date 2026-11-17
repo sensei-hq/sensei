@@ -292,6 +292,7 @@ pub fn parse_opencode_messages(content: &str) -> Vec<TranscriptTurn> {
                     started_at: time_created.and_then(millis_to_datetime),
                     attrs: msg.get("data").map(turn_attrs).unwrap_or_default(),
                     facts,
+                    intent: None,
                 });
             }
             "assistant" => {

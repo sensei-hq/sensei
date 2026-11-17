@@ -572,6 +572,7 @@ async fn a_transcript_source_lands_on_every_turn() {
         started_at: None,
         attrs: serde_json::json!({}),
         facts: Default::default(),
+        intent: None,
     };
     s.upsert_transcript_turns(
         &TranscriptSource {

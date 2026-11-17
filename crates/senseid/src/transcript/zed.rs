@@ -316,6 +316,7 @@ pub fn parse_zed_thread(content: &str) -> Vec<TranscriptTurn> {
                 }),
                 attrs: attrs.clone(),
                 facts: facts.clone(),
+                intent: None,
             });
         } else if let Some(t) = cur.as_mut() {
             let text = m.text.trim();

@@ -166,6 +166,7 @@ mod tests {
                 service_tier: Some("standard".to_string()),
                 ..Default::default()
             },
+            intent: None,
         }
     }
 

@@ -1,4 +1,4 @@
-set search_path to activity, extensions;
+set search_path to activity, sensei, extensions;
 
 -- Assistant + user prose per conversation turn, parsed from agent transcripts
 -- (#73). The hook stream captures tool calls + prompts but NOT assistant prose;
@@ -35,6 +35,10 @@ create table if not exists activity.transcript_turns (
   , service_tier   text     -- billing tier
   , origin         text not null default 'human'  -- who started the turn: human, or Claude Code's scheduled / peer / task_notification / auto_continuation
   , prompt_id      text     -- the transcript's promptId — the hook's prompt_id for the same prompt
+  , intent         sensei.turn_intent         -- #447: what this user turn means for the reply it answers
+  , intent_source  sensei.turn_intent_source  -- #447: who decided it — the model, or the phrase fallback
+  , intent_at      timestamptz                -- #447: when it was last (re)labelled; a later one makes the session due again
+  , constraint transcript_turns_intent_has_source check ((intent is null) = (intent_source is null) and (intent is null) = (intent_at is null))
   , unique (source, session_id, turn_index)
 );
 
@@ -56,3 +60,10 @@ comment on column transcript_turns.skill
      is 'Which skill/plugin drove the turn — the "are our skills used?" question, the same shape as the unused-tools signal but for skills.';
 comment on column transcript_turns.attrs
      is 'Every per-turn attribute the transcript carried, verbatim, including the fields not promoted to columns. Keeps a new signal a query rather than a re-ingest of files the user may have rotated away. See docs/database/activity.md.';
+
+comment on column transcript_turns.intent
+     is 'What this user turn means for the agent reply before it (#447): correction, principle or neither. NULL until labelled; a re-ingest that changes user_text clears it.';
+comment on column transcript_turns.intent_source
+     is 'Who decided `intent` (#447): intent = the measured classifier (qwen3.8, two stages); phrase = the key-phrase fallback when the model was unavailable, relabelled when it returns.';
+comment on column transcript_turns.intent_at
+     is 'When `intent` was last written (#447). A label newer than the session''s analyzed_at makes the session due for re-analysis.';

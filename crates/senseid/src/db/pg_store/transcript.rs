@@ -300,6 +300,25 @@ impl PgStore {
         Ok((turns, family))
     }
 
+    // ── Turn intent (#447) ─────────────────────────────────────────────────
+
+    /// Up to `limit` user turns the intent classifier should (re)label, newest
+    /// first: your turns that answer an agent reply, with no label yet or only
+    /// the phrase fallback's. Machine text — command wrappers, hook output,
+    /// interrupts, continuations — and subagent turns are not candidates.
+    pub async fn intent_candidates(&self, _limit: i64) -> Result<Vec<IntentCandidateRow>, String> {
+        Err("intent_candidates: not built".into())
+    }
+
+    /// Store intent labels by transcript-turn id, stamping `intent_at`. A label
+    /// equal to the stored one is not rewritten. Returns the rows changed.
+    pub async fn set_turn_intents(
+        &self,
+        _labels: &[(uuid::Uuid, crate::tasks::handlers::prompt_classify::TurnIntent)],
+    ) -> Result<u64, String> {
+        Err("set_turn_intents: not built".into())
+    }
+
     // ── Raw transcript backup ──────────────────────────────────────────────
 
     /// Back up a transcript unit's raw bytes, gzipped, keyed by content sha.
@@ -438,6 +457,7 @@ impl PgStore {
                     service_tier: r.service_tier,
                     counted_messages: std::collections::HashSet::new(),
                 },
+                intent: None,
             })
             .collect();
         Ok(Some(TranscriptExport { source, model, turns }))
@@ -593,4 +613,14 @@ pub struct CaptureWatermark {
     pub mtime_ns: i64,
     /// It was read then and ignored: its session belongs to no tracked folder.
     pub untracked: bool,
+}
+
+/// A user turn the intent classifier should label (#447): its transcript-turn id,
+/// its session, the message, and the agent reply it answers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntentCandidateRow {
+    pub id: uuid::Uuid,
+    pub session_id: String,
+    pub user_text: String,
+    pub prev_reply: String,
 }

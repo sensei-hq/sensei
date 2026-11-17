@@ -109,6 +109,7 @@ pub fn parse_cursor_transcript(content: &str) -> Vec<TranscriptTurn> {
                         started_at: super::parse_timestamp(&v),
                         attrs,
                         facts: TurnFacts::default(),
+                        intent: None,
                     });
                 }
             }
