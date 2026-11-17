@@ -19,7 +19,7 @@
 
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::prompt_classify::{PromptClass, classify_batch};
+use super::prompt_classify::{IntentSource, PromptClass, TurnIntent, classify_batch};
 use crate::db::pg_store::SessionMetricsRow;
 use crate::transcript::TranscriptTurn;
 
@@ -1390,6 +1390,107 @@ mod tests {
         assert_eq!(hook_event_from_row(&row).prompt_id.as_deref(), Some("abc"));
     }
 
+    // ── #447: corrections by intent ──
+
+    fn labelled(t: TranscriptTurn, class: PromptClass, source: IntentSource) -> TranscriptTurn {
+        TranscriptTurn { intent: Some(TurnIntent { class, source }), ..t }
+    }
+
+    #[test]
+    fn a_correction_with_no_key_phrase_counts_by_its_label() {
+        let events = vec![prompt_ev("edit the config", 1000), ev("Stop", 2000)];
+        let transcript = vec![
+            tt(0, "edit the config", "I edited config/app.toml."),
+            labelled(
+                tt(1, "Hmm, I meant the other config file", "Done."),
+                PromptClass::Correction,
+                IntentSource::Intent,
+            ),
+        ];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        assert_eq!(m.corrections, 1);
+        assert!(!m.ftr, "a corrected session is not first-try-right");
+        assert_eq!(m.outcome, "corrected");
+    }
+
+    #[test]
+    fn a_request_with_a_key_phrase_is_not_a_correction_once_labelled() {
+        let transcript = vec![
+            tt(0, "build the toolbar", "Built it."),
+            labelled(
+                tt(1, "add a revert button to the toolbar", "Added."),
+                PromptClass::Neither,
+                IntentSource::Intent,
+            ),
+        ];
+        let m = derive_session_metrics(&[], &transcript).unwrap();
+        assert_eq!(m.corrections, 0, "the label outranks the phrase");
+        assert!(m.ftr);
+    }
+
+    #[test]
+    fn an_unlabelled_turn_falls_back_to_the_phrase_list() {
+        let transcript =
+            vec![tt(0, "build the toolbar", "Built it."), tt(1, "that's wrong, revert it", "ok")];
+        assert_eq!(derive_session_metrics(&[], &transcript).unwrap().corrections, 1);
+    }
+
+    #[test]
+    fn a_turn_that_answers_no_reply_is_never_a_correction() {
+        let transcript = vec![tt(0, "why did you stop yesterday? carry on", "Continuing.")];
+        assert_eq!(derive_session_metrics(&[], &transcript).unwrap().corrections, 0);
+    }
+
+    #[test]
+    fn a_hook_turn_takes_the_correction_of_its_transcript_prompt() {
+        let prompt = |text: &str, pid: &str, ts: i64| HookEvent {
+            prompt_id: Some(pid.into()),
+            ..prompt_ev(text, ts)
+        };
+        let events = vec![
+            prompt("edit the config", "p1", 0),
+            prompt("Hmm, I meant the other config file", "p2", MIN),
+            prompt("add a revert button", "p3", 2 * MIN),
+        ];
+        let transcript = vec![
+            tt_from(0, "human", "p1", "edit the config"),
+            labelled(
+                tt_from(1, "human", "p2", "Hmm, I meant the other config file"),
+                PromptClass::Correction,
+                IntentSource::Intent,
+            ),
+            labelled(
+                tt_from(2, "human", "p3", "add a revert button"),
+                PromptClass::Neither,
+                IntentSource::Intent,
+            ),
+        ];
+        let m = derive_session_metrics(&events, &transcript).unwrap();
+        let flags: Vec<(bool, Option<&str>)> =
+            m.turns.iter().map(|t| (t.is_correction, t.triage_signal)).collect();
+        assert_eq!(flags, vec![(false, None), (true, Some("intent")), (false, None)]);
+    }
+
+    #[test]
+    fn the_evidence_quotes_the_first_labelled_correction() {
+        let transcript = vec![
+            tt(0, "edit the config", "I edited config/app.toml."),
+            labelled(
+                tt(1, "that's wrong but leave it", "ok"),
+                PromptClass::Neither,
+                IntentSource::Intent,
+            ),
+            labelled(
+                tt(2, "Hmm, I meant the other config file", "Done."),
+                PromptClass::Correction,
+                IntentSource::Intent,
+            ),
+        ];
+        let ev = build_session_evidence(&transcript, "claude");
+        let corr = ev["moments"].as_array().unwrap().iter().find(|m| m["kind"] == "correction");
+        assert_eq!(corr.unwrap()["turn"], 2);
+    }
+
     #[test]
     fn corrections_come_from_transcript_user_text() {
         let events = vec![prompt_ev("noise", 1000)]; // the hook prompt is not a correction
@@ -2097,6 +2198,82 @@ mod tests {
             .await
             .ok();
         assert_eq!(due, vec![ids[0]], "only the session whose transcript grew since");
+    }
+
+    /// #447: the intent pass labels turns after their session was analysed; a label
+    /// newer than the analysis makes the session due, so its corrections, first-try
+    /// and outcome are re-derived from it. An older label does not.
+    #[tokio::test]
+    async fn a_label_newer_than_the_analysis_makes_the_session_due() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg
+            .create_workspace(&format!("_test:intent-{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(
+            pg,
+            &format!("intent-{}", uuid::Uuid::new_v4()),
+        )
+        .await;
+        let mut ids = Vec::new();
+        for labelled in ["now()", "now() - interval '3 hours'"] {
+            let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+            let sid = pg
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &csid,
+                    folder_id: &fid,
+                    workspace_id: Some(&pid),
+                    family: "claude",
+                    is_end: true,
+                })
+                .await
+                .unwrap();
+            // The turn landed before the analysis; only its label can make it due.
+            sqlx_core::query::query(&format!(
+                "INSERT INTO activity.transcript_turns
+                   (source, session_id, family, turn_index, created_at, intent, intent_source, intent_at)
+                 VALUES ('test', $1, 'claude', 0, now() - interval '4 hours',
+                         'correction', 'intent', {labelled})"
+            ))
+            .bind(&csid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET analyzed_at = now() - interval '1 hour' WHERE id = $1",
+            )
+            .bind(sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            ids.push((sid, csid));
+        }
+        let due: Vec<uuid::Uuid> = pg
+            .get_workspace_sessions_needing_enrichment(&pid)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        for (sid, csid) in &ids {
+            sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id = $1")
+                .bind(csid)
+                .execute(pg.pool())
+                .await
+                .ok();
+            sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+                .bind(sid)
+                .execute(pg.pool())
+                .await
+                .ok();
+        }
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .ok();
+        assert_eq!(due, vec![ids[0].0], "only the session labelled since its analysis");
     }
 
     /// R12: a session analysed before the split (active time, no split) is due
