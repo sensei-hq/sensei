@@ -327,6 +327,11 @@ mod measure {
     #[tokio::test]
     #[ignore]
     async fn intent_labels_a_set() {
+        // The pass reports a failed call through tracing; show it here.
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::WARN)
+            .try_init();
         let set: Vec<serde_json::Value> = serde_json::from_str(
             &std::fs::read_to_string(std::env::var("INTENT_SET").expect("INTENT_SET")).unwrap(),
         )
