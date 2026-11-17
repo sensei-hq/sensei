@@ -324,6 +324,38 @@ mod tests {
 mod measure {
     use super::super::prompt_classify::{GatewayIntentModel, IntentCandidate, classify_intent};
 
+    /// The pass itself, end to end, for `INTENT_BATCHES` batches (default 2):
+    /// candidates from the database, the seeded chain, labels written back. Run
+    /// against the live database it writes exactly what the daemon would.
+    ///   `GATEWAY_LOADER_TEST_URL=<db> cargo test -p senseid --bin senseid \
+    ///    intent_pass_runs -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn intent_pass_runs() {
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::WARN)
+            .try_init();
+        let url = std::env::var("GATEWAY_LOADER_TEST_URL").expect("GATEWAY_LOADER_TEST_URL");
+        let pg = crate::db::pg_store::PgStore::connect(&url).await.expect("connect");
+        let cfg = crate::api::gateway_config_loader::load_gateway_config(&pg)
+            .await
+            .expect("load")
+            .expect("the database seeds chains");
+        let gateway = std::sync::Arc::new(gateway::FacadeBuilder::new(cfg).build().await.gateway);
+        let model = GatewayIntentModel { gateway };
+        let batches: u32 =
+            std::env::var("INTENT_BATCHES").ok().and_then(|b| b.parse().ok()).unwrap_or(2);
+        let ticks = std::sync::atomic::AtomicU32::new(0);
+        let report = super::label_pending(&pg, &model, || {
+            ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= batches
+        })
+        .await
+        .expect("the pass runs");
+        println!("intent pass: {report:?}");
+        assert!(report.by_model > 0, "the model labelled nothing: {report:?}");
+    }
+
     #[tokio::test]
     #[ignore]
     async fn intent_labels_a_set() {

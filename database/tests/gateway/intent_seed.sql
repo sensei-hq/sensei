@@ -33,6 +33,18 @@ begin
     if legs is distinct from '1:qwen3.8:27b@ollama' then
         raise exception 'intent chain legs are %', coalesce(legs, '<empty>');
     end if;
+
+    -- The router waits long enough for a 27B model (#447, found live 2026-11-17):
+    -- a warm stage-1 batch takes ~25s, but a cold load of the 18 GB model, or a
+    -- request queued behind another model on the one local Ollama, outlasted the
+    -- 120 s router timeout — the first live run got no answer and phrase-labelled
+    -- its batch. The gateway takes the timeout from the router (no per-request one),
+    -- and maps the adapter by router NAME, so a second, slower Ollama router is not
+    -- possible. 600 s matches the pass's own per-call cap (INTENT_TIMEOUT).
+    if (select (config->>'timeout_ms')::bigint from gateway.routers where name = 'ollama') < 600000 then
+        raise exception 'ollama router timeout_ms is % — under the 600000 a 27B cold load needs',
+            (select config->>'timeout_ms' from gateway.routers where name = 'ollama');
+    end if;
 end $$;
 
 rollback;
