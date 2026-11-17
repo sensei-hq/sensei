@@ -22,8 +22,11 @@
   a correction targets the agent's own previous work, a fix of something else is a new request.
 
 ## Open Questions
-- Q2: Floors (user's call). Recommended: **recall >= 0.80 and precision >= 0.75**, population-weighted on
-  the labelled set — at least today's precision, at sixteen times its recall. Today's prompt meets recall
-  but not precision (0.64); the build sharpens it (the agent's own previous work; "fix X" negatives) and
-  re-measures. The non-hit stratum (130) drives the precision estimate's spread; growing it to ~300
-  would tighten both numbers.
+- (none open)
+
+## Decisions
+- Q2 (user, 2026-11-17): floors **recall >= 0.80 and precision >= 0.75**, population-weighted on the
+  labelled set. The labelled set stays local (`~/.sensei/eval/correction-intent-2026-11-17/`; the repo is
+  public). Today's prompt meets recall but not precision (0.64); the build sharpens it (the agent's own
+  previous work; "fix X" negatives) and re-measures. The non-hit stratum (130) drives the precision
+  estimate's spread; growing it to ~300 would tighten both numbers.
