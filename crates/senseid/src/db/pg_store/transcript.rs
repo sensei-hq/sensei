@@ -46,7 +46,15 @@ impl PgStore {
                    effort         = COALESCE(EXCLUDED.effort,       activity.transcript_turns.effort),
                    service_tier   = COALESCE(EXCLUDED.service_tier, activity.transcript_turns.service_tier),
                    origin         = EXCLUDED.origin,
-                   prompt_id      = COALESCE(EXCLUDED.prompt_id,    activity.transcript_turns.prompt_id)"
+                   prompt_id      = COALESCE(EXCLUDED.prompt_id,    activity.transcript_turns.prompt_id),
+                   -- #447: a label belongs to the prompt it was decided on; a
+                   -- different prompt at this index is unlabelled again.
+                   intent         = CASE WHEN EXCLUDED.user_text IS DISTINCT FROM activity.transcript_turns.user_text
+                                         THEN NULL ELSE activity.transcript_turns.intent END,
+                   intent_source  = CASE WHEN EXCLUDED.user_text IS DISTINCT FROM activity.transcript_turns.user_text
+                                         THEN NULL ELSE activity.transcript_turns.intent_source END,
+                   intent_at      = CASE WHEN EXCLUDED.user_text IS DISTINCT FROM activity.transcript_turns.user_text
+                                         THEN NULL ELSE activity.transcript_turns.intent_at END"
             )
             .bind(source).bind(session_id).bind(family).bind(provider).bind(model).bind(t.turn_index)
             .bind(&t.user_text).bind(&t.assistant_text).bind(char_count).bind(t.started_at)
@@ -262,8 +270,11 @@ impl PgStore {
             Option<String>,
             String,
             Option<String>,
+            Option<String>,
+            Option<String>,
         )> = sqlx_core::query_as::query_as(
-            "SELECT turn_index, user_text, assistant_text, started_at, family, origin, prompt_id
+            "SELECT turn_index, user_text, assistant_text, started_at, family, origin, prompt_id,
+                    intent::text, intent_source::text
                    FROM activity.transcript_turns
                   WHERE session_id = $1 ORDER BY turn_index",
         )
@@ -284,6 +295,8 @@ impl PgStore {
                     _family,
                     origin,
                     prompt_id,
+                    intent,
+                    intent_source,
                 )| {
                     crate::transcript::TranscriptTurn {
                         turn_index,
@@ -292,6 +305,7 @@ impl PgStore {
                         user_text,
                         assistant_text,
                         started_at,
+                        intent: stored_intent(intent.as_deref(), intent_source.as_deref()),
                         ..Default::default()
                     }
                 },
@@ -306,17 +320,62 @@ impl PgStore {
     /// first: your turns that answer an agent reply, with no label yet or only
     /// the phrase fallback's. Machine text — command wrappers, hook output,
     /// interrupts, continuations — and subagent turns are not candidates.
-    pub async fn intent_candidates(&self, _limit: i64) -> Result<Vec<IntentCandidateRow>, String> {
-        Err("intent_candidates: not built".into())
+    pub async fn intent_candidates(&self, limit: i64) -> Result<Vec<IntentCandidateRow>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT t.id, t.session_id, t.user_text, coalesce(p.assistant_text, '')
+               FROM activity.transcript_turns t
+               JOIN activity.transcript_turns p
+                 ON p.source = t.source AND p.session_id = t.session_id AND p.turn_index = t.turn_index - 1
+              WHERE (t.intent_source IS NULL OR t.intent_source = 'phrase')
+                AND t.origin = 'human'
+                AND coalesce(t.is_sidechain, false) = false
+                AND t.user_text IS NOT NULL
+                AND length(trim(t.user_text)) BETWEEN 3 AND 1500
+                AND t.user_text !~ '^\\s*<'
+                AND t.user_text !~* '^(caveat:|\\[request interrupted|this session is being continued|base directory for this skill)'
+              ORDER BY t.started_at DESC NULLS LAST, t.session_id, t.turn_index DESC
+              LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("intent_candidates: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, session_id, user_text, prev_reply)| IntentCandidateRow {
+                id,
+                session_id,
+                user_text,
+                prev_reply,
+            })
+            .collect())
     }
 
     /// Store intent labels by transcript-turn id, stamping `intent_at`. A label
     /// equal to the stored one is not rewritten. Returns the rows changed.
     pub async fn set_turn_intents(
         &self,
-        _labels: &[(uuid::Uuid, crate::tasks::handlers::prompt_classify::TurnIntent)],
+        labels: &[(uuid::Uuid, crate::tasks::handlers::prompt_classify::TurnIntent)],
     ) -> Result<u64, String> {
-        Err("set_turn_intents: not built".into())
+        let ids: Vec<uuid::Uuid> = labels.iter().map(|(id, _)| *id).collect();
+        let classes: Vec<&str> = labels.iter().map(|(_, l)| l.class.as_str()).collect();
+        let sources: Vec<&str> = labels.iter().map(|(_, l)| l.source.as_str()).collect();
+        let res = sqlx_core::query::query(
+            "UPDATE activity.transcript_turns t
+                SET intent = v.intent::sensei.turn_intent,
+                    intent_source = v.source::sensei.turn_intent_source,
+                    intent_at = now()
+               FROM unnest($1::uuid[], $2::text[], $3::text[]) AS v(id, intent, source)
+              WHERE t.id = v.id
+                AND (t.intent::text, t.intent_source::text) IS DISTINCT FROM (v.intent, v.source)",
+        )
+        .bind(&ids)
+        .bind(&classes)
+        .bind(&sources)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_turn_intents: {e}"))?;
+        Ok(res.rows_affected())
     }
 
     // ── Raw transcript backup ──────────────────────────────────────────────
@@ -623,4 +682,14 @@ pub struct IntentCandidateRow {
     pub session_id: String,
     pub user_text: String,
     pub prev_reply: String,
+}
+
+/// A stored label, when both halves are present and known. The table's check
+/// keeps them together; an unknown enum label is a newer daemon's, read as none.
+fn stored_intent(
+    intent: Option<&str>,
+    source: Option<&str>,
+) -> Option<crate::tasks::handlers::prompt_classify::TurnIntent> {
+    use crate::tasks::handlers::prompt_classify::{IntentSource, PromptClass, TurnIntent};
+    Some(TurnIntent { class: PromptClass::parse(intent?)?, source: IntentSource::parse(source?)? })
 }
