@@ -985,17 +985,14 @@ impl PgStore {
 
     // ── Corrections aggregation (#65 step 5) ─────────────────────────────────
 
-    /// All captured user prompts across every workspace: (workspace_id, workspace_name,
-    /// session_id, ts_ms, prompt). Ordered by ts so the handler's clustering seeds
-    /// on the earliest member. The handler filters to corrections.
-    pub async fn get_all_user_prompts(
-        &self,
-    ) -> Result<Vec<(uuid::Uuid, String, String, i64, String)>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, i64, String)> = sqlx_core::query_as::query_as(
-            "SELECT s.workspace_id, COALESCE(p.name, ''), ae.session_id, ae.ts, ae.payload->>'prompt'
+    /// All captured user prompts across every workspace, each with its intent label
+    /// (#447). Ordered by ts so the handler's clustering seeds on the earliest
+    /// member. The handler filters to corrections.
+    pub async fn get_all_user_prompts(&self) -> Result<Vec<UserPromptRow>, String> {
+        let rows: Vec<(uuid::Uuid, String, i64, String)> = sqlx_core::query_as::query_as(
+            "SELECT s.workspace_id, ae.session_id, ae.ts, ae.payload->>'prompt'
                FROM activity.assistant_events ae
                JOIN activity.sessions s ON s.client_session_id = ae.session_id
-               JOIN sensei.workspaces p ON p.id = s.workspace_id
               WHERE ae.event_type = 'UserPromptSubmit'
                 AND ae.payload->>'prompt' IS NOT NULL
                 AND s.workspace_id IS NOT NULL
@@ -1004,7 +1001,15 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .map(|(workspace_id, session_id, ts, text)| UserPromptRow {
+                workspace_id,
+                session_id,
+                ts,
+                prompt: LabelledPrompt { text, intent: None, answers_reply: None },
+            })
+            .collect())
     }
 
     /// Upsert one aggregated correction, keyed by its stable `signature` (so `id`

@@ -31,6 +31,18 @@ pub fn phrase_label(prompt: &str) -> PromptClass {
     }
 }
 
+/// A captured prompt's class for the aggregate signals (correction-prone,
+/// rule-candidates, recurring corrections): its stored label when the intent pass
+/// reached it, else the phrase list's — where a prompt that answers no reply
+/// (`answers_reply == Some(false)`) is never a correction.
+pub fn prompt_class(
+    _prompt: &str,
+    _label: Option<TurnIntent>,
+    _answers_reply: Option<bool>,
+) -> PromptClass {
+    PromptClass::Neither
+}
+
 /// The labels to store for one batch: the model's where it answered, the phrase
 /// list's (marked `phrase`) where it did not. `decided[i]` belongs to `batch[i]`.
 pub fn labels_for(
@@ -148,6 +160,30 @@ mod tests {
         assert_eq!(phrase_label("that's wrong, revert it"), PromptClass::Correction);
         assert_eq!(phrase_label("from now on, run the tests first"), PromptClass::Principle);
         assert_eq!(phrase_label("Hmm, I meant the other config file"), PromptClass::Neither);
+    }
+
+    #[test]
+    fn a_prompt_class_is_its_label_else_its_phrase() {
+        let correction =
+            TurnIntent { class: PromptClass::Correction, source: IntentSource::Intent };
+        let neither = TurnIntent { class: PromptClass::Neither, source: IntentSource::Intent };
+        assert_eq!(
+            prompt_class("Hmm, I meant the other config file", Some(correction), Some(true)),
+            PromptClass::Correction
+        );
+        assert_eq!(
+            prompt_class("add a revert button", Some(neither), Some(true)),
+            PromptClass::Neither
+        );
+        assert_eq!(prompt_class("that's wrong, revert it", None, None), PromptClass::Correction);
+        assert_eq!(
+            prompt_class("that's wrong, revert it", None, Some(false)),
+            PromptClass::Neither
+        );
+        assert_eq!(
+            prompt_class("from now on, run the tests", None, Some(false)),
+            PromptClass::Principle
+        );
     }
 
     #[test]

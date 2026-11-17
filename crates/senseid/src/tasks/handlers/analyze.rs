@@ -1011,9 +1011,10 @@ pub async fn derive_signals(
     // `rule-candidates` pattern per workspace — the folder locus survives inside
     // each instance blob for later drill-down, but the row itself rolls up.
     let mut candidates: Vec<(uuid::Uuid, String, String, PromptClass)> = Vec::new();
-    for (folder_id, session_id, prompt) in
+    for crate::db::pg_store::WorkspacePromptRow { folder_id, session_id, prompt } in
         ctx.pg().get_workspace_prompts(workspace_id, affected).await?
     {
+        let prompt = prompt.text;
         let regex_class = if correction_signal(&prompt).is_some() {
             PromptClass::Correction
         } else if principle_signal(&prompt).is_some() {

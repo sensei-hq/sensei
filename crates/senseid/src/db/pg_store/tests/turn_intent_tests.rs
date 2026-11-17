@@ -177,3 +177,79 @@ async fn candidates_leave_out_the_turns_a_run_has_already_handled() {
     assert_eq!(left, ["go on then"], "a turn handled this run is not offered again");
     cleanup(&s, &sid).await;
 }
+
+/// The aggregate signals read each captured prompt's label through its transcript
+/// turn (same prompt id): correction-prone and recurring corrections follow intent.
+#[tokio::test]
+async fn captured_prompts_carry_their_transcript_label() {
+    let s = pg_store().await;
+    let pid = s
+        .create_workspace(&format!("_test:intent-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let fid = create_test_folder(&s, "intent-prompts").await;
+    let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+    s.record_session_event(&SessionEventRow {
+        client_session_id: &csid,
+        folder_id: &fid,
+        workspace_id: Some(&pid),
+        family: "claude",
+        is_end: false,
+    })
+    .await
+    .unwrap();
+    let prompts = [
+        ("p1", "edit the config"),
+        ("p2", "Hmm, I meant the other config file"),
+        ("p9", "no transcript for me"),
+    ];
+    for (n, (pid_, text)) in prompts.iter().enumerate() {
+        s.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "UserPromptSubmit",
+            tool_name: None,
+            cwd: None,
+            ts: 1000 + n as i64,
+            success: None,
+            payload: &serde_json::json!({ "prompt": text, "prompt_id": pid_ }),
+        })
+        .await
+        .unwrap();
+    }
+    let tturn = |i: i32, pid_: &str, text: &str| crate::transcript::TranscriptTurn {
+        prompt_id: Some(pid_.to_string()),
+        ..turn(i, "human", text, "Done.")
+    };
+    s.upsert_transcript_turns(
+        &source(&csid),
+        &[tturn(0, "p1", "edit the config"), tturn(1, "p2", "Hmm, I meant the other config file")],
+    )
+    .await
+    .unwrap();
+    s.set_turn_intents(&[(turn_id(&s, &csid, 1).await, CORRECTION)]).await.unwrap();
+
+    let want = vec![
+        ("edit the config".to_string(), None, Some(false)),
+        ("Hmm, I meant the other config file".to_string(), Some(CORRECTION), Some(true)),
+        ("no transcript for me".to_string(), None, None),
+    ];
+    let ws: Vec<_> = s
+        .get_workspace_prompts(&pid, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.prompt.text, r.prompt.intent, r.prompt.answers_reply))
+        .collect();
+    assert_eq!(ws, want);
+    let all: Vec<_> = s
+        .get_all_user_prompts()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.session_id == csid)
+        .map(|r| (r.prompt.text, r.prompt.intent, r.prompt.answers_reply))
+        .collect();
+    assert_eq!(all, want);
+    cleanup(&s, &csid).await;
+}

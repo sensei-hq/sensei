@@ -150,12 +150,12 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
     let all = ctx.pg().get_all_user_prompts().await?;
     let mut candidates: Vec<CorrItem> = all
         .into_iter()
-        .filter(|(_, _, _, _, prompt)| correction_signal(prompt).is_some())
-        .map(|(workspace_id, _pname, session_id, ts, prompt)| CorrItem {
-            workspace_id,
-            session_id,
-            ts,
-            prompt,
+        .filter(|r| correction_signal(&r.prompt.text).is_some())
+        .map(|r| CorrItem {
+            workspace_id: r.workspace_id,
+            session_id: r.session_id,
+            ts: r.ts,
+            prompt: r.prompt.text,
         })
         .collect();
 

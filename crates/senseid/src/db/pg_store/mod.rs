@@ -588,7 +588,7 @@ pub use pruner::PruneReport;
 #[cfg(test)]
 pub use schema_store::StoredSchemaRef;
 pub use schema_store::{StoredDep, StoredSchemaEntity, UnplacedRef};
-pub use transcript::IntentCandidateRow;
+pub use transcript::{IntentCandidateRow, LabelledPrompt, UserPromptRow, WorkspacePromptRow};
 mod patterns;
 mod personas;
 /// Named outside this module because THREE callers now share it — the scheduled

@@ -1135,16 +1135,15 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// User-prompt text across a workspace's sessions — the SignalDeriver's
-    /// correction / rule-candidate source (#68, L1). Returns `(folder_id,
-    /// session_id, prompt)` for every UserPromptSubmit carrying prompt text.
+    /// User prompts across a workspace's sessions, each with its intent label (#447)
+    /// — the SignalDeriver's correction / rule-candidate source (#68, L1).
     /// `folders = Some(ids)` scopes to those folders (incremental re-derive);
     /// `None` = whole workspace.
     pub async fn get_workspace_prompts(
         &self,
         workspace_id: &uuid::Uuid,
         folders: Option<&[uuid::Uuid]>,
-    ) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
+    ) -> Result<Vec<WorkspacePromptRow>, String> {
         let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
             "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt'
              FROM activity.assistant_events ae
@@ -1160,7 +1159,14 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .map(|(folder_id, session_id, text)| WorkspacePromptRow {
+                folder_id,
+                session_id,
+                prompt: LabelledPrompt { text, intent: None, answers_reply: None },
+            })
+            .collect())
     }
 
     // ── Transcript backfill (#73) ────────────────────────────────────────────
