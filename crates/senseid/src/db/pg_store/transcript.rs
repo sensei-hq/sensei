@@ -323,7 +323,7 @@ impl PgStore {
     pub async fn intent_candidates(
         &self,
         limit: i64,
-        _handled: &[uuid::Uuid],
+        handled: &[uuid::Uuid],
     ) -> Result<Vec<IntentCandidateRow>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
             "SELECT t.id, t.session_id, t.user_text, coalesce(p.assistant_text, '')
@@ -334,6 +334,7 @@ impl PgStore {
                 AND t.origin = 'human'
                 AND coalesce(t.is_sidechain, false) = false
                 AND t.user_text IS NOT NULL
+                AND NOT (t.id = ANY($2::uuid[]))
                 AND length(trim(t.user_text)) BETWEEN 3 AND 1500
                 AND t.user_text !~ '^\\s*<'
                 AND t.user_text !~* '^(caveat:|\\[request interrupted|this session is being continued|base directory for this skill)'
@@ -341,6 +342,7 @@ impl PgStore {
               LIMIT $1",
         )
         .bind(limit)
+        .bind(handled)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("intent_candidates: {e}"))?;

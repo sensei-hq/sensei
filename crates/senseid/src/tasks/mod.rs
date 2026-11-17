@@ -156,6 +156,10 @@ pub enum TaskKind {
     /// Global: cluster recurring corrective prompts across all workspaces into
     /// inference.corrections (analyzer #65 step 5). Enqueued once per scheduler tick.
     AggregateCorrections,
+    /// Global: label user turns by intent — correction / principle / neither — with
+    /// the measured local classifier (#447). Rides the analyzer's daily window and
+    /// queues itself again while candidates remain (the history backfill drains so).
+    ClassifyTurnIntent,
     /// Global: snapshot the per-tool signal cards (unused / warn / opportunity /
     /// win) into sensei.tool_insights so the observatory Insights tab reads a
     /// cached row per tool instead of re-computing on every request (T2 Slice D).
@@ -348,6 +352,7 @@ impl TaskKind {
         Self::MeasureVerdicts,
         Self::ClassifyPendingVerdicts,
         Self::AggregateCorrections,
+        Self::ClassifyTurnIntent,
         Self::AggregateToolInsights,
         Self::ConsolidateGovernance,
         Self::WarmInsightCopy,
@@ -652,6 +657,14 @@ impl TaskKind {
                 pipeline: Pipeline::Inference,
                 stage: Stage::Aggregate,
                 budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ClassifyTurnIntent => KindInfo {
+                name: "classify_turn_intent",
+                pipeline: Pipeline::Inference,
+                stage: Stage::Aggregate,
+                budget_secs: 1800,
                 high_priority: false,
                 retryable: false,
             },
@@ -1149,7 +1162,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 43, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 44, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]

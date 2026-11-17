@@ -21,17 +21,35 @@ use crate::db::pg_store::{IntentCandidateRow, PgStore};
 const BATCH: i64 = 10;
 
 /// The phrase list's label for a prompt — the fallback when the model gave none.
-pub fn phrase_label(_prompt: &str) -> PromptClass {
-    PromptClass::Neither
+pub fn phrase_label(prompt: &str) -> PromptClass {
+    if correction_signal(prompt).is_some() {
+        PromptClass::Correction
+    } else if principle_signal(prompt).is_some() {
+        PromptClass::Principle
+    } else {
+        PromptClass::Neither
+    }
 }
 
 /// The labels to store for one batch: the model's where it answered, the phrase
 /// list's (marked `phrase`) where it did not. `decided[i]` belongs to `batch[i]`.
 pub fn labels_for(
-    _batch: &[IntentCandidateRow],
-    _decided: &[Option<PromptClass>],
+    batch: &[IntentCandidateRow],
+    decided: &[Option<PromptClass>],
 ) -> Vec<(uuid::Uuid, TurnIntent)> {
-    Vec::new()
+    batch
+        .iter()
+        .zip(decided)
+        .map(|(c, d)| {
+            let label = match d {
+                Some(class) => TurnIntent { class: *class, source: IntentSource::Intent },
+                None => {
+                    TurnIntent { class: phrase_label(&c.user_text), source: IntentSource::Phrase }
+                }
+            };
+            (c.id, label)
+        })
+        .collect()
 }
 
 /// What one run did.
@@ -50,16 +68,66 @@ pub struct PassReport {
 /// Label pending turns in batches until none remain, the model stops answering,
 /// or `out_of_time` says stop.
 pub async fn label_pending<M: IntentModel>(
-    _pg: &PgStore,
-    _model: &M,
-    _out_of_time: impl Fn() -> bool,
+    pg: &PgStore,
+    model: &M,
+    out_of_time: impl Fn() -> bool,
 ) -> Result<PassReport, String> {
-    Err("label_pending: not built".into())
+    let mut report = PassReport::default();
+    // Turns this run has labelled: a phrase-labelled turn is still a candidate,
+    // and must not come round again in the same run.
+    let mut handled: Vec<uuid::Uuid> = Vec::new();
+    loop {
+        if out_of_time() {
+            report.more = true;
+            return Ok(report);
+        }
+        let batch = pg.intent_candidates(BATCH, &handled).await?;
+        if batch.is_empty() {
+            return Ok(report);
+        }
+        let items: Vec<IntentCandidate> = batch
+            .iter()
+            .map(|c| IntentCandidate { prompt: &c.user_text, prev_reply: &c.prev_reply })
+            .collect();
+        let decided = classify_intent(model, &items).await;
+        let answered = decided.iter().filter(|d| d.is_some()).count() as u32;
+        report.by_model += answered;
+        report.by_phrase += batch.len() as u32 - answered;
+        report.written += pg.set_turn_intents(&labels_for(&batch, &decided)).await?;
+        handled.extend(batch.iter().map(|c| c.id));
+        if answered == 0 {
+            tracing::warn!(
+                "intent: the model gave no answer for a whole batch — phrase-labelled it; \
+                 the next run tries the model again"
+            );
+            return Ok(report);
+        }
+    }
 }
 
+/// How long one run labels before it stops and, if needed, queues another —
+/// well inside the task's watchdog budget.
+const RUN_FOR: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
 /// Handler for `TaskKind::ClassifyTurnIntent`.
-pub async fn classify_turn_intent(_ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
-    Err("classify_turn_intent: not built".into())
+pub async fn classify_turn_intent(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
+    let model =
+        super::prompt_classify::GatewayIntentModel { gateway: ctx.app_state.gateway.clone() };
+    let started = std::time::Instant::now();
+    let report = label_pending(ctx.pg(), &model, || started.elapsed() >= RUN_FOR).await?;
+    tracing::info!(
+        written = report.written,
+        by_model = report.by_model,
+        by_phrase = report.by_phrase,
+        more = report.more,
+        "classify_turn_intent"
+    );
+    if report.more {
+        ctx.queue
+            .enqueue_unique(Task::new(super::super::TaskKind::ClassifyTurnIntent, "", ""))
+            .await;
+    }
+    Ok(report.written as u32)
 }
 
 #[cfg(test)]
