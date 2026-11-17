@@ -225,11 +225,32 @@ const INTENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 /// The gateway request for one call: the `intent` chain, deterministic, and no
 /// fallback — another model would be an unmeasured classifier.
 fn intent_request(
-    _system: &str,
-    _user: String,
-    _max_tokens: u32,
+    system: &str,
+    user: String,
+    max_tokens: u32,
 ) -> gateway::types::request::InferenceRequest {
-    unimplemented!()
+    use gateway::types::capability::Capability;
+    use gateway::types::request::*;
+    InferenceRequest {
+        capability: Capability::TextChat,
+        model: None,
+        router: None,
+        chain: Some(INTENT_CHAIN.into()),
+        payload: Payload::Chat {
+            messages: vec![Message::text(MessageRole::User, user)],
+            system: Some(system.to_string()),
+            max_tokens: Some(max_tokens),
+            temperature: Some(0.0),
+            tools: Vec::new(),
+        },
+        budget: None,
+        auth: None,
+        panel: None,
+        consensus: None,
+        allow_fallback: false,
+        credentials: std::collections::HashMap::new(),
+        routing: None,
+    }
 }
 
 /// [`IntentModel`] over the daemon's gateway.
