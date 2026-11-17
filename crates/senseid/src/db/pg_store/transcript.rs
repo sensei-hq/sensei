@@ -692,7 +692,7 @@ pub struct IntentCandidateRow {
 
 /// A stored label, when both halves are present and known. The table's check
 /// keeps them together; an unknown enum label is a newer daemon's, read as none.
-fn stored_intent(
+pub(super) fn stored_intent(
     intent: Option<&str>,
     source: Option<&str>,
 ) -> Option<crate::tasks::handlers::prompt_classify::TurnIntent> {

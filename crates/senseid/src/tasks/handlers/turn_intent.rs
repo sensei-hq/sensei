@@ -36,11 +36,17 @@ pub fn phrase_label(prompt: &str) -> PromptClass {
 /// reached it, else the phrase list's — where a prompt that answers no reply
 /// (`answers_reply == Some(false)`) is never a correction.
 pub fn prompt_class(
-    _prompt: &str,
-    _label: Option<TurnIntent>,
-    _answers_reply: Option<bool>,
+    prompt: &str,
+    label: Option<TurnIntent>,
+    answers_reply: Option<bool>,
 ) -> PromptClass {
-    PromptClass::Neither
+    if let Some(l) = label {
+        return l.class;
+    }
+    match phrase_label(prompt) {
+        PromptClass::Correction if answers_reply == Some(false) => PromptClass::Neither,
+        class => class,
+    }
 }
 
 /// The labels to store for one batch: the model's where it answered, the phrase

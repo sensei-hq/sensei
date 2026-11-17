@@ -19,7 +19,7 @@
 
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::prompt_classify::{IntentSource, PromptClass, TurnIntent, classify_batch};
+use super::prompt_classify::{IntentSource, PromptClass, TurnIntent};
 use crate::db::pg_store::SessionMetricsRow;
 use crate::transcript::TranscriptTurn;
 
@@ -1002,45 +1002,28 @@ pub async fn derive_signals(
     }
 
     // 2. Prompt-derived signals: corrections (anti) + rule candidates (pattern).
-    // Cheap regex RECALL → L2 LLM PRECISION (#70): the regex flags candidates,
-    // then one model pass refines them (drops false positives, fixes
-    // correction↔principle mislabels). Falls back to the regex class when no
-    // chat model is configured, so this never blocks the analyzer.
+    // Each prompt's class is its intent label (#447) when the intent pass reached
+    // it, else the phrase list's.
     //
     // Aggregation is at WORKSPACE scope (#82): one `correction-prone` and one
     // `rule-candidates` pattern per workspace — the folder locus survives inside
     // each instance blob for later drill-down, but the row itself rolls up.
-    let mut candidates: Vec<(uuid::Uuid, String, String, PromptClass)> = Vec::new();
+    let mut corrections: Vec<serde_json::Value> = Vec::new();
+    let mut principles: Vec<serde_json::Value> = Vec::new();
     for crate::db::pg_store::WorkspacePromptRow { folder_id, session_id, prompt } in
         ctx.pg().get_workspace_prompts(workspace_id, affected).await?
     {
-        let prompt = prompt.text;
-        let regex_class = if correction_signal(&prompt).is_some() {
-            PromptClass::Correction
-        } else if principle_signal(&prompt).is_some() {
-            PromptClass::Principle
-        } else {
-            continue;
-        };
-        candidates.push((folder_id, session_id, prompt, regex_class));
-    }
-    let texts: Vec<&str> = candidates.iter().map(|(_, _, p, _)| p.as_str()).collect();
-    let refined = classify_batch(&ctx.app_state.gateway, &texts).await;
-
-    let mut corrections: Vec<serde_json::Value> = Vec::new();
-    let mut principles: Vec<serde_json::Value> = Vec::new();
-    for (i, (folder_id, session_id, prompt, regex_class)) in candidates.iter().enumerate() {
-        // LLM-refined class when available for this prompt, else the regex class.
-        let class = refined.get(i).copied().flatten().unwrap_or(*regex_class);
+        let class =
+            super::turn_intent::prompt_class(&prompt.text, prompt.intent, prompt.answers_reply);
         let instance = serde_json::json!({
             "folder_id": folder_id,
             "session": session_id,
-            "prompt": prompt_snippet(prompt),
+            "prompt": prompt_snippet(&prompt.text),
         });
         match class {
             PromptClass::Correction => corrections.push(instance),
             PromptClass::Principle => principles.push(instance),
-            PromptClass::Neither => {} // LLM rejected the regex candidate — a false positive
+            PromptClass::Neither => {}
         }
     }
     if corrections.len() >= CORRECTION_MIN {

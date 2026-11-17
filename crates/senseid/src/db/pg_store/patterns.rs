@@ -989,10 +989,20 @@ impl PgStore {
     /// (#447). Ordered by ts so the handler's clustering seeds on the earliest
     /// member. The handler filters to corrections.
     pub async fn get_all_user_prompts(&self) -> Result<Vec<UserPromptRow>, String> {
-        let rows: Vec<(uuid::Uuid, String, i64, String)> = sqlx_core::query_as::query_as(
-            "SELECT s.workspace_id, ae.session_id, ae.ts, ae.payload->>'prompt'
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, String, i64, String, Option<String>, Option<String>, Option<bool>)> =
+            sqlx_core::query_as::query_as(
+            "SELECT s.workspace_id, ae.session_id, ae.ts, ae.payload->>'prompt', l.intent, l.source, l.answers
                FROM activity.assistant_events ae
                JOIN activity.sessions s ON s.client_session_id = ae.session_id
+             LEFT JOIN LATERAL (
+                  SELECT tt.intent::text AS intent, tt.intent_source::text AS source,
+                         EXISTS (SELECT 1 FROM activity.transcript_turns p
+                                  WHERE p.source = tt.source AND p.session_id = tt.session_id
+                                    AND p.turn_index = tt.turn_index - 1) AS answers
+                    FROM activity.transcript_turns tt
+                   WHERE tt.session_id = ae.session_id AND tt.prompt_id = ae.payload->>'prompt_id'
+                   LIMIT 1) l ON true
               WHERE ae.event_type = 'UserPromptSubmit'
                 AND ae.payload->>'prompt' IS NOT NULL
                 AND s.workspace_id IS NOT NULL
@@ -1003,11 +1013,17 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(workspace_id, session_id, ts, text)| UserPromptRow {
-                workspace_id,
-                session_id,
-                ts,
-                prompt: LabelledPrompt { text, intent: None, answers_reply: None },
+            .map(|(workspace_id, session_id, ts, text, intent, source, answers_reply)| {
+                UserPromptRow {
+                    workspace_id,
+                    session_id,
+                    ts,
+                    prompt: LabelledPrompt {
+                        text,
+                        intent: transcript::stored_intent(intent.as_deref(), source.as_deref()),
+                        answers_reply,
+                    },
+                }
             })
             .collect())
     }

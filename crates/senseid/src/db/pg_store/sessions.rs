@@ -1144,10 +1144,20 @@ impl PgStore {
         workspace_id: &uuid::Uuid,
         folders: Option<&[uuid::Uuid]>,
     ) -> Result<Vec<WorkspacePromptRow>, String> {
-        let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
-            "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt'
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<String>, Option<bool>)> =
+            sqlx_core::query_as::query_as(
+            "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt', l.intent, l.source, l.answers
              FROM activity.assistant_events ae
              JOIN activity.sessions s ON s.client_session_id = ae.session_id
+             LEFT JOIN LATERAL (
+                  SELECT tt.intent::text AS intent, tt.intent_source::text AS source,
+                         EXISTS (SELECT 1 FROM activity.transcript_turns p
+                                  WHERE p.source = tt.source AND p.session_id = tt.session_id
+                                    AND p.turn_index = tt.turn_index - 1) AS answers
+                    FROM activity.transcript_turns tt
+                   WHERE tt.session_id = ae.session_id AND tt.prompt_id = ae.payload->>'prompt_id'
+                   LIMIT 1) l ON true
              WHERE s.workspace_id = $1
                AND ($2::uuid[] IS NULL OR s.folder_id = ANY($2))
                AND ae.event_type = 'UserPromptSubmit'
@@ -1161,10 +1171,16 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(folder_id, session_id, text)| WorkspacePromptRow {
-                folder_id,
-                session_id,
-                prompt: LabelledPrompt { text, intent: None, answers_reply: None },
+            .map(|(folder_id, session_id, text, intent, source, answers_reply)| {
+                WorkspacePromptRow {
+                    folder_id,
+                    session_id,
+                    prompt: LabelledPrompt {
+                        text,
+                        intent: transcript::stored_intent(intent.as_deref(), source.as_deref()),
+                        answers_reply,
+                    },
+                }
             })
             .collect())
     }

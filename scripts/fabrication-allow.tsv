@@ -154,7 +154,6 @@ crates/senseid/src/tasks/handlers/metrics/quality.rs	R1	let repo_key = pg.repo_k
 crates/senseid/src/tasks/handlers/model_insight.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/tasks/handlers/process.rs	R1	.ok()	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/tasks/handlers/process.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
-crates/senseid/src/tasks/handlers/prompt_classify.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/tasks/handlers/prompt_classify.rs	R5	let labels: Vec<String> = serde_json::from_str(&content[start..=end]).ok()?;	NOT-A-DEFAULT	.ok() — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/tasks/handlers/publish_run.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/tasks/handlers/repo_scan.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err(e) => — failure propagated/logged-skip	audit 2026-11-03 App. C	2026-11-03
