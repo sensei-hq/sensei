@@ -2,9 +2,8 @@
   // The workspace window's task view (D90). Same screen as the main window's; what
   // differs is the view id and where the back link goes.
   import { appState } from '$lib/appstate.svelte.js';
-  import { relayApi } from '$lib/relay-api.js';
-  import { RelayTaskState } from '@sensei/state';
-  import { subscribeTaskStream } from '$lib/relay/relay-task-stream.js';
+  import { relayApi, relayStream } from '$lib/relay-api.js';
+  import { RelayTaskState, sseEvents } from '@sensei/state';
   import { crewTail } from '$lib/relay/relay-format.js';
   import RelayTaskScreen from '$lib/relay/RelayTaskScreen.svelte';
 
@@ -12,12 +11,19 @@
 
   /** Kept by the pair it was read for, so a navigation is a new task. */
   const state = $derived.by(
-    () => new RelayTaskState(data, relayApi(appState.port), data.crewId, data.taskId),
+    () => new RelayTaskState(
+        data,
+        relayApi(appState.port),
+        data.crewId,
+        data.taskId,
+        sseEvents(() => relayStream(appState.port, data.crewId)),
+      ),
   );
 
-  // The route owns the socket (F8): task notifications re-read, steps apply.
-  // Param-keyed, so navigating crew/task resubscribes with the new state.
-  $effect(() => subscribeTaskStream(appState.port, state, data.taskId));
+  // The state listens through its source (#414), to its crew's stream only (#418):
+  // steps apply, task notifications re-read. Param-keyed, so navigating crew/task
+  // connects the new state and closes the old.
+  $effect(() => state.connect());
 </script>
 
 <RelayTaskScreen
