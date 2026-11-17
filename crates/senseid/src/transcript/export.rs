@@ -166,6 +166,7 @@ mod tests {
                 service_tier: Some("standard".to_string()),
                 ..Default::default()
             },
+            intent: None,
         }
     }
 
@@ -181,7 +182,7 @@ mod tests {
         assert_eq!(user["message"]["role"], "user");
         assert_eq!(user["message"]["content"], "add a login page");
         assert_eq!(user["promptId"], "p1");
-        assert_eq!(user[REGENERATED_MARKER], true);
+        assert_eq!(user[REGENERATED_MARKER].as_bool(), Some(true));
     }
 
     #[test]
@@ -205,7 +206,7 @@ mod tests {
         assert_eq!(asst["message"]["usage"]["cache_creation_input_tokens"], 5);
         assert_eq!(asst["message"]["usage"]["service_tier"], "standard");
         assert!(asst.get("uuid").is_none(), "assistant uuids are not kept");
-        assert_eq!(asst[REGENERATED_MARKER], true);
+        assert_eq!(asst[REGENERATED_MARKER].as_bool(), Some(true));
     }
 
     #[test]

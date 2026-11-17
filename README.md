@@ -18,14 +18,23 @@ Sensei watches your coding sessions, learns your team's patterns and conventions
 
 | Directory | Language | Purpose |
 |-----------|----------|---------|
-| [`app/`](app/) | SvelteKit + Tauri | Desktop observatory |
-| [`crates/`](crates/) | Rust | Background daemon, CLI, MCP server (single unified workspace) |
-| [`docs/`](docs/) | Markdown | Design docs, mockups, backlog |
+| [`app/`](app/) | SvelteKit + Tauri | Desktop app (the observatory and workspace windows) |
+| [`crates/`](crates/) | Rust | One workspace: `senseid` (daemon), `cli` (`sensei`), `mcp`, `bootstrap`, `logger`, `dojo-protocol`, `transcript-formats` |
+| [`dojo/`](dojo/) | SvelteKit | The dōjō, the team web app (kavach + Supabase) |
+| [`packages/`](packages/) | TypeScript + Svelte | Code shared by the app and the dōjō: `state` (domain state, the Relay first), `ui` (one screen layout), `codemap`, `glyphs`, `sdlc-figures` |
+| [`database/`](database/) | SQL ([dbd](#prerequisites-development)) | The daemon's schema: DDL under `ddl/`, `design.yaml`, imports, policies, SQL tests. The files are the source of truth |
+| [`supabase/`](supabase/) | SQL | The dōjō's local Supabase stack |
+| [`docs/`](docs/) | Markdown | Product, roadmap, architecture, design, decisions, backlog — start at [docs/README.md](docs/README.md) |
+| [`openspec/`](openspec/) | Markdown | Spec-first change proposals ([OpenSpec](https://github.com/Fission-AI/OpenSpec)): `openspec/changes/<id>/` |
+| [`scripts/`](scripts/) | Shell, Python | Guards the hooks run, release and install helpers |
+| [`homebrew/`](homebrew/) | Ruby | Formula and cask templates, rendered by the release into [sensei-hq/homebrew-tap](https://github.com/sensei-hq/homebrew-tap) |
+| [`marketplace/`](marketplace/) | JSON, Markdown | Skills, commands, agents and hooks, mirrored to [sensei-hq/marketplace](https://github.com/sensei-hq/marketplace) on release |
+| [`tools/`](tools/) | Rust | Stand-alone tools (`session-report`) |
 
-Sibling repos (versioned independently, pulled in as dependencies):
+Sibling repositories (released on their own schedule):
 
-- **[sensei-hq/gateway](https://github.com/sensei-hq/gateway)** — LLM routing library. Consumed by the daemon as a git dependency (`gateway-embedded` in `crates/senseid/Cargo.toml`). Previously vendored here as `gateway/`; moved out so it can be released to crates.io on its own cadence.
-- **[sensei-hq/marketplace](https://github.com/sensei-hq/marketplace)** — skills, commands, agents, and hooks. Version tracks this repo.
+- **[sensei-hq/gateway](https://github.com/sensei-hq/gateway)** — LLM routing library, consumed by the daemon as a git dependency (`gateway-embedded` in `crates/senseid/Cargo.toml`).
+- **[sensei-hq/website](https://github.com/sensei-hq/website)** — sensei-hq.com, checked out beside this repository.
 
 ## Install (macOS)
 
@@ -64,46 +73,57 @@ daemon cannot answer. The same figures are at `GET /api/tasks/abandoned?days=N`.
 
 ## Prerequisites (development)
 
-- Rust stable + cargo
-- Bun
-- PostgreSQL (local) — dev uses `sensei_dev`, release uses `sensei`
+- macOS (the desktop app and the Keychain), Xcode command line tools
+- Rust stable via rustup, with `rust-analyzer` and `rust-src` (the indexer uses them)
+- [Bun](https://bun.sh) — the JavaScript package manager and runner for `app/`, `dojo/` and `packages/`
+- Node.js — the TypeScript indexing engine runs on it
+- PostgreSQL 17, local on :5432 — the daemon's `sensei` database; tests use `sensei_test` (`make test-template`) and the e2e suite `sensei_e2e`
+- [dbd](https://github.com/sensei-hq/dbd) 0.27 (`cargo install dbd-cli`) — applies and reconciles `database/`
+- Supabase CLI and Docker — only for the local dōjō (`make dojo-local`)
+- [OpenSpec](https://github.com/Fission-AI/OpenSpec) 0.17 (`bun add -g @fission-ai/openspec@0.17.2`) — to validate change proposals (`openspec validate <id> --strict`)
 
 ## Quick start
 
 ```bash
-# First-time setup: install git hooks (runs unit tests on each commit)
-make setup-hooks
-
-# Build daemon binaries (dev) and install to ~/.local/bin
-make install-dev
-
-# Run desktop app with hot reload
-make app-dev
-
-# Run marketing website
-make website-dev
-
-# Run all tests
-make test
+make setup-hooks        # once: the pre-commit hook runs the fast suite and the guards
+make crates             # build senseid, sensei and sensei-mcp (release)
+make install            # install them over the brew install, and the desktop app
+make app-dev            # the desktop app with hot reload
+make dojo-local         # the local dōjō: Supabase + dojo dev on 127.0.0.1:5173
+make test-fast          # no database needed (what the hook runs)
+make test               # everything, database tests included
 ```
 
-## Version bump
+`make install-service` installs the daemon alone; each reinstall asks the Keychain for "Always Allow" again (#283).
+E2E: `make test-app-e2e` (the installed daemon on a throwaway `sensei_e2e`).
+
+## Version and release
+
+A release ships from `main` by version tag. Every release bumps the version; `VERSION` is the single source.
 
 ```bash
-make bump v=0.3.0
-# Updates: VERSION, app/package.json, daemon/crates/{senseid,cli,mcp}/Cargo.toml
+make bump v=patch       # 0.22.1 → 0.22.2   (on a clean develop; commits and pushes develop)
+make bump v=minor       # 0.22.1 → 0.23.0
+make bump v=major       # 0.22.1 → 1.0.0
+make bump v=0.30.0      # an explicit version
+# then: PR develop → main, merged when green; on main:
+make release            # tags main, pushes the tag, syncs the marketplace, merges main back into develop
 ```
+
+The tag runs `release.yml`: the builds, the GitHub release, the Homebrew tap and the dōjō database (approved by a person).
+`scripts/release-guard.sh` refuses either step on the wrong branch. Details: [CLAUDE.md](CLAUDE.md#version).
 
 ## Dependency updates
 
 ```bash
-make update
-# cargo update + bun update (app + website) + make test
+make update             # cargo update + bun update (app), then make test
 ```
 
-## Component READMEs
+## Documentation
 
-- [app/README.md](app/README.md) — desktop app setup, routes, build
-- [sensei-hq/website](https://github.com/sensei-hq/website) — sensei-hq.com, its own repository
-- [docs/README.md](docs/README.md) — design docs index
-- [sensei-hq/gateway](https://github.com/sensei-hq/gateway) — LLM routing, providers, capabilities (separate repo)
+- [docs/README.md](docs/README.md) — the index: product (`prd/`), status (`roadmap/`), architecture, design, journeys
+- [docs/backlog.md](docs/backlog.md) — open work, as GitHub issue references
+- [docs/decisions.md](docs/decisions.md) — the decision log
+- [openspec/project.md](openspec/project.md) — the project context for spec-first changes; [AGENTS.md](AGENTS.md) for assistants
+- [app/README.md](app/README.md) — the desktop app: setup, routes, build
+- [sensei-hq/gateway](https://github.com/sensei-hq/gateway) — LLM routing, providers, capabilities

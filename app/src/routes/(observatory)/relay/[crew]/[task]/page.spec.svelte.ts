@@ -12,14 +12,16 @@ import { mountComponent } from '$lib/test-mount.js';
 import type { ApiResult } from '$lib/api.js';
 import type { RelayTaskView } from '$lib/relay-api.js';
 import * as F from '$lib/test-stubs/relay-fixtures.js';
+import { relayStream } from '$lib/relay-api.js';
 
 const PAGE = './+page.svelte';
 const LOADER = './+page.js';
 
 const relay = vi.hoisted(() => ({ api: null as unknown }));
-vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api) }));
-// The socket is the route's, pinned in relay-task-stream.spec — not here.
-vi.mock('$lib/relay/relay-task-stream.js', () => ({ subscribeTaskStream: vi.fn(() => () => {}) }));
+// The task state listens through its source (#414; RelayTaskState.connect, pinned in the
+// state's spec); the route only says whose stream — its crew's (#418).
+const socket = vi.hoisted(() => ({ onopen: null, subscribe: () => () => {}, destroy: () => {} }));
+vi.mock('$lib/relay-api.js', () => ({ relayApi: vi.fn(() => relay.api), relayStream: vi.fn(() => socket) }));
 
 const route = vi.hoisted(() => ({ crew: '', task: '' }));
 vi.mock('$app/state', () => ({
@@ -95,6 +97,11 @@ describe('Observatory · Relay · task', () => {
     expect(vi.mocked(ScreenShell)).toHaveBeenCalled();
     expect(vi.mocked(ScreenShell).mock.calls[0][1]).toMatchObject({ viewId: 'observatory.relay.task', mark: { kanji: '継' } });
     expect(one(c, 'a[data-back]')?.getAttribute('href')).toBe('/relay');
+  });
+
+  it("listens to its crew's stream only (#418)", async () => {
+    await open(F.LOOSE_CREW_ID, 't-scratch', F.ok(looseTask()));
+    expect(vi.mocked(relayStream).mock.calls.at(-1)?.[1]).toBe(F.LOOSE_CREW_ID);
   });
 
   it('a task on a repository with no workspace draws, naming its repository', async () => {

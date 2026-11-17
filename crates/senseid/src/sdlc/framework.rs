@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn an_edit_outside_the_repo_or_without_one_is_no_evidence() {
         assert_eq!(one(edit(1, "Edit", "/r/b/openspec/changes/x/tasks.md")), None);
-        assert_eq!(one(edit(1, "Write", "/tmp/claude/openspec/x.md")), None);
+        assert_eq!(one(edit(1, "Write", "/elsewhere/claude/openspec/x.md")), None);
         assert_eq!(behavioural(&[edit(1, "Edit", "/r/a/openspec/x.md")], None), None);
     }
 

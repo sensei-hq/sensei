@@ -99,7 +99,7 @@ scan_paths() {
       crates/senseid/tests/fixtures/transcripts/*) continue ;;
     esac
     case "$f" in
-      *.jsonl|*.log|*events.jsonl|*chatSessions/*|*workspaceStorage/*|*/transcripts/*|*/facets/*)
+      *.jsonl|*.log|*chatSessions/*|*workspaceStorage/*|*/transcripts/*|*/facets/*)
         note "  $f — looks like a transcript or log; those belong outside the repo" ;;
     esac
   done <<< "$1"
@@ -201,10 +201,14 @@ scan_stdin() {
 }
 
 run_scan() {
-  local files diff
+  local files diff f
+  local staged
   files=$(git diff --cached --name-only --diff-filter=ACM)
   [ -z "$files" ] && return 0
-  diff=$(git diff --cached --unified=0 -- $(printf '%s\n' "$files" | tr '\n' ' ') 2>/dev/null)
+  # One array element per staged path (word-splitting here would break on spaces).
+  staged=()
+  while IFS= read -r f; do staged+=("$f"); done <<< "$files"
+  diff=$(git diff --cached --unified=0 -- "${staged[@]}" 2>/dev/null)
   scan_paths "$files"
   scan_content "$diff"
   return $fail

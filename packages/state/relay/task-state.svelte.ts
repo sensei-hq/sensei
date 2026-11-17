@@ -5,7 +5,8 @@
 // same question again. Everything else that fails is a fault with a Retry.
 import { failureReason, type ApiError } from '../result.js';
 import type { RelayApi } from './client.js';
-import type { RelayDecision, RelayTaskStep, RelayTaskView } from './types.js';
+import type { RelayEvents } from './relay-state.svelte.js';
+import type { RelayDecision, RelayStreamEvent, RelayTaskStep, RelayTaskView } from './types.js';
 
 export interface TaskReads {
   view: RelayTaskView | null;
@@ -16,6 +17,8 @@ export class RelayTaskState {
   readonly api: RelayApi;
   readonly crewId: string;
   readonly taskId: string;
+  /** The crew's stream (#418): the daemon's socket on the desktop, the realtime channel on the dōjō. */
+  readonly events: RelayEvents;
 
   view = $state<RelayTaskView | null>(null);
   error = $state<ApiError | null>(null);
@@ -23,8 +26,9 @@ export class RelayTaskState {
 
   #inFlight: Promise<void> | null = null;
 
-  constructor(reads: TaskReads, api: RelayApi, crewId: string, taskId: string) {
+  constructor(reads: TaskReads, api: RelayApi, crewId: string, taskId: string, events: RelayEvents) {
     this.api = api;
+    this.events = events;
     this.crewId = crewId;
     this.taskId = taskId;
     this.view = reads.view;
@@ -74,6 +78,28 @@ export class RelayTaskState {
     return null;
   }
 
+  // ── The stream ──
+
+  /** Subscribe to the crew's stream; returns the teardown (call on destroy). Each open
+   *  reads the task: the loader's read predates the first, and a broadcast replays
+   *  nothing missed while the stream was down. */
+  connect(): () => void {
+    return this.events(
+      (event) => this.apply(event),
+      () => void this.reRead(),
+    );
+  }
+
+  /** One stream event (F8): a step for this task lands directly, a task event for this
+   *  task re-reads it, and an unregister — whose interrupts name no task — re-reads. The
+   *  stream is crew-wide; anything else names nothing this state holds. */
+  apply(event: RelayStreamEvent): void {
+    const { entity, data } = event;
+    if (entity === 'step' && data.task_id && data.step) this.applyStep(data.task_id, data.step);
+    else if (entity === 'task' && data.task_id) void this.applyTaskChanged(data.task_id);
+    else if (entity === 'relay' && data.op === 'unregister') void this.reRead();
+  }
+
   /** A streamed step lands directly (F8): new keys append, restated keys
    *  update in place. Anything for another task, or before the view reads,
    *  is ignored — the stream is crew-wide, the state is one task's. */
@@ -84,9 +110,7 @@ export class RelayTaskState {
     else this.view.steps[at] = step;
   }
 
-  /** A streamed task notification (F8): re-read, but only when the task is
-   *  this one. (Op-only events like unregister re-read through `reRead`,
-   *  routed by the route — they name no task.) */
+  /** A streamed task notification (F8): re-read, but only when the task is this one. */
   async applyTaskChanged(taskId: string): Promise<void> {
     if (taskId !== this.taskId) return;
     await this.reRead();

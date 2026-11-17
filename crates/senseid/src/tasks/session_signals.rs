@@ -92,7 +92,8 @@ pub async fn pass_with(
     let catalogue = pg.command_catalogue().await?;
     let candidates = pg.sessions_needing_signals(&catalogue.hash, limit).await?;
     let mut report = PassReport::default();
-    let mut probed: std::collections::HashMap<String, StaticOutcome> = Default::default();
+    let mut probed: std::collections::HashMap<String, StaticOutcome> =
+        std::collections::HashMap::new();
     for c in candidates {
         let mark_of = |through_event_id, event_count| SignalMark {
             session_id: c.session_id,

@@ -208,6 +208,7 @@ fn parse_journal_transcript(content: &str) -> Vec<TranscriptTurn> {
                 "responseTimestamp": req.response_timestamp_ms,
             }),
             facts,
+            intent: None,
         });
     }
     turns
@@ -251,6 +252,7 @@ fn parse_transcript_content(content: &str) -> Vec<TranscriptTurn> {
                         started_at: parse_timestamp(&v),
                         attrs: serde_json::json!({}),
                         facts: TurnFacts::default(),
+                        intent: None,
                     });
                 }
             }
@@ -325,6 +327,7 @@ fn parse_otel_content(content: &str) -> Vec<TranscriptTurn> {
                 started_at: None,
                 attrs: serde_json::json!({ "otel_span_id": span.get("spanId") }),
                 facts: TurnFacts::default(),
+                intent: None,
             });
         } else if role == "assistant" && !content_text.is_empty() {
             if let Some(ref mut t) = cur {

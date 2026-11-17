@@ -15,6 +15,46 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-11-17
+
+### Added
+
+- **Corrections by intent, not key phrases (#447).** A local model (qwen3.8 on the
+  new `intent` chain — Ollama only, no cloud leg) labels each of your turns that
+  answers an agent reply as correction, principle or neither, in two stages. Session
+  corrections, first-try-right, outcomes, the per-turn flag, the drill-down's
+  correction quote, correction-prone patterns and recurring corrections all read the
+  label. Measured on 490 labelled real turns: precision 0.84, recall 0.77 — the
+  phrase list found ~5% of corrections. Recall tuning continues in #485.
+- **The daily intent pass** (`classify_turn_intent`) labels new turns and, on its
+  first run, backfills history in chained batches (several hours of local model time,
+  once). A turn the model cannot answer is labelled by the phrase list with source
+  `phrase` and relabelled later; labels carry their source so metrics can tell them
+  apart.
+- **Lanes show their host editor** — "in Cursor" — kept on `relay.lanes.host` (#396).
+- **Now's lanes by run or by agent**, the choice kept per viewer (#422).
+
+### Changed
+
+- The relay task view listens through its state's source, like Now (#414); ticket
+  links open in the system browser (#381).
+- `record_outcome` refuses outcomes it cannot read and says why, instead of
+  recording none (#481).
+- The old gemma refinement of phrase matches (`classify` chain) is removed — it could
+  only drop a phrase match, never find a correction the phrases missed.
+
+### Fixed
+
+- RUSTSEC-2026-0459: rusqlite 0.43 and dbd v0.27.10 without its sqlite feature; the
+  audit exception is gone (#446).
+
+### Database
+
+- `activity.transcript_turns` gains `intent`, `intent_source`, `intent_at` (enums
+  `sensei.turn_intent`, `sensei.turn_intent_source`); `sensei.task_execution_kind`
+  gains `classify_turn_intent` (with an apply hook for existing databases);
+  `relay.lanes.host`. All additive.
+
 ## [0.23.0] — 2026-11-16
 
 ### Added

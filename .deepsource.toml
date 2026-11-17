@@ -1,0 +1,25 @@
+# DeepSource configuration: what the analyzers treat as tests, and the two files
+# they cannot parse. Deliberately minimal — no [[analyzers]] section, so every
+# auto-detected analyzer keeps running with dashboard settings; see #479.
+version = 1
+
+# Test files: specs, fixtures and harnesses. Declaring them lets the analyzers
+# tell application code from test code and reduces test-idiom false positives
+# (async stubs that match async interfaces, single-letter mounts, dense assertions).
+test_patterns = [
+  "**/*.spec.*",
+  "**/*.test.*",
+  "**/test/**",
+  "**/tests/**",
+  "app/e2e/**",
+  "crates/*/tests/**",
+]
+
+# The JS analyzer parses these ESM scripts as classic scripts and reports
+# "'import' and 'export' may appear only with 'sourceType: module'" (#466).
+# Excluded until the analyzer honours .mjs; both are small dev-only scripts
+# (mockup renderer, preview sheet generator) covered by `bun run check`.
+exclude_patterns = [
+  "app/e2e/mockup/render.mjs",
+  "app/e2e/preview/sheet.mjs",
+]

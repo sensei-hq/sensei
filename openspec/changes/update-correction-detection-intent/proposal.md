@@ -10,8 +10,8 @@ exists can only remove phrase matches, never add one.
 
 ## What Changes
 - Every user turn that follows an assistant turn is a candidate.
-- The existing `correction | principle | neither` classifier labels candidates in batches on the
-  local model (embedded gemma4, like the other analysis passes).
+- A `correction | principle | neither` classifier labels candidates in batches on a local model
+  (qwen3.8 in two stages, chosen by measurement — see design.md).
 - With no model available, the phrase list is the fallback, and the label records its source
   (`intent` vs `phrase`) — never silently mixed.
 - The per-turn flag, FTR and outcomes read the label; phrase-only metrics are re-derived on a backfill.
@@ -19,4 +19,4 @@ exists can only remove phrase matches, never add one.
 
 ## Impact
 - Specs: `session-analysis`. Code: `tasks/handlers/analyze.rs`, `prompt_classify.rs`, the analysis
-  scheduler/backfill, `activity.turns` (label + source), metrics that read the flag.
+  scheduler/backfill, `activity.transcript_turns` (label + source), metrics that read the flag.

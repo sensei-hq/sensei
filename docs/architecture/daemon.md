@@ -109,8 +109,12 @@ silent-error audit is a standing follow-up (open-issues D).
   stored**; token budgets are flat regardless of project age. The context manager's
   `context_pack(task, max_tokens)` ranks by DiffFirstBFS → TraceabilityBoost →
   Semantic → BM25 → RelevanceLearning (this is *spec* — see [mcp](mcp.md) G4).
-- **FTR classification is 2-phase:** regex correction-keyword heuristics first,
-  local-model second; rolling 14-day window.
+- **FTR classification is by intent (#447):** every user turn that answers an agent
+  reply is labelled `correction` / `principle` / `neither` by a local model (qwen3.8 on
+  the seeded `intent` chain, two stages) in the daily `classify_turn_intent` pass; the
+  key-phrase list is only the fallback when the model is unavailable, and each label
+  records its source (`intent` | `phrase`). Rolling 14-day window. Spec: openspec
+  change `update-correction-detection-intent`.
 - **Recommendation lifecycle:** signal → threshold → consensus panel (persisted to
   `reasoning_traces`) → verdict tracking (`baseline_ftr` at act-time vs rolling
   `current_ftr`). **Drift algorithm:** `git diff <lastIndexed>..HEAD` × the

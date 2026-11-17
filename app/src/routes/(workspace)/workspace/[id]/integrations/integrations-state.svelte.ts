@@ -161,6 +161,10 @@ export function writebackText(w: TrackerConnection['writeback'], kind: TrackerKi
       return 'Checking which tickets are yours on the next sync.';
     case 'nothing_assigned':
       return 'No tickets on this board are assigned to you.';
+    default:
+      // The daemon owns the state vocabulary; a state this app does not know yet
+      // still renders words, never undefined.
+      return 'Write-back is in an unknown state.';
   }
 }
 
@@ -380,16 +384,19 @@ export class TrackerIntegration {
   }
 
   /** The board's write-back state as text (W-UI). */
+  // skipcq - called on the state instance from the template; static would break the markup
   writebackLine(t: TrackerConnection): string {
     return writebackText(t.writeback, t.kind);
   }
 
   /** Tickets skipped because their repository is not private (F7), or `null`. */
+  // skipcq - called on the state instance from the template; static would break the markup
   notPrivateLine(t: TrackerConnection): string | null {
     return notPrivateText(t.writeback);
   }
 
   /** What write-back does on a tracker without field mapping, and the token it needs (F10). */
+  // skipcq - called on the state instance from the template; static would break the markup
   commentOnlyNote(t: TrackerConnection): string {
     const where = t.kind === 'gitlab' ? 'private projects' : 'private repositories';
     const scope: Partial<Record<TrackerKind, string>> = {

@@ -3,6 +3,7 @@
   // task was opened from, the title in the display face with its state, the ticket as a
   // pill linking out (#381), and one line of facts — key muted, value in ink.
   import { Pill } from '@rokkit/ui';
+  import { externalClick } from '$lib/open-external.js';
   import type { RelayTaskHeaderView } from '@sensei/state';
 
   let { header }: { header: RelayTaskHeaderView } = $props();
@@ -21,6 +22,7 @@
         href={header.ticket.url ?? undefined}
         target="_blank"
         rel="noopener noreferrer"
+        onclick={externalClick}
         class="ml-auto inline-flex items-center gap-1.5 min-h-8 px-3 rounded-full border border-solid border-paper-edge bg-paper text-sm text-ink no-underline"
       >
         <span data-ticket-provider class="text-ink-soft">{header.ticket.provider}</span>

@@ -5,6 +5,7 @@
   // identity; in the backlog a checkbox picks it for a run. It draws toQueueRows'
   // data and calls back.
   import { Pill } from '@rokkit/ui';
+  import { externalClick } from '$lib/open-external.js';
   import { Notice } from '@sensei/ui';
   import type { RelayQueueRowView } from '@sensei/state';
   import { NOW_CARD_ROW } from './primitives.js';
@@ -65,6 +66,7 @@
       href={row.ticket.url ?? undefined}
       target="_blank"
       rel="noopener noreferrer"
+      onclick={externalClick}
       class="inline-flex items-center gap-1.5 min-h-8 px-3 rounded-lg border border-solid border-paper-edge bg-paper text-sm text-ink no-underline"
     >
       <span data-ticket-provider class="hidden md:inline text-ink-soft">{row.ticket.provider}</span>

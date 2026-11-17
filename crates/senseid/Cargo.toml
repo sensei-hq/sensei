@@ -1,6 +1,6 @@
 [package]
 name = "senseid"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 description = "Sensei indexer daemon — graph-based code intelligence"
 
@@ -72,7 +72,7 @@ oxc_allocator = "0.124"
 # Zed transcript adapter: read its threads.db (SQLite) + zstd-compressed thread blobs.
 # `bundled` compiles SQLite from source (no system-sqlite linkage risk); ruzstd is
 # a pure-Rust zstd decompressor (no C toolchain).
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 ruzstd = "0.9"
 
 # Serialization

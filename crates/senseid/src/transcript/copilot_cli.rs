@@ -97,6 +97,7 @@ fn parse_events_jsonl_turns(content: &str) -> Vec<TranscriptTurn> {
                         started_at: parse_timestamp(&v),
                         attrs: serde_json::json!({}),
                         facts: TurnFacts::default(),
+                        intent: None,
                     });
                 }
             }
@@ -348,6 +349,7 @@ fn parse_sqlite_turns(db_path: &Path, session_id: &str) -> Vec<TranscriptTurn> {
             started_at: None,
             attrs: serde_json::json!({}),
             facts: TurnFacts::default(),
+            intent: None,
         });
     }
     turns

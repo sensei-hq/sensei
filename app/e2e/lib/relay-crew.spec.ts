@@ -2,7 +2,7 @@
 // TypeScript twin of scripts/relay-queue-smoke.sh. Driven with a fake fetch, so each
 // call's path, token and body are pinned without a daemon.
 import { describe, it, expect, vi } from 'vitest';
-import { RelayCrew, RelayCallError } from './relay-crew';
+import { RelayCrew, RelayCallError, RelayLane } from './relay-crew';
 
 function fakeFetch(answers: Record<string, { status: number; body: unknown }>) {
   const calls: Array<{ method: string; path: string; auth: string | null; body: unknown }> = [];
@@ -95,7 +95,7 @@ describe('RelayLane · the loop', () => {
     expect(err).toBeInstanceOf(RelayCallError);
     expect((err as RelayCallError).status).toBe(409);
     expect((err as RelayCallError).body).toMatchObject({ error: 'relay_upstream_deps_unmet' });
-    const tried = await l.attempt(() => l.report('t2', { phase: 'impl', round: 1, summary: { changed: 'y' } }));
+    const tried = await RelayLane.attempt(() => l.report('t2', { phase: 'impl', round: 1, summary: { changed: 'y' } }));
     expect(tried).toMatchObject({ ok: false, status: 409, error: 'relay_upstream_deps_unmet' });
   });
 });

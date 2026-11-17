@@ -940,6 +940,9 @@ task checkpoint. POST /api/relay/unregister releases the lane cleanly when \
 you leave.\n\
 - Name: register answers with your codename in suggested_name (two words, \
 unique in the crew); the person sees you by it beside your lane code.\n\
+- Host: running inside an editor (Cursor, Zed), pass host at register with \
+the editor's name; the person sees it on your card, and your transcripts count \
+for your model, not the editor. A terminal session passes none.\n\
 - Nudge: a nudge reaches you as a message, usually with the task_id that \
 waits on you: a review to claim, a question to answer, a report to finish. \
 Act on that task in your next turn; a nudge is not new work.\n\
@@ -1534,6 +1537,11 @@ mod tests {
         let closed = bullet("Closed");
         for word in ["410", "relay_lane_gone", "409", "crew is closed", "stop"] {
             assert!(closed.contains(word), "the closed-crew bullet lacks {word:?}: {closed}");
+        }
+        // #396: a session in an editor says which, at register.
+        let host = bullet("Host");
+        for word in ["host", "register", "editor"] {
+            assert!(host.contains(word), "the host bullet lacks {word:?}: {host}");
         }
     }
 

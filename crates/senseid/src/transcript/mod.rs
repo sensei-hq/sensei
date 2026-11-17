@@ -244,6 +244,9 @@ pub struct TranscriptTurn {
     /// All `Option` — a transcript that doesn't carry one stays honest-null rather
     /// than recording a fabricated 0/false.
     pub facts: TurnFacts,
+    /// The stored intent label (#447): read from the database, never set by an adapter —
+    /// the classifier writes it after ingest. `None` until labelled.
+    pub intent: Option<crate::tasks::handlers::prompt_classify::TurnIntent>,
 }
 
 impl Default for TranscriptTurn {
@@ -262,6 +265,7 @@ impl Default for TranscriptTurn {
             started_at: None,
             attrs: serde_json::Value::Object(serde_json::Map::new()),
             facts: TurnFacts::default(),
+            intent: None,
         }
     }
 }

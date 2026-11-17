@@ -597,3 +597,28 @@ describe('RelayState · a read never undoes newer stream rows (#426 found it, #4
     expect(readNow).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('RelayState · the Lanes view: by run or by agent, kept for the person (#422)', () => {
+  const store = (stored: string | null) => {
+    const written: string[] = [];
+    return { read: () => stored, write: (v: string) => written.push(v), written };
+  };
+
+  it('by run unless the person chose otherwise', () => {
+    expect(new RelayState(fakeSource().source, {}, reads()).laneView).toBe('run');
+    expect(new RelayState(fakeSource().source, {}, reads(), { laneView: store(null) }).laneView).toBe('run');
+  });
+
+  it('a kept choice comes back; a value that names no view is not one', () => {
+    expect(new RelayState(fakeSource().source, {}, reads(), { laneView: store('agent') }).laneView).toBe('agent');
+    expect(new RelayState(fakeSource().source, {}, reads(), { laneView: store('sideways') }).laneView).toBe('run');
+  });
+
+  it('a choice is kept', () => {
+    const kept = store(null);
+    const s = new RelayState(fakeSource().source, {}, reads(), { laneView: kept });
+    s.setLaneView('agent');
+    expect(s.laneView).toBe('agent');
+    expect(kept.written).toEqual(['agent']);
+  });
+});

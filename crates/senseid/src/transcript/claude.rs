@@ -503,6 +503,7 @@ impl Reader for TurnsReader {
                         started_at: parse_timestamp(v),
                         attrs: turn_attrs(v, &["message", "attachment", "toolUseResult"]),
                         facts,
+                        intent: None,
                     });
                 }
                 // tool_result / skill body / unlabelled injected notice → not a boundary.

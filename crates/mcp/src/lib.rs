@@ -144,6 +144,20 @@ pub fn daemon_request_for(
         return None;
     }
 
+    // Each family of tools is its own dispatcher (DeepSource RS-R1000: one function
+    // of every tool had a cyclomatic complexity of 105).
+    if let Some(req) = workspace_request(tool, args, repo_id, cwd)
+        .or_else(|| code_lookup_request(tool, args, repo_id))
+        .or_else(|| context_lookup_request(tool, args, repo_id, cwd))
+        .or_else(|| knowledge_request(tool, args, repo_id, cwd))
+        .or_else(|| relay_claim_request(tool, args))
+        .or_else(|| relay_crew_request(tool, args))
+        .or_else(|| run_control_request(tool, args, repo_id))
+        .or_else(|| playbook_request(tool, args, repo_id))
+    {
+        return req;
+    }
+
     match tool {
         // ── Handled inline by the binary (custom client / response / no-op) ──
         // `use_workspace` is here too: it needs the daemon workspace list, a
@@ -151,6 +165,38 @@ pub fn daemon_request_for(
         "infer" | "embed" | "gateway_status" | "consensus" | "generate_image" | "log_event"
         | "use_workspace" => None,
 
+        // ── Everything else → the daemon mcp proxy ──────────────────────────
+        _ => {
+            let mut params = build_daemon_params(args, repo_id);
+            // `get_lib_docs` matches docs to the version the ASKING folder
+            // pins (02b S9), so it needs to know which folder is asking. The
+            // model rarely thinks to say, and cwd is the answer it would give
+            // — default it here rather than serve the latest docs to a repository
+            // on an older release and call that an answer.
+            if tool == "get_lib_docs"
+                && args["folder"].as_str().filter(|s| !s.is_empty()).is_none()
+                && !cwd.is_empty()
+                && let Some(obj) = params.as_object_mut()
+            {
+                obj.insert("folder".into(), json!(cwd));
+            }
+            Some(DaemonRequest::post_json(
+                "/api/mcp/call",
+                json!({ "tool": map_daemon_tool(tool), "params": params }),
+            ))
+        }
+    }
+}
+
+/// Workspace discovery, who is working, the stance and the workflow state.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn workspace_request(
+    tool: &str,
+    args: &Value,
+    repo_id: &str,
+    cwd: &str,
+) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Folder-scoped workspace discovery ─────────────────────────────────
         // `find_workspaces` is the folder-scoped view of `list_workspaces`: shape
         // `GET /api/workspaces?under=<path>`, defaulting the scope to the MCP
@@ -210,6 +256,15 @@ pub fn daemon_request_for(
             Some(DaemonRequest::get(format!("/api/state/{workspace}")))
         }
 
+        _ => return None,
+    })
+}
+
+/// Lookups about the code: patterns, duplicates, conventions, the risk class and
+/// library capabilities.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn code_lookup_request(tool: &str, args: &Value, repo_id: &str) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Pattern engine (direct /api/patterns endpoints) ─────────────────
         "match_pattern" => {
             let desc = args["description"].as_str().unwrap_or("");
@@ -263,12 +318,28 @@ pub fn daemon_request_for(
             Some(DaemonRequest::get(format!("/api/libs/{name}/agents")))
         }
 
+        _ => return None,
+    })
+}
+
+/// Lookups about the work: tickets, rules, commands and the layered context.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn context_lookup_request(
+    tool: &str,
+    args: &Value,
+    repo_id: &str,
+    cwd: &str,
+) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Governance rules ────────────────────────────────────────────────
         // ── Tickets (TG5, D63) ───────────────────────────────────────────────
         // `get_ticket` reads the ticket live and starts work on it in the cwd's
         // repository; the key is a path segment (`#12` → `%2312`).
         "get_ticket" => {
-            let key = args["key"].as_str().filter(|s| !s.is_empty())?;
+            // No key, no request — `Some(None)`, not `?`: here `None` means "not this family".
+            let Some(key) = args["key"].as_str().filter(|s| !s.is_empty()) else {
+                return Some(None);
+            };
             let mut body = json!({ "folder": cwd });
             if let Some(sid) = args["session_id"].as_str().filter(|s| !s.is_empty()) {
                 body["session_id"] = json!(sid);
@@ -298,7 +369,9 @@ pub fn daemon_request_for(
         "get_layered_context" => {
             let explicit_pid = args["workspace_id"].as_str().unwrap_or("");
             // `None` → no workspace resolvable; the binary returns a guidance error.
-            let (key, val) = context_workspace_param(explicit_pid, repo_id)?;
+            let Some((key, val)) = context_workspace_param(explicit_pid, repo_id) else {
+                return Some(None);
+            };
             let mut req = DaemonRequest::get("/api/knowledge/context").with_query(key, val);
             if let Some(l) = args["limit"].as_str().filter(|s| !s.is_empty()) {
                 req = req.with_query("limit", l);
@@ -315,6 +388,19 @@ pub fn daemon_request_for(
             Some(req)
         }
 
+        _ => return None,
+    })
+}
+
+/// Knowledge writes, outcomes, planning and checkers.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn knowledge_request(
+    tool: &str,
+    args: &Value,
+    repo_id: &str,
+    cwd: &str,
+) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Knowledge writes ────────────────────────────────────────────────
         "propose_memory" | "save_memory" => {
             let body = build_memory_body(args, cwd, repo_id);
@@ -347,14 +433,10 @@ pub fn daemon_request_for(
             };
             Some(DaemonRequest::post_json(format!("/api/knowledge/proposals/{id}/reject"), body))
         }
-        "record_outcome" => {
-            let outcomes: Value = serde_json::from_str(args["outcomes"].as_str().unwrap_or("[]"))
-                .unwrap_or_else(|_| json!([]));
-            Some(DaemonRequest::post_json(
-                "/api/knowledge/outcomes",
-                json!({ "outcomes": outcomes }),
-            ))
-        }
+        // Outcomes it cannot read are the binary's to refuse (`record_outcome_body`).
+        "record_outcome" => record_outcome_body(args)
+            .ok()
+            .map(|body| DaemonRequest::post_json("/api/knowledge/outcomes", body)),
 
         // `plan` (D-PLANNER) decomposes a goal/spec/issue into a structured plan
         // (phases → features → acceptance criteria) + rendered docs/plan markdown.
@@ -382,121 +464,14 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/checkers/run", body))
         }
 
-        // ── Relay run-control (P3.8) → the daemon's /api/runs endpoints ─────
-        // `start_run` POSTs a new run; `workspace` defaults to the resolved repo
-        // (name), matching every other tool's cwd→workspace convention. The daemon
-        // resolves the workspace name/uuid and creates the run.
-        "start_run" => {
-            let goal = args["goal"].as_str().unwrap_or("");
-            // Caller-supplied workspace wins; else the cwd-resolved repo name.
-            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
-            let mut body = json!({ "goal": goal });
-            if !workspace.is_empty() {
-                body["workspace"] = json!(workspace);
-            }
-            if let Some(plan) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
-                body["plan_ref"] = json!(plan);
-            }
-            Some(DaemonRequest::post_json("/api/runs", body))
-        }
-        // `run_status` lists active runs, or one run + its events with a run_id.
-        "run_status" => match args["run_id"].as_str().filter(|s| !s.is_empty()) {
-            Some(id) => Some(DaemonRequest::get(format!("/api/runs/{id}"))),
-            None => Some(DaemonRequest::get("/api/runs")),
-        },
-        // `pause_run` marks a run paused-until-reset (a limit-wait, auto-resumes) —
-        // POSTs `/api/runs/pause`; `workspace` defaults to the cwd-resolved repo, so
-        // the active run for the current workspace is paused when no run_id is given.
-        "pause_run" => {
-            let mut body = json!({ "until": args["until"].as_str().unwrap_or("") });
-            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
-            if !workspace.is_empty() {
-                body["workspace"] = json!(workspace);
-            }
-            for k in ["reason", "run_id"] {
-                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
-                    body[k] = json!(v);
-                }
-            }
-            Some(DaemonRequest::post_json("/api/runs/pause", body))
-        }
+        _ => return None,
+    })
+}
 
-        // ── Automated-run coordinator contract (AR-3) → daemon /api/runs/* ───
-        // `register_plan` seeds an authored plan GRAPH as a run (AR-2): the daemon
-        // validates it (DAG), stores it, and authors the Dōjō outline from it.
-        // `plan` is the graph as a JSON string (parsed here, like record_outcome).
-        "register_plan" => {
-            let goal = args["goal"].as_str().unwrap_or("");
-            let plan: Value =
-                serde_json::from_str(args["plan"].as_str().unwrap_or("")).unwrap_or(Value::Null);
-            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
-            let mut body = json!({ "goal": goal, "plan": plan });
-            if !workspace.is_empty() {
-                body["workspace"] = json!(workspace);
-            }
-            if let Some(p) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
-                body["plan_ref"] = json!(p);
-            }
-            if let Some(mc) = args["max_concurrency"].as_str().and_then(|s| s.parse::<i64>().ok()) {
-                body["max_concurrency"] = json!(mc);
-            }
-            Some(DaemonRequest::post_json("/api/runs/plan", body))
-        }
-        // `update_task_status` flips one plan task's state as the executor works
-        // the graph — re-projects the authored outline + feeds the progress clock.
-        "update_task_status" => {
-            let run_id = args["run_id"].as_str().unwrap_or("");
-            let task_id = args["task_id"].as_str().unwrap_or("");
-            let mut body = json!({ "state": args["state"].as_str().unwrap_or("") });
-            if let Some(n) = args["note"].as_str().filter(|s| !s.is_empty()) {
-                body["note"] = json!(n);
-            }
-            Some(DaemonRequest::post_json(format!("/api/runs/{run_id}/tasks/{task_id}"), body))
-        }
-        // `report_run_outcome` marks a run terminal (done|failed) — the one terminal
-        // transition an external coordinator may set.
-        "report_run_outcome" => {
-            let run_id = args["run_id"].as_str().unwrap_or("");
-            let mut body = json!({ "outcome": args["outcome"].as_str().unwrap_or("") });
-            if let Some(s) = args["summary"].as_str().filter(|s| !s.is_empty()) {
-                body["summary"] = json!(s);
-            }
-            Some(DaemonRequest::post_json(format!("/api/runs/{run_id}/outcome"), body))
-        }
-        // `get_pending_nudges` pulls the human→agent steer for a run (the "daemon
-        // initiates a check" pull side). Read-only; fail-soft to an empty list.
-        "get_pending_nudges" => {
-            let run_id = args["run_id"].as_str().unwrap_or("");
-            Some(DaemonRequest::get(format!("/api/runs/{run_id}/nudges")))
-        }
-
-        // ── Front-door intake ────────────────────────────────────────────────
-        "get_intake_guide" => Some(DaemonRequest::get("/api/playbook/guide")),
-        "recommend_playbook" => {
-            let mut body = serde_json::json!({
-                "lifecycle": args["lifecycle"], "intent": args["intent"], "risk": args["risk"],
-            });
-            for k in ["session_id", "feature", "confirm"] {
-                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
-                    body[k] = serde_json::json!(v);
-                }
-            }
-            // Forward the workspace (explicit arg, else the cwd-resolved one) so the
-            // daemon can suggest the skills/agents provided by libraries it depends on.
-            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
-            if !workspace.is_empty() {
-                body["workspace"] = serde_json::json!(workspace);
-            }
-            Some(DaemonRequest::post_json("/api/playbook/recommend", body))
-        }
-
-        // ── §9 learning loop: accept path ────────────────────────────────────
-        "list_playbook_rule_proposals" => Some(DaemonRequest::get("/api/playbook/rule-proposals")),
-        "accept_playbook_rule" => {
-            let id = args["id"].as_str().unwrap_or("");
-            Some(DaemonRequest::post_json(format!("/api/playbook/rule/{id}/accept"), json!({})))
-        }
-
+/// The relay lane loop: register, claim, heartbeat, report and review.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn relay_claim_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         // ── Relay lanes (L3, slice 1 item 2) ───────────────────────────────
         // `relay_wait_for_task` is inline (a hold of up to 50 s outlives the
         // default client); the binary shapes it with `build_relay_wait_request`.
@@ -517,6 +492,8 @@ pub fn daemon_request_for(
                 "workspace_id",
                 // Queue cutover: the name the assistant proposes for itself.
                 "suggested_name",
+                // #396: the editor the session runs in, when it runs in one.
+                "host",
             ] {
                 if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
                     body.insert(k.into(), v.clone());
@@ -627,6 +604,15 @@ pub fn daemon_request_for(
                 args,
             ))
         }
+        _ => return None,
+    })
+}
+
+/// The relay crew calls: decisions, messages, planning and assignment, merges,
+/// handovers, steps, pauses, closing the crew and resources.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn relay_crew_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
         "relay_ask_decision" => {
             let mut body = relay_lane_body(args);
             relay_forward(
@@ -781,27 +767,139 @@ pub fn daemon_request_for(
                 args,
             ))
         }
-        // ── Everything else → the daemon mcp proxy ──────────────────────────
-        _ => {
-            let mut params = build_daemon_params(args, repo_id);
-            // `get_lib_docs` matches docs to the version the ASKING folder
-            // pins (02b S9), so it needs to know which folder is asking. The
-            // model rarely thinks to say, and cwd is the answer it would give
-            // — default it here rather than serve the latest docs to a repository
-            // on an older release and call that an answer.
-            if tool == "get_lib_docs"
-                && args["folder"].as_str().filter(|s| !s.is_empty()).is_none()
-                && !cwd.is_empty()
-                && let Some(obj) = params.as_object_mut()
-            {
-                obj.insert("folder".into(), json!(cwd));
+        _ => return None,
+    })
+}
+
+/// Run control and the automated-run coordinator contract.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn run_control_request(tool: &str, args: &Value, repo_id: &str) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
+        // ── Relay run-control (P3.8) → the daemon's /api/runs endpoints ─────
+        // `start_run` POSTs a new run; `workspace` defaults to the resolved repo
+        // (name), matching every other tool's cwd→workspace convention. The daemon
+        // resolves the workspace name/uuid and creates the run.
+        "start_run" => {
+            let goal = args["goal"].as_str().unwrap_or("");
+            // Caller-supplied workspace wins; else the cwd-resolved repo name.
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            let mut body = json!({ "goal": goal });
+            if !workspace.is_empty() {
+                body["workspace"] = json!(workspace);
             }
-            Some(DaemonRequest::post_json(
-                "/api/mcp/call",
-                json!({ "tool": map_daemon_tool(tool), "params": params }),
-            ))
+            if let Some(plan) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
+                body["plan_ref"] = json!(plan);
+            }
+            Some(DaemonRequest::post_json("/api/runs", body))
         }
-    }
+        // `run_status` lists active runs, or one run + its events with a run_id.
+        "run_status" => match args["run_id"].as_str().filter(|s| !s.is_empty()) {
+            Some(id) => Some(DaemonRequest::get(format!("/api/runs/{id}"))),
+            None => Some(DaemonRequest::get("/api/runs")),
+        },
+        // `pause_run` marks a run paused-until-reset (a limit-wait, auto-resumes) —
+        // POSTs `/api/runs/pause`; `workspace` defaults to the cwd-resolved repo, so
+        // the active run for the current workspace is paused when no run_id is given.
+        "pause_run" => {
+            let mut body = json!({ "until": args["until"].as_str().unwrap_or("") });
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            if !workspace.is_empty() {
+                body["workspace"] = json!(workspace);
+            }
+            for k in ["reason", "run_id"] {
+                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
+                    body[k] = json!(v);
+                }
+            }
+            Some(DaemonRequest::post_json("/api/runs/pause", body))
+        }
+
+        // ── Automated-run coordinator contract (AR-3) → daemon /api/runs/* ───
+        // `register_plan` seeds an authored plan GRAPH as a run (AR-2): the daemon
+        // validates it (DAG), stores it, and authors the Dōjō outline from it.
+        // `plan` is the graph as a JSON string (parsed here, like record_outcome).
+        "register_plan" => {
+            let goal = args["goal"].as_str().unwrap_or("");
+            let plan: Value =
+                serde_json::from_str(args["plan"].as_str().unwrap_or("")).unwrap_or(Value::Null);
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            let mut body = json!({ "goal": goal, "plan": plan });
+            if !workspace.is_empty() {
+                body["workspace"] = json!(workspace);
+            }
+            if let Some(p) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
+                body["plan_ref"] = json!(p);
+            }
+            if let Some(mc) = args["max_concurrency"].as_str().and_then(|s| s.parse::<i64>().ok()) {
+                body["max_concurrency"] = json!(mc);
+            }
+            Some(DaemonRequest::post_json("/api/runs/plan", body))
+        }
+        // `update_task_status` flips one plan task's state as the executor works
+        // the graph — re-projects the authored outline + feeds the progress clock.
+        "update_task_status" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = json!({ "state": args["state"].as_str().unwrap_or("") });
+            if let Some(n) = args["note"].as_str().filter(|s| !s.is_empty()) {
+                body["note"] = json!(n);
+            }
+            Some(DaemonRequest::post_json(format!("/api/runs/{run_id}/tasks/{task_id}"), body))
+        }
+        // `report_run_outcome` marks a run terminal (done|failed) — the one terminal
+        // transition an external coordinator may set.
+        "report_run_outcome" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            let mut body = json!({ "outcome": args["outcome"].as_str().unwrap_or("") });
+            if let Some(s) = args["summary"].as_str().filter(|s| !s.is_empty()) {
+                body["summary"] = json!(s);
+            }
+            Some(DaemonRequest::post_json(format!("/api/runs/{run_id}/outcome"), body))
+        }
+        // `get_pending_nudges` pulls the human→agent steer for a run (the "daemon
+        // initiates a check" pull side). Read-only; fail-soft to an empty list.
+        "get_pending_nudges" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/runs/{run_id}/nudges")))
+        }
+
+        _ => return None,
+    })
+}
+
+/// The front-door intake and the playbook learning loop.
+/// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
+fn playbook_request(tool: &str, args: &Value, repo_id: &str) -> Option<Option<DaemonRequest>> {
+    Some(match tool {
+        // ── Front-door intake ────────────────────────────────────────────────
+        "get_intake_guide" => Some(DaemonRequest::get("/api/playbook/guide")),
+        "recommend_playbook" => {
+            let mut body = serde_json::json!({
+                "lifecycle": args["lifecycle"], "intent": args["intent"], "risk": args["risk"],
+            });
+            for k in ["session_id", "feature", "confirm"] {
+                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
+                    body[k] = serde_json::json!(v);
+                }
+            }
+            // Forward the workspace (explicit arg, else the cwd-resolved one) so the
+            // daemon can suggest the skills/agents provided by libraries it depends on.
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            if !workspace.is_empty() {
+                body["workspace"] = serde_json::json!(workspace);
+            }
+            Some(DaemonRequest::post_json("/api/playbook/recommend", body))
+        }
+
+        // ── §9 learning loop: accept path ────────────────────────────────────
+        "list_playbook_rule_proposals" => Some(DaemonRequest::get("/api/playbook/rule-proposals")),
+        "accept_playbook_rule" => {
+            let id = args["id"].as_str().unwrap_or("");
+            Some(DaemonRequest::post_json(format!("/api/playbook/rule/{id}/accept"), json!({})))
+        }
+
+        _ => return None,
+    })
 }
 
 /// Shape the inline `relay_wait_for_task` daemon call (the binary sends it on
@@ -924,6 +1022,22 @@ fn attach_governance(body: &mut Value, args: &Value, cwd: &str) {
     }
     if let Some(enf) = args["enforcement"].as_str().filter(|s| !s.is_empty()) {
         body["enforcement"] = json!(enf);
+    }
+}
+
+/// The `/api/knowledge/outcomes` body for `record_outcome`: its `outcomes` argument, a JSON
+/// array string, parsed. A missing, unparseable or non-array value is refused with the reason —
+/// never sent as `[]`, which the daemon would record as "no outcomes".
+pub fn record_outcome_body(args: &Value) -> Result<Value, String> {
+    let Some(raw) = args["outcomes"].as_str().filter(|s| !s.trim().is_empty()) else {
+        return Err("record_outcome: outcomes is required (a JSON array string)".into());
+    };
+    match serde_json::from_str::<Value>(raw) {
+        Ok(outcomes @ Value::Array(_)) => Ok(json!({ "outcomes": outcomes })),
+        Ok(_) => {
+            Err("record_outcome: outcomes must be a JSON array of {memory_id, outcome}".into())
+        }
+        Err(e) => Err(format!("record_outcome: outcomes is not valid JSON: {e}")),
     }
 }
 
@@ -1388,6 +1502,7 @@ pub fn handle_list_tools() -> Value {
                 &[
                     ("role", "string", "coordinator | contributor (default contributor)"),
                     ("suggested_name", "string", "The name you propose for yourself: becomes the lane title (the code stays the handle)"),
+                    ("host", "string", "The editor you run inside (cursor, zed), when you run in one; omit in a terminal"),
                     ("version", "string", "Lane version"),
                     ("model", "string", "Model the lane runs"),
                     ("capabilities", "array", "What the lane can do"),
@@ -1893,7 +2008,7 @@ pub fn resolve_active_workspace_in(workspaces: &[Value], hint: &str) -> Option<A
 /// workspace's `folders[].abs_path`.  Picks the workspace whose folder has the
 /// longest `abs_path` that is a prefix of `cwd`.  Returns "" if no match.
 pub fn resolve_from_cwd_in(workspaces: &[Value], cwd: &str) -> String {
-    let mut best_name = String::new();
+    let mut best_name = String::default();
     let mut best_len = 0usize;
 
     for p in workspaces {
@@ -1971,7 +2086,7 @@ mod tests {
             resolve_from_cwd_in(&sample(), "/Users/x/dev/sensei/crates/senseid/src"),
             "sensei".to_string()
         );
-        assert_eq!(resolve_from_cwd_in(&sample(), "/tmp/other"), "".to_string());
+        assert_eq!(resolve_from_cwd_in(&sample(), "/elsewhere/other"), "".to_string());
     }
 
     #[test]
@@ -2555,6 +2670,130 @@ mod tests {
     /// TG5 (D63): `get_ticket` fetches the ticket through the daemon and starts work
     /// on it — a POST carrying the caller's cwd (the repository the work is in) and,
     /// when given, the session to link. A key is a path segment, so `#12` is encoded.
+    /// Each family dispatcher's tools, by the request they make: method, path and body.
+    fn request(tool: &str, args: Value) -> DaemonRequest {
+        daemon_request_for(tool, &args, "/repo/cwd", Some("sensei"))
+            .unwrap_or_else(|| panic!("{tool}: a daemon call"))
+    }
+
+    #[test]
+    fn code_lookups_shape_their_requests() {
+        let risk = request("resolve_risk_class", json!({ "paths": ["a.rs"], "task": "t1" }));
+        assert_eq!((risk.method, risk.path.as_str()), (HttpMethod::Post, "/api/review/risk-class"));
+        assert_eq!(risk.body, Some(json!({ "paths": ["a.rs"], "task": "t1" })));
+        // No paths: an empty list, and no task when none is given.
+        assert_eq!(request("resolve_risk_class", json!({})).body, Some(json!({ "paths": [] })));
+
+        assert_eq!(
+            request("list_library_skills", json!({ "name": "rokkit" })).path,
+            "/api/libs/rokkit/skills"
+        );
+        assert_eq!(
+            request("get_library_skill", json!({ "name": "rokkit", "focus": "list" })).path,
+            "/api/libs/rokkit/skills/list"
+        );
+        assert_eq!(
+            request("list_library_agents", json!({ "name": "rokkit" })).path,
+            "/api/libs/rokkit/agents"
+        );
+    }
+
+    #[test]
+    fn knowledge_writes_shape_their_requests() {
+        let outcome =
+            request("record_outcome", json!({ "outcomes": r#"[{"id":"m1","ok":true}]"# }));
+        assert_eq!(
+            (outcome.method, outcome.path.as_str()),
+            (HttpMethod::Post, "/api/knowledge/outcomes")
+        );
+        assert_eq!(outcome.body, Some(json!({ "outcomes": [{ "id": "m1", "ok": true }] })));
+
+        let plan = request("plan", json!({ "goal": "Ship it", "context": "issue #1" }));
+        assert_eq!(plan.path, "/api/planner/generate");
+        assert_eq!(plan.body, Some(json!({ "goal": "Ship it", "context": "issue #1" })));
+        assert_eq!(
+            request("plan", json!({ "goal": "Ship it" })).body,
+            Some(json!({ "goal": "Ship it" }))
+        );
+    }
+
+    #[test]
+    fn register_plan_sends_the_graph_and_its_concurrency_cap() {
+        let req = request(
+            "register_plan",
+            json!({ "goal": "g", "plan": r#"{"tasks":[]}"#, "plan_ref": "docs/plan.md", "max_concurrency": "3" }),
+        );
+        assert_eq!(req.path, "/api/runs/plan");
+        assert_eq!(
+            req.body,
+            Some(
+                json!({ "goal": "g", "plan": { "tasks": [] }, "workspace": "sensei", "plan_ref": "docs/plan.md", "max_concurrency": 3 })
+            )
+        );
+        // A cap that is not a number is not sent (the daemon applies its own).
+        let no_cap = request(
+            "register_plan",
+            json!({ "goal": "g", "plan": "{}", "max_concurrency": "many" }),
+        );
+        assert!(no_cap.body.unwrap().get("max_concurrency").is_none());
+    }
+
+    #[test]
+    fn run_control_shapes_its_requests() {
+        let status = request(
+            "update_task_status",
+            json!({ "run_id": "r1", "task_id": "t1", "state": "done", "note": "ok" }),
+        );
+        assert_eq!(
+            (status.method, status.path.as_str()),
+            (HttpMethod::Post, "/api/runs/r1/tasks/t1")
+        );
+        assert_eq!(status.body, Some(json!({ "state": "done", "note": "ok" })));
+
+        let outcome = request(
+            "report_run_outcome",
+            json!({ "run_id": "r1", "outcome": "failed", "summary": "gate red" }),
+        );
+        assert_eq!(outcome.path, "/api/runs/r1/outcome");
+        assert_eq!(outcome.body, Some(json!({ "outcome": "failed", "summary": "gate red" })));
+
+        let nudges = request("get_pending_nudges", json!({ "run_id": "r1" }));
+        assert_eq!((nudges.method, nudges.path.as_str()), (HttpMethod::Get, "/api/runs/r1/nudges"));
+    }
+
+    #[test]
+    fn intake_and_playbook_shape_their_requests() {
+        assert_eq!(request("get_intake_guide", json!({})).path, "/api/playbook/guide");
+        let rec = request(
+            "recommend_playbook",
+            json!({ "lifecycle": "build", "intent": "fix", "risk": "low", "feature": "f1", "confirm": "" }),
+        );
+        assert_eq!(rec.path, "/api/playbook/recommend");
+        // The cwd-resolved workspace rides along; an empty optional is not sent.
+        assert_eq!(
+            rec.body,
+            Some(
+                json!({ "lifecycle": "build", "intent": "fix", "risk": "low", "feature": "f1", "workspace": "sensei" })
+            )
+        );
+        assert_eq!(
+            request("list_playbook_rule_proposals", json!({})).path,
+            "/api/playbook/rule-proposals"
+        );
+        let accept = request("accept_playbook_rule", json!({ "id": "p9" }));
+        assert_eq!(
+            (accept.method, accept.path.as_str()),
+            (HttpMethod::Post, "/api/playbook/rule/p9/accept")
+        );
+    }
+
+    #[test]
+    fn log_event_data_that_is_not_an_object_is_kept_under_data() {
+        // JSON that is not an object, and text that is not JSON, both stay whole.
+        assert_eq!(build_log_event_body(&json!({ "data": "[1,2]" }), "/c")["data"], json!([1, 2]));
+        assert_eq!(build_log_event_body(&json!({ "data": "not json" }), "/c")["data"], "not json");
+    }
+
     #[test]
     fn get_ticket_shapes_a_post_with_the_cwd() {
         let req = daemon_request_for(
@@ -2572,6 +2811,9 @@ mod tests {
             .expect("a daemon call");
         assert_eq!(bare.path, "/api/tickets/%2312/fetch");
         assert_eq!(bare.body, Some(json!({ "folder": "/repo/cwd" })), "no session: none sent");
+        // No key: no daemon call — never the generic MCP proxy (the family split
+        // turned a `?` here into "not this family" once; the proxy then answered).
+        assert_eq!(daemon_request_for("get_ticket", &json!({}), "/repo/cwd", None), None);
     }
 
     /// TG5: `get_ticket` is advertised, needs its key, and says it starts the work.
@@ -3007,6 +3249,30 @@ mod tests {
         assert_eq!(body["outcomes"][0]["outcome"], "applied");
     }
 
+    /// Outcomes that cannot be read are refused with the reason — never sent as an
+    /// empty list, which would read as "no outcomes" (no fabrication on a failure path).
+    #[test]
+    fn record_outcome_refuses_outcomes_it_cannot_read() {
+        let refused = |args: Value| record_outcome_body(&args).expect_err("refused");
+        assert!(refused(json!({})).contains("outcomes is required"), "missing");
+        assert!(refused(json!({ "outcomes": "  " })).contains("outcomes is required"), "blank");
+        assert!(refused(json!({ "outcomes": "[{oops" })).contains("not valid JSON"), "unparseable");
+        assert!(
+            refused(json!({ "outcomes": r#"{"memory_id":"m1"}"# })).contains("JSON array"),
+            "an object"
+        );
+        // An empty array is a real (if idle) call, not a failure.
+        assert_eq!(
+            record_outcome_body(&json!({ "outcomes": "[]" })),
+            Ok(json!({ "outcomes": [] }))
+        );
+        // No daemon call is shaped for a refusal: the binary answers it as an error.
+        assert_eq!(
+            daemon_request_for("record_outcome", &json!({ "outcomes": "[{oops" }), "/cwd", None),
+            None
+        );
+    }
+
     #[test]
     fn unknown_tool_defaults_to_the_mcp_proxy() {
         // Behavior-preserving: an unrecognized tool still routes to /api/mcp/call
@@ -3189,7 +3455,7 @@ mod tests {
         assert_eq!(resolve_default_workspace(None, None, "  "), WorkspaceResolution::Unresolved);
 
         // empty explicit + empty-name pin are treated as absent.
-        let empty = ActiveWorkspace { id: "id".into(), name: String::new() };
+        let empty = ActiveWorkspace { id: "id".into(), name: String::default() };
         assert_eq!(
             resolved(resolve_default_workspace(Some(""), Some(&empty), "cwdname")),
             ("cwdname".into(), "cwd", None)
@@ -3381,6 +3647,10 @@ mod tests {
         let register = tool_named(&ts, "relay_register");
         assert!(register["inputSchema"]["properties"]["suggested_name"].is_object());
         assert!(
+            register["inputSchema"]["properties"]["host"].is_object(),
+            "#396: the editor the session runs in"
+        );
+        assert!(
             register["inputSchema"]["properties"]["role"]["description"]
                 .as_str()
                 .unwrap()
@@ -3472,13 +3742,14 @@ mod tests {
     fn register_dispatch_forwards_suggested_name_and_omits_role_when_absent() {
         let req = daemon_request_for(
             "relay_register",
-            &json!({"family": "claude-code", "suggested_name": "worker-alpha"}),
+            &json!({"family": "claude-code", "suggested_name": "worker-alpha", "host": "cursor"}),
             "/cwd",
             None,
         )
         .unwrap();
         let body = req.body.as_ref().unwrap();
         assert_eq!(body["suggested_name"], "worker-alpha");
+        assert_eq!(body["host"], "cursor", "#396: the host rides register");
         assert!(
             body.get("role").is_none(),
             "absent stays absent: the daemon defaults to contributor"
@@ -3640,7 +3911,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(req.path, "/api/relay/tasks/t1/report");
-        assert_eq!(req.body.as_ref().unwrap()["partial"], true);
+        assert_eq!(req.body.as_ref().unwrap()["partial"].as_bool(), Some(true));
         let req = daemon_request_for(
             "relay_report_task",
             &lane_args(json!({"task_id": "t1", "phase": "impl", "round": 1,

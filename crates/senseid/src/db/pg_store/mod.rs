@@ -1248,6 +1248,49 @@ mod pool_lifecycle_tests {
     }
 }
 
+// ── Turn intent reads (#447) ─────────────────────────────────────────
+//
+// What the store READS for the intent pass and the signals that follow it —
+// built by `transcript.rs`, `sessions.rs` and `patterns.rs`, never written from.
+// Declared here, at the path callers name: the indexer does not follow `pub use`.
+
+/// A user turn the intent classifier should label (#447): its transcript-turn id,
+/// its session, the message, and the agent reply it answers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntentCandidateRow {
+    pub id: uuid::Uuid,
+    pub session_id: String,
+    pub user_text: String,
+    pub prev_reply: String,
+}
+
+/// A captured prompt with what the intent pass knows of it (#447): its label and
+/// whether it answers an agent reply, both from the transcript turn with the same
+/// prompt id — `None` when no transcript turn matched.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelledPrompt {
+    pub text: String,
+    pub intent: Option<crate::tasks::handlers::prompt_classify::TurnIntent>,
+    pub answers_reply: Option<bool>,
+}
+
+/// A prompt in one workspace's sessions (the signal deriver's source).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspacePromptRow {
+    pub folder_id: uuid::Uuid,
+    pub session_id: String,
+    pub prompt: LabelledPrompt,
+}
+
+/// A prompt across every workspace (the recurring-corrections source).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserPromptRow {
+    pub workspace_id: uuid::Uuid,
+    pub session_id: String,
+    pub ts: i64,
+    pub prompt: LabelledPrompt,
+}
+
 // ── The store's row types (#161) ─────────────────────────────────────
 //
 // Declared HERE, at the path every caller names (`pg_store::FolderRow`), not

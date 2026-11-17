@@ -84,11 +84,9 @@ status — open or closed is GitHub's answer.
   main; verify the diagrams section on the shipped artifact (release checklist step 5) before closing. Also: #370
   reached main by PR only, so `LICENSE` is absent from develop — merge `origin/main` back into develop (the
   `make release` step that normally does it did not run for #370) before the release PR.
-- **Exception: RUSTSEC-2026-0459 ignored in `.cargo/audit.toml` (user, 2026-11-15) — #446.** A C SQLite CVE
-  (CVE-2026-119375, medium 6.8) in `libsqlite3-sys` 0.30.1, which ships bundled into senseid via `rusqlite` and via
-  `dbd-core` → `sqlx-sqlite`. It fails the audit bar (it ships); approved so v0.22.0 could release. The fix moves sqlx
-  to 0.9 in dbd and sensei and `rusqlite` to `libsqlite3-sys` >= 0.39 together (`links = "sqlite3"` allows one).
-  Remove the ignore when #446 closes. (The other develop CI reds queued 2026-11-12 are fixed: the bootstrap SQL
+- **RUSTSEC-2026-0459 cleared (#446, 2026-11-16).** The 2026-11-15 exception is gone: `rusqlite` 0.43 links
+  `libsqlite3-sys` 0.40, and `dbd-core` v0.27.10 is built without its `sqlite` feature (0.27.10 also stops sqlx's
+  default features pulling sqlx-sqlite in, sensei-hq/dbd#118), so nothing links the old SQLite. (The other develop CI reds queued 2026-11-12 are fixed: the bootstrap SQL
   runner's harness no longer inherits `TEST_DATABASE_URL`; Rust 1.100's rust-analyzer `Cargo.lock` and the gate's
   locked worktree, clippy `needless_bool`, `quinn-udp` RUSTSEC-2026-0538.)
 

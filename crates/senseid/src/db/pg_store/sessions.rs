@@ -923,7 +923,7 @@ impl PgStore {
 
     /// `(session uuid, client_session_id)` for a workspace's sessions that NEED
     /// (re)enrichment — never analyzed (`analyzed_at IS NULL`), or with
-    /// assistant_events or transcript turns newer than the last analysis. Lets the scheduler skip
+    /// assistant_events, transcript turns or intent labels (#447) newer than the last analysis. Lets the scheduler skip
     /// unchanged sessions so enrichment cost scales with NEW activity, not total
     /// history (#67 incremental).
     pub async fn get_workspace_sessions_needing_enrichment(
@@ -944,7 +944,7 @@ impl PgStore {
                                  AND to_timestamp(e.ts / 1000.0) > s.analyzed_at)
                     OR EXISTS (SELECT 1 FROM activity.transcript_turns tt
                                WHERE tt.session_id = s.client_session_id
-                                 AND tt.created_at > s.analyzed_at))"
+                                 AND (tt.created_at > s.analyzed_at OR tt.intent_at > s.analyzed_at)))"
         ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
@@ -1135,20 +1135,29 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// User-prompt text across a workspace's sessions — the SignalDeriver's
-    /// correction / rule-candidate source (#68, L1). Returns `(folder_id,
-    /// session_id, prompt)` for every UserPromptSubmit carrying prompt text.
+    /// User prompts across a workspace's sessions, each with its intent label (#447)
+    /// — the SignalDeriver's correction / rule-candidate source (#68, L1).
     /// `folders = Some(ids)` scopes to those folders (incremental re-derive);
     /// `None` = whole workspace.
     pub async fn get_workspace_prompts(
         &self,
         workspace_id: &uuid::Uuid,
         folders: Option<&[uuid::Uuid]>,
-    ) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
-        let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
-            "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt'
+    ) -> Result<Vec<WorkspacePromptRow>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<String>, Option<bool>)> =
+            sqlx_core::query_as::query_as(
+            "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt', l.intent, l.source, l.answers
              FROM activity.assistant_events ae
              JOIN activity.sessions s ON s.client_session_id = ae.session_id
+             LEFT JOIN LATERAL (
+                  SELECT tt.intent::text AS intent, tt.intent_source::text AS source,
+                         EXISTS (SELECT 1 FROM activity.transcript_turns p
+                                  WHERE p.source = tt.source AND p.session_id = tt.session_id
+                                    AND p.turn_index = tt.turn_index - 1) AS answers
+                    FROM activity.transcript_turns tt
+                   WHERE tt.session_id = ae.session_id AND tt.prompt_id = ae.payload->>'prompt_id'
+                   LIMIT 1) l ON true
              WHERE s.workspace_id = $1
                AND ($2::uuid[] IS NULL OR s.folder_id = ANY($2))
                AND ae.event_type = 'UserPromptSubmit'
@@ -1160,7 +1169,20 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .map(|(folder_id, session_id, text, intent, source, answers_reply)| {
+                WorkspacePromptRow {
+                    folder_id,
+                    session_id,
+                    prompt: LabelledPrompt {
+                        text,
+                        intent: transcript::stored_intent(intent.as_deref(), source.as_deref()),
+                        answers_reply,
+                    },
+                }
+            })
+            .collect())
     }
 
     // ── Transcript backfill (#73) ────────────────────────────────────────────

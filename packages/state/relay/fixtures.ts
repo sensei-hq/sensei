@@ -7,6 +7,8 @@
 // only the first, fails.
 import type { ApiResult } from '../result.js';
 import type {
+  RelayNowRunTask,
+  RelayNowRunTaskLane,
   RelayRunDetail,
   RelayRunList,
   RelayRunListRow,
@@ -76,6 +78,7 @@ export function lane(over: Partial<RelayLane> = {}): RelayLane {
     limit_resumes_at: null,
     limit_note: null,
     suggested_name: null,
+    host: null,
     reviewing: null,
     task: {
       id: 't-structure',
@@ -363,6 +366,7 @@ export function now(over: Partial<RelayNow> = {}): RelayNow {
     facets: { repos: [REPO], workspaces: [{ id: 'w1', name: 'Sensei' }] },
     lanes: [coordinatorLane(), lane()],
     runs: [],
+    run_tasks: [],
     floating_reviews: [],
     decisions: [],
     person_messages: [],
@@ -796,3 +800,48 @@ export function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+/** A lane as a run task names it (#422). */
+export function runTaskLane(over: Partial<RelayNowRunTaskLane> = {}): RelayNowRunTaskLane {
+  return { id: LANE.L1, code: 'L1', suggested_name: 'cobalt-lyra', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', ...over };
+}
+
+/** One task of the open run, waiting in the pool unless a spec says otherwise (#422). */
+export function runTask(over: Partial<RelayNowRunTask> = {}): RelayNowRunTask {
+  return {
+    task_id: 't-run',
+    run_id: RUN_ID,
+    crew_id: CREW_ID,
+    title: 'A run task',
+    phase: 'impl',
+    state: 'ready',
+    round: 1,
+    position: null,
+    claimed_at: null,
+    completed_at: null,
+    step: null,
+    lane: null,
+    reviewer: null,
+    ...over,
+  };
+}
+
+const atlas = () => runTaskLane({ id: LANE.L0, code: 'L0', suggested_name: 'atlas-rigel' });
+const coral = () => runTaskLane({ id: LANE.L3, code: 'L3', suggested_name: 'coral-spica', model: null });
+
+/** Sprint 14 as Now groups it (#422), in the plan's order: Task 0 and two tasks done (B ran
+ *  before A), one held by L1, two waiting at backlog positions 3 and 1. L0 and L1 are the
+ *  crew's lanes; L0 holds no run task. */
+export const runNow = (): RelayNow =>
+  now({
+    runs: [sprint()],
+    lanes: [coordinatorLane({ task: null, suggested_name: 'atlas-rigel' }), lane({ suggested_name: 'cobalt-lyra' })],
+    run_tasks: [
+      runTask({ task_id: 't-plan', title: 'Plan: Sprint 14', phase: 'planning', state: 'done', claimed_at: '2026-11-16T09:00:00Z', completed_at: '2026-11-16T09:20:00Z', lane: atlas() }),
+      runTask({ task_id: 't-a', title: 'Header on the shell', state: 'done', claimed_at: '2026-11-16T10:00:00Z', completed_at: '2026-11-16T10:30:00Z', lane: runTaskLane(), reviewer: coral() }),
+      runTask({ task_id: 't-b', title: 'Sidebar on the shell', state: 'done', claimed_at: '2026-11-16T09:40:00Z', completed_at: '2026-11-16T10:10:00Z', lane: coral(), reviewer: runTaskLane() }),
+      runTask({ task_id: 't-structure', title: 'Structure view on the shell', phase: 'tests', state: 'working', claimed_at: '2026-11-16T10:40:00Z', step: 'Writing the failing specs', lane: runTaskLane() }),
+      runTask({ task_id: 't-docs', title: 'Docs for the shell', position: 3 }),
+      runTask({ task_id: 't-search', title: 'Search on the shell', position: 1 }),
+    ],
+  });

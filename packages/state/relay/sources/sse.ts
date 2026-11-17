@@ -4,7 +4,7 @@
 // state reads on it: nothing before the socket opened is missed.
 
 import type { RelayApi } from '../client.js';
-import type { RelaySource } from '../relay-state.svelte.js';
+import type { RelayEvents, RelaySource } from '../relay-state.svelte.js';
 import type { RelayStreamEvent } from '../types.js';
 
 /** What the source needs of a socket: the EventManager's shape. */
@@ -27,14 +27,20 @@ export function relaySseSource(api: RelayApi, stream: () => RelayEventStream): R
     readRuns: () => api.tryGetRuns(),
     startRun: (runId, crewId) => api.tryStartRun(runId, crewId),
     cancelRun: (runId) => api.tryCancelRun(runId),
-    events(on, onOpen) {
-      const socket = stream();
-      socket.onopen = () => onOpen();
-      const unsubscribe = socket.subscribe(on);
-      return () => {
-        unsubscribe();
-        socket.destroy();
-      };
-    },
+    events: sseEvents(stream),
+  };
+}
+
+/** The daemon's stream alone: a fresh socket per subscription, every open reported.
+ *  The task view listens through this, narrowed to its crew by the socket it is given. */
+export function sseEvents(stream: () => RelayEventStream): RelayEvents {
+  return (on, onOpen) => {
+    const socket = stream();
+    socket.onopen = () => onOpen();
+    const unsubscribe = socket.subscribe(on);
+    return () => {
+      unsubscribe();
+      socket.destroy();
+    };
   };
 }

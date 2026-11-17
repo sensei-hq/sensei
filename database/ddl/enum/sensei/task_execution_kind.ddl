@@ -100,4 +100,5 @@ create type task_execution_kind as enum (
 , 'backfill_transcript_file'
 , 'import_dbd_schema'
 , 'derive_orm_schema'
+, 'classify_turn_intent'
 );

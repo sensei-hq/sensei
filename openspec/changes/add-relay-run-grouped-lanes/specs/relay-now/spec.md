@@ -15,7 +15,7 @@ lanes on no run task.
 #### Scenario: A lane on no task
 - **GIVEN** a live lane that holds no task of an open run
 - **WHEN** the person opens Now
-- **THEN** it is listed under "Not on a task" after every run group, with its presence
+- **THEN** it is listed under "Not on a run task" after every run group, with its presence
 
 #### Scenario: The main window with two crews
 - **GIVEN** the main window holds two crews, each with an open run
@@ -26,7 +26,7 @@ lanes on no run task.
 #### Scenario: No open run
 - **GIVEN** a crew with lanes and no open run
 - **WHEN** the person opens Now
-- **THEN** the lanes are listed under "Not on a task" and no run group is drawn
+- **THEN** the lanes are listed under "Not on a run task" and no run group is drawn
 
 ### Requirement: Priority order for waiting tasks
 Waiting tasks of a run SHALL be ordered by priority: the backlog position of the item each task
