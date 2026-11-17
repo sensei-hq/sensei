@@ -311,3 +311,57 @@ mod tests {
         assert_eq!(report.written, 0);
     }
 }
+
+/// The measurement harness (#447 §4.1): the classifier exactly as the daemon runs
+/// it — the seeded `intent` chain through the gateway, the committed prompts —
+/// over a labelled set that lives OUTSIDE the repo (real prompts; the repo is
+/// public). Ignored by default:
+///   `INTENT_SET=<sample.json> INTENT_OUT=<labels.json> GATEWAY_LOADER_TEST_URL=<seeded db> \
+///    cargo test -p senseid --bin senseid intent_labels_a_set -- --ignored`
+/// The set is `[{ "id", "user", "prev" }]`; the output `{ id: label | null }`, scored
+/// by the local harness against its gold labels.
+#[cfg(test)]
+mod measure {
+    use super::super::prompt_classify::{GatewayIntentModel, IntentCandidate, classify_intent};
+
+    #[tokio::test]
+    #[ignore]
+    async fn intent_labels_a_set() {
+        let set: Vec<serde_json::Value> = serde_json::from_str(
+            &std::fs::read_to_string(std::env::var("INTENT_SET").expect("INTENT_SET")).unwrap(),
+        )
+        .unwrap();
+        let url = std::env::var("GATEWAY_LOADER_TEST_URL").expect("GATEWAY_LOADER_TEST_URL");
+        let pg = crate::db::pg_store::PgStore::connect(&url).await.expect("connect");
+        let cfg = crate::api::gateway_config_loader::load_gateway_config(&pg)
+            .await
+            .expect("load")
+            .expect("the database seeds chains");
+        assert!(cfg.chains.contains_key("intent"), "the intent chain is seeded");
+        let gateway = std::sync::Arc::new(gateway::FacadeBuilder::new(cfg).build().await.gateway);
+        let model = GatewayIntentModel { gateway };
+        let items: Vec<IntentCandidate> = set
+            .iter()
+            .map(|it| IntentCandidate {
+                prompt: it["user"].as_str().unwrap_or(""),
+                prev_reply: it["prev"].as_str().unwrap_or(""),
+            })
+            .collect();
+        let labels = classify_intent(&model, &items).await;
+        let out: serde_json::Map<String, serde_json::Value> = set
+            .iter()
+            .zip(&labels)
+            .map(|(it, l)| {
+                let label = l.map_or(serde_json::Value::Null, |c| c.as_str().into());
+                (it["id"].as_str().unwrap_or("").to_string(), label)
+            })
+            .collect();
+        std::fs::write(
+            std::env::var("INTENT_OUT").expect("INTENT_OUT"),
+            serde_json::to_string_pretty(&out).unwrap(),
+        )
+        .unwrap();
+        let unknown = labels.iter().filter(|l| l.is_none()).count();
+        println!("intent: {} labelled, {unknown} with no answer", labels.len() - unknown);
+    }
+}
