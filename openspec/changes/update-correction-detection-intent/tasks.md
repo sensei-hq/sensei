@@ -3,7 +3,7 @@
   phrase list's baseline recorded in design.md (P 0.75, R ~0.05)
 ## 2. Classification (red first)
 - [ ] 2.1 Candidates = user turns after an assistant turn; batch the classifier on the local model
-- [ ] 2.2 Label + source on `activity.turns`; phrase fallback marked; relabel when the model returns
+- [ ] 2.2 Label + source on `activity.transcript_turns` (see design.md); phrase fallback marked; relabel when the model returns
 ## 3. Metrics
 - [ ] 3.1 Per-turn flag, FTR, outcomes, correction-prone, recurring corrections read the label; backfill
 ## 4. Verification

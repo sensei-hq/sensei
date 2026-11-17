@@ -33,6 +33,7 @@ pub(crate) mod scan_logic;
 pub(crate) mod session_process;
 mod session_retro;
 pub(crate) mod tool_insights;
+pub(crate) mod turn_intent;
 mod verdicts;
 mod verdicts_classify;
 mod warm_narration_cache;

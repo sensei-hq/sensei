@@ -139,7 +139,7 @@ async fn candidates_are_your_turns_that_answer_a_reply_and_lack_a_model_label() 
     .unwrap();
 
     let mine: Vec<IntentCandidateRow> = s
-        .intent_candidates(1_000_000)
+        .intent_candidates(1_000_000, &[])
         .await
         .unwrap()
         .into_iter()
@@ -152,5 +152,28 @@ async fn candidates_are_your_turns_that_answer_a_reply_and_lack_a_model_label() 
         got,
         [("no, the other file", "I wrote parser.rs."), ("why did you drop the index?", "Shipped.")]
     );
+    cleanup(&s, &sid).await;
+}
+
+#[tokio::test]
+async fn candidates_leave_out_the_turns_a_run_has_already_handled() {
+    let s = pg_store().await;
+    let sid = format!("_test-intent-{}", uuid::Uuid::new_v4());
+    let turns = [
+        turn(0, "human", "start", "Started."),
+        turn(1, "human", "go on then", "Went."),
+        turn(2, "human", "and the tests", "Added."),
+    ];
+    s.upsert_transcript_turns(&source(&sid), &turns).await.unwrap();
+    let seen = turn_id(&s, &sid, 2).await;
+    let left: Vec<String> = s
+        .intent_candidates(1_000_000, &[seen])
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.session_id == sid)
+        .map(|c| c.user_text)
+        .collect();
+    assert_eq!(left, ["go on then"], "a turn handled this run is not offered again");
     cleanup(&s, &sid).await;
 }

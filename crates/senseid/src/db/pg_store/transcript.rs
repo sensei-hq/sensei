@@ -320,7 +320,11 @@ impl PgStore {
     /// first: your turns that answer an agent reply, with no label yet or only
     /// the phrase fallback's. Machine text — command wrappers, hook output,
     /// interrupts, continuations — and subagent turns are not candidates.
-    pub async fn intent_candidates(&self, limit: i64) -> Result<Vec<IntentCandidateRow>, String> {
+    pub async fn intent_candidates(
+        &self,
+        limit: i64,
+        _handled: &[uuid::Uuid],
+    ) -> Result<Vec<IntentCandidateRow>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
             "SELECT t.id, t.session_id, t.user_text, coalesce(p.assistant_text, '')
                FROM activity.transcript_turns t

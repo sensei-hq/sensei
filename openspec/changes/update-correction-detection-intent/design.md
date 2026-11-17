@@ -51,3 +51,16 @@
   pool's 60); two blind labellers, 97.4% agreement, kappa 0.93; 4 adjudicated. Both sets stay local.
   The margin is modest (corrections are ~7% of ordinary turns; 55 in the two sets), so the build keeps the
   harness and re-measures on a fresh draw before shipping.
+- Where labels live (build, 2026-11-17): on `activity.transcript_turns` (`intent`, `intent_source`,
+  `intent_at`), not `activity.turns` as tasks.md first said. Session corrections are counted from the
+  transcript, which holds the message and the reply it answers; `activity.turns` is rebuilt from hooks on
+  every analysis and takes its flag from the transcript turn with the same prompt id. A re-ingest that
+  changes a turn's text clears its label; a label is written only when it changes; a label newer than
+  the session's analysis makes the session due again.
+- Model access (build, 2026-11-17): a seeded `intent` chain with one leg, qwen3.8 on local Ollama, no
+  fallback — another model is an unmeasured classifier, and the turns are the user's own prompts (the
+  `classify` chain ends in cloud models). When it is unavailable, turns are labelled by the phrase list
+  with source `phrase` and relabelled by a later run.
+- The pass (build, 2026-11-17): `ClassifyTurnIntent` rides the analyzer's daily window, works in
+  batches of ten until its time is up, and queues itself again while candidates remain — which is how the
+  one-time backfill of history drains (several hours of local model time, once).
