@@ -77,7 +77,7 @@
   **Neither meets both floors pooled.** Two stages misses recall (stage 2 drops 5 of the fresh set's 40
   corrections while removing 5 false alarms); stage 1 alone misses precision (the phrase-hit stratum,
   set 1). Every miss is a correction labelled `neither`. With ~95 corrections across the sets the
-  interval on either number is about ±0.08. Open: Q3 below.
-
-## Open Questions (re-opened 2026-11-17)
-- Q3: ship below a floor, or tune further against a fourth fresh draw? See the re-measure above.
+  interval on either number is about ±0.08.
+- Q3 (user, 2026-11-17): **ship two stages** at 0.84 / 0.77 — precision protects first-try-right from
+  false corrections; the recall shortfall (3 points, within noise) is recorded, not hidden, and tuning
+  continues in #485, validated on a fourth fresh draw. The floors stand as the target.
