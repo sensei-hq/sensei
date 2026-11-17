@@ -150,6 +150,33 @@ pub fn correction_signal(prompt: &str) -> Option<&'static str> {
     None
 }
 
+/// Why a transcript turn is a correction (#447), or `None`. A turn that answers no
+/// agent reply corrects nothing. A labelled turn counts by its label — `"intent"`
+/// when the model decided it, the phrase cue when the phrase fallback did; an
+/// unlabelled one (not yet reached by the intent pass) by the phrase list.
+pub fn correction_mark(t: &TranscriptTurn, answers_a_reply: bool) -> Option<&'static str> {
+    if !answers_a_reply {
+        return None;
+    }
+    let phrase = || t.user_text.as_deref().and_then(correction_signal);
+    match t.intent {
+        Some(TurnIntent { class: PromptClass::Correction, source: IntentSource::Intent }) => {
+            Some("intent")
+        }
+        Some(TurnIntent { class: PromptClass::Correction, source: IntentSource::Phrase }) => {
+            Some(phrase().unwrap_or("phrase"))
+        }
+        Some(_) => None,
+        None => phrase(),
+    }
+}
+
+/// Each transcript turn's [`correction_mark`], in order: every turn after the
+/// first answers the reply before it.
+fn correction_marks(transcript: &[TranscriptTurn]) -> Vec<Option<&'static str>> {
+    transcript.iter().enumerate().map(|(i, t)| correction_mark(t, i > 0)).collect()
+}
+
 /// Detect an imperative *principle/rule* in a user prompt — the user stating a
 /// durable "do X / never Y" expectation (a teaching/rule candidate, distinct
 /// from a one-off correction). Keyword match; an LLM classifier (L2) refines
@@ -469,13 +496,14 @@ pub fn derive_session_metrics(
     } else {
         // Scheduled, peer and other automated prompts are turns of their own, but
         // not yours: they neither count as a turn nor can correct one.
-        let yours: Vec<&TranscriptTurn> =
-            transcript.iter().filter(|t| t.origin == "human").collect();
-        let c = yours
+        let marks = correction_marks(transcript);
+        let yours = transcript.iter().filter(|t| t.origin == "human").count() as i32;
+        let c = transcript
             .iter()
-            .filter(|t| t.user_text.as_deref().is_some_and(|u| correction_signal(u).is_some()))
+            .zip(&marks)
+            .filter(|(t, mark)| t.origin == "human" && mark.is_some())
             .count() as i32;
-        (yours.len() as i32, c)
+        (yours, c)
     };
     let real_turns = (turn_count as usize).max(turns.len());
     let resumed = was_resumed(events);
@@ -501,16 +529,26 @@ pub fn derive_session_metrics(
     })
 }
 
-/// Label each hook turn with the origin of the transcript turn its prompt started.
+/// Label each hook turn from the transcript turn its prompt started: its origin,
+/// and whether it corrects (#447) — the transcript turn carries the intent label.
+/// A hook turn with no transcript match keeps its phrase-derived flag.
 fn label_origins(turns: &mut [Turn], events: &[HookEvent], transcript: &[TranscriptTurn]) {
-    let by_prompt: std::collections::HashMap<&str, &str> = transcript
+    let marks = correction_marks(transcript);
+    let by_prompt: std::collections::HashMap<&str, (&str, Option<&'static str>)> = transcript
         .iter()
-        .filter_map(|t| Some((t.prompt_id.as_deref()?, t.origin.as_str())))
+        .zip(marks)
+        .filter_map(|(t, mark)| Some((t.prompt_id.as_deref()?, (t.origin.as_str(), mark))))
         .collect();
     let prompts = events.iter().filter(|e| e.event_type == "UserPromptSubmit");
     for (turn, prompt) in turns.iter_mut().zip(prompts) {
-        turn.origin =
-            prompt.prompt_id.as_deref().and_then(|p| by_prompt.get(p)).map(|o| o.to_string());
+        let Some(&(origin, mark)) = prompt.prompt_id.as_deref().and_then(|p| by_prompt.get(p))
+        else {
+            turn.origin = None;
+            continue;
+        };
+        turn.origin = Some(origin.to_string());
+        turn.is_correction = mark.is_some();
+        turn.triage_signal = mark;
     }
 }
 
@@ -653,9 +691,8 @@ pub fn build_session_evidence(
     }
     // First correction — the FTR detractor, quoted from the user turn that flags it
     // (skip when it IS the opening turn, to avoid a duplicate moment).
-    if let Some(corr) = transcript
-        .iter()
-        .find(|t| t.user_text.as_deref().is_some_and(|u| correction_signal(u).is_some()))
+    if let Some(corr) =
+        transcript.iter().zip(correction_marks(transcript)).find_map(|(t, m)| m.map(|_| t))
         && Some(corr.turn_index) != first_turn
     {
         moments.push(serde_json::json!({

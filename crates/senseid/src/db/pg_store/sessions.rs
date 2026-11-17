@@ -923,7 +923,7 @@ impl PgStore {
 
     /// `(session uuid, client_session_id)` for a workspace's sessions that NEED
     /// (re)enrichment — never analyzed (`analyzed_at IS NULL`), or with
-    /// assistant_events or transcript turns newer than the last analysis. Lets the scheduler skip
+    /// assistant_events, transcript turns or intent labels (#447) newer than the last analysis. Lets the scheduler skip
     /// unchanged sessions so enrichment cost scales with NEW activity, not total
     /// history (#67 incremental).
     pub async fn get_workspace_sessions_needing_enrichment(
@@ -944,7 +944,7 @@ impl PgStore {
                                  AND to_timestamp(e.ts / 1000.0) > s.analyzed_at)
                     OR EXISTS (SELECT 1 FROM activity.transcript_turns tt
                                WHERE tt.session_id = s.client_session_id
-                                 AND tt.created_at > s.analyzed_at))"
+                                 AND (tt.created_at > s.analyzed_at OR tt.intent_at > s.analyzed_at)))"
         ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
