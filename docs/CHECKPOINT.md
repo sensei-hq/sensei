@@ -1,28 +1,21 @@
-# Checkpoint — 2026-11-17 (#447 corrections by intent — build done, measuring)
+# Checkpoint — 2026-11-17 (#447 shipped in v0.24.0; placement floor fixed)
 
-**Slice:** label user turns by intent (qwen3.8, two stages) instead of key phrases.
-Branch `lane/447-correction-intent` (worktree `lanes/correction-intent`).
+**Slice:** corrections by intent (#447) → release 0.24.0 → live run; then the failing placement floor.
 
-**Done (each red → green):**
-- Two-stage classifier + `GatewayIntentModel` (intent chain, temp 0, no fallback) — `prompt_classify.rs`.
-- Seeded `intent` chain: qwen3.8:27b on ollama only (local alias: `ollama cp qwen3.8:latest qwen3.8:27b`).
-- `transcript_turns.intent/intent_source/intent_at` (+ enums), guarded writes, clear on changed prompt.
-- Analysis reads the label: corrections, FTR, outcome, hook-turn flags, evidence; label newer than
-  analysis ⇒ session due.
-- `ClassifyTurnIntent` task: daily window, batches of 10, self-chaining backfill, phrase fallback marked.
-- Correction-prone + recurring corrections read the label; old gemma `classify_batch` deleted.
-- Indexer dangling ratchet back at 1,197 (= base). Clippy clean. openspec validate --strict OK.
-- Ignored harness `intent_labels_a_set` (daemon path over a local set).
+**Done:**
+- #447 merged (#486), closed; released in v0.24.0 (#487, tag CI green incl. dōjō-prod). Installed;
+  daemon on 0.24.0 keeps the schema (dbd diff clean).
+- Ollama router timeout 120 s → 600 s (#489, merged) — the first live intent run timed out on a 27B
+  cold load. Live re-run: 20 turns labelled by the model (`intent_pass_runs`, ignored test).
+- Placement floor (failing nightly since 2026-10-27): `packages/tsconfig.json` (#490, merged c25d1a930);
+  CI dispatch on the branch green; nightly turns green once it reaches main (next release).
 
-**In flight:** daemon-path runs on held-out, fresh (150, κ 0.98, gold 40/2/108) and set 1;
-score with `python3 -I ~/.sensei/eval/score_daemon.py <dir>=<labels.json> ...`.
+**Remaining / follow-ups:** #485 recall tuning (4th fresh draw); #488 index (session_id, prompt_id);
+gateway#96 per-request timeout; dbd#121 enum ADD VALUE clash. Backfill of ~5,000 turns drains via the
+daily ClassifyTurnIntent runs (watch `select intent_source, count(*) from activity.transcript_turns ...`).
 
-**Remaining:** record scores in design.md; tasks.md ticks; PR to develop; install + live run.
+**Next command:** `psql -d sensei -Atc "select intent_source, intent, count(*) from activity.transcript_turns where intent is not null group by 1,2"`
 
-**Next command:** `python3 -I ~/.sensei/eval/score_daemon.py ~/.sensei/eval/correction-intent-holdout-2026-11-17=…/h_daemon.json`
+**Open questions (user):** #420 phone header bands (~1100px); #457; #458; #389; #455.
 
-**Lane DB:** `TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_447_tpl` (restamp after DDL commit).
-
-**Open questions:** none for #447. Elsewhere: #420, #389, #455, #457, #458.
-
-**Known broken:** #483, #482 (flaky, unrelated); Keychain-approval tests fail in this shell (env).
+**Known broken:** #483, #482 (flaky, unrelated); Keychain-approval tests fail in non-interactive shells.
