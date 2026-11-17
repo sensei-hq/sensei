@@ -208,6 +208,9 @@ async function crewStage(): Promise<void> {
   expect(hosts).toEqual(['in Cursor']);
   // The Crew button's badge counts them too (its name carries the count).
   await expect.poll(() => attrOf('[data-screen-tools] [aria-label^="Crew"]', 'aria-label'), { timeout: STREAM }).toBe('Crew · 3');
+  // Once a crew exists, the Crew view still says how another lane joins it: the line to
+  // paste names this crew (#382).
+  expect(await textsOf('[data-paste-text]')).toContain(`register with sensei as contributor in crew ${lanes.coord.crewId}`);
 
 
   const start = tauri.locator('[data-run-card] [data-run-start]');
@@ -298,6 +301,40 @@ async function mergedAndCompleted(taskId: string, title: string): Promise<void> 
   await expect.poll(async () => (await textsOf('[data-completed-row]')).includes(title), { timeout: STREAM }).toBe(true);
 }
 
+/** The task's own page (#414): opened from its row while its lane works, a step the lane
+ *  posts lands without a reload; the page body is the shell's scroller, inside the window
+ *  (#380); and the back link returns to Now. */
+async function taskPageLive(lane: RelayLane, taskId: string): Promise<void> {
+  await tauri.evaluate(`document.querySelector(${JSON.stringify(`${runGroup()} [data-run-task="${taskId}"]`)})?.closest('a')?.click()`);
+  await expect.poll(() => textsOf('[data-task-title]'), { timeout: STREAM }).toContain('First file');
+  const stepKeys = async () =>
+    JSON.parse(String(await tauri.evaluate(`JSON.stringify([...document.querySelectorAll('[data-step]')].map((s) => s.getAttribute('data-step')))`))) as string[];
+  await expect.poll(stepKeys, { timeout: STREAM }).toEqual(['write', 'check']);
+  await lane.checkpoint(taskId, {
+    current_step: 'Tidy it',
+    steps: [
+      { key: 'write', title: 'Write t1.txt', state: 'done' },
+      { key: 'check', title: 'Check it', state: 'done' },
+      { key: 'tidy', title: 'Tidy it', state: 'open' },
+    ],
+  });
+  await expect.poll(stepKeys, { timeout: STREAM }).toEqual(['write', 'check', 'tidy']);
+  await expect.poll(() => attrOf('[data-step="check"]', 'data-step-state'), { timeout: STREAM }).toBe('done');
+  const body = JSON.parse(
+    String(
+      await tauri.evaluate(`(() => {
+        const b = document.querySelector('[data-screen="relay"] [data-screen-body]');
+        return JSON.stringify({ bottom: b.getBoundingClientRect().bottom, inner: innerHeight, overflow: getComputedStyle(b).overflowY });
+      })()`),
+    ),
+  ) as { bottom: number; inner: number; overflow: string };
+  expect(body.bottom).toBeLessThanOrEqual(body.inner);
+  expect(['auto', 'scroll']).toContain(body.overflow);
+  await evidence('4-task-page-live');
+  await tauri.evaluate(`document.querySelector('[data-task-header] a[data-back]')?.click()`);
+  await expect.poll(() => countOf(runGroup()), { timeout: STREAM }).toBe(1);
+}
+
 async function workStage(): Promise<void> {
   const a = lanes.a!;
   const b = lanes.b!;
@@ -325,6 +362,7 @@ async function workStage(): Promise<void> {
   });
   // The holder's first open step reads on its task's row (#422).
   await expect.poll(async () => await textsOf(`${runGroup()} [data-run-task="${work.t1}"] [data-run-task-detail]`), { timeout: STREAM }).toContain('Check it');
+  await taskPageLive(a, work.t1);
 
   // B's early report is refused until the first is done.
   const early = await RelayLane.attempt(() => b.report(work.t2, { phase: 'impl', round: 1, summary: { changed: 't2.txt' }, branch: 'lane/t2' }));

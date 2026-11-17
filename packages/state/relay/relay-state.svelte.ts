@@ -66,6 +66,10 @@ export interface RelaySource {
   events(on: (event: RelayStreamEvent) => void, onOpen: () => void): () => void;
 }
 
+/** A source's stream: subscribe with a handler for every event and one for every open;
+ *  returns the teardown. The task state listens through the same shape (#414). */
+export type RelayEvents = RelaySource['events'];
+
 /** What a loader hands the page: the two reads, or why each could not be read. */
 export interface RelayReads {
   now: RelayNow | null;

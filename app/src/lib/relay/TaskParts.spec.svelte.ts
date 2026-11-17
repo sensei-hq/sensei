@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 // The task view's parts (#425; COMPONENTS §3d TaskHeader, RunDetails, HandoffCard): each
 // draws toTaskView's data.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+
+// The app's webview ignores target=_blank (#381): a ticket opens in the system browser.
+const opener = vi.hoisted(() => ({ openUrl: vi.fn(async (_url: string) => {}) }));
+vi.mock('@tauri-apps/plugin-opener', () => opener);
 import { mountComponent } from '$lib/test-mount.js';
 import type { RelayHandoffView, RelayRunDetailsView, RelayTaskHeaderView } from '@sensei/state';
 import TaskHeader from './TaskHeader.svelte';
@@ -66,6 +70,15 @@ describe('TaskHeader', () => {
     expect(ticket.getAttribute('target')).toBe('_blank');
     expect(text(ticket)).toBe('Jira SEN-52');
     expect(mount(TaskHeader, { header: header({ ticket: null }) }).querySelector('[data-ticket]')).toBeNull();
+  });
+
+  it('a click on the ticket opens it in the system browser, not the webview (#381)', () => {
+    opener.openUrl.mockClear();
+    const ticket = mount(TaskHeader, { header: header() }).querySelector('a[data-ticket]') as HTMLAnchorElement;
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    ticket.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(opener.openUrl).toHaveBeenCalledWith('https://x/SEN-52');
   });
 });
 

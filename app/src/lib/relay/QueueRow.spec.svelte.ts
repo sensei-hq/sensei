@@ -5,6 +5,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
+
+// The app's webview ignores target=_blank (#381): a ticket opens in the system browser.
+const opener = vi.hoisted(() => ({ openUrl: vi.fn(async (_url: string) => {}) }));
+vi.mock('@tauri-apps/plugin-opener', () => opener);
 import type { RelayQueueRowView } from '@sensei/state';
 import QueueRow from './QueueRow.svelte';
 import QueueSection from './QueueSection.svelte';
@@ -38,6 +42,15 @@ const backlog = (over: Partial<RelayQueueRowView> = {}) =>
   triage({ id: 'b1', canAdd: false, add: null, selectable: true, ...over });
 
 describe('QueueRow', () => {
+  it('a click on the ticket opens it in the system browser, not the webview (#381)', () => {
+    opener.openUrl.mockClear();
+    const ticket = mount(QueueRow, { row: triage() }).querySelector('a[data-ticket]') as HTMLAnchorElement;
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    ticket.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(opener.openUrl).toHaveBeenCalledWith('https://acme.atlassian.net/browse/SEN-58');
+  });
+
   it('the title over its pills: the kind first in its tone, then the tags', () => {
     const c = mount(QueueRow, { row: triage() });
     const row = c.querySelector('[data-queue-row="jira:SEN-58"]')!;
