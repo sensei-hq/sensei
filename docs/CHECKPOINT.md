@@ -1,25 +1,26 @@
-# Checkpoint — 2026-11-16 (DeepSource low-hanging fixes on develop; #460 merged)
+# Checkpoint — 2026-11-17 (relay UI finish-up; PR to develop)
 
-**Slice:** DeepSource review findings → tracking issues #461–#479, then fix the
-low-hanging ones on `develop` (this session, rebased over #460).
+**Slice:** finish the relay UI, then a full e2e run that the screen updates as tasks run.
+Branch `lane/relay-ui-verify` (from develop `1285c3d2d`).
 
-**Done (pushed):** `2e9b6c91d` (20 files: shell quoting/disables, Rust
-T::new/as_bool/create_dir_all/tmp-free fixtures, static attempt, attrOf move,
-writebackText default via TDD, quote swaps, openSidebarEntry, vi.fn mocks,
-skipcq with reasons, `.deepsource.toml` with test_patterns + 2 .mjs excludes)
-and `df9649198` (the 2 rustfmt violations #460 landed with; CI lint was red).
-Full suite green: cargo 5532/0, vitest 3739/0, svelte-check, clippy, fmt,
-test-fast, 3× audit. Closed #466, #468–#470, #472–#478.
-Kept open with verdicts: #462–#464, #467, #471 (dashboard ignore-clicks or
-test_patterns confirmation on next run), #461, #465 (next batch), #479
-(umbrella: secrets scanners clean, dashboard triage needed).
+**Done:**
+- Task view listens through its state's source (#414): red `482100cda`, green `af29814f7`.
+- #381 ticket links → system browser: green `d457a560a` (`$lib/open-external.ts`).
+- #382: already built in the Crew view (Add a member, crew-named line); e2e pin added.
+- e2e journey: task page live + scroll (#380) + join line, `f700439ff`.
+- Full e2e: 135 passed, 1 failed (settings-editable flake, passes alone → #483), 21 skipped.
+  `relay-run.spec.ts` green (2.8m), incl. `4-task-page-live`.
+- #447 floors recorded on `lane/447-correction-intent` `8344ca279` (worktree
+  `lanes/correction-intent`). Prompt v2 + scorer ready in `~/.sensei/eval/correction-intent-2026-11-17/`.
 
-**Carried forward:** release PR #459 open (develop→main v0.23.0); #460 merged.
-dbd#118 + dbd v0.27.10 release, then move the four dbd pins and land
-`wip/446-sqlite-cve` (#446); then #447, #457.
+**Remaining:**
+1. PR lane/relay-ui-verify → develop; on merge close by hand #378 #379 #380 #381 #382 #383
+   #384 #385 #386 #388.
+2. #447: `python3 -I run_variant.py prompt_v2.txt prompt v2` in the eval dir; iterate to floors;
+   then build tasks 2.1–3.1 red-first in `lanes/correction-intent`.
 
-**Next command:** review + merge #459; dashboard ignore-clicks for
-#462–#464, #467, #471; then #461 (need() sweep) and #465 (refactors).
+**Next command:** `gh pr create --base develop --head lane/relay-ui-verify`
 
-**Open questions (user):** v0.23.0 release decision; the dbd release; #447
-floors; #457.
+**Open questions (user):** #420 phone header bands (~1100px); #457; #458.
+
+**Known broken:** #483 (flaky Settings e2e, unrelated).
