@@ -64,3 +64,20 @@
 - The pass (build, 2026-11-17): `ClassifyTurnIntent` rides the analyzer's daily window, works in
   batches of ten until its time is up, and queues itself again while candidates remain — which is how the
   one-time backfill of history drains (several hours of local model time, once).
+- Re-measure before shipping (2026-11-17), through the daemon path (`intent_labels_a_set`: the seeded
+  chain, the committed prompts) plus a FRESH set — 150 ordinary turns, seed 4472, none of the earlier
+  340; two blind labellers 149/150 (kappa 0.98), 1 adjudicated before any classifier output. No phrase
+  hits remained in the pool, so the fresh set measures ordinary turns; the pooled score covers both strata.
+
+  | Classifier (precision / recall) | Set 1 (189) | Held-out (151) | Fresh (150) | Pooled (490) |
+  |---|---|---|---|---|
+  | two stages (built) | 0.63 / 0.77 | 0.94 / 0.80 | 0.94 / 0.75 | 0.84 / 0.77 |
+  | stage 1 only | 0.54 / 0.95 | 0.81 / 0.86 | 0.83 / 0.88 | 0.73 / 0.89 |
+
+  **Neither meets both floors pooled.** Two stages misses recall (stage 2 drops 5 of the fresh set's 40
+  corrections while removing 5 false alarms); stage 1 alone misses precision (the phrase-hit stratum,
+  set 1). Every miss is a correction labelled `neither`. With ~95 corrections across the sets the
+  interval on either number is about ±0.08. Open: Q3 below.
+
+## Open Questions (re-opened 2026-11-17)
+- Q3: ship below a floor, or tune further against a fourth fresh draw? See the re-measure above.
