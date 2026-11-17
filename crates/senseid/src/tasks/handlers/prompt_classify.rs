@@ -36,6 +36,7 @@ fn build_user_message(prompts: &[&str]) -> String {
 /// fences by extracting the first `[ … ]`. Returns `None` unless the array
 /// length matches the input count (so a malformed reply falls back to regex).
 fn parse_response(content: &str, n: usize) -> Option<Vec<PromptClass>> {
+    let content = after_thinking(content);
     let start = content.find('[')?;
     let end = content.rfind(']')?;
     if end <= start {
@@ -159,33 +160,109 @@ pub struct IntentCandidate<'a> {
 }
 
 /// Stage 1's definition: compare the message with the reply it answers.
-pub const INTENT_SYSTEM: &str = "";
+pub const INTENT_SYSTEM: &str = "You classify a developer's messages to an AI coding agent. Each item shows the end of the agent's last reply, then the developer's next message. Decide exactly one label per item by comparing the message with the reply:\n\
+- \"correction\": the message pushes back on something the agent did, said, proposed or chose in that reply or in its recent work. It says it is wrong, broken, unwanted, confusing, or should have been done differently — including a mild preference against the agent's own choice (\"I don't like X\", \"we keep one per file\", \"don't mock it\"), an error the agent's change produced, a \"why did you…\", or \"that didn't fix it\".\n\
+- \"principle\": a durable rule to follow from now on (\"always…\", \"never…\", \"from now on…\").\n\
+- \"neither\": the message moves forward without rejecting the reply — approval, a next step, a new or follow-up change, a question, or a fix for something the agent did not do. \"go ahead\", \"rename the button\", \"now add Y\", \"can we handle null here?\" are \"neither\" when the reply did not do the thing being changed.\n\
+Reply with ONLY a JSON array of strings, one label per item in order. No prose, no code fences.";
 
 /// Stage 2's strict check, asked once per stage-1 correction.
-pub const VERIFY_SYSTEM: &str = "";
+pub const VERIFY_SYSTEM: &str = "You judge one message a developer sent to an AI coding agent, right after the agent's reply.\n\
+Answer \"yes\" only if the message rejects or pushes back on the agent's OWN work in that reply or just before it: it says something the agent did, wrote, chose or claimed is wrong, broken, unwanted or not what was asked, or asks why the agent did it.\n\
+Answer \"no\" if the message approves, continues, asks a question, gives the next step, or asks for a new change to something the agent's reply did not touch.\n\
+Answer with one word: yes or no.";
+
+/// How much of the agent's reply each stage sees (its end), and of the message.
+const REPLY_TAIL: usize = 600;
+const STAGE1_PROMPT: usize = 300;
+const VERIFY_PROMPT: usize = 600;
+/// Token budgets: the model thinks before it answers.
+const STAGE1_MAX_TOKENS: u32 = 4096;
+const VERIFY_MAX_TOKENS: u32 = 1024;
 
 /// Label candidates by intent. One slot per input: `Some(class)` when the model
 /// decided it, `None` when its batch (or its stage-2 check) got no usable answer.
 pub async fn classify_intent<M: IntentModel>(
-    _model: &M,
+    model: &M,
     items: &[IntentCandidate<'_>],
 ) -> Vec<Option<PromptClass>> {
-    vec![None; items.len()]
+    let mut out: Vec<Option<PromptClass>> = vec![None; items.len()];
+    for (ci, chunk) in items.chunks(CHUNK).enumerate() {
+        let answer = model.chat(INTENT_SYSTEM, intent_message(chunk), STAGE1_MAX_TOKENS).await;
+        let Some(classes) = answer.as_deref().and_then(|c| parse_response(c, chunk.len())) else {
+            tracing::warn!("intent: batch got no usable answer — its turns fall back to phrases");
+            continue;
+        };
+        for (j, class) in classes.into_iter().enumerate() {
+            out[ci * CHUNK + j] = Some(class);
+        }
+    }
+    for (item, slot) in items.iter().zip(out.iter_mut()) {
+        if *slot != Some(PromptClass::Correction) {
+            continue;
+        }
+        let verdict = model.chat(VERIFY_SYSTEM, verify_message(item), VERIFY_MAX_TOKENS).await;
+        *slot = match verdict.as_deref().and_then(parse_verify) {
+            Some(true) => Some(PromptClass::Correction),
+            Some(false) => Some(PromptClass::Neither),
+            None => {
+                tracing::warn!(
+                    "intent: check got no usable answer — the turn falls back to phrases"
+                );
+                None
+            }
+        };
+    }
+    out
+}
+
+/// The last `n` chars of `s`.
+fn tail(s: &str, n: usize) -> String {
+    let len = s.chars().count();
+    s.chars().skip(len.saturating_sub(n)).collect()
+}
+
+/// The first `n` chars of `s`.
+fn head(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
 }
 
 /// Stage 1's message for one batch.
-fn intent_message(_items: &[IntentCandidate<'_>]) -> String {
-    String::new()
+fn intent_message(items: &[IntentCandidate<'_>]) -> String {
+    let mut s = String::from("Classify these prompts:\n");
+    for (i, it) in items.iter().enumerate() {
+        let reply = tail(it.prev_reply, REPLY_TAIL).replace('\n', " ");
+        let prompt = head(it.prompt, STAGE1_PROMPT).replace('\n', " ");
+        s.push_str(&format!("{}. [agent just said: …{reply}] DEVELOPER: {prompt}\n", i + 1));
+    }
+    s
 }
 
 /// Stage 2's message for one candidate.
-fn verify_message(_item: &IntentCandidate<'_>) -> String {
-    String::new()
+fn verify_message(item: &IntentCandidate<'_>) -> String {
+    format!(
+        "AGENT'S REPLY (end): …{}\n\nDEVELOPER'S NEXT MESSAGE: {}\n\n\
+         Is the developer's message a correction of the agent's own work? Answer yes or no.",
+        tail(item.prev_reply, REPLY_TAIL),
+        head(item.prompt, VERIFY_PROMPT)
+    )
+}
+
+/// What the model answered after any thinking block it printed.
+fn after_thinking(content: &str) -> &str {
+    content.rsplit_once("</think>").map_or(content, |(_, answer)| answer)
 }
 
 /// Stage 2's answer: `Some(true)` for yes, `Some(false)` for no, `None` otherwise.
-fn parse_verify(_content: &str) -> Option<bool> {
-    None
+fn parse_verify(content: &str) -> Option<bool> {
+    let answer = after_thinking(content).trim().to_lowercase();
+    if answer.starts_with("yes") {
+        Some(true)
+    } else if answer.starts_with("no") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -287,23 +364,23 @@ mod tests {
 
     #[test]
     fn the_intent_message_puts_the_reply_tail_beside_each_message() {
-        let reply = format!("{}END OF REPLY", "x".repeat(700));
-        let prompt = format!("no, the other file\n{}", "y".repeat(400));
+        let reply = format!("{}END OF REPLY", "~".repeat(700));
+        let prompt = format!("no, the other file\n{}", "^".repeat(400));
         let msg = intent_message(&[cand(&prompt, &reply), cand("go ahead", "Shall I?")]);
         assert!(msg.contains("1. [agent just said: …"), "{msg}");
         assert!(msg.contains("END OF REPLY] DEVELOPER: no, the other file "));
         assert!(msg.contains("2. [agent just said: …Shall I?] DEVELOPER: go ahead"));
-        assert_eq!(msg.matches('x').count(), 600 - "END OF REPLY".len(), "reply tail is 600 chars");
-        assert_eq!(msg.matches('y').count(), 300 - "no, the other file ".len(), "message is 300");
+        assert_eq!(msg.matches('~').count(), 600 - "END OF REPLY".len(), "reply tail is 600 chars");
+        assert_eq!(msg.matches('^').count(), 300 - "no, the other file ".len(), "message is 300");
     }
 
     #[test]
     fn the_verify_message_quotes_the_reply_tail_and_the_message() {
-        let reply = format!("{}tail", "x".repeat(700));
+        let reply = format!("{}tail", "~".repeat(700));
         let msg = verify_message(&cand("why did you drop the index?", &reply));
         assert!(msg.contains("AGENT'S REPLY (end): …"));
         assert!(msg.contains("tail\n\nDEVELOPER'S NEXT MESSAGE: why did you drop the index?"));
-        assert_eq!(msg.matches('x').count(), 596);
+        assert_eq!(msg.matches('~').count(), 596);
     }
 
     #[test]
