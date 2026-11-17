@@ -132,9 +132,202 @@ async fn classify_chunk(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<Promp
     }
 }
 
+// ── Intent classifier (#447) ──
+//
+// Every user turn that follows an agent reply is a candidate, and the model —
+// not a phrase list — decides whether it corrects that reply. Two stages, chosen
+// by measurement (openspec `update-correction-detection-intent`, design.md):
+// stage 1 labels a batch with the end of the agent's previous reply beside each
+// message; stage 2 asks one strict yes/no per stage-1 correction.
+
+/// A chat model the intent classifier asks. `None` = unavailable, timed out or
+/// empty: the caller labels those turns by the phrase list, marked as such.
+pub trait IntentModel {
+    fn chat(
+        &self,
+        system: &str,
+        user: String,
+        max_tokens: u32,
+    ) -> impl std::future::Future<Output = Option<String>> + Send;
+}
+
+/// One candidate: the user's message and the agent reply it answers.
+#[derive(Debug, Clone, Copy)]
+pub struct IntentCandidate<'a> {
+    pub prompt: &'a str,
+    pub prev_reply: &'a str,
+}
+
+/// Stage 1's definition: compare the message with the reply it answers.
+pub const INTENT_SYSTEM: &str = "";
+
+/// Stage 2's strict check, asked once per stage-1 correction.
+pub const VERIFY_SYSTEM: &str = "";
+
+/// Label candidates by intent. One slot per input: `Some(class)` when the model
+/// decided it, `None` when its batch (or its stage-2 check) got no usable answer.
+pub async fn classify_intent<M: IntentModel>(
+    _model: &M,
+    items: &[IntentCandidate<'_>],
+) -> Vec<Option<PromptClass>> {
+    vec![None; items.len()]
+}
+
+/// Stage 1's message for one batch.
+fn intent_message(_items: &[IntentCandidate<'_>]) -> String {
+    String::new()
+}
+
+/// Stage 2's message for one candidate.
+fn verify_message(_item: &IntentCandidate<'_>) -> String {
+    String::new()
+}
+
+/// Stage 2's answer: `Some(true)` for yes, `Some(false)` for no, `None` otherwise.
+fn parse_verify(_content: &str) -> Option<bool> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A model that answers from a script: stage-1 batches in order, then
+    /// stage-2 checks by the message they quote. Records every call.
+    struct Scripted {
+        batches: std::sync::Mutex<std::collections::VecDeque<Option<String>>>,
+        verdicts: Vec<(&'static str, Option<&'static str>)>,
+        calls: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    impl Scripted {
+        fn new(
+            batches: Vec<Option<&str>>,
+            verdicts: Vec<(&'static str, Option<&'static str>)>,
+        ) -> Self {
+            Self {
+                batches: std::sync::Mutex::new(
+                    batches.into_iter().map(|b| b.map(str::to_string)).collect(),
+                ),
+                verdicts,
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl IntentModel for Scripted {
+        fn chat(
+            &self,
+            system: &str,
+            user: String,
+            _max_tokens: u32,
+        ) -> impl std::future::Future<Output = Option<String>> + Send {
+            self.calls.lock().unwrap().push((system.to_string(), user.clone()));
+            let answer = if system == VERIFY_SYSTEM {
+                self.verdicts
+                    .iter()
+                    .find(|(quoted, _)| user.contains(quoted))
+                    .and_then(|(_, v)| v.map(str::to_string))
+            } else {
+                self.batches.lock().unwrap().pop_front().flatten()
+            };
+            async move { answer }
+        }
+    }
+
+    fn cand<'a>(prompt: &'a str, prev_reply: &'a str) -> IntentCandidate<'a> {
+        IntentCandidate { prompt, prev_reply }
+    }
+
+    #[tokio::test]
+    async fn stage_two_keeps_confirmed_corrections_and_clears_the_rest() {
+        let items = [
+            cand("Hmm, I meant the other config file", "I edited config/app.toml."),
+            cand("fix the lint errors in the parser", "Tests pass."),
+            cand("always run the tests first", "Done."),
+        ];
+        let model = Scripted::new(
+            vec![Some(r#"["correction","correction","principle"]"#)],
+            vec![("I meant the other config", Some("yes")), ("fix the lint errors", Some("no"))],
+        );
+        let labels = classify_intent(&model, &items).await;
+        assert_eq!(
+            labels,
+            vec![
+                Some(PromptClass::Correction),
+                Some(PromptClass::Neither),
+                Some(PromptClass::Principle)
+            ]
+        );
+        let calls = model.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "one batch + one check per stage-1 correction");
+        assert_eq!(calls[0].0, INTENT_SYSTEM);
+        assert!(calls[1..].iter().all(|(s, _)| s == VERIFY_SYSTEM));
+    }
+
+    #[tokio::test]
+    async fn a_failed_batch_or_check_is_unknown_not_neither() {
+        let items: Vec<IntentCandidate> =
+            (0..11).map(|_| cand("that didn't fix it", "I changed the loop.")).collect();
+        // Batch one (10) answers; batch two (1) gets nothing. Every stage-2 check fails.
+        let model = Scripted::new(
+            vec![
+                Some(
+                    r#"["correction","neither","neither","neither","neither","neither","neither","neither","neither","neither"]"#,
+                ),
+                None,
+            ],
+            vec![("that didn't fix it", None)],
+        );
+        let labels = classify_intent(&model, &items).await;
+        assert_eq!(labels[0], None, "an unanswered check leaves the turn unknown");
+        assert!(labels[1..10].iter().all(|l| *l == Some(PromptClass::Neither)));
+        assert_eq!(labels[10], None, "an unanswered batch leaves its turns unknown");
+    }
+
+    #[test]
+    fn the_intent_message_puts_the_reply_tail_beside_each_message() {
+        let reply = format!("{}END OF REPLY", "x".repeat(700));
+        let prompt = format!("no, the other file\n{}", "y".repeat(400));
+        let msg = intent_message(&[cand(&prompt, &reply), cand("go ahead", "Shall I?")]);
+        assert!(msg.contains("1. [agent just said: …"), "{msg}");
+        assert!(msg.contains("END OF REPLY] DEVELOPER: no, the other file "));
+        assert!(msg.contains("2. [agent just said: …Shall I?] DEVELOPER: go ahead"));
+        assert_eq!(msg.matches('x').count(), 600 - "END OF REPLY".len(), "reply tail is 600 chars");
+        assert_eq!(msg.matches('y').count(), 300 - "no, the other file ".len(), "message is 300");
+    }
+
+    #[test]
+    fn the_verify_message_quotes_the_reply_tail_and_the_message() {
+        let reply = format!("{}tail", "x".repeat(700));
+        let msg = verify_message(&cand("why did you drop the index?", &reply));
+        assert!(msg.contains("AGENT'S REPLY (end): …"));
+        assert!(msg.contains("tail\n\nDEVELOPER'S NEXT MESSAGE: why did you drop the index?"));
+        assert_eq!(msg.matches('x').count(), 596);
+    }
+
+    #[test]
+    fn parse_verify_reads_yes_or_no_after_any_thinking() {
+        assert_eq!(parse_verify("Yes."), Some(true));
+        assert_eq!(parse_verify(" no"), Some(false));
+        assert_eq!(parse_verify("<think>is it? no idea</think>\nyes"), Some(true));
+        assert_eq!(parse_verify("maybe"), None);
+        assert_eq!(parse_verify(""), None);
+    }
+
+    #[test]
+    fn parse_response_skips_a_thinking_block() {
+        let c = "<think>labels like [\"x\"] would be wrong</think>[\"correction\"]";
+        assert_eq!(parse_response(c, 1), Some(vec![PromptClass::Correction]));
+    }
+
+    #[test]
+    fn the_prompts_carry_the_measured_definitions() {
+        assert!(INTENT_SYSTEM.contains("comparing the message with the reply"));
+        assert!(INTENT_SYSTEM.contains("a fix for something the agent did not do"));
+        assert!(VERIFY_SYSTEM.contains("the agent's OWN work"));
+        assert!(VERIFY_SYSTEM.ends_with("Answer with one word: yes or no."));
+    }
 
     #[test]
     fn parse_response_maps_labels_in_order() {
