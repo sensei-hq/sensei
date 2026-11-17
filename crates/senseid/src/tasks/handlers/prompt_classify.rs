@@ -216,6 +216,53 @@ pub async fn classify_intent<M: IntentModel>(
     out
 }
 
+/// The seeded chain the classifier was measured on (qwen3.8, local only).
+pub const INTENT_CHAIN: &str = "intent";
+/// One call's wall-clock cap: a 27B model thinking over ten messages is slow,
+/// but a stalled backend must not wedge the pass.
+const INTENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The gateway request for one call: the `intent` chain, deterministic, and no
+/// fallback — another model would be an unmeasured classifier.
+fn intent_request(
+    _system: &str,
+    _user: String,
+    _max_tokens: u32,
+) -> gateway::types::request::InferenceRequest {
+    unimplemented!()
+}
+
+/// [`IntentModel`] over the daemon's gateway.
+pub struct GatewayIntentModel {
+    pub gateway: std::sync::Arc<Gateway>,
+}
+
+impl IntentModel for GatewayIntentModel {
+    fn chat(
+        &self,
+        system: &str,
+        user: String,
+        max_tokens: u32,
+    ) -> impl std::future::Future<Output = Option<String>> + Send {
+        let gateway = self.gateway.clone();
+        let request = intent_request(system, user, max_tokens);
+        async move {
+            match tokio::time::timeout(INTENT_TIMEOUT, gateway.execute(&request)).await {
+                Ok(Ok(resp)) if resp.success => resp.content.filter(|c| !c.trim().is_empty()),
+                Ok(Ok(_)) => None,
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "intent: the model is unavailable");
+                    None
+                }
+                Err(_) => {
+                    tracing::warn!("intent: the model timed out");
+                    None
+                }
+            }
+        }
+    }
+}
+
 /// The last `n` chars of `s`.
 fn tail(s: &str, n: usize) -> String {
     let len = s.chars().count();
@@ -396,6 +443,22 @@ mod tests {
     fn parse_response_skips_a_thinking_block() {
         let c = "<think>labels like [\"x\"] would be wrong</think>[\"correction\"]";
         assert_eq!(parse_response(c, 1), Some(vec![PromptClass::Correction]));
+    }
+
+    #[test]
+    fn the_request_pins_the_intent_chain_at_temperature_zero_without_fallback() {
+        use gateway::types::request::Payload;
+        let r = intent_request(VERIFY_SYSTEM, "AGENT'S REPLY (end): …".into(), 1024);
+        assert_eq!(r.chain.as_deref(), Some("intent"));
+        assert!(!r.allow_fallback, "another model is an unmeasured classifier");
+        assert!(r.model.is_none() && r.router.is_none(), "the seed picks the model");
+        let Payload::Chat { system, max_tokens, temperature, messages, .. } = r.payload else {
+            panic!("a chat payload");
+        };
+        assert_eq!(system.as_deref(), Some(VERIFY_SYSTEM));
+        assert_eq!(max_tokens, Some(1024));
+        assert_eq!(temperature, Some(0.0), "measured at temperature 0");
+        assert_eq!(messages.len(), 1);
     }
 
     #[test]
