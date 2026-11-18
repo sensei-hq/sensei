@@ -199,7 +199,7 @@ describe('buildTimeline', () => {
         } as unknown as RelayAction,
       ]),
     );
-    expect(rows[0].title).toBe('Answered: target: main, count: 2');
+    expect(rows[0].title).toBe('Answered: count: 2, target: main');
   });
 
   it('a message names its target', () => {

@@ -139,6 +139,12 @@ export class RelayLane {
     return this.#post(`/api/relay/tasks/${taskId}/checkpoint`, body);
   }
 
+  /** Plan a task on the crew's board (coordinator); its id. */
+  async plan(body: { title: string; phase: string; repo_key: string }): Promise<string> {
+    const planned = await this.#post<{ task_id: string }>('/api/relay/tasks/plan', body);
+    return planned.task_id;
+  }
+
   /** Ask the person: buttons (`options`) or a form (`response`, #389), never both. */
   async ask(body: {
     task_id?: string;

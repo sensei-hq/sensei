@@ -106,9 +106,15 @@ describe('answerGist (#389)', () => {
     expect(answerGist({ option: 'db', values: null })).toBe('db');
   });
 
-  it('a form answer reads its values in order, objects as JSON', () => {
+  it('a form answer reads its values by key, objects as JSON', () => {
     expect(answerGist({ option: null, values: { target: 'main', count: 2, ok: true, tags: ['a', 'b'] } })).toBe(
-      'target: main, count: 2, ok: true, tags: ["a","b"]',
+      'count: 2, ok: true, tags: ["a","b"], target: main',
+    );
+  });
+
+  it('the same values read the same whatever order the store kept them in (jsonb reorders keys)', () => {
+    expect(answerGist({ option: null, values: { ship: true, count: 3, target: 'main' } })).toBe(
+      answerGist({ option: null, values: { target: 'main', count: 3, ship: true } }),
     );
   });
 
