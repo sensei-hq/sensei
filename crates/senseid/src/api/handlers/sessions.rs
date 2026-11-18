@@ -1159,4 +1159,180 @@ mod hook_gate_tests {
             assert_eq!(out, plain, "run_id {bad}");
         }
     }
+
+    // ── #312: a gate put to a phone, answered through a mock dōjō ───────────
+
+    /// What the mock dōjō saw and how it answers the gate.
+    #[derive(Clone, Default)]
+    struct Phone {
+        /// The gate's reply; `None` leaves it pending (a timeout).
+        reply: Option<Value>,
+        /// The payloads raised to the inbox.
+        raised: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    }
+
+    /// A mock dōjō: accepts the session publish, acks the raised gate as
+    /// `gate-1`, and answers lookups of it with the phone's reply.
+    async fn mock_dojo(phone: Phone) -> crate::db::pg_store::DojoMembership {
+        use axum::extract::State;
+        use axum::{Json, Router, routing::post};
+        use dojo_protocol::relay::{
+            RelayInboxAck, RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus,
+            RelayMessageDirection,
+        };
+
+        async fn session() -> Json<Value> {
+            Json(json!({ "id": "session-1" }))
+        }
+        async fn raise(State(p): State<Phone>, Json(item): Json<Value>) -> Json<RelayInboxAck> {
+            p.raised.lock().unwrap().push(item["payload"].clone());
+            Json(RelayInboxAck { id: "gate-1".into(), seq: 1 })
+        }
+        async fn lookup(State(p): State<Phone>) -> Json<RelayInboxPull> {
+            let status = if p.reply.is_some() {
+                RelayInboxStatus::Answered
+            } else {
+                RelayInboxStatus::Pending
+            };
+            Json(RelayInboxPull {
+                items: vec![RelayInboxItem {
+                    id: Some("gate-1".into()),
+                    run_id: "run-1".into(),
+                    segment_id: None,
+                    kind: RelayInboxKind::Approval,
+                    direction: RelayMessageDirection::AgentToHuman,
+                    status,
+                    payload: json!({}),
+                    reply: p.reply.clone(),
+                    created_at: None,
+                    answered_at: None,
+                }],
+                cursor: 1,
+            })
+        }
+
+        let app = Router::new()
+            .route("/v1/t/{origin}/{org}/relay/session", post(session))
+            .route("/v1/t/{origin}/{org}/relay/inbox", post(raise).get(lookup))
+            .with_state(phone);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let id = uuid::Uuid::new_v4();
+        crate::dojo::client::test_bearers::set(id, "device-token-gate");
+        crate::db::pg_store::DojoMembership {
+            id,
+            registry_url: format!("http://{addr}"),
+            tenant_key: "github/acme".into(),
+            dojo_url: format!("http://{addr}/github/acme"),
+            kind: "client".into(),
+            org_slugs: vec![],
+            role: "contributor".into(),
+            authenticated_via: "github_oauth".into(),
+            attribution_default: "anonymous".into(),
+            sync_status: "connected".into(),
+            last_seq: 0,
+            last_heartbeat_at: None,
+            enabled: true,
+            persona: None,
+        }
+    }
+
+    /// Put an unattended-or-not `make deploy` gate to the mock phone, recording in
+    /// a fresh run. Returns the gate's answer, the run's gate events in order,
+    /// and the payloads raised to the phone.
+    async fn put_deploy(
+        reply: Option<Value>,
+        unattended: bool,
+    ) -> (Value, Vec<crate::runs::RunEvent>, Vec<Value>) {
+        let (ctx, run_id) = run().await;
+        let phone = Phone { reply, ..Default::default() };
+        let client =
+            crate::dojo::client::DojoClient::for_membership(&mock_dojo(phone.clone()).await);
+        let hard_block = crate::dojo::gate::classify_hard_block(
+            "Bash",
+            &json!({ "command": "make deploy TARGET=arg-marker-312" }),
+        );
+        assert!(hard_block.is_some(), "make deploy is a hard-block");
+        let run = run_id.to_string();
+        let session = uuid::Uuid::new_v4().to_string();
+        let gate = super::GateRecord {
+            state: &ctx.app_state,
+            run_id: Some(&run),
+            session_id: &session,
+            tool: "Bash",
+            hard_block: hard_block.as_ref(),
+            unattended,
+        };
+        let out = gate.put_to_phone(&client, None, std::time::Duration::from_secs(2)).await;
+        let mut events = gate_events(&ctx.app_state, &run_id).await;
+        events.sort_by_key(|e| e.id);
+        let raised = phone.raised.lock().unwrap().clone();
+        (out.0["hookSpecificOutput"].clone(), events, raised)
+    }
+
+    fn kinds(events: &[crate::runs::RunEvent]) -> Vec<crate::runs::RunEventKind> {
+        events.iter().map(|e| e.kind).collect()
+    }
+
+    #[tokio::test]
+    async fn an_approved_gate_allows_and_records_raised_then_passed() {
+        use crate::runs::RunEventKind::{GatePassed, GateRaised};
+        let (out, events, raised) = put_deploy(Some(json!({ "verdict": "approve" })), true).await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, GatePassed], "{events:?}");
+        assert_eq!(events[0].detail["outcome"], "raised", "{}", events[0].detail);
+        assert_eq!(events[1].detail["outcome"], "approved", "{}", events[1].detail);
+        assert_eq!(events[1].detail["category"], "deploy", "{}", events[1].detail);
+        assert_eq!(raised.len(), 1, "one gate raised: {raised:?}");
+        assert_eq!(raised[0]["category"], "deploy", "{}", raised[0]);
+        for e in &events {
+            assert!(!e.detail.to_string().contains("arg-marker-312"), "{}", e.detail);
+        }
+        assert!(!raised[0].to_string().contains("arg-marker-312"), "{}", raised[0]);
+    }
+
+    #[tokio::test]
+    async fn a_declined_gate_denies_and_records_flagged_declined() {
+        use crate::runs::RunEventKind::{Flagged, GateRaised};
+        let (out, events, _) = put_deploy(Some(json!({ "verdict": "deny" })), false).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, Flagged], "{events:?}");
+        assert_eq!(events[1].detail["outcome"], "declined", "{}", events[1].detail);
+        assert!(events[1].detail.get("why").is_none(), "{}", events[1].detail);
+    }
+
+    /// Spec: "Unattended deploy with a garbled reply" — `/hook/gate` denies.
+    #[tokio::test]
+    async fn an_unattended_deploy_with_a_garbled_reply_is_denied() {
+        use crate::runs::RunEventKind::{Flagged, GateRaised};
+        let (out, events, _) = put_deploy(Some(json!({ "text": "sure" })), true).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, Flagged], "{events:?}");
+        assert_eq!(events[1].detail["outcome"], "denied", "{}", events[1].detail);
+        assert_eq!(events[1].detail["why"], crate::dojo::gate::UNCLEAR_REPLY);
+        assert_eq!(events[1].detail["reason"], out["permissionDecisionReason"]);
+    }
+
+    /// Spec: "Interactive deploy with a garbled reply" — `/hook/gate` allows.
+    #[tokio::test]
+    async fn an_interactive_deploy_with_a_garbled_reply_is_allowed() {
+        use crate::runs::RunEventKind::{Flagged, GateRaised};
+        let (out, events, _) = put_deploy(Some(json!({ "text": "sure" })), false).await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, Flagged], "{events:?}");
+        assert_eq!(events[1].detail["outcome"], "allowed", "{}", events[1].detail);
+        assert_eq!(events[1].detail["why"], crate::dojo::gate::UNCLEAR_REPLY);
+    }
+
+    #[tokio::test]
+    async fn an_unattended_deploy_with_no_reply_in_time_is_denied() {
+        use crate::runs::RunEventKind::{Flagged, GateRaised};
+        let (out, events, _) = put_deploy(None, true).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, Flagged], "{events:?}");
+        assert_eq!(events[1].detail["outcome"], "denied", "{}", events[1].detail);
+        assert_eq!(events[1].detail["why"], "gate timed out", "{}", events[1].detail);
+    }
 }
