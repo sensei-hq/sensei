@@ -84,6 +84,13 @@ describe('DecisionRow · a form decision', () => {
     expect(field(c, 'max_retries')!.textContent).toContain('Max retries');
   });
 
+  it('the yes/no field is a native checkbox a keyboard reaches; nothing focusable is hidden from assistive tech', () => {
+    const c = mount(F.formDecision());
+    const box = field(c, 'ship')!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(box.hidden).toBe(false);
+    expect(c.querySelector('[aria-hidden="true"][tabindex]:not([tabindex="-1"])')).toBeNull();
+  });
+
   it('the default seeds its field', () => {
     const c = mount(F.formDecision());
     expect(field(c, 'max_retries')!.querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe('2');

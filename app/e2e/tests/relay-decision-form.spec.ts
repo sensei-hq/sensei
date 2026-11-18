@@ -168,7 +168,11 @@ test.describe('relay decision form (#389)', () => {
     page.evaluate(`JSON.stringify({ mark: window.__formNoReload ?? null, at: location.pathname })`) as Promise<string>;
   /** Pick a value in a field's rokkit Select: open it, press the option by its text. */
   async function pick(page: TauriPageLike, card: string, name: string, label: string): Promise<void> {
-    await page.locator(`${card} [data-decision-field="${name}"] [data-select-trigger]`).click();
+    // Scrolled into view first: the task view's card can sit below the fold, where a pointer
+    // click misses. The Select opens on a real pointer press, not a scripted click.
+    const trigger = `${card} [data-decision-field="${name}"] [data-select-trigger]`;
+    await page.evaluate(`(document.querySelector(${JSON.stringify(trigger)}).scrollIntoView({ block: 'center' }), true)`);
+    await page.locator(trigger).click();
     await expect
       .poll(() =>
         page.evaluate(`(() => {
@@ -229,12 +233,16 @@ test.describe('relay decision form (#389)', () => {
     await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
     expect(await textsOf(tauriPage, `${card} [data-decision-question]`)).toEqual([question]);
     expect(await textsOf(tauriPage, `${card} [data-decision-field]`).then((t) => t.length)).toBe(3);
+    // The fields come in the order the wire's schema lists them (jsonb keeps its own key order).
+    const row = (await person('GET', '/relay/now')).body.decisions.find((d) => d.id === decisionId);
+    const wireOrder = Object.keys((row?.response as { schema: { properties: Record<string, unknown> } }).schema.properties);
+    expect([...wireOrder].sort()).toEqual(['count', 'ship', 'target']);
     const names = JSON.parse(
       (await tauriPage.evaluate(
         `JSON.stringify([...document.querySelectorAll(${JSON.stringify(`${card} [data-decision-field]`)})].map((e) => e.getAttribute('data-decision-field')))`,
       )) as string,
     );
-    expect(names).toEqual(['target', 'count', 'ship']);
+    expect(names).toEqual(wireOrder);
     expect(await countOf(tauriPage, `${card} [data-decision-field="target"] [data-select]`)).toBe(1);
     expect(await countOf(tauriPage, `${card} [data-decision-field="count"] input[type="number"]`)).toBe(1);
     expect(await countOf(tauriPage, `${card} [data-decision-field="ship"] input[type="checkbox"]`)).toBe(1);
