@@ -3,26 +3,26 @@
 Red commit first, then green, per item. Run `cd app && bun run test:unit` after each green: the package has no vitest
 config of its own, and `app/vitest.config.ts` includes `../packages/state/**/*.spec{,.svelte}.ts`.
 
-- [ ] 1.1 Red: `packages/state/source.spec.ts` — `sseEvents` and `realtimeEvents` typed as `StateStream<E>` for a
+- [x] 1.1 Red: `packages/state/source.spec.ts` — `sseEvents` and `realtimeEvents` typed as `StateStream<E>` for a
       non-relay event type (a `{id, n}` test event): every event reaches the handler, every open calls `onOpen`, the
       teardown unsubscribes and destroys the socket.
-- [ ] 1.2 Green: add `packages/state/source.ts` (`StateStream<E>`); make `sseEvents`/`realtimeEvents` generic;
+- [x] 1.2 Green: add `packages/state/source.ts` (`StateStream<E>`); make `sseEvents`/`realtimeEvents` generic;
       `RelayEvents = StateStream<RelayStreamEvent>`; export `StateStream` from `index.ts`.
-- [ ] 1.3 Red: `relay/task-state.spec.svelte.ts` — build `RelayTaskState` from a fake `RelayTaskSource`: `retry`
+- [x] 1.3 Red: `relay/task-state.spec.svelte.ts` — build `RelayTaskState` from a fake `RelayTaskSource`: `retry`
       and `reRead` call `readTask(crew, task)`; `answer` calls `source.answer` with `surface: 'dojo'` when built with
       `{surface: 'dojo'}` and `'desktop'` by default; `connect` subscribes through `source.events`.
-- [ ] 1.4 Green: `RelayTaskSource` type; `RelayTaskState(reads, source, crewId, taskId, options?)`; drop the
+- [x] 1.4 Green: `RelayTaskSource` type; `RelayTaskState(reads, source, crewId, taskId, options?)`; drop the
       `RelayApi` field. Add `relayTaskSseSource(api, stream)` in `sources/sse.ts` with a spec in `sources.spec.ts`.
-- [ ] 1.5 Wire both app task pages (`app/src/routes/(observatory)/relay/[crew]/[task]/+page.svelte`,
+- [x] 1.5 Wire both app task pages (`app/src/routes/(observatory)/relay/[crew]/[task]/+page.svelte`,
       `app/src/routes/(workspace)/workspace/[id]/relay/[crew]/[task]/+page.svelte`) to
       `relayTaskSseSource(relayApi(port), () => relayStream(port, crewId))`; update their page specs (red first if a
       spec asserts the old constructor).
-- [ ] 1.6 Red then green: `event-manager.spec.ts` — a payload that fails to parse is reported to an `onError`
+- [x] 1.6 Red then green: `event-manager.spec.ts` — a payload that fails to parse is reported to an `onError`
       handler (default logs with `console.warn` naming the URL) and the next payload still dispatches.
-- [ ] 1.7 Checks: `cd app && bun run check && bun run test:unit`; `rg -n --no-ignore -g '!node_modules' 'tryGetTask'
+- [x] 1.7 Checks: `cd app && bun run check && bun run test:unit`; `rg -n --no-ignore -g '!node_modules' 'tryGetTask'
       packages app/src` shows only the client, the SSE task source, the two task-page loaders (`+page.ts`, which
       read the first view and stay as they are), fixtures and specs.
-- [ ] 1.8 Tauri e2e (follow the shared CONTEXT preflight: `pgrep -f "instance e2e"` empty first): `make test-app-e2e`,
+- [x] 1.8 Tauri e2e (follow the shared CONTEXT preflight: `pgrep -f "instance e2e"` empty first): `make test-app-e2e`,
       or after the bundle is built (`make app-e2e-build`) `cd app && bunx playwright test --config
       e2e/playwright.config.ts --project=tauri relay-run relay-timeline relay.spec`. The run journey's task-page steps land with no
       reload. Confirm `brew services start sensei` restored the real daemon afterwards.
