@@ -11,7 +11,8 @@ import { Pill, StatCard } from '@rokkit/ui';
 import type { PreviewEntry, PreviewView } from '$lib/preview/catalogue.js';
 import { toAgentGroups, toPastRuns, toRunCard, toRunGroups, type NowRowOptions } from '@sensei/state';
 import * as RF from '$lib/test-stubs/relay-fixtures.js';
-import { decision, floatingReview, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
+import { decision, floatingReview, formDecision, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
+import type { RelayDecisionResponse } from '@sensei/state';
 import PastRunsList from './PastRunsList.svelte';
 import RelayRunScreen from './RelayRunScreen.svelte';
 import { toRelayShell, type RelayShellInput, type RelayStatFilter } from './relay-shell.js';
@@ -64,6 +65,22 @@ const entry = (
   props: PreviewEntry['props'],
   frame?: PreviewEntry['frame'],
 ): PreviewEntry => ({ id, note, component, props, frame });
+
+/** A form decision with every field kind the subset draws (#389): text with a pattern,
+ *  pick-one, a bounded number, an integer, yes/no. */
+const FORM_RESPONSE: RelayDecisionResponse = {
+  schema: {
+    type: 'object',
+    properties: {
+      target: { type: 'string', enum: ['develop', 'main'], title: 'Target branch' },
+      path: { type: 'string', pattern: '^/', maxLength: 200, description: 'An absolute path.' },
+      budget: { type: 'number', minimum: 0.5, maximum: 8 },
+      retries: { type: 'integer', minimum: 0, maximum: 5, default: 2 },
+      ship: { type: 'boolean', description: 'Ship it now?' },
+    },
+    required: ['target', 'path'],
+  },
+};
 
 /** The preview never answers a decision or adds to a backlog: a fixture's
  *  callbacks resolve to "no refusal" so the component can be exercised. */
@@ -231,6 +248,32 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
   entry('DecisionRow/two-options', 'a decision with the recommended option marked', DecisionRow, {
     decision: decision(),
     href: '/relay/crew/task',
+    onanswer: accepted,
+  }),
+
+  entry('DecisionRow/form', 'a form decision: text, pick-one, bounded number, integer, yes/no; the layout built from the schema', DecisionRow, {
+    decision: formDecision({ response: FORM_RESPONSE }),
+    href: '/relay/crew/task',
+    onanswer: accepted,
+  }),
+
+  entry('DecisionRow/form-layout', "a form decision with the lane's own layout: labels, help, a placeholder, its order", DecisionRow, {
+    decision: formDecision({
+      response: {
+        ...FORM_RESPONSE,
+        layout: {
+          type: 'vertical',
+          elements: [
+            { scope: '#/target', label: 'Ship to', description: 'The branch the merge lands on.' },
+            { scope: '#/path', label: 'Log folder', props: { placeholder: '/var/log/sensei' } },
+            { scope: '#/budget', label: 'Budget (hours)' },
+            { scope: '#/retries', label: 'Retries' },
+            { scope: '#/ship', label: 'Ship it now' },
+          ],
+        },
+      },
+    }),
+    href: null,
     onanswer: accepted,
   }),
 

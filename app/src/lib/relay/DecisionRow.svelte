@@ -1,11 +1,13 @@
 <script lang="ts">
   // One open decision, as the mockup's card (COMPONENTS §3b DecisionCard; CONTRACT
   // §1c-1, §3e): the question, what it blocks with a link to that task, its options
-  // with this decision's own recommendation marked, and Answer. One write per press;
-  // a refusal says why and leaves the card where it was.
+  // with this decision's own recommendation marked, and Answer. A form decision (#389)
+  // draws its fields in place of the options; Answer checks them inline first. One write
+  // per press; a refusal says why and leaves the card, and what was entered, where it was.
   import { untrack } from 'svelte';
   import { Notice } from '@sensei/ui';
-  import type { RelayDecision } from '$lib/relay-api.js';
+  import type { RelayDecision, RelayDecisionChoice } from '$lib/relay-api.js';
+  import DecisionForm from './DecisionForm.svelte';
 
   let {
     decision,
@@ -15,19 +17,31 @@
     decision: RelayDecision;
     /** The task the question blocks, when it names one. */
     href: string | null;
-    onanswer: (option: string) => Promise<string | null>;
+    onanswer: (choice: RelayDecisionChoice) => Promise<string | null>;
   } = $props();
 
   // The card's own choice, seeded once from the decision it was drawn for.
   let chosen = $state(untrack(() => decision.recommended ?? decision.options[0]?.id ?? ''));
   let busy = $state(false);
   let error = $state<string | null>(null);
+  let form = $state<DecisionForm | null>(null);
+
+  /** The answer this press sends: the form's values once they pass, else the chosen option. */
+  function choice(): RelayDecisionChoice | null {
+    if (decision.response) {
+      const values = form?.collect() ?? null;
+      return values ? { values } : null;
+    }
+    return chosen ? { option: chosen } : null;
+  }
 
   async function send(): Promise<void> {
-    if (busy || !chosen) return;
+    if (busy) return;
+    const answer = choice();
+    if (!answer) return;
     busy = true;
     error = null;
-    const refused = await onanswer(chosen);
+    const refused = await onanswer(answer);
     if (refused) error = refused;
     busy = false;
   }
@@ -42,6 +56,9 @@
     {#if decision.context}{decision.context}{/if}
     {#if href}<a class="text-accent no-underline hover:underline" {href}>Open the task ›</a>{/if}
   </span>
+  {#if decision.response}
+    <DecisionForm bind:this={form} response={decision.response} disabled={busy} />
+  {/if}
   <div class="flex flex-wrap items-center gap-1.5">
     {#each decision.options as option (option.id)}
       {@const recommended = decision.recommended === option.id}
@@ -70,7 +87,7 @@
     <button
       type="button"
       data-decision-answer
-      disabled={busy || !chosen}
+      disabled={busy || (!decision.response && !chosen)}
       onclick={() => void send()}
       class="min-h-[34px] px-3.5 rounded-lg border-0 bg-ink text-paper text-sm cursor-pointer disabled:opacity-60"
     >Answer</button>

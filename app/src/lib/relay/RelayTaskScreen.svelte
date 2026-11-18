@@ -90,7 +90,7 @@
           <DecisionRow
             decision={view.decision}
             href={null}
-            onanswer={(option) => state.answer(view.decision!, { option })}
+            onanswer={(choice) => state.answer(view.decision!, choice)}
           />
         {/if}
 
