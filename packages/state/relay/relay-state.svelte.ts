@@ -13,6 +13,7 @@
 // leaves the screen as it was (D83).
 
 import { failureReason, type ApiError, type ApiResult } from '../result.js';
+import type { StateStream } from '../source.js';
 import type { RelayWaitRowView } from './now-selectors.js';
 import type {
   RelayAddToBacklog,
@@ -63,12 +64,11 @@ export interface RelaySource {
   cancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
   /** Subscribe to the stream: every event, and every open — the first and each
    *  reconnect (a broadcast has no replay). Returns the teardown. */
-  events(on: (event: RelayStreamEvent) => void, onOpen: () => void): () => void;
+  events: RelayEvents;
 }
 
-/** A source's stream: subscribe with a handler for every event and one for every open;
- *  returns the teardown. The task state listens through the same shape (#414). */
-export type RelayEvents = RelaySource['events'];
+/** The relay stream: the package's StateStream (#414) carrying relay events. */
+export type RelayEvents = StateStream<RelayStreamEvent>;
 
 /** What a loader hands the page: the two reads, or why each could not be read. */
 export interface RelayReads {
