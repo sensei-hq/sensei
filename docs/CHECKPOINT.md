@@ -1,7 +1,7 @@
 # Checkpoint — 2026-11-19 (relay open items — #389 slice 1, the wire)
 
 **Slice:** `add-relay-decision-response-form` slice A (#389): ask with a response schema, answer with
-values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR to develop.
+values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR #500 to develop.
 
 **Done (tasks A1–A6, red then green each):**
 - `relay/decision_schema.rs`: `validate_response` (the closed subset, refused by keyword and property)
@@ -24,7 +24,7 @@ values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR to develop.
 
 **Remaining:** slice B (the form on the Relay screen, live) and slice R (rokkit issue + widen).
 
-**Next command:** `gh pr checks <PR>` for lane/relay-389-s1; then slice B from tasks.md B1.1.
+**Next command:** `gh pr checks 500` (lane/relay-389-s1); then slice B from tasks.md B1.1.
 
 **Open questions:** none blocking.
 
