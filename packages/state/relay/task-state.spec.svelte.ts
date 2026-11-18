@@ -1,23 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
-import { RelayTaskState } from './task-state.svelte.js';
+import { RelayTaskState, type RelayTaskSource } from './task-state.svelte.js';
 import * as F from './fixtures.js';
-import type { RelayApi } from './client.js';
 import type { RelayEvents } from './relay-state.svelte.js';
 import type { RelayStreamEvent, RelayTaskStep, RelayTaskView } from './types.js';
 
-/** The relay client, its every call a spy (the app's fakeRelayApi; a package cannot share it). */
-const fakeApi = () =>
-  ({
-    tryGetNow: vi.fn(async () => F.ok(F.now())),
-    tryGetQueue: vi.fn(async () => F.ok(F.queue())),
-    tryGetTask: vi.fn(async () => F.ok(F.taskView())),
-    trySendMessage: vi.fn(async () => F.ok({ message_id: 'msg-1' })),
-    tryAnswerDecision: vi.fn(async () => F.ok({ action_id: 'act-answer' })),
-    tryAddToBacklog: vi.fn(async () => F.ok({ item_id: 'item-new' })),
-    tryAddTriage: vi.fn(async () => F.ok({ item_id: 'item-added' })),
-    tryCreateRun: vi.fn(async () => F.ok({ run_id: F.RUN_ID, planning_task_id: 't-plan', crew_id: F.CREW_ID, status: 'planning' as const })),
-  }) as unknown as { [K in keyof RelayApi]: ReturnType<typeof vi.fn> & RelayApi[K] };
+/** A task source (#414), its reads and answers spies; the stream is the test's to give. */
+const fakeSource = (events: RelayEvents = () => () => {}) => ({
+  readTask: vi.fn(async (_crewId: string, _taskId: string) => F.ok(F.taskView())),
+  answer: vi.fn(async (_body: Parameters<RelayTaskSource['answer']>[0]) => F.ok({ action_id: 'act-answer' })),
+  events,
+});
 
 // F8: the stream feeds the state through apply-style updaters — steps land
 // directly, task notifications re-read. Anything for another task is ignored.
@@ -52,7 +45,7 @@ const fakeStream = () => {
 const noEvents: RelayEvents = () => () => {};
 
 const stateFor = (view: RelayTaskView | null = F.taskView()): RelayTaskState =>
-  new RelayTaskState({ view, error: null }, fakeApi(), 'crew-1', 'task-1', noEvents);
+  new RelayTaskState({ view, error: null }, fakeSource(noEvents), 'crew-1', 'task-1');
 
 describe('RelayTaskState stream updaters', () => {
   it('applyStep appends a new step in place', () => {
@@ -81,14 +74,14 @@ describe('RelayTaskState stream updaters', () => {
   });
 
   it('applyTaskChanged re-reads its own task only', async () => {
-    const api = fakeApi();
+    const source = fakeSource(noEvents);
     const fresh = F.taskView();
-    api.tryGetTask.mockResolvedValue({ ok: true, data: fresh });
-    const s = new RelayTaskState({ view: F.taskView(), error: null }, api, 'crew-1', 'task-1', noEvents);
+    source.readTask.mockResolvedValue({ ok: true, data: fresh });
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1');
     await s.applyTaskChanged('task-9');
-    expect(api.tryGetTask).not.toHaveBeenCalled();
+    expect(source.readTask).not.toHaveBeenCalled();
     await s.applyTaskChanged('task-1');
-    expect(api.tryGetTask).toHaveBeenCalledWith('crew-1', 'task-1');
+    expect(source.readTask).toHaveBeenCalledWith('crew-1', 'task-1');
     // ($state proxies the read — compare by value, not identity.)
     expect(s.view?.task.id).toBe(fresh.task.id);
     expect(s.view?.steps).toEqual(fresh.steps);
@@ -99,12 +92,12 @@ describe('RelayTaskState stream updaters', () => {
 // connect(), and the surface (daemon SSE, dōjō realtime) is the source's alone.
 describe('RelayTaskState.connect', () => {
   const connected = () => {
-    const api = fakeApi();
     const { stream, events } = fakeStream();
-    const s = new RelayTaskState({ view: F.taskView(), error: null }, api, 'crew-1', 'task-1', events);
+    const source = fakeSource(events);
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1');
     const stop = s.connect();
-    const reads = () => api.tryGetTask.mock.calls.length;
-    return { api, s, stream, stop, reads };
+    const reads = () => source.readTask.mock.calls.length;
+    return { source, s, stream, stop, reads };
   };
   const settle = () => new Promise((r) => setTimeout(r, 0));
 
@@ -162,5 +155,54 @@ describe('RelayTaskState.connect', () => {
     await settle();
     expect(reads()).toBe(at);
     expect(s.view!.steps).toHaveLength(0);
+  });
+});
+
+// The task view reads and answers through its source (#414, design D2): nothing in it
+// is the daemon's, and an answer says which surface gave it.
+describe('RelayTaskState over a RelayTaskSource', () => {
+  const decision = () => F.decision();
+
+  it('retry and reRead read the task through the source', async () => {
+    const source = fakeSource();
+    const s = new RelayTaskState({ view: null, error: { status: 502, message: 'down' } }, source, 'crew-1', 'task-1');
+    await s.retry();
+    expect(source.readTask).toHaveBeenCalledWith('crew-1', 'task-1');
+    expect(s.error).toBeNull();
+    expect(s.view?.task.id).toBe(F.taskView().task.id);
+    await s.reRead();
+    expect(source.readTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers as the desktop by default, then re-reads through the source', async () => {
+    const source = fakeSource();
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1');
+    expect(await s.answer(decision(), 'db')).toBeNull();
+    expect(source.answer).toHaveBeenCalledWith({ decision_id: decision().id, option: 'db', note: null, surface: 'desktop' });
+    expect(source.readTask).toHaveBeenCalledWith('crew-1', 'task-1');
+  });
+
+  it('answers as the dōjō when built for it', async () => {
+    const source = fakeSource();
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1', { surface: 'dojo' });
+    expect(s.surface).toBe('dojo');
+    await s.answer(decision(), 'db');
+    expect(source.answer).toHaveBeenCalledWith(expect.objectContaining({ surface: 'dojo' }));
+    expect(source.readTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('a refused answer is its reason, and nothing is re-read', async () => {
+    const source = fakeSource();
+    source.answer.mockResolvedValue(F.fail(409, 'already answered'));
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1');
+    expect(await s.answer(decision(), 'db')).toBeTruthy();
+    expect(source.readTask).not.toHaveBeenCalled();
+  });
+
+  it('connect subscribes through source.events', () => {
+    const events = vi.fn(() => () => {});
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, fakeSource(events), 'crew-1', 'task-1');
+    s.connect();
+    expect(events).toHaveBeenCalledTimes(1);
   });
 });

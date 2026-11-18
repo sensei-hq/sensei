@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { RelayApi } from '../client.js';
 import type { RelayStreamEvent } from '../types.js';
 import * as F from '../fixtures.js';
-import { relaySseSource, type RelayEventStream } from './sse.js';
+import { relaySseSource, relayTaskSseSource, type RelayEventStream } from './sse.js';
 import { relayRealtimeSource, cannedRealtime, type RelayRealtimeTransport } from './realtime.js';
 
 function fakeApi(): RelayApi & Record<string, ReturnType<typeof vi.fn>> {
@@ -81,6 +81,36 @@ describe('relaySseSource — the daemon', () => {
     expect(stream.destroyed).toBe(true);
     stream.fire(lane());
     expect(on).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('relayTaskSseSource — the daemon, for one task view (#414)', () => {
+  it('reads the task and answers through the relay client', async () => {
+    const api = fakeApi();
+    const source = relayTaskSseSource(api, () => fakeStream());
+    const read = await source.readTask(F.CREW_ID, 't-1');
+    expect(read.ok).toBe(true);
+    expect(api.tryGetTask).toHaveBeenCalledWith(F.CREW_ID, 't-1');
+    const answer = { decision_id: 'd', option: 'db', note: null, surface: 'desktop' as const };
+    await source.answer(answer);
+    expect(api.tryAnswerDecision).toHaveBeenCalledWith(answer);
+  });
+
+  it('streams through a fresh socket: every event, every open, and the teardown closes it', () => {
+    const stream = fakeStream();
+    const make = vi.fn(() => stream);
+    const source = relayTaskSseSource(fakeApi(), make);
+    expect(make).not.toHaveBeenCalled();
+    const on = vi.fn();
+    const opened = vi.fn();
+    const stop = source.events(on, opened);
+    expect(make).toHaveBeenCalledTimes(1);
+    stream.open();
+    stream.fire(lane());
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(on).toHaveBeenCalledWith(lane());
+    stop();
+    expect(stream.destroyed).toBe(true);
   });
 });
 
