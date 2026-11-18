@@ -3,19 +3,19 @@
   // with the back link to the main Relay.
   import { appState } from '$lib/appstate.svelte.js';
   import { relayApi, relayStream } from '$lib/relay-api.js';
-  import { RelayTaskState, sseEvents } from '@sensei/state';
+  import { RelayTaskState, relayTaskSseSource } from '@sensei/state';
   import { crewTail } from '$lib/relay/relay-format.js';
   import RelayTaskScreen from '$lib/relay/RelayTaskScreen.svelte';
 
   let { data } = $props();
 
   const state = $derived.by(
-    () => new RelayTaskState(
+    () =>
+      new RelayTaskState(
         data,
-        relayApi(appState.port),
+        relayTaskSseSource(relayApi(appState.port), () => relayStream(appState.port, data.crewId)),
         data.crewId,
         data.taskId,
-        sseEvents(() => relayStream(appState.port, data.crewId)),
       ),
   );
 

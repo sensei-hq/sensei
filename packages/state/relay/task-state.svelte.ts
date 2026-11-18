@@ -3,22 +3,34 @@
 // A task is read by (crew, task): another crew's task, or another user's, is a
 // 404 and the screen says "not found" — nothing broke, and Retry would ask the
 // same question again. Everything else that fails is a fault with a Retry.
-import { failureReason, type ApiError } from '../result.js';
-import type { RelayApi } from './client.js';
+import { failureReason, type ApiError, type ApiResult } from '../result.js';
 import type { RelayEvents } from './relay-state.svelte.js';
-import type { RelayDecision, RelayStreamEvent, RelayTaskStep, RelayTaskView } from './types.js';
+import type { RelayAnswer, RelayDecision, RelayStreamEvent, RelayTaskStep, RelayTaskView } from './types.js';
 
 export interface TaskReads {
   view: RelayTaskView | null;
   error: ApiError | null;
 }
 
+/** Where one task view reads, answers and listens (#414): the daemon on the desktop
+ *  (`relayTaskSseSource`), Supabase on the dōjō. */
+export interface RelayTaskSource {
+  readTask(crewId: string, taskId: string): Promise<ApiResult<RelayTaskView>>;
+  answer(body: RelayAnswer): Promise<ApiResult<{ action_id: string }>>;
+  /** The crew's stream (#418): the daemon's socket, or the realtime channel. */
+  events: RelayEvents;
+}
+
+export interface RelayTaskStateOptions {
+  /** Who answers a decision: the desktop (the default), or the dōjō. */
+  surface?: 'desktop' | 'dojo';
+}
+
 export class RelayTaskState {
-  readonly api: RelayApi;
+  readonly source: RelayTaskSource;
   readonly crewId: string;
   readonly taskId: string;
-  /** The crew's stream (#418): the daemon's socket on the desktop, the realtime channel on the dōjō. */
-  readonly events: RelayEvents;
+  readonly surface: 'desktop' | 'dojo';
 
   view = $state<RelayTaskView | null>(null);
   error = $state<ApiError | null>(null);
@@ -26,9 +38,15 @@ export class RelayTaskState {
 
   #inFlight: Promise<void> | null = null;
 
-  constructor(reads: TaskReads, api: RelayApi, crewId: string, taskId: string, events: RelayEvents) {
-    this.api = api;
-    this.events = events;
+  constructor(
+    reads: TaskReads,
+    source: RelayTaskSource,
+    crewId: string,
+    taskId: string,
+    options: RelayTaskStateOptions = {},
+  ) {
+    this.source = source;
+    this.surface = options.surface ?? 'desktop';
     this.crewId = crewId;
     this.taskId = taskId;
     this.view = reads.view;
@@ -50,13 +68,7 @@ export class RelayTaskState {
     this.reading = true;
     this.#inFlight = (async () => {
       try {
-        const answer = await this.api.tryGetTask(this.crewId, this.taskId);
-        if (answer.ok) {
-          this.view = answer.data;
-          this.error = null;
-        } else {
-          this.error = answer.error;
-        }
+        await this.reRead();
       } finally {
         this.reading = false;
         this.#inFlight = null;
@@ -67,11 +79,11 @@ export class RelayTaskState {
 
   /** Answer the task's open decision: its reason when refused, else null. */
   async answer(decision: RelayDecision, option: string): Promise<string | null> {
-    const answer = await this.api.tryAnswerDecision({
+    const answer = await this.source.answer({
       decision_id: decision.id,
       option,
       note: null,
-      surface: 'desktop',
+      surface: this.surface,
     });
     if (!answer.ok) return failureReason(answer.error);
     await this.reRead();
@@ -84,7 +96,7 @@ export class RelayTaskState {
    *  reads the task: the loader's read predates the first, and a broadcast replays
    *  nothing missed while the stream was down. */
   connect(): () => void {
-    return this.events(
+    return this.source.events(
       (event) => this.apply(event),
       () => void this.reRead(),
     );
@@ -119,7 +131,7 @@ export class RelayTaskState {
   /** Read the task again after a write. A failed re-read is a fault, not a no-op:
    *  the view it would have replaced is stale (D83, N8). */
   async reRead(): Promise<void> {
-    const answer = await this.api.tryGetTask(this.crewId, this.taskId);
+    const answer = await this.source.readTask(this.crewId, this.taskId);
     if (answer.ok) {
       this.view = answer.data;
       this.error = null;

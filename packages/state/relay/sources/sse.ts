@@ -5,6 +5,7 @@
 
 import type { RelayApi } from '../client.js';
 import type { RelaySource } from '../relay-state.svelte.js';
+import type { RelayTaskSource } from '../task-state.svelte.js';
 import type { RelayStreamEvent } from '../types.js';
 import { sseEvents, type EventStream } from '../../source.js';
 
@@ -24,6 +25,16 @@ export function relaySseSource(api: RelayApi, stream: () => RelayEventStream): R
     readRuns: () => api.tryGetRuns(),
     startRun: (runId, crewId) => api.tryStartRun(runId, crewId),
     cancelRun: (runId) => api.tryCancelRun(runId),
+    events: sseEvents(stream),
+  };
+}
+
+/** A RelayTaskSource over the daemon (#414): one task's read and answer through `api`,
+ *  its crew's stream through a fresh socket per subscription. */
+export function relayTaskSseSource(api: RelayApi, stream: () => RelayEventStream): RelayTaskSource {
+  return {
+    readTask: (crewId, taskId) => api.tryGetTask(crewId, taskId),
+    answer: (body) => api.tryAnswerDecision(body),
     events: sseEvents(stream),
   };
 }

@@ -35,7 +35,7 @@ export {
   type RelayRunRow,
   type RelayTaskRow,
 } from './relay/entity-states.svelte.js';
-export { relaySseSource, type RelayEventStream } from './relay/sources/sse.js';
+export { relaySseSource, relayTaskSseSource, type RelayEventStream } from './relay/sources/sse.js';
 export {
   relayRealtimeSource,
   cannedRealtime,
@@ -51,7 +51,12 @@ export {
   minutesSince,
   type RelayStats,
 } from './relay/relay-selectors.js';
-export { RelayTaskState, type TaskReads } from './relay/task-state.svelte.js';
+export {
+  RelayTaskState,
+  type RelayTaskSource,
+  type RelayTaskStateOptions,
+  type TaskReads,
+} from './relay/task-state.svelte.js';
 export {
   nameOf,
   nameOfCode,
