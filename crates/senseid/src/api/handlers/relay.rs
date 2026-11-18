@@ -1512,6 +1512,7 @@ pub(crate) async fn ask(
                     .map(|o| RelayDecisionOption { id: o.id, label: o.label, detail: o.detail })
                     .collect(),
                 recommended: body.recommended,
+                response: None,
                 blocks,
                 asked_of,
             },
@@ -1544,7 +1545,7 @@ pub(crate) async fn lane_answer(
             session.user_id,
             RelayCaller::Lane { lane_id: caller },
             decision_id,
-            RelayAnswerInput { option: body.option, note: body.note },
+            RelayAnswerInput { option: Some(body.option), values: None, note: body.note },
         )
         .await
         .map_err(err)?;
@@ -1848,7 +1849,7 @@ pub(crate) async fn person_answer(
             user_id,
             RelayCaller::Person { surface },
             decision_id,
-            RelayAnswerInput { option: body.option, note: body.note },
+            RelayAnswerInput { option: Some(body.option), values: None, note: body.note },
         )
         .await
         .map_err(err)?;

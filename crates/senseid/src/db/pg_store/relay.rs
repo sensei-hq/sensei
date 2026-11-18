@@ -644,8 +644,12 @@ pub struct RelayAskInput {
     pub task_id: Option<Uuid>,
     pub question: String,
     pub context: Option<String>,
+    /// Buttons: empty when the decision is a form (#389 D2).
     pub options: Vec<RelayDecisionOption>,
     pub recommended: Option<String>,
+    /// A form: `{schema, layout?}`, the closed subset `relay::decision_schema`
+    /// checks (#389 D1). `None` for an options decision.
+    pub response: Option<serde_json::Value>,
     pub blocks: Vec<Uuid>,
     pub asked_of: RelayAskedOf,
 }
@@ -669,7 +673,10 @@ pub struct RelayAnswerOutput {
 /// daemon stamps the caller). Only the asked-of party answers.
 #[derive(Debug, Clone)]
 pub struct RelayAnswerInput {
-    pub option: String,
+    /// The pick, for an options decision.
+    pub option: Option<String>,
+    /// The values, keyed by property name, for a form decision (#389 D3).
+    pub values: Option<serde_json::Value>,
     pub note: Option<String>,
 }
 
@@ -5265,16 +5272,14 @@ impl PgStore {
             .get("options")
             .and_then(|v| v.as_array())
             .ok_or_else(|| RelayError::Internal("ask has no options".into()))?;
-        if !options
-            .iter()
-            .any(|o| o.get("id").and_then(|v| v.as_str()) == Some(input.option.as_str()))
-        {
-            return Err(RelayError::Validation(format!("unknown option {}", input.option)));
+        let option = input.option.clone().unwrap_or_default();
+        if !options.iter().any(|o| o.get("id").and_then(|v| v.as_str()) == Some(option.as_str())) {
+            return Err(RelayError::Validation(format!("unknown option {option}")));
         }
         if let Some(note) = &input.note {
             check_summary(note, "note")?;
         }
-        let answer_props = serde_json::json!({"option": input.option, "surface": word(surface)});
+        let answer_props = serde_json::json!({"option": option, "surface": word(surface)});
         validate_props(RelayActionKind::Answered, &answer_props)
             .map_err(|e| RelayError::Validation(e.message))?;
         let ask_blocks: Vec<Uuid> = props
@@ -5336,7 +5341,7 @@ impl PgStore {
             // The gate's ask (2.8): `skip_gate` cancels the broker task and
             // leaves the gated task approved for a manual merge; `retry`
             // resumes it to the pool like any other answer.
-            if executor == "broker" && input.option == GATE_SKIP_OPTION {
+            if executor == "broker" && input.option.as_deref() == Some(GATE_SKIP_OPTION) {
                 let cancelled = transition(RelayTaskState::Blocked, TaskEvent::Cancelled)
                     .map_err(|_| RelayError::Internal("blocked task cannot cancel".into()))?;
                 sqlx_core::query::query(
@@ -6262,7 +6267,7 @@ impl PgStore {
             Uuid,
             Option<Uuid>,
             Option<Uuid>,
-            String,
+            Option<String>,
             Option<String>,
             DateTime<Utc>,
         )> = sqlx_core::query_as::query_as(
@@ -6298,6 +6303,7 @@ impl PgStore {
                 decision_id: decision_id.to_string(),
                 task_id: task_id.map(|id| id.to_string()),
                 option,
+                values: None,
                 note,
                 from_lane_code,
                 created_at: iso(created_at),
@@ -11043,6 +11049,7 @@ mod tests {
                 detail: None,
             }],
             recommended: Some("db".into()),
+            response: None,
             blocks,
             asked_of: RelayAskedOf::Person,
         }
@@ -11098,7 +11105,7 @@ mod tests {
         let w = v7(0x94);
         fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
         let ask = pg.relay_ask_decision(u1(), a1, ask_input(vec![w])).await.unwrap();
-        let answer = RelayAnswerInput { option: "db".into(), note: None };
+        let answer = RelayAnswerInput { option: Some("db".into()), values: None, note: None };
         let action = pg
             .relay_answer_decision(
                 u1(),
@@ -11134,7 +11141,7 @@ mod tests {
         let mut lane_ask = ask_input(vec![w]);
         lane_ask.asked_of = RelayAskedOf::Lane(a2);
         let ask = pg.relay_ask_decision(u1(), a1, lane_ask).await.unwrap();
-        let answer = || RelayAnswerInput { option: "db".into(), note: None };
+        let answer = || RelayAnswerInput { option: Some("db".into()), values: None, note: None };
         let err = pg
             .relay_answer_decision(
                 u1(),
@@ -11165,6 +11172,210 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, RelayError::Conflict(_)), "{err:?}");
+    }
+
+    // ── #389: form decisions ──
+
+    fn form_response() -> serde_json::Value {
+        json!({"schema": {"type": "object", "properties": {
+            "path": {"type": "string", "pattern": "^src/", "title": "Path"},
+            "count": {"type": "integer", "minimum": 1, "maximum": 5}
+        }, "required": ["path"]}})
+    }
+
+    fn form_ask(blocks: Vec<Uuid>) -> RelayAskInput {
+        RelayAskInput {
+            options: vec![],
+            recommended: None,
+            response: Some(form_response()),
+            ..ask_input(blocks)
+        }
+    }
+
+    fn values_answer(values: serde_json::Value) -> RelayAnswerInput {
+        RelayAnswerInput { option: None, values: Some(values), note: None }
+    }
+
+    async fn answered_count(pg: &PgStore) -> i64 {
+        sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where kind = 'answered'",
+        )
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn ask_with_a_response_stores_it_and_no_options() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let w = v7(0x96);
+        fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
+        let out = pg.relay_ask_decision(u1(), a1, form_ask(vec![w])).await.unwrap();
+        let props: serde_json::Value =
+            sqlx_core::query_scalar::query_scalar("select props from relay.actions where id = $1")
+                .bind(out.decision_id)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(props["response"], form_response());
+        assert!(props.get("options").is_none(), "a form carries no options: {props}");
+        assert_eq!(task_state(&pg, w).await, "blocked");
+    }
+
+    #[tokio::test]
+    async fn ask_out_of_the_subset_is_refused_and_writes_nothing() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let w = v7(0x97);
+        fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
+        let mut ask = form_ask(vec![w]);
+        ask.response = Some(json!({"schema": {"type": "object", "properties": {
+            "files": {"type": "array", "items": {"enum": ["a", "b"]}}}}}));
+        let err = pg.relay_ask_decision(u1(), a1, ask).await.unwrap_err();
+        match err {
+            RelayError::Validation(m) => assert!(m.contains("files") && m.contains("array"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        // Options and response together: refused the same way.
+        let mut both = form_ask(vec![w]);
+        both.options = ask_input(vec![]).options;
+        let err = pg.relay_ask_decision(u1(), a1, both).await.unwrap_err();
+        assert!(matches!(err, RelayError::Validation(_)), "{err:?}");
+        assert_eq!(task_state(&pg, w).await, "working");
+        assert_eq!(count(&pg, "actions").await, 0);
+    }
+
+    #[tokio::test]
+    async fn answer_with_values_stores_them_and_resumes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let w = v7(0x98);
+        fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
+        let ask = pg.relay_ask_decision(u1(), a1, form_ask(vec![w])).await.unwrap();
+        let values = json!({"path": "src/relay", "count": 2});
+        let action = pg
+            .relay_answer_decision(
+                u1(),
+                RelayCaller::Person { surface: RelaySurface::Desktop },
+                ask.decision_id,
+                values_answer(values.clone()),
+            )
+            .await
+            .unwrap();
+        let props: serde_json::Value =
+            sqlx_core::query_scalar::query_scalar("select props from relay.actions where id = $1")
+                .bind(action.action_id)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(props, json!({"values": values, "surface": "desktop"}));
+        assert_eq!(task_state(&pg, w).await, "working");
+    }
+
+    #[tokio::test]
+    async fn answer_must_fit_the_decision_and_its_schema() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let w = v7(0x9a);
+        fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
+        let form = pg.relay_ask_decision(u1(), a1, form_ask(vec![w])).await.unwrap();
+        let pick = pg.relay_ask_decision(u1(), a1, ask_input(vec![])).await.unwrap();
+        let person = || RelayCaller::Person { surface: RelaySurface::Desktop };
+        let refused = |r: Result<RelayAnswerOutput, RelayError>, needle: &str| match r {
+            Err(RelayError::Validation(m)) => assert!(m.contains(needle), "`{m}` lacks `{needle}`"),
+            other => panic!("{other:?}"),
+        };
+        let option = RelayAnswerInput { option: Some("db".into()), values: None, note: None };
+        refused(pg.relay_answer_decision(u1(), person(), form.decision_id, option).await, "values");
+        refused(
+            pg.relay_answer_decision(
+                u1(),
+                person(),
+                pick.decision_id,
+                values_answer(json!({"a": 1})),
+            )
+            .await,
+            "option",
+        );
+        for (values, needle) in [
+            (json!({"count": 2}), "values.path is required"),
+            (json!({"path": "lib/x"}), "values.path"),
+            (json!({"path": "src/x", "count": 9}), "values.count"),
+            (json!({"path": "src/x", "bogus": true}), "values.bogus"),
+        ] {
+            refused(
+                pg.relay_answer_decision(u1(), person(), form.decision_id, values_answer(values))
+                    .await,
+                needle,
+            );
+        }
+        assert_eq!(answered_count(&pg).await, 0, "a refused answer records nothing");
+        assert_eq!(task_state(&pg, w).await, "blocked", "the decision stays open");
+    }
+
+    #[tokio::test]
+    async fn form_decision_reads_carry_response_and_values() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let w = v7(0x9b);
+        fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
+        let mut ask = form_ask(vec![w]);
+        ask.task_id = Some(w);
+        let decision = pg.relay_ask_decision(u1(), a2, ask).await.unwrap();
+        // Needs you, the stream's row, and the task view all carry the response.
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        let d = now["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == decision.decision_id.to_string())
+            .cloned()
+            .unwrap_or_else(|| panic!("not on Now: {now}"));
+        assert_eq!(d["response"], form_response());
+        assert_eq!(d["options"], json!([]));
+        let row = pg.relay_decision_row(decision.decision_id).await.unwrap().unwrap();
+        assert_eq!(row["response"], form_response());
+        let view = pg.relay_task_view(u1(), c1, w).await.unwrap();
+        assert_eq!(view["decision"]["response"], form_response());
+        assert_eq!(view["decision"]["options"], json!([]));
+        // Answered: the asking lane's envelope reads the values, option null.
+        let values = json!({"path": "src/x"});
+        pg.relay_answer_decision(
+            u1(),
+            RelayCaller::Person { surface: RelaySurface::Desktop },
+            decision.decision_id,
+            values_answer(values.clone()),
+        )
+        .await
+        .unwrap();
+        let env = pg.relay_envelope(u1(), a2).await.unwrap();
+        assert_eq!(env.answers.len(), 1);
+        assert_eq!(env.answers[0].option, None);
+        assert_eq!(env.answers[0].values, Some(values));
+    }
+
+    #[test]
+    fn history_carries_response_and_values() {
+        let asked = history_props(
+            "asked",
+            &json!({"response": form_response(), "blocks": [], "asked_of": "person"}),
+        );
+        assert_eq!(asked["response"], form_response());
+        assert_eq!(asked["options"], json!([]));
+        let options = history_props(
+            "asked",
+            &json!({"options": [{"id": "db", "label": "Db"}], "blocks": [], "asked_of": "person"}),
+        );
+        assert_eq!(options.get("response"), Some(&serde_json::Value::Null));
+        let answered =
+            history_props("answered", &json!({"values": {"path": "src/"}, "surface": "desktop"}));
+        assert_eq!(
+            answered,
+            json!({"option": null, "values": {"path": "src/"}, "surface": "desktop"})
+        );
+        let picked = history_props("answered", &json!({"option": "db", "surface": "desktop"}));
+        assert_eq!(picked, json!({"option": "db", "values": null, "surface": "desktop"}));
     }
 
     // ── send_message ──
@@ -11536,14 +11747,15 @@ mod tests {
             u1(),
             RelayCaller::Person { surface: RelaySurface::Desktop },
             decision.decision_id,
-            RelayAnswerInput { option: "db".into(), note: Some("go".into()) },
+            RelayAnswerInput { option: Some("db".into()), values: None, note: Some("go".into()) },
         )
         .await
         .unwrap();
         let env = pg.relay_envelope(u1(), a2).await.unwrap();
         assert_eq!(env.answers.len(), 1);
         assert_eq!(env.answers[0].decision_id, decision.decision_id.to_string());
-        assert_eq!(env.answers[0].option, "db");
+        assert_eq!(env.answers[0].option.as_deref(), Some("db"));
+        assert_eq!(env.answers[0].values, None);
         assert_eq!(env.answers[0].task_id.as_deref(), Some(&*w.to_string()));
     }
 
@@ -12309,7 +12521,8 @@ mod tests {
         }
         // retry: the gate task is ready again and handed over on the next pass.
         pg.relay_gate_outcome(g, &error, t0()).await.unwrap();
-        let answer = RelayAnswerInput { option: GATE_RETRY_OPTION.into(), note: None };
+        let answer =
+            RelayAnswerInput { option: Some(GATE_RETRY_OPTION.into()), values: None, note: None };
         pg.relay_answer_decision(u1(), person.clone(), decision(&pg, g).await, answer)
             .await
             .unwrap();
@@ -12319,7 +12532,8 @@ mod tests {
         // skip_gate: the gate task is cancelled; the task stays approved for
         // a manual merge.
         pg.relay_gate_outcome(g, &error, t0()).await.unwrap();
-        let answer = RelayAnswerInput { option: GATE_SKIP_OPTION.into(), note: None };
+        let answer =
+            RelayAnswerInput { option: Some(GATE_SKIP_OPTION.into()), values: None, note: None };
         pg.relay_answer_decision(u1(), person, decision(&pg, g).await, answer).await.unwrap();
         assert_eq!(task_state(&pg, g).await, "cancelled");
         assert_eq!(task_state(&pg, t).await, "approved");
@@ -12599,6 +12813,7 @@ mod tests {
         assert_eq!(d["context"], "T waits on this.");
         assert_eq!(d["options"][0]["id"], "db");
         assert_eq!(d["recommended"], "db");
+        assert_eq!(d.get("response"), Some(&serde_json::Value::Null), "an options decision (#389)");
         // …manual triage counts, the merged task completes today…
         assert_eq!(now["triage"], json!([{"provider": "manual", "sprint": null, "count": 1}]));
         let done = &now["completed_today"][0];
