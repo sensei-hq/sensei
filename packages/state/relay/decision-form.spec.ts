@@ -3,7 +3,7 @@
 // the data starts from each `default`. The answer keeps what was filled and drops the
 // optional fields left empty, so absent stays absent (D83).
 import { describe, it, expect } from 'vitest';
-import { toAnswerValues, toDecisionForm } from './decision-form.js';
+import { patternMisses, toAnswerValues, toDecisionForm, toPatternRegExp, withoutPatterns } from './decision-form.js';
 import type { RelayDecisionResponse } from './types.js';
 import * as F from './fixtures.js';
 
@@ -80,5 +80,57 @@ describe('toAnswerValues', () => {
   it('sends only the schema properties', () => {
     const r = response();
     expect(toAnswerValues(r.schema, { target: 'main', stray: 1 })).toEqual({ target: 'main' });
+  });
+});
+
+// The daemon checks a pattern with Rust `regex`, which reads text as Unicode; the inline check
+// reads it the same way so it never refuses a value the daemon would take.
+describe('toPatternRegExp', () => {
+  it('reads text by code point, as the daemon does', () => {
+    expect(toPatternRegExp('^.$')!.test('😀')).toBe(true);
+    expect(toPatternRegExp('^[^/]{2}$')!.test('a😀')).toBe(true);
+    expect(toPatternRegExp('^\\p{Lu}')!.test('Élan')).toBe(true);
+    expect(toPatternRegExp('^\\p{Lu}')!.test('élan')).toBe(false);
+  });
+
+  it('lets . match a carriage return but not a newline, as Rust does', () => {
+    expect(toPatternRegExp('^a.b$')!.test('a\rb')).toBe(true);
+    expect(toPatternRegExp('^a.b$')!.test('a b')).toBe(true);
+    expect(toPatternRegExp('^a.b$')!.test('a\nb')).toBe(false);
+    // An escaped dot and a dot in a class stay literal.
+    expect(toPatternRegExp('^a\\.b$')!.test('axb')).toBe(false);
+    expect(toPatternRegExp('^[.]$')!.test('x')).toBe(false);
+  });
+
+  it('is unanchored, as JSON Schema says', () => {
+    expect(toPatternRegExp('src/')!.test('a/src/b')).toBe(true);
+  });
+
+  it('is null when the browser cannot compile it, so the daemon decides', () => {
+    expect(toPatternRegExp('\\#')).toBeNull();
+  });
+});
+
+describe('patternMisses / withoutPatterns', () => {
+  const schema = {
+    type: 'object' as const,
+    properties: {
+      path: { type: 'string' as const, pattern: '^/' },
+      name: { type: 'string' as const, pattern: '^\\p{L}+$' },
+      odd: { type: 'string' as const, pattern: '\\#' },
+      free: { type: 'string' as const },
+    },
+  };
+
+  it('names each filled field whose text misses its pattern; empty fields and uncompiled patterns are left to others', () => {
+    expect(patternMisses(schema, { path: 'rel', name: 'José', odd: 'x', free: 'y' })).toEqual(['path']);
+    expect(patternMisses(schema, { path: '', name: 'a1' })).toEqual(['name']);
+  });
+
+  it('drops every pattern and nothing else', () => {
+    const stripped = withoutPatterns(schema);
+    expect(stripped.properties.path).toEqual({ type: 'string' });
+    expect(stripped.properties.free).toEqual({ type: 'string' });
+    expect(schema.properties.path.pattern).toBe('^/');
   });
 });

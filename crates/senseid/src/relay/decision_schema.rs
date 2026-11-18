@@ -509,6 +509,57 @@ mod tests {
     }
 
     #[test]
+    fn refuses_patterns_the_browser_reads_differently() {
+        // Each compiles in Rust `regex` but means something else (or nothing) to the
+        // browser's RegExp, so the inline check would refuse a value the daemon takes.
+        for pattern in [
+            r"^\w+$",       // Unicode \w here, ASCII there
+            r"\d",          // Unicode digits here
+            r"\s",          // a different whitespace set
+            r"\bx",         // a Unicode word boundary here
+            r"\Asrc/",      // \A is no anchor there
+            r"src\z",       // nor \z
+            r"\pL",         // Rust's one-letter class shorthand
+            r"\p{Greek}",   // a script name the browser does not take bare
+            r"[[:digit:]]", // POSIX class
+            r"[a-z&&[^x]]", // class intersection
+            r"[a-z--x]",    // class difference
+            r"[]a]",        // a leading ] is literal here, an empty class there
+            r"a{,3}",       // an open lower bound
+            r"\x41",        // hex escapes
+            r"\#",          // an escape the browser refuses
+            r"a]",          // a stray ]
+            r"\-",          // \- outside a class
+            r"\1",          // a back-reference
+        ] {
+            refused(
+                &with_prop("s", json!({"type": "string", "pattern": pattern})),
+                &["s", "pattern"],
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_patterns_both_engines_read_alike() {
+        for pattern in [
+            r"^src/",
+            r"^[0-9a-f]{7,40}$",
+            r"^\p{L}+$",
+            r"^[\p{Lu}][\p{Ll} ]*$",
+            r"^v\.[0-9]+(\.[0-9]+)?$",
+            r"^\/x|^\(y\)$",
+            r"^[a\-z]+$",
+            r"^[^/]+$",
+            r"^.{1,3}$",
+            r"\t|\n",
+            r"^a{2}b{1,}c*?$",
+        ] {
+            let r = with_prop("s", json!({"type": "string", "pattern": pattern}));
+            assert_eq!(validate_response(&r), Ok(()), "{pattern}");
+        }
+    }
+
+    #[test]
     fn refuses_a_default_that_breaks_its_own_rules() {
         refused(
             &with_prop("n", json!({"type": "integer", "minimum": 1, "default": 0})),

@@ -136,6 +136,54 @@ describe('DecisionRow · a form decision', () => {
     expect(field(c, 'path')!.querySelector('[data-message]')?.textContent).toContain('format is invalid');
   });
 
+  // The daemon reads a pattern with Rust `regex` (Unicode); a plain `new RegExp` reads these
+  // differently and would refuse a value the daemon takes, so nothing could be posted.
+  it.each([
+    ['^\\p{Lu}', 'Élan'],
+    ['^.$', '😀'],
+    ['^[^/]{2}$', 'a😀'],
+  ])('a value the daemon would take under pattern %s is sent', async (pattern, text) => {
+    const onanswer = vi.fn(async () => null);
+    const decision = F.formDecision({
+      response: { schema: { type: 'object', properties: { name: { type: 'string', pattern } }, required: ['name'] } },
+    });
+    const c = mount(decision, onanswer);
+    const input = field(c, 'name')!.querySelector<HTMLInputElement>('input')!;
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(field(c, 'name')!.querySelector('[data-message]')).toBeNull();
+    expect(onanswer).toHaveBeenCalledWith({ values: { name: text } });
+  });
+
+  it('a pattern miss shown inline clears once the value is fixed', async () => {
+    const onanswer = vi.fn(async () => null);
+    const decision = F.formDecision({
+      response: { schema: { type: 'object', properties: { path: { type: 'string', pattern: '^/' } }, required: ['path'] } },
+    });
+    const c = mount(decision, onanswer);
+    const input = field(c, 'path')!.querySelector<HTMLInputElement>('input')!;
+    const type = (value: string) => {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    type('rel');
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(field(c, 'path')!.querySelector('[data-message]')?.textContent).toContain('format is invalid');
+    type('/abs');
+    await settle();
+    expect(field(c, 'path')!.querySelector('[data-message]')).toBeNull();
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).toHaveBeenCalledWith({ values: { path: '/abs' } });
+  });
+
   it('Answer sends the values once; a second press while it is in flight sends nothing', async () => {
     let release: (v: string | null) => void = () => {};
     const onanswer = vi.fn(() => new Promise<string | null>((r) => (release = r)));
