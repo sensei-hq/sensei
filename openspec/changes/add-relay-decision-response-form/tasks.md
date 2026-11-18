@@ -3,7 +3,7 @@
 Red commit first for every numbered group; green in the next commit.
 
 ### A1. The subset checker and props (red first)
-- [ ] A1.1 Red: `crates/senseid/src/relay/decision_schema.rs` unit tests for `validate_response` — accepts a
+- [x] A1.1 Red: `crates/senseid/src/relay/decision_schema.rs` unit tests for `validate_response` — accepts a
   three-property schema (string+enum, integer with minimum/maximum, boolean) with and without a layout;
   refuses, each naming the keyword and property: no properties, >12 properties, a bad property name, `required`
   naming an unknown property, `type: "array"` (pick-several), `items`, `format` (e.g. `"textarea"`), a nested
@@ -11,60 +11,60 @@ Red commit first for every numbered group; green in the next commit.
   `minimum > maximum`, a non-finite bound, a pattern that does not compile, a pattern containing `(?`, a
   `default` that breaks its own rules; and in the layout: a scope naming no property, a property twice,
   `renderer`, `override`, `readonly`, `options`, `min`/`max`, any other key
-- [ ] A1.2 Red: `validate_values(response, values)` unit tests — unknown key; required absent / null / `""`; wrong
+- [x] A1.2 Red: `validate_values(response, values)` unit tests — unknown key; required absent / null / `""`; wrong
   type per type (`integer` given 2.5, `number` given `"3"`, `boolean` given `"true"`); enum miss; below
   `minimum` / above `maximum`; over `maxLength`; over 600 with no `maxLength`; `pattern` miss (and an unanchored
   match passes); leak-guard hit (kinds only); an absent optional stays absent (no default filled)
-- [ ] A1.3 Red: `relay/mod.rs` unit tests — `validate_props(Asked)` accepts `response` and refuses
+- [x] A1.3 Red: `relay/mod.rs` unit tests — `validate_props(Asked)` accepts `response` and refuses
   options+response, neither, empty `options` alone, and an out-of-subset `response` (delegates to A1.1);
   `validate_props(Answered)` accepts `values` without `option`
-- [ ] A1.4 Green: `decision_schema.rs` (pure, `serde_json::Value` + the `regex` crate already in
+- [x] A1.4 Green: `decision_schema.rs` (pure, `serde_json::Value` + the `regex` crate already in
   `crates/senseid/Cargo.toml:62`; no new dependency), wired from `validate_props` (Asked at
   `relay/mod.rs:584`, Answered at `:605`)
 
 ### A2. Store (red first; `--test-threads=1`, `make test-template` after the view edit)
-- [ ] A2.1 Red: `pg_store/relay.rs` tests — ask with `response` stores `props.response`; ask with an
+- [x] A2.1 Red: `pg_store/relay.rs` tests — ask with `response` stores `props.response`; ask with an
   out-of-subset `response` (an `array` property) → Validation and no action or block written; answer with
   `values` stores `props.values` and resumes blocks; answer with `option` on a form decision → Validation; answer with
   `values` on an option decision → Validation; invalid values → Validation, nothing written
-- [ ] A2.2 Green: `RelayAskInput.response: Option<RelayDecisionResponse>`, `RelayAnswerInput` becomes
+- [x] A2.2 Green: `RelayAskInput.response: Option<RelayDecisionResponse>`, `RelayAnswerInput` becomes
   `option: Option<String>, values: Option<Value>`; ask (`:5031`), answer (`:5200`, replace the option check at
   `:5269-5277` with: option decision → option check; form decision → `validate_values` against the stored
   `asked.props.response`, before the write)
 
 ### A3. Reads (red first)
-- [ ] A3.1 Red: pgTAP in `database/tests/relay/relay_now.sql` — `open_asked` payload carries `response` (null for an
+- [x] A3.1 Red: pgTAP in `database/tests/relay/relay_now.sql` — `open_asked` payload carries `response` (null for an
   option decision)
-- [ ] A3.2 Green: `database/ddl/view/relay/now.ddl:82-88` adds `'response', a.props->'response'`
-- [ ] A3.3 Red: store tests — `now_decision_json` (`:1338`) row, the `relay_task_view` open decision
+- [x] A3.2 Green: `database/ddl/view/relay/now.ddl:82-88` adds `'response', a.props->'response'`
+- [x] A3.3 Red: store tests — `now_decision_json` (`:1338`) row, the `relay_task_view` open decision
   (`:7893-7945`, shaped separately), task history (`:1240-1259`) and the lane envelope answers (`:6259-6304`)
   carry `response` / `values`; the envelope still reads (no decode error) after a form answer, with
   `EnvelopeAnswer.option` null
-- [ ] A3.4 Green: shape them; the envelope query decodes `props->>'option'` as `Option<String>` and selects
+- [x] A3.4 Green: shape them; the envelope query decodes `props->>'option'` as `Option<String>` and selects
   `props->'values'`; `EnvelopeAnswer` (`relay/envelope.rs:44`) gains `values`, `option` becomes `Option`
 
 ### A4. HTTP + MCP (red first)
-- [ ] A4.1 Red: handler tests in `api/handlers/relay.rs` — ask with `response` round-trips on `GET /relay/now`;
+- [x] A4.1 Red: handler tests in `api/handlers/relay.rs` — ask with `response` round-trips on `GET /relay/now`;
   ask with `type: "array"` → 422 naming the property;
   the #418 stream `add` row equals the Now row incl. `response`; `POST /relay/answers` with `values` → 200 and the
   `remove` event; bad values → 422 naming the field
-- [ ] A4.2 Green: `AskBody` gains `response`; `LaneAnswerBody` / `PersonAnswerBody` gain `values`, `option` optional
-- [ ] A4.3 Red: `crates/mcp/src/lib.rs` tests — `relay_ask_decision` forwards `response`; `relay_answer_decision`
+- [x] A4.2 Green: `AskBody` gains `response`; `LaneAnswerBody` / `PersonAnswerBody` gain `values`, `option` optional
+- [x] A4.3 Red: `crates/mcp/src/lib.rs` tests — `relay_ask_decision` forwards `response`; `relay_answer_decision`
   forwards `values`; the `missing_required` pin (`:4200-4208`) drops `options` (ask) and `option` (answer): the
   daemon enforces one-of
-- [ ] A4.4 Green: forwarding at `:616-638`, tool schemas at `:1647-1672` (`options`/`option` move to optional,
+- [x] A4.4 Green: forwarding at `:616-638`, tool schemas at `:1647-1672` (`options`/`option` move to optional,
   `response`/`values` added as optional)
 
 ### A5. State types (red first)
-- [ ] A5.1 Red: `packages/state/relay` specs — `RelayDecision.response` (`{schema, layout?}`), `RelayAnswer` union; `RelayState.answer` /
+- [x] A5.1 Red: `packages/state/relay` specs — `RelayDecision.response` (`{schema, layout?}`), `RelayAnswer` union; `RelayState.answer` /
   `RelayTaskState.answer` send `{option}` or `{values}`; `relaySseSource`, `relayTaskSseSource`,
   `relayRealtimeSource` and `relayRealtimeTaskSource` pass the body through (`sources.spec.ts`)
-- [ ] A5.2 Green: `types.ts:216-235,640-648`, `relay-state.svelte.ts:444`, `task-state.svelte.ts` answer (posts via
+- [x] A5.2 Green: `types.ts:216-235,640-648`, `relay-state.svelte.ts:444`, `task-state.svelte.ts` answer (posts via
   its `RelayTaskSource.answer`, the seam #414 adds; this change lands after #414); DecisionRow callers keep passing
   `{option}`
 
 ### A6. Docs + proof
-- [ ] A6.1 `lanes-data.md` props table (`asked.response`, `answered.values`) and `lanes.md` decisions paragraph,
+- [x] A6.1 `lanes-data.md` props table (`asked.response`, `answered.values`) and `lanes.md` decisions paragraph,
   including the subset (what is accepted, what is refused and why); the MCP `relay_ask_decision` description
   states the subset in one line
 - [ ] A6.2 e2e `app/e2e/tests/relay-decision-form.spec.ts` test "the broker round-trips a form decision": a lane asks
