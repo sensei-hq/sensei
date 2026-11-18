@@ -35,6 +35,9 @@ export class RelayTaskState {
   view = $state<RelayTaskView | null>(null);
   error = $state<ApiError | null>(null);
   reading = $state(false);
+  /** Why the live stream is down, so the view may be stale (D83); null while it is up.
+   *  The stream's next open clears it. */
+  streamFault = $state<string | null>(null);
 
   #inFlight: Promise<void> | null = null;
 
@@ -98,7 +101,13 @@ export class RelayTaskState {
   connect(): () => void {
     return this.source.events(
       (event) => this.apply(event),
-      () => void this.reRead(),
+      () => {
+        this.streamFault = null;
+        void this.reRead();
+      },
+      (reason) => {
+        this.streamFault = reason;
+      },
     );
   }
 

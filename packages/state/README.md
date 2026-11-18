@@ -20,11 +20,15 @@ own code.
 A state never fetches. It is built with a source, and the page builds the source.
 
 - A source has the reads and writes the state needs, and `events`, a `StateStream<E>`.
-- `StateStream<E>` is `(on, onOpen) => teardown`. `on` gets every event. `onOpen` runs on every open: the first,
-  and each reconnect. A broadcast has no replay, so the state re-reads on each open.
+- `StateStream<E>` is `(on, onOpen, onFault?) => teardown`. `on` gets every event. `onOpen` runs on every open: the
+  first, and each reconnect. A broadcast has no replay, so the state re-reads on each open. `onFault` gets the reason
+  the stream went down (a realtime `CHANNEL_ERROR`, `TIMED_OUT` or `CLOSED`, with the supabase-js error). The relay
+  states hold it as `streamFault` until the next open; a screen shows it, since stale data is a fault (D83).
 - The desktop builds sources over the daemon: `relaySseSource`, `relayTaskSseSource`.
 - The dōjō builds them over Supabase realtime: `relayRealtimeSource`, `relayRealtimeTaskSource`, on a transport
-  whose `subscribe` is `realtimeChannel(client, {topic, schema, tables})`. `fromPostgresChange` maps a
+  whose `subscribe` is `realtimeChannel(client, {topic, schema, tables})`. Each subscription opens its own
+  channel (`<topic>:<n>`): supabase-js reuses the channel it holds for a topic, and a listener added after
+  `subscribe()` throws. `fromPostgresChange` maps a
   `postgres_changes` payload to the daemon's event, so the state cannot tell the two apart. The client is any
   object with the supabase-js `channel` / `on` / `subscribe` / `removeChannel` shape.
 

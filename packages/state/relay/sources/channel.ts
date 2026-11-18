@@ -48,7 +48,10 @@ let opened = 0;
 export function realtimeChannel(client: RealtimeClientLike, spec: RealtimeChannelSpec) {
   const tables = spec.tables ?? RELAY_TABLES;
   return {
-    subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: ChannelStatus) => void): () => void {
+    subscribe(
+      on: (event: RelayStreamEvent) => void,
+      onStatus: (status: ChannelStatus, err?: Error) => void,
+    ): () => void {
       let open = true;
       opened += 1;
       let channel = client.channel(`${spec.topic}:${opened}`);
@@ -62,8 +65,13 @@ export function realtimeChannel(client: RealtimeClientLike, spec: RealtimeChanne
       }
       channel = channel.subscribe((status, err) => {
         if (!open) return;
-        if (STATUSES.includes(status)) onStatus(status as ChannelStatus);
-        else console.warn('relay realtime: unknown channel status', status, spec.topic, err);
+        if (!STATUSES.includes(status)) {
+          console.warn('relay realtime: unknown channel status', status, spec.topic, err);
+          return;
+        }
+        // The channel is down: say so, with what supabase-js said (RLS, JWT, publication).
+        if (status !== 'SUBSCRIBED') console.warn('relay realtime: channel', status, spec.topic, err);
+        onStatus(status as ChannelStatus, err);
       });
       return () => {
         if (!open) return;

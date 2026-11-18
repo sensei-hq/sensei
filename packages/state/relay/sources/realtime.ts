@@ -42,8 +42,12 @@ export interface RelayRealtimeTransport {
   readRuns(): Promise<ApiResult<RelayRunList>>;
   startRun(runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>>;
   cancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
-  /** Subscribe to the channel: each change as a StateEvent, and each status change. Returns the teardown. */
-  subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: RelayChannelStatus) => void): () => void;
+  /** Subscribe to the channel: each change as a StateEvent, and each status change with
+   *  the error supabase-js gave, if any. Returns the teardown. */
+  subscribe(
+    on: (event: RelayStreamEvent) => void,
+    onStatus: (status: RelayChannelStatus, err?: Error) => void,
+  ): () => void;
 }
 
 /** A RelaySource over the dōjō's transport. Each SUBSCRIBED — the first, and again after a drop — is an open. */
@@ -88,7 +92,7 @@ export type CannedWrite =
 /** A transport for specs and the bench: canned reads, recorded writes, and a channel the test drives. */
 export function cannedRealtime(reads: { now: RelayNow | null; queue: RelayQueue | null; task?: RelayTaskView | null }) {
   let handler: ((event: RelayStreamEvent) => void) | null = null;
-  let statusHandler: ((status: RelayChannelStatus) => void) | null = null;
+  let statusHandler: ((status: RelayChannelStatus, err?: Error) => void) | null = null;
   const writes: CannedWrite[] = [];
   const unread = { ok: false as const, error: { status: 503, message: 'not synced from the desktop yet' } };
   const ok = <T>(data: T): ApiResult<T> => ({ ok: true, data });
@@ -115,7 +119,7 @@ export function cannedRealtime(reads: { now: RelayNow | null; queue: RelayQueue 
       writes.push({ kind: 'cancel', runId });
       return { ok: false, error: { status: 501, message: 'the canned transport cancels no runs' } };
     },
-    subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: RelayChannelStatus) => void) {
+    subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: RelayChannelStatus, err?: Error) => void) {
       handler = on;
       statusHandler = onStatus;
       return () => {
@@ -127,9 +131,9 @@ export function cannedRealtime(reads: { now: RelayNow | null; queue: RelayQueue 
     emit(event: RelayStreamEvent) {
       handler?.(event);
     },
-    /** Report a channel status, as the channel would. */
-    status(status: RelayChannelStatus) {
-      statusHandler?.(status);
+    /** Report a channel status, and its error, as the channel would. */
+    status(status: RelayChannelStatus, err?: Error) {
+      statusHandler?.(status, err);
     },
   } satisfies RelayRealtimeTransport & Record<string, unknown>;
 }
