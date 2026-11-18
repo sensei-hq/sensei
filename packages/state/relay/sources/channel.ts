@@ -23,7 +23,7 @@ export interface RealtimeClientLike {
 }
 
 export interface RealtimeChannelSpec {
-  /** The channel's topic. */
+  /** The channel's topic; each subscription opens it under its own suffix. */
   topic: string;
   /** The schema the relay tables live in. */
   schema: string;
@@ -33,15 +33,25 @@ export interface RealtimeChannelSpec {
 
 const STATUSES: readonly string[] = ['SUBSCRIBED', 'TIMED_OUT', 'CLOSED', 'CHANNEL_ERROR'] satisfies ChannelStatus[];
 
+/** Subscriptions opened by this module; the suffix that keeps their topics apart. */
+let opened = 0;
+
 /** A transport's `subscribe`: one channel per subscription, a listener per table, each
  *  change mapped to the daemon's event and each status passed on. The teardown removes
- *  the channel; nothing reaches the handlers after it. */
+ *  the channel; nothing reaches the handlers after it.
+ *
+ *  Each subscription gets its own topic (`<topic>:<n>`). supabase-js hands back the
+ *  channel it already holds for a topic, and adding a listener to a subscribed channel
+ *  throws, so two views on one client and crew, or a re-subscribe while the last
+ *  removal is in flight, would otherwise break. postgres_changes filter by schema and
+ *  table, not by topic, so the suffix changes nothing the server sends. */
 export function realtimeChannel(client: RealtimeClientLike, spec: RealtimeChannelSpec) {
   const tables = spec.tables ?? RELAY_TABLES;
   return {
     subscribe(on: (event: RelayStreamEvent) => void, onStatus: (status: ChannelStatus) => void): () => void {
       let open = true;
-      let channel = client.channel(spec.topic);
+      opened += 1;
+      let channel = client.channel(`${spec.topic}:${opened}`);
       for (const table of Object.keys(tables)) {
         channel = channel.on('postgres_changes', { event: '*', schema: spec.schema, table }, (payload) => {
           if (!open) return;
