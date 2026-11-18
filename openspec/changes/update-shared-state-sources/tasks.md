@@ -54,7 +54,7 @@ config of its own, and `app/vitest.config.ts` includes `../packages/state/**/*.s
 - [x] 2.9 Write `packages/state/README.md`: what the package holds, the source contract, the migration order and the
       per-screen checklist (design D5).
 - [x] 2.10 `openspec validate update-shared-state-sources --strict`.
-- [ ] 2.11 On merge to develop: comment the order + checklist on #414; file one issue each for scan, health and
+- [x] 2.11 On merge to develop: comment the order + checklist on #414; file one issue each for scan, health and
       wizard moving to the package (checklist in the body); comment on #427 that step 4 uses `relayRealtimeSource`,
       `relayRealtimeTaskSource` and `realtimeChannel`; close #414 with `Closes #414` in the final commit and a comment
       linking #427 step 4 for the dōjō screen half.

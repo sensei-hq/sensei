@@ -13,10 +13,12 @@ host. Branch `lane/relay-414-s2` (worktree `lanes/relay-open`), PR to develop.
   over the realtime sources and type-checks a real `SupabaseClient` against the structural client.
 - `packages/state/README.md`: source contract, migration order, per-screen checklist.
 
-**Remaining:** 2.11 issue comments, follow-up
-issues (scan, health, wizard), #427 note; #414 closes when the PR merges.
+**Done (2.11):** order + checklist on #414; follow-ups scan #496, health #497, wizard #498; #427
+step-4 note posted. PR #499 to develop carries `Closes #414`.
 
-**Next command:** `gh pr view lane/relay-414-s2` — review and merge the PR into develop (closes #414).
+**Remaining:** merge PR #499 (closes #414).
+
+**Next command:** `gh pr checks 499` — merge #499 into develop when green.
 
 **Open questions:** none blocking. The dōjō task view moves by re-reading on a `tasks` change (steps
 have no relay table yet); #427's publisher decides whether steps get one.
