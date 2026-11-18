@@ -24,6 +24,7 @@ import type {
   RelayCreatedRun,
   RelayCrew,
   RelayDecision,
+  RelayDecisionChoice,
   RelayFacets,
   RelayNowRunTask,
   RelayFilter,
@@ -454,8 +455,8 @@ export class RelayState {
   // ── The person's writes ──
 
   /** Answer a decision: the reason it was refused, or null when it was taken. Its event confirms it. */
-  async answer(decision: RelayDecision, option: string): Promise<string | null> {
-    const answer = await this.source.answer({ decision_id: decision.id, option, note: null, surface: this.surface });
+  async answer(decision: RelayDecision, choice: RelayDecisionChoice): Promise<string | null> {
+    const answer = await this.source.answer({ decision_id: decision.id, ...choice, note: null, surface: this.surface });
     return answer.ok ? null : failureReason(answer.error);
   }
 

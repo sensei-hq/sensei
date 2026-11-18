@@ -140,6 +140,7 @@ export function decision(over: Partial<RelayDecision> = {}): RelayDecision {
       { id: 'file', label: 'In a file per workspace', detail: null },
     ],
     recommended: 'db',
+    response: null,
     asked_at: minutesAgo(5),
     ...over,
   };
