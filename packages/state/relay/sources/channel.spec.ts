@@ -4,33 +4,48 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { RelayStreamEvent } from '../types.js';
 import type { PostgresChangePayload } from './postgres-change.js';
-import { realtimeChannel, type RealtimeClientLike } from './channel.js';
+import { realtimeChannel, type RealtimeChannelLike, type RealtimeClientLike } from './channel.js';
 
 type Listener = { filter: { event: string; schema: string; table: string }; cb: (p: PostgresChangePayload) => void };
 
-/** A supabase-js-shaped client: records each channel, its listeners and its status callback. */
+/** A supabase-js-shaped client that behaves as realtime-js 2.x does: `channel(topic)`
+ *  hands back the open channel for a topic it already holds (`RealtimeClient.channel`),
+ *  a listener added after `subscribe()` throws (`RealtimeChannel.on`), and removing a
+ *  channel lets the topic open afresh. */
 function fakeClient() {
   const channels: Array<{
     topic: string;
     listeners: Listener[];
     status: ((s: string, err?: Error) => void) | null;
+    subscribed: boolean;
+    handle?: unknown;
   }> = [];
   const removed: unknown[] = [];
   const client = {
     channel(topic: string) {
-      const record = { topic, listeners: [] as Listener[], status: null as ((s: string, err?: Error) => void) | null };
+      const open = channels.find((c) => c.topic === topic && !removed.includes(c.handle));
+      if (open) return open.handle as RealtimeChannelLike;
+      const record = {
+        topic,
+        listeners: [] as Listener[],
+        status: null as ((s: string, err?: Error) => void) | null,
+        subscribed: false,
+        handle: undefined as unknown,
+      };
       channels.push(record);
-      const channel = {
+      const channel: RealtimeChannelLike = {
         on(_type: 'postgres_changes', filter: Listener['filter'], cb: Listener['cb']) {
+          if (record.subscribed) throw new Error(`cannot add \`postgres_changes\` callbacks for realtime:${topic} after \`subscribe()\`.`);
           record.listeners.push({ filter, cb });
           return channel;
         },
         subscribe(cb?: (s: string, err?: Error) => void) {
+          record.subscribed = true;
           record.status = cb ?? null;
           return channel;
         },
       };
-      (record as Record<string, unknown>).handle = channel;
+      record.handle = channel;
       return channel;
     },
     removeChannel: vi.fn(async (channel: unknown) => {
@@ -58,18 +73,43 @@ const spec = { topic: 'relay:crew-1', schema: 'relay' };
 afterEach(() => vi.restoreAllMocks());
 
 describe('realtimeChannel — a transport subscribe over a supabase-shaped client', () => {
-  it('opens one channel per subscribe, with one postgres_changes listener per relay table', () => {
+  it('opens its own channel per subscribe, with one postgres_changes listener per relay table', () => {
     const f = fakeClient();
     const ch = realtimeChannel(f.client, spec);
     expect(f.channels).toHaveLength(0);
     ch.subscribe(vi.fn(), vi.fn());
     expect(f.channels).toHaveLength(1);
-    expect(f.channels[0].topic).toBe('relay:crew-1');
+    expect(f.channels[0].topic.startsWith('relay:crew-1')).toBe(true);
     expect(f.channels[0].listeners.map((l) => l.filter)).toEqual(
       ['lanes', 'tasks', 'runs', 'items', 'decisions', 'messages'].map((table) => ({ event: '*', schema: 'relay', table })),
     );
     ch.subscribe(vi.fn(), vi.fn());
     expect(f.channels).toHaveLength(2);
+    expect(f.channels[1].topic).not.toBe(f.channels[0].topic);
+  });
+
+  it('a second subscriber on the same client and topic opens, while the first is still subscribed', () => {
+    // realtime-js hands back the subscribed channel for a topic it holds, and a listener
+    // added to it throws: the crew view and the task view share the dōjō's client.
+    const f = fakeClient();
+    const first = vi.fn();
+    const second = vi.fn();
+    realtimeChannel(f.client, spec).subscribe(first, vi.fn());
+    expect(() => realtimeChannel(f.client, spec).subscribe(second, vi.fn())).not.toThrow();
+    f.change(0, lanePayload('l-1'));
+    f.change(1, lanePayload('l-2'));
+    expect(first.mock.calls.map((c) => c[0].data.id)).toEqual(['l-1']);
+    expect(second.mock.calls.map((c) => c[0].data.id)).toEqual(['l-2']);
+  });
+
+  it('a re-subscribe before the last teardown finishes removing still opens', () => {
+    const f = fakeClient();
+    const ch = realtimeChannel(f.client, spec);
+    const stop = ch.subscribe(vi.fn(), vi.fn());
+    // removeChannel is async: an effect re-runs connect() before it lands.
+    f.client.removeChannel.mockImplementationOnce(() => new Promise(() => {}));
+    stop();
+    expect(() => ch.subscribe(vi.fn(), vi.fn())).not.toThrow();
   });
 
   it('listens on the tables the spec names, when it names them', () => {

@@ -3,7 +3,7 @@
 // `realtimeChannel` over a supabase-js-shaped client. Canned postgres_changes payloads
 // in, data out — no DOM, no daemon, no Supabase.
 import { describe, it, expect, vi } from 'vitest';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
 	RelayState,
 	RelayTaskState,
@@ -173,5 +173,27 @@ describe('RelayTaskState in the dōjō, over the realtime task source', () => {
 		const stop = s.connect();
 		stop();
 		expect(sb.client.removeChannel).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('realtimeChannel over a real supabase-js client', () => {
+	// supabase-js hands back the subscribed channel for a topic it already holds, and a
+	// postgres_changes listener added to it throws. The crew view and the task view share
+	// the dōjō's client and the crew topic. No server: channel(), on() and subscribe()
+	// throw (or not) before any socket opens.
+	it('two subscribers on the same client and crew topic both open', () => {
+		const client = createClient('http://127.0.0.1:1', 'anon-key-for-a-spec');
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const spec = { topic: `relay:${F.CREW_ID}`, schema: 'relay' };
+		const stops: Array<() => void> = [];
+		try {
+			stops.push(realtimeChannel(client, spec).subscribe(vi.fn(), vi.fn()));
+			expect(() => stops.push(realtimeChannel(client, spec).subscribe(vi.fn(), vi.fn()))).not.toThrow();
+			expect(client.getChannels()).toHaveLength(2);
+		} finally {
+			for (const stop of stops) stop();
+			void client.removeAllChannels();
+			warn.mockRestore();
+		}
 	});
 });
