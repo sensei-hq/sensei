@@ -1,5 +1,13 @@
 // @sensei/state — domain state shared by the desktop app and the dōjō (#414).
 export type { StateEvent } from './events.js';
+export {
+  sseEvents,
+  realtimeEvents,
+  type StateStream,
+  type EventStream,
+  type ChannelStatus,
+  type ChannelSubscriber,
+} from './source.js';
 export { ReactiveStageContext } from './stage.svelte.js';
 export { EventManager, type EventHandler } from './event-manager.js';
 export { failureFrom, failureReason, type ApiError, type ApiResult } from './result.js';
@@ -27,10 +35,9 @@ export {
   type RelayRunRow,
   type RelayTaskRow,
 } from './relay/entity-states.svelte.js';
-export { relaySseSource, sseEvents, type RelayEventStream } from './relay/sources/sse.js';
+export { relaySseSource, relayTaskSseSource, type RelayEventStream } from './relay/sources/sse.js';
 export {
   relayRealtimeSource,
-  realtimeEvents,
   cannedRealtime,
   type CannedWrite,
   type RelayChannelStatus,
@@ -44,7 +51,12 @@ export {
   minutesSince,
   type RelayStats,
 } from './relay/relay-selectors.js';
-export { RelayTaskState, type TaskReads } from './relay/task-state.svelte.js';
+export {
+  RelayTaskState,
+  type RelayTaskSource,
+  type RelayTaskStateOptions,
+  type TaskReads,
+} from './relay/task-state.svelte.js';
 export {
   nameOf,
   nameOfCode,

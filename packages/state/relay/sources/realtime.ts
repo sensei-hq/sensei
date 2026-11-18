@@ -5,7 +5,8 @@
 // this interface and a canned double.
 
 import type { ApiResult } from '../../result.js';
-import type { RelayEvents, RelaySource } from '../relay-state.svelte.js';
+import type { RelaySource } from '../relay-state.svelte.js';
+import { realtimeEvents, type ChannelStatus } from '../../source.js';
 import type {
   RelayAddToBacklog,
   RelayAddTriage,
@@ -22,7 +23,7 @@ import type {
 } from '../types.js';
 
 /** A realtime channel's status, as supabase-js reports it. */
-export type RelayChannelStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR';
+export type RelayChannelStatus = ChannelStatus;
 
 /** What the dōjō's transport provides: the reads and writes, and a channel of relay changes. */
 export interface RelayRealtimeTransport {
@@ -55,14 +56,6 @@ export function relayRealtimeSource(transport: RelayRealtimeTransport): RelaySou
     cancelRun: (runId) => transport.cancelRun(runId),
     events: realtimeEvents(transport),
   };
-}
-
-/** The dōjō's channel alone, as a stream: each SUBSCRIBED — the first, and again after a drop — is an open. */
-export function realtimeEvents(transport: Pick<RelayRealtimeTransport, 'subscribe'>): RelayEvents {
-  return (on, onOpen) =>
-    transport.subscribe(on, (status) => {
-      if (status === 'SUBSCRIBED') onOpen();
-    });
 }
 
 /** One write the canned transport recorded. */

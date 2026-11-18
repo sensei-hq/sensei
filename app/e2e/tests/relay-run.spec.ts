@@ -310,6 +310,8 @@ async function taskPageLive(lane: RelayLane, taskId: string): Promise<void> {
   const stepKeys = async () =>
     JSON.parse(String(await tauri.evaluate(`JSON.stringify([...document.querySelectorAll('[data-step]')].map((s) => s.getAttribute('data-step')))`))) as string[];
   await expect.poll(stepKeys, { timeout: STREAM }).toEqual(['write', 'check']);
+  // A full reload would clear this; the step must arrive through the task source's stream.
+  await tauri.evaluate(`window.__taskPageNoReload = true`);
   await lane.checkpoint(taskId, {
     current_step: 'Tidy it',
     steps: [
@@ -320,6 +322,7 @@ async function taskPageLive(lane: RelayLane, taskId: string): Promise<void> {
   });
   await expect.poll(stepKeys, { timeout: STREAM }).toEqual(['write', 'check', 'tidy']);
   await expect.poll(() => attrOf('[data-step="check"]', 'data-step-state'), { timeout: STREAM }).toBe('done');
+  expect(await tauri.evaluate(`window.__taskPageNoReload === true`)).toBe(true);
   const body = JSON.parse(
     String(
       await tauri.evaluate(`(() => {
