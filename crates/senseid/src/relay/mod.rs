@@ -583,9 +583,28 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
             Ok(())
         }
         K::Asked => {
-            allow(&["options", "blocks", "asked_of", "context", "recommended"])?;
-            let options =
-                present("options").and_then(|v| v.as_array()).ok_or_else(|| missing("options"))?;
+            allow(&["options", "response", "blocks", "asked_of", "context", "recommended"])?;
+            // #389 D2: buttons or a form, never both and never neither.
+            let options = match (present("options"), present("response")) {
+                (Some(_), Some(_)) => {
+                    return Err(props_err(
+                        "a decision carries options or response, not both".into(),
+                    ));
+                }
+                (None, None) => return Err(props_err("options or response is required".into())),
+                (None, Some(response)) => {
+                    if present("recommended").is_some() {
+                        return Err(props_err("recommended belongs to options".into()));
+                    }
+                    decision_schema::validate_response(response).map_err(props_err)?;
+                    &[][..]
+                }
+                (Some(options), None) => options
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .filter(|o| !o.is_empty())
+                    .ok_or_else(|| props_err("options must be a non-empty array".into()))?,
+            };
             for o in options {
                 let ok = o.get("id").and_then(|v| v.as_str()).is_some()
                     && o.get("label").and_then(|v| v.as_str()).is_some();
@@ -604,9 +623,20 @@ pub fn validate_props(kind: RelayActionKind, props: &serde_json::Value) -> Resul
             Ok(())
         }
         K::Answered => {
-            allow(&["option", "note", "surface"])?;
-            if present("option").and_then(|v| v.as_str()).is_none() {
-                return Err(missing("option"));
+            allow(&["option", "values", "note", "surface"])?;
+            // #389: the pick for an options decision, the values for a form.
+            match (present("option"), present("values")) {
+                (Some(_), Some(_)) => {
+                    return Err(props_err("an answer carries option or values, not both".into()));
+                }
+                (None, None) => return Err(props_err("option or values is required".into())),
+                (Some(option), None) if option.as_str().is_none() => {
+                    return Err(props_err("option must be a string".into()));
+                }
+                (None, Some(values)) if !values.is_object() => {
+                    return Err(props_err("values must be an object".into()));
+                }
+                _ => {}
             }
             check_surface(present("surface").ok_or_else(|| missing("surface"))?)?;
             Ok(())
