@@ -1016,11 +1016,11 @@ mod hook_gate_tests {
 
     async fn gate(body: Value) -> Value {
         let ctx = crate::tasks::test_support::make_ctx().await;
-        gate_on(&ctx.app_state, body).await
+        gate_on(&ctx, body).await
     }
 
-    async fn gate_on(state: &crate::api::state::AppState, body: Value) -> Value {
-        let app = crate::api::routes::create_router(state.clone());
+    async fn gate_on(ctx: &crate::tasks::executor::TaskContext, body: Value) -> Value {
+        let app = crate::api::routes::create_router(ctx.app_state.clone());
         let req = Request::builder()
             .method("POST")
             .uri("/hook/gate")
@@ -1091,10 +1091,10 @@ mod hook_gate_tests {
 
     /// The run's events the gate wrote (`detail.via` = `hook_gate`).
     async fn gate_events(
-        state: &crate::api::state::AppState,
+        ctx: &crate::tasks::executor::TaskContext,
         run_id: &uuid::Uuid,
     ) -> Vec<crate::runs::RunEvent> {
-        let events = state.pg.list_run_events(run_id, 100).await.expect("events");
+        let events = ctx.app_state.pg.list_run_events(run_id, 100).await.expect("events");
         events.into_iter().filter(|e| e.detail["via"] == "hook_gate").collect()
     }
 
@@ -1108,10 +1108,10 @@ mod hook_gate_tests {
         let (ctx, run_id) = run().await;
         let mut body = with_run(deploy(Some(true)), &run_id.to_string());
         body["tool_input"]["command"] = json!("make deploy TARGET=arg-marker-312");
-        let out = gate_on(&ctx.app_state, body).await;
+        let out = gate_on(&ctx, body).await;
         assert_eq!(out["permissionDecision"], "deny", "{out}");
 
-        let events = gate_events(&ctx.app_state, &run_id).await;
+        let events = gate_events(&ctx, &run_id).await;
         assert_eq!(events.len(), 1, "{events:?}");
         let e = &events[0];
         assert_eq!(e.kind, crate::runs::RunEventKind::Flagged);
@@ -1126,10 +1126,10 @@ mod hook_gate_tests {
     #[tokio::test]
     async fn an_interactive_deploy_with_a_run_id_is_allowed_and_recorded() {
         let (ctx, run_id) = run().await;
-        let out = gate_on(&ctx.app_state, with_run(deploy(None), &run_id.to_string())).await;
+        let out = gate_on(&ctx, with_run(deploy(None), &run_id.to_string())).await;
         assert_eq!(out["permissionDecision"], "allow", "{out}");
 
-        let events = gate_events(&ctx.app_state, &run_id).await;
+        let events = gate_events(&ctx, &run_id).await;
         assert_eq!(events.len(), 1, "{events:?}");
         assert_eq!(events[0].kind, crate::runs::RunEventKind::Flagged);
         assert_eq!(events[0].detail["outcome"], "allowed", "{}", events[0].detail);
@@ -1145,17 +1145,17 @@ mod hook_gate_tests {
             "unattended": true,
             "run_id": run_id.to_string(),
         });
-        let out = gate_on(&ctx.app_state, body).await;
+        let out = gate_on(&ctx, body).await;
         assert_eq!(out["permissionDecision"], "allow", "{out}");
-        assert!(gate_events(&ctx.app_state, &run_id).await.is_empty());
+        assert!(gate_events(&ctx, &run_id).await.is_empty());
     }
 
     #[tokio::test]
     async fn a_bad_run_id_does_not_change_the_answer() {
         let ctx = crate::tasks::test_support::make_ctx().await;
-        let plain = gate_on(&ctx.app_state, deploy(Some(true))).await;
+        let plain = gate_on(&ctx, deploy(Some(true))).await;
         for bad in ["not-a-uuid", &uuid::Uuid::new_v4().to_string()] {
-            let out = gate_on(&ctx.app_state, with_run(deploy(Some(true)), bad)).await;
+            let out = gate_on(&ctx, with_run(deploy(Some(true)), bad)).await;
             assert_eq!(out, plain, "run_id {bad}");
         }
     }
@@ -1247,9 +1247,9 @@ mod hook_gate_tests {
         unattended: bool,
     ) -> (Value, Vec<crate::runs::RunEvent>, Vec<Value>) {
         let (ctx, run_id) = run().await;
-        let phone = Phone { reply, ..Default::default() };
-        let client =
-            crate::dojo::client::DojoClient::for_membership(&mock_dojo(phone.clone()).await);
+        let raised = std::sync::Arc::default();
+        let phone = Phone { reply, raised: std::sync::Arc::clone(&raised) };
+        let client = crate::dojo::client::DojoClient::for_membership(&mock_dojo(phone).await);
         let hard_block = crate::dojo::gate::classify_hard_block(
             "Bash",
             &json!({ "command": "make deploy TARGET=arg-marker-312" }),
@@ -1266,9 +1266,9 @@ mod hook_gate_tests {
             unattended,
         };
         let out = gate.put_to_phone(&client, None, std::time::Duration::from_secs(2)).await;
-        let mut events = gate_events(&ctx.app_state, &run_id).await;
+        let mut events = gate_events(&ctx, &run_id).await;
         events.sort_by_key(|e| e.id);
-        let raised = phone.raised.lock().unwrap().clone();
+        let raised = raised.lock().unwrap().clone();
         (out.0["hookSpecificOutput"].clone(), events, raised)
     }
 
