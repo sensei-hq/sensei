@@ -356,6 +356,9 @@ pub(crate) async fn ingest_hook_event(
 
 // ── Hook gate (relay-engine feature B) ───────────────────────────────────────
 
+/// How long a raised gate waits for the phone: under Claude Code's 60s hook cap.
+const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(50);
+
 /// What `/hook/gate` needs to record a gate's outcome in a run's activity
 /// (#312): the run the plugin named, and the call's tool and hard-block.
 struct GateRecord<'a> {
@@ -414,6 +417,98 @@ impl GateRecord<'_> {
         self.record(crate::dojo::gate::GateOutcome::unanswered(decision), Some(why), &reason).await;
         gate_decision(decision, &reason)
     }
+
+    /// Put the gate to the phone through `client` and wait up to `wait` for the
+    /// answer: publish the session, raise the inbox item (`gate_raised`), then
+    /// map the reply. An approval allows (`gate_passed`), a decline denies
+    /// (`flagged`), and an unclear reply, a timeout or a failure is decided like
+    /// no answer ([`Self::unanswered`]).
+    async fn put_to_phone(
+        &self,
+        client: &crate::dojo::client::DojoClient,
+        cwd: Option<&str>,
+        wait: std::time::Duration,
+    ) -> Json<serde_json::Value> {
+        use crate::dojo::gate::{GateOutcome, Reply, UNCLEAR_REPLY, answered_decision, read_reply};
+        let tool = self.tool;
+
+        // Ensure the cloud session exists so the phone can render the gate in
+        // context (Running status; no segments — the gate carries its own prompt).
+        let update = crate::dojo::relay_project::session_update(
+            self.session_id,
+            &crate::dojo::relay_project::title_from_cwd(cwd),
+            &[],
+        );
+        if let Err(e) = client.publish_session_update(&update).await {
+            tracing::warn!(session_id = self.session_id, error = %e, "hook_gate: session update failed — no gate raised");
+            return self.unanswered("gate unavailable").await;
+        }
+
+        // Raise the gate. Zero-knowledge: the payload names the tool and — for a
+        // hard-block — the matched danger CATEGORY + REASON only. Never its
+        // args/code/diffs (the reason is a fixed daemon-owned phrase, never command or model text).
+        let gate_payload = match self.hard_block {
+            Some(hb) => serde_json::json!({
+                "prompt": format!("Hard-block: {}. Approve {tool}?", hb.reason),
+                "tool": self.tool,
+                "category": hb.category,
+                "reason": hb.reason,
+            }),
+            None => serde_json::json!({
+                "prompt": format!("Approve {tool}?"),
+                "tool": self.tool,
+            }),
+        };
+        let item = dojo_protocol::relay::RelayInboxItem {
+            id: None,
+            run_id: self.session_id.to_string(),
+            segment_id: None,
+            kind: dojo_protocol::relay::RelayInboxKind::Approval,
+            direction: dojo_protocol::relay::RelayMessageDirection::AgentToHuman,
+            status: dojo_protocol::relay::RelayInboxStatus::Pending,
+            payload: gate_payload,
+            reply: None,
+            created_at: None,
+            answered_at: None,
+        };
+        let ack = match client.raise_inbox_item(&item).await {
+            Ok(ack) => ack,
+            Err(e) => {
+                tracing::warn!(session_id = self.session_id, tool_name = self.tool, error = %e, "hook_gate: raise failed — no gate raised");
+                return self.unanswered("gate unavailable").await;
+            }
+        };
+        self.record(GateOutcome::Raised, None, "put to your phone").await;
+
+        // Block (bounded < Claude's 60s hook cap) for the human's answer.
+        //
+        // By gate ID, not from `ack.seq`. The cursor form only worked because an
+        // in-DB trigger bumped the row's `seq` on the answering UPDATE, lifting it
+        // back above a watermark the daemon had already passed — a write-side
+        // mechanism compensating for asking the wrong question. The daemon RAISED
+        // this gate and holds its id; "has it been answered" is a lookup.
+        match client.await_reply(&ack.id, wait).await {
+            Ok(None) => self.unanswered("gate timed out").await,
+            Ok(Some(reply)) => match read_reply(&reply) {
+                Reply::Unclear => self.unanswered(UNCLEAR_REPLY).await,
+                answered => {
+                    let (decision, reason) =
+                        answered_decision(answered, self.unattended, self.hard_block);
+                    let outcome = if answered == Reply::Approved {
+                        GateOutcome::Approved
+                    } else {
+                        GateOutcome::Declined
+                    };
+                    self.record(outcome, None, &reason).await;
+                    gate_decision(decision, &reason)
+                }
+            },
+            Err(e) => {
+                tracing::warn!(session_id = self.session_id, tool_name = self.tool, error = %e, "hook_gate: await_reply failed — no answer");
+                self.unanswered("gate unavailable").await
+            }
+        }
+    }
 }
 
 /// Build a Claude Code `PreToolUse` hook decision body. `decision` is `"allow"`
@@ -455,8 +550,7 @@ pub(crate) async fn hook_gate(
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     use crate::dojo::gate::{
-        GateOutcome, Reply, UNCLEAR_REPLY, answered_decision, classify_hard_block,
-        gated_tools_from_env, needs_semantic_review, parse_semantic_verdict, read_reply,
+        classify_hard_block, gated_tools_from_env, needs_semantic_review, parse_semantic_verdict,
         semantic_system_prompt, semantic_user_message, should_gate,
     };
 
@@ -618,82 +712,7 @@ pub(crate) async fn hook_gate(
         return gate.unanswered("no dōjō enrolled").await;
     };
     let client = crate::dojo::client::DojoClient::for_membership(&membership);
-
-    // Ensure the cloud session exists so the phone can render the gate in
-    // context (Running status; no segments — the gate carries its own prompt).
-    let update = crate::dojo::relay_project::session_update(
-        session_id,
-        &crate::dojo::relay_project::title_from_cwd(cwd),
-        &[],
-    );
-    if let Err(e) = client.publish_session_update(&update).await {
-        tracing::warn!(session_id, error = %e, "hook_gate: session update failed — no gate raised");
-        return gate.unanswered("gate unavailable").await;
-    }
-
-    // Raise the gate. Zero-knowledge: the payload names the tool and — for a
-    // hard-block — the matched danger CATEGORY + REASON only. Never its
-    // args/code/diffs (the reason is a fixed daemon-owned phrase, never command or model text).
-    let gate_payload = match &hard_block {
-        Some(hb) => serde_json::json!({
-            "prompt": format!("Hard-block: {}. Approve {tool_name}?", hb.reason),
-            "tool": tool_name,
-            "category": hb.category,
-            "reason": hb.reason,
-        }),
-        None => serde_json::json!({
-            "prompt": format!("Approve {tool_name}?"),
-            "tool": tool_name,
-        }),
-    };
-    let item = dojo_protocol::relay::RelayInboxItem {
-        id: None,
-        run_id: session_id.to_string(),
-        segment_id: None,
-        kind: dojo_protocol::relay::RelayInboxKind::Approval,
-        direction: dojo_protocol::relay::RelayMessageDirection::AgentToHuman,
-        status: dojo_protocol::relay::RelayInboxStatus::Pending,
-        payload: gate_payload,
-        reply: None,
-        created_at: None,
-        answered_at: None,
-    };
-    let ack = match client.raise_inbox_item(&item).await {
-        Ok(ack) => ack,
-        Err(e) => {
-            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: raise failed — no gate raised");
-            return gate.unanswered("gate unavailable").await;
-        }
-    };
-    gate.record(GateOutcome::Raised, None, "put to your phone").await;
-
-    // Block (bounded < Claude's 60s hook cap) for the human's answer.
-    //
-    // By gate ID, not from `ack.seq`. The cursor form only worked because an
-    // in-DB trigger bumped the row's `seq` on the answering UPDATE, lifting it
-    // back above a watermark the daemon had already passed — a write-side
-    // mechanism compensating for asking the wrong question. The daemon RAISED
-    // this gate and holds its id; "has it been answered" is a lookup.
-    match client.await_reply(&ack.id, std::time::Duration::from_secs(50)).await {
-        Ok(None) => gate.unanswered("gate timed out").await,
-        Ok(Some(reply)) => match read_reply(&reply) {
-            Reply::Unclear => gate.unanswered(UNCLEAR_REPLY).await,
-            answered => {
-                let (decision, reason) = answered_decision(answered, unattended, gate.hard_block);
-                let outcome = if answered == Reply::Approved {
-                    GateOutcome::Approved
-                } else {
-                    GateOutcome::Declined
-                };
-                gate.record(outcome, None, &reason).await;
-                gate_decision(decision, &reason)
-            }
-        },
-        Err(e) => {
-            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: await_reply failed — no answer");
-            gate.unanswered("gate unavailable").await
-        }
-    }
+    gate.put_to_phone(&client, cwd, GATE_WAIT).await
 }
 
 /// Sessions already nudged this process lifetime. Once-per-session guard so
