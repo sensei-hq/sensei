@@ -66,9 +66,11 @@ function fakeSupabase() {
 
 /** The relay tables as a publisher that writes the screen's rows declares them (#427's
  *  to build): each row is applied as it is, with no re-read. */
-const SCREEN_TABLES = Object.fromEntries(
-	Object.entries(RELAY_TABLES).map(([table, entity]) => [table, { entity, screenRow: true as const }])
-);
+const SCREEN_TABLES: RelayTableMap = {
+	lanes: { entity: 'lane', screenRow: true },
+	decisions: { entity: 'decision', screenRow: true },
+	messages: { entity: 'message', screenRow: true }
+};
 
 /** The dōjō's transport: canned reads (spied), recorded writes, and the realtime channel. */
 function transport(tables: RelayTableMap = SCREEN_TABLES) {
@@ -83,7 +85,12 @@ function transport(tables: RelayTableMap = SCREEN_TABLES) {
 		readNow: vi.fn(canned.readNow),
 		readQueue: vi.fn(canned.readQueue),
 		readTask: vi.fn(canned.readTask),
-		subscribe: realtimeChannel(sb.client, { topic: `relay:${F.CREW_ID}`, schema: 'relay', tables }).subscribe
+		subscribe: realtimeChannel(sb.client, {
+			topic: `relay:${F.CREW_ID}`,
+			schema: 'relay',
+			crewId: F.CREW_ID,
+			tables
+		}).subscribe
 	} satisfies RelayRealtimeTransport;
 	return { t, sb, writes: canned.writes };
 }
@@ -106,12 +113,44 @@ describe('RelayState in the dōjō, over the realtime source', () => {
 		expect(t.readQueue).not.toHaveBeenCalled();
 	});
 
+	it('another crew’s decision never reaches this crew’s screen', async () => {
+		const { t, sb } = transport();
+		const s = new RelayState(relayRealtimeSource(t), {}, reads(), { surface: 'dojo' });
+		s.connect();
+		sb.change('decisions', 'INSERT', { ...F.decision(), id: 'ask-b', crew_id: F.OTHER_CREW_ID });
+		await settle();
+		expect(s.now?.decisions.map((d) => d.id)).toEqual(['ask-1']);
+	});
+
+	it('a decision answered on the desktop (a relay.actions row) re-reads Now on the default map', async () => {
+		const { t, sb } = transport(RELAY_TABLES);
+		const s = new RelayState(relayRealtimeSource(t), {}, reads(), { surface: 'dojo' });
+		s.connect();
+		sb.change('actions', 'INSERT', {
+			user_id: 'u-1',
+			id: 'a-2',
+			crew_id: F.CREW_ID,
+			task_id: F.taskView().task.id,
+			lane_id: null,
+			kind: 'answered',
+			reply_to: 'ask-1',
+			props: {}
+		});
+		await settle();
+		expect(t.readNow).toHaveBeenCalledTimes(1);
+	});
+
 	it('a row from today’s relay tables re-reads Now: its columns are not the screen’s lane', async () => {
 		const { t, sb } = transport(RELAY_TABLES);
 		const s = new RelayState(relayRealtimeSource(t), {}, reads(), { surface: 'dojo' });
 		s.connect();
 		const lane = s.lanes.items[0];
-		sb.change('lanes', 'UPDATE', { id: lane.id, code: lane.code, token_hash: 'not-for-the-screen' });
+		sb.change('lanes', 'UPDATE', {
+			id: lane.id,
+			crew_id: F.CREW_ID,
+			code: lane.code,
+			token_hash: 'not-for-the-screen'
+		});
 		await settle();
 		expect(t.readNow).toHaveBeenCalledTimes(1);
 		expect(s.lanes.get(lane.id)).not.toHaveProperty('token_hash');
@@ -203,7 +242,7 @@ describe('realtimeChannel over a real supabase-js client', () => {
 	it('two subscribers on the same client and crew topic both open', () => {
 		const client = createClient('http://127.0.0.1:1', 'anon-key-for-a-spec');
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		const spec = { topic: `relay:${F.CREW_ID}`, schema: 'relay' };
+		const spec = { topic: `relay:${F.CREW_ID}`, schema: 'relay', crewId: F.CREW_ID };
 		const stops: Array<() => void> = [];
 		try {
 			stops.push(realtimeChannel(client, spec).subscribe(vi.fn(), vi.fn()));

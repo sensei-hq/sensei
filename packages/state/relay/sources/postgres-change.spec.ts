@@ -3,6 +3,7 @@
 // one row to two RelayStates — once as the daemon's SSE event, once as the mapped
 // payload — and expect the same state: the state cannot tell the planes apart.
 import { describe, it, expect, vi } from 'vitest';
+import { readdirSync } from 'node:fs';
 import type { ApiResult } from '../../result.js';
 import { RelayState, type RelaySource } from '../relay-state.svelte.js';
 import { RelayTaskState } from '../task-state.svelte.js';
@@ -25,23 +26,34 @@ const payload = (
 });
 
 /** The relay tables as a publisher that writes the screen's rows would declare them:
- *  each row is applied as it is. Nothing in today's `relay` schema is such a table. */
-const SCREEN_TABLES = Object.fromEntries(
-  Object.entries(RELAY_TABLES).map(([table, entity]) => [table, { entity, screenRow: true as const }]),
-);
+ *  each row is applied as it is. Nothing in today's `relay` schema is such a table, and
+ *  these table names are a spec's, not the dōjō's (#427 names its own). */
+const SCREEN_TABLES = {
+  lanes: { entity: 'lane', screenRow: true },
+  runs: { entity: 'run', screenRow: true },
+  items: { entity: 'item', screenRow: true },
+  decisions: { entity: 'decision', screenRow: true },
+  messages: { entity: 'message', screenRow: true },
+  tasks: { entity: 'task', screenRow: true },
+} as const;
+
+/** The tables `database/ddl/table/relay/*.ddl` declares. */
+const DDL_TABLES = readdirSync(new URL('../../../../database/ddl/table/relay/', import.meta.url))
+  .filter((f) => f.endsWith('.ddl'))
+  .map((f) => f.slice(0, -'.ddl'.length));
 
 describe('fromPostgresChange — a table row names what changed', () => {
   it('INSERT is add, UPDATE is update, DELETE is remove with the id from old', () => {
-    expect(fromPostgresChange(payload('messages', 'INSERT', { id: 'm-1', body_md: 'hi' }))).toEqual({
+    expect(fromPostgresChange(payload('items', 'INSERT', { id: 'i-1', title: 'Gap' }))).toEqual({
       action: 'add',
-      entity: 'message',
-      data: { op: 'insert', message_id: 'm-1' },
+      entity: 'item',
+      data: { op: 'insert', item_id: 'i-1' },
     });
-    expect(fromPostgresChange(payload('messages', 'UPDATE', { id: 'm-1' }))?.action).toBe('update');
-    expect(fromPostgresChange(payload('messages', 'DELETE', { id: 'm-1' }))).toEqual({
+    expect(fromPostgresChange(payload('items', 'UPDATE', { id: 'i-1' }))?.action).toBe('update');
+    expect(fromPostgresChange(payload('items', 'DELETE', { id: 'i-1' }))).toEqual({
       action: 'remove',
-      entity: 'message',
-      data: { op: 'delete', message_id: 'm-1' },
+      entity: 'item',
+      data: { op: 'delete', item_id: 'i-1' },
     });
   });
 
@@ -59,22 +71,60 @@ describe('fromPostgresChange — a table row names what changed', () => {
       op: 'insert',
       item_id: 'i-1',
     });
-    expect(fromPostgresChange(payload('decisions', 'INSERT', { id: 'd-1' }))?.data).toEqual({
-      op: 'insert',
-      decision_id: 'd-1',
+  });
+
+  it('listens only on tables the relay DDL has: a binding on a missing table fails the whole channel', () => {
+    // realtime-js joins every postgres_changes binding at once; the server refuses the
+    // join when one names a table that does not exist (#499 review).
+    expect(DDL_TABLES).toContain('lanes');
+    for (const table of Object.keys(RELAY_TABLES)) expect(DDL_TABLES).toContain(table);
+  });
+
+  it('maps the tables a live screen moves on: lanes, leases, tasks, actions, runs, items', () => {
+    expect(Object.keys(RELAY_TABLES).sort()).toEqual(['actions', 'items', 'lanes', 'leases', 'runs', 'tasks']);
+    expect(fromPostgresChange(payload('run_items', 'INSERT', { run_id: 'r-1', item_id: 'i-1' }))).toBeNull();
+  });
+
+  it('a relay.actions row (an ask, an answer, a message) names its task; one with no task re-reads Now', () => {
+    const action = (task_id: string | null, kind: string) => ({
+      user_id: 'u-1',
+      id: 'a-1',
+      crew_id: F.CREW_ID,
+      task_id,
+      lane_id: null,
+      kind,
+      props: {},
+      reply_to: 'a-0',
+      created_at: '2026-11-18T10:00:00Z',
+    });
+    expect(fromPostgresChange(payload('actions', 'INSERT', action('t-1', 'answered')))).toEqual({
+      action: 'add',
+      entity: 'task',
+      data: { op: 'insert', task_id: 't-1' },
+    });
+    expect(fromPostgresChange(payload('actions', 'INSERT', action(null, 'message')))).toEqual({
+      action: 'add',
+      entity: 'task',
+      data: { op: 'insert' },
     });
   });
 
-  it('maps every relay table to its entity, and an unmapped table to null', () => {
-    expect(RELAY_TABLES).toEqual({
-      lanes: 'lane',
-      tasks: 'task',
-      runs: 'run',
-      items: 'item',
-      decisions: 'decision',
-      messages: 'message',
+  it('a relay.leases row (lane presence) names its lane, not the lease', () => {
+    const lease = {
+      user_id: 'u-1',
+      id: 'lease-1',
+      crew_id: F.CREW_ID,
+      lane_id: 'l-1',
+      kind: 'lane',
+      resource: null,
+      state: 'expired',
+      props: {},
+    };
+    expect(fromPostgresChange(payload('leases', 'UPDATE', lease))).toEqual({
+      action: 'update',
+      entity: 'lane',
+      data: { op: 'update', lane_id: 'l-1' },
     });
-    expect(fromPostgresChange(payload('actions', 'INSERT', { id: 'a-1' }))).toBeNull();
   });
 
   it('takes the table map as a parameter: the dōjō names its own tables', () => {
@@ -278,6 +328,55 @@ describe('a relay table row (today’s schema) re-reads what it names', () => {
     expect(source.readNow).toHaveBeenCalled();
     expect(s.lanes.get(id)).not.toHaveProperty('token_hash');
     expect(s.lanes.get(id)).toHaveProperty('presence');
+  });
+});
+
+describe('a decision answered on the desktop reaches the dōjō', () => {
+  const answered = (task_id: string | null) => ({
+    user_id: 'u-1',
+    id: 'a-2',
+    crew_id: F.CREW_ID,
+    task_id,
+    lane_id: null,
+    kind: 'answered',
+    reply_to: 'ask-1',
+    props: {},
+    created_at: '2026-11-18T10:00:00Z',
+  });
+
+  it('an INSERT on relay.actions re-reads Now, and the answered decision leaves it', async () => {
+    const now = F.now({ decisions: [F.decision()] });
+    const source = readingSource(F.now({ decisions: [] }), F.queue());
+    const s = new RelayState(source, {}, reads(now));
+    s.apply(fromPostgresChange(payload('actions', 'INSERT', answered('t-1'))) as RelayStreamEvent);
+    await settle();
+    expect(source.readNow).toHaveBeenCalledTimes(1);
+    expect(s.now?.decisions).toEqual([]);
+  });
+
+  it('an INSERT on relay.actions for the viewed task re-reads the task view', async () => {
+    const readTask = vi.fn(async () => F.ok(F.taskView()));
+    const source = { readTask, answer: vi.fn(), events: () => () => {} };
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, source as never, F.CREW_ID, 't-1');
+    s.apply(fromPostgresChange(payload('actions', 'INSERT', answered('t-other'))) as RelayStreamEvent);
+    await settle();
+    expect(readTask).not.toHaveBeenCalled();
+    s.apply(fromPostgresChange(payload('actions', 'INSERT', answered('t-1'))) as RelayStreamEvent);
+    await settle();
+    expect(readTask).toHaveBeenCalledWith(F.CREW_ID, 't-1');
+  });
+
+  it('an UPDATE on relay.leases re-reads Now: the lane’s presence moves', async () => {
+    const now = F.now();
+    const lane = now.lanes[0];
+    const after = { ...now, lanes: [{ ...lane, presence: 'not_responding' as const }, ...now.lanes.slice(1)] };
+    const source = readingSource(after, F.queue());
+    const s = new RelayState(source, {}, reads(now));
+    const lease = { user_id: 'u-1', id: 'lease-1', crew_id: F.CREW_ID, lane_id: lane.id, kind: 'lane', state: 'expired' };
+    s.apply(fromPostgresChange(payload('leases', 'UPDATE', lease)) as RelayStreamEvent);
+    await settle();
+    expect(source.readNow).toHaveBeenCalledTimes(1);
+    expect(s.lanes.get(lane.id)?.presence).toBe('not_responding');
   });
 });
 

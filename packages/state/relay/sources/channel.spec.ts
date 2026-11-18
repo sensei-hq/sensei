@@ -6,7 +6,7 @@ import type { RelayStreamEvent } from '../types.js';
 import type { PostgresChangePayload } from './postgres-change.js';
 import { realtimeChannel, type RealtimeChannelLike, type RealtimeClientLike } from './channel.js';
 
-type Listener = { filter: { event: string; schema: string; table: string }; cb: (p: PostgresChangePayload) => void };
+type Listener = { filter: { event: string; schema: string; table: string; filter?: string }; cb: (p: PostgresChangePayload) => void };
 
 /** A supabase-js-shaped client that behaves as realtime-js 2.x does: `channel(topic)`
  *  hands back the open channel for a topic it already holds (`RealtimeClient.channel`),
@@ -64,11 +64,11 @@ const lanePayload = (id = 'l-1'): PostgresChangePayload => ({
   schema: 'relay',
   table: 'lanes',
   eventType: 'UPDATE',
-  new: { id, title: 'Live' },
+  new: { id, crew_id: 'crew-1', title: 'Live' },
   old: {},
 });
 
-const spec = { topic: 'relay:crew-1', schema: 'relay' };
+const spec = { topic: 'relay:crew-1', schema: 'relay', crewId: 'crew-1' };
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -80,9 +80,10 @@ describe('realtimeChannel — a transport subscribe over a supabase-shaped clien
     ch.subscribe(vi.fn(), vi.fn());
     expect(f.channels).toHaveLength(1);
     expect(f.channels[0].topic.startsWith('relay:crew-1')).toBe(true);
-    expect(f.channels[0].listeners.map((l) => l.filter)).toEqual(
-      ['lanes', 'tasks', 'runs', 'items', 'decisions', 'messages'].map((table) => ({ event: '*', schema: 'relay', table })),
+    expect(f.channels[0].listeners.map((l) => l.filter.table).sort()).toEqual(
+      ['actions', 'items', 'lanes', 'leases', 'runs', 'tasks'],
     );
+    expect(f.channels[0].listeners.every((l) => l.filter.event === '*' && l.filter.schema === 'relay')).toBe(true);
     ch.subscribe(vi.fn(), vi.fn());
     expect(f.channels).toHaveLength(2);
     expect(f.channels[1].topic).not.toBe(f.channels[0].topic);
@@ -110,6 +111,45 @@ describe('realtimeChannel — a transport subscribe over a supabase-shaped clien
     f.client.removeChannel.mockImplementationOnce(() => new Promise(() => {}));
     stop();
     expect(() => ch.subscribe(vi.fn(), vi.fn())).not.toThrow();
+  });
+
+  it('asks the server for the crew’s rows only, on each table whose rows all name a crew', () => {
+    const f = fakeClient();
+    realtimeChannel(f.client, spec).subscribe(vi.fn(), vi.fn());
+    const filters = Object.fromEntries(f.channels[0].listeners.map((l) => [l.filter.table, l.filter.filter]));
+    expect(filters).toEqual({
+      lanes: 'crew_id=eq.crew-1',
+      leases: 'crew_id=eq.crew-1',
+      tasks: 'crew_id=eq.crew-1',
+      actions: 'crew_id=eq.crew-1',
+      // A draft run has no crew yet, and the queue is the person's, across crews.
+      runs: undefined,
+      items: undefined,
+    });
+  });
+
+  it('drops a change whose row names another crew, under any table map', () => {
+    const f = fakeClient();
+    const on = vi.fn();
+    const tables = { decisions: { entity: 'decision', screenRow: true as const }, runs: 'run' };
+    realtimeChannel(f.client, { ...spec, tables }).subscribe(on, vi.fn());
+    const decision = (crew_id: string) => ({ id: `ask-${crew_id}`, crew_id, question: 'Which?' });
+    f.change(0, { schema: 'relay', table: 'decisions', eventType: 'INSERT', new: decision('crew-2'), old: {} });
+    f.change(0, { schema: 'relay', table: 'runs', eventType: 'UPDATE', new: { id: 'r-2', crew_id: 'crew-2' }, old: {} });
+    expect(on).not.toHaveBeenCalled();
+    f.change(0, { schema: 'relay', table: 'decisions', eventType: 'INSERT', new: decision('crew-1'), old: {} });
+    // A draft run names no crew: it is the person's, and passes.
+    f.change(0, { schema: 'relay', table: 'runs', eventType: 'UPDATE', new: { id: 'r-3', crew_id: null }, old: {} });
+    expect(on.mock.calls.map((c) => c[0].entity)).toEqual(['decision', 'run']);
+  });
+
+  it('a channel for every crew the person sees (crewId null) filters nothing', () => {
+    const f = fakeClient();
+    const on = vi.fn();
+    realtimeChannel(f.client, { ...spec, crewId: null }).subscribe(on, vi.fn());
+    expect(f.channels[0].listeners.every((l) => l.filter.filter === undefined)).toBe(true);
+    f.change(0, { ...lanePayload(), new: { id: 'l-9', crew_id: 'crew-2' } });
+    expect(on).toHaveBeenCalledTimes(1);
   });
 
   it('listens on the tables the spec names, when it names them', () => {
