@@ -810,6 +810,8 @@ pub(crate) struct AskBody {
     #[serde(default)]
     options: Vec<OptionBody>,
     recommended: Option<String>,
+    /// A form in place of options (#389): `{schema, layout?}`.
+    response: Option<serde_json::Value>,
     #[serde(default)]
     blocks: Vec<String>,
     asked_of: String,
@@ -818,14 +820,20 @@ pub(crate) struct AskBody {
 #[derive(Debug, Deserialize)]
 pub(crate) struct LaneAnswerBody {
     lane_id: String,
-    option: String,
+    /// The pick, for an options decision.
+    option: Option<String>,
+    /// The values, for a form decision (#389).
+    values: Option<serde_json::Value>,
     note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PersonAnswerBody {
     decision_id: String,
-    option: String,
+    /// The pick, for an options decision.
+    option: Option<String>,
+    /// The values, for a form decision (#389).
+    values: Option<serde_json::Value>,
     note: Option<String>,
     surface: String,
 }
@@ -1512,7 +1520,7 @@ pub(crate) async fn ask(
                     .map(|o| RelayDecisionOption { id: o.id, label: o.label, detail: o.detail })
                     .collect(),
                 recommended: body.recommended,
-                response: None,
+                response: body.response,
                 blocks,
                 asked_of,
             },
@@ -1545,7 +1553,7 @@ pub(crate) async fn lane_answer(
             session.user_id,
             RelayCaller::Lane { lane_id: caller },
             decision_id,
-            RelayAnswerInput { option: Some(body.option), values: None, note: body.note },
+            RelayAnswerInput { option: body.option, values: body.values, note: body.note },
         )
         .await
         .map_err(err)?;
@@ -1849,7 +1857,7 @@ pub(crate) async fn person_answer(
             user_id,
             RelayCaller::Person { surface },
             decision_id,
-            RelayAnswerInput { option: Some(body.option), values: None, note: body.note },
+            RelayAnswerInput { option: body.option, values: body.values, note: body.note },
         )
         .await
         .map_err(err)?;

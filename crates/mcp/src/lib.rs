@@ -618,7 +618,16 @@ fn relay_crew_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>>
             relay_forward(
                 &mut body,
                 args,
-                &["task_id", "question", "context", "options", "recommended", "blocks", "asked_of"],
+                &[
+                    "task_id",
+                    "question",
+                    "context",
+                    "options",
+                    "recommended",
+                    "response",
+                    "blocks",
+                    "asked_of",
+                ],
             );
             Some(relay_authed(
                 DaemonRequest::post_json("/api/relay/decisions", Value::Object(body)),
@@ -628,7 +637,7 @@ fn relay_crew_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>>
         "relay_answer_decision" => {
             let decision_id = args["decision_id"].as_str().unwrap_or("");
             let mut body = relay_lane_body(args);
-            relay_forward(&mut body, args, &["option", "note"]);
+            relay_forward(&mut body, args, &["option", "values", "note"]);
             Some(relay_authed(
                 DaemonRequest::post_json(
                     format!("/api/relay/decisions/{}/answer", path_segment(decision_id)),
@@ -1645,29 +1654,31 @@ pub fn handle_list_tools() -> Value {
                     ("telemetry", "object", "Review telemetry"),
                 ]),
             tool("relay_ask_decision",
-                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered).",
+                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered). Send options (buttons) or response (a form), never both. A response is {schema, layout?}: one object schema of 1-12 string/number/integer/boolean properties with enum (pick one), required, minimum/maximum, maxLength (≤600) and pattern; anything else (arrays, format, nested objects) is refused with 422.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
                     ("question", "string", "The ≤600-char question"),
-                    ("options", "array", "[{id, label, detail?}]"),
                     ("asked_of", "string", "\"person\" or a lane uuid"),
                 ],
                 &[
+                    ("options", "array", "[{id, label, detail?}] — buttons; or send response"),
+                    ("response", "object", "{schema, layout?} — a form (the subset above); or send options"),
                     ("task_id", "string", "Task uuid the question belongs to"),
                     ("context", "string", "Extra context for the decider"),
                     ("recommended", "string", "Recommended option id (must name an option)"),
                     ("blocks", "array", "Task uuids this decision blocks"),
                 ]),
             tool("relay_answer_decision",
-                "Answer a decision asked of this lane: records the pick and resumes what the ask blocked.",
+                "Answer a decision asked of this lane: records the pick (option) or the form's values, and resumes what the ask blocked. The daemon checks values against the decision's schema before storing.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
                     ("decision_id", "string", "Decision uuid"),
-                    ("option", "string", "Chosen option id (must name an option)"),
                 ],
                 &[
+                    ("option", "string", "Chosen option id, for an options decision"),
+                    ("values", "object", "Values keyed by property name, for a form decision"),
                     ("note", "string", "The ≤600-char answer note"),
                 ]),
             tool("relay_send_message",
