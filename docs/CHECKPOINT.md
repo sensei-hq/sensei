@@ -3,7 +3,7 @@
 **Slice:** `add-relay-decision-response-form` slice A (#389): ask with a response schema, answer with
 values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR to develop.
 
-**Done (tasks A1–A6.1, red then green each):**
+**Done (tasks A1–A6, red then green each):**
 - `relay/decision_schema.rs`: `validate_response` (the closed subset, refused by keyword and property)
   and `validate_values` (unknown keys, required, type, enum, bounds, maxLength/600, pattern, leak guard).
 - `validate_props`: Asked takes `options` (non-empty) or `response`, never both or neither; Answered
@@ -15,7 +15,12 @@ values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR to develop.
   are optional tool args.
 - `@sensei/state`: `RelayDecision.response`, `RelayAnswer` union, `answer(decision, {option}|{values})`.
 - Docs: `lanes-data.md` props table, `lanes.md` §7 decisions.
-- e2e: `relay-decision-form.spec.ts` "the broker round-trips a form decision".
+- e2e: `relay-decision-form.spec.ts` "the broker round-trips a form decision" green, with
+  `diagrams-schema` + `relay-run` (3/3); real brew daemon restored on :7744.
+- Gates: senseid 5051/5052 on the lane template (the one failure is the keychain test
+  `discarding_the_forge_refresh_token_…`, untouched code, fails on this machine's keychain); sensei-mcp
+  green; clippy `-D warnings` and fmt clean; SQL `run.sh relay` 14/14; app check 0 errors; dōjō check
+  0 errors.
 
 **Remaining:** slice B (the form on the Relay screen, live) and slice R (rokkit issue + widen).
 

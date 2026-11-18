@@ -67,10 +67,10 @@ Red commit first for every numbered group; green in the next commit.
 - [x] A6.1 `lanes-data.md` props table (`asked.response`, `answered.values`) and `lanes.md` decisions paragraph,
   including the subset (what is accepted, what is refused and why); the MCP `relay_ask_decision` description
   states the subset in one line
-- [ ] A6.2 e2e `app/e2e/tests/relay-decision-form.spec.ts` test "the broker round-trips a form decision": a lane asks
+- [x] A6.2 e2e `app/e2e/tests/relay-decision-form.spec.ts` test "the broker round-trips a form decision": a lane asks
   with `response`; `GET /relay/now` shows it; the person posts `values`; the asking lane's envelope reads them back.
   And `relay-run.spec.ts` option-pick journey stays green
-- [ ] A6.3 Gates: `cargo fmt --all --check`, clippy `-D warnings`, `make test-fast`, senseid DB tests, `bun run test`
+- [x] A6.3 Gates: `cargo fmt --all --check`, clippy `-D warnings`, `make test-fast`, senseid DB tests, `bun run test`
   in `packages/state`; ratchets untouched
 
 ## Slice B — the form on the Relay screen, live
