@@ -4116,6 +4116,29 @@ mod tests {
     }
 
     #[test]
+    fn relay_ask_and_answer_forward_a_form_389() {
+        let response = json!({"schema": {"type": "object",
+            "properties": {"path": {"type": "string"}}, "required": ["path"]}});
+        let req = daemon_request_for(
+            "relay_ask_decision",
+            &lane_args(json!({"question": "Where?", "response": response, "asked_of": "person"})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.body.as_ref().unwrap()["response"], response);
+        let req = daemon_request_for(
+            "relay_answer_decision",
+            &lane_args(json!({"decision_id": "d1", "values": {"path": "src/"}})),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.body.as_ref().unwrap()["values"], json!({"path": "src/"}));
+        assert!(req.body.as_ref().unwrap().get("option").is_none());
+    }
+
+    #[test]
     fn relay_plan_posts_item_shape() {
         let req = daemon_request_for(
             "relay_plan_item",
@@ -4198,13 +4221,14 @@ mod tests {
             missing_required("relay_submit_review", &lane_args(json!({"task_id": "t1"}))),
             vec!["verdict", "summary"]
         );
+        // #389: options or response, option or values — the daemon enforces one-of.
         assert_eq!(
             missing_required("relay_ask_decision", &lane_args(json!({}))),
-            vec!["question", "options", "asked_of"]
+            vec!["question", "asked_of"]
         );
         assert_eq!(
             missing_required("relay_answer_decision", &lane_args(json!({}))),
-            vec!["decision_id", "option"]
+            vec!["decision_id"]
         );
     }
 

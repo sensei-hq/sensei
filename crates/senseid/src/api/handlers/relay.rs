@@ -4652,6 +4652,155 @@ mod tests {
         }
     }
 
+    fn form_response() -> serde_json::Value {
+        json!({"schema": {"type": "object", "properties": {
+            "path": {"type": "string", "pattern": "^src/"},
+            "count": {"type": "integer", "minimum": 1, "maximum": 5},
+            "ship": {"type": "boolean"}
+        }, "required": ["path"]}})
+    }
+
+    /// A lane asks the person a form decision; its id.
+    async fn ask_form(h: &Harness, task_id: &str, holder: &str, token: &str) -> String {
+        let (status, body) = call(
+            h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                holder,
+                json!({
+                    "task_id": task_id, "question": "Where does it go?",
+                    "response": form_response(),
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["decision_id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn a_form_decision_rides_now_and_the_stream_and_is_answered_with_values() {
+        // #389: the Now row and the stream's add row carry the response; the
+        // person answers with values; the row leaves.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let decision_id = ask_form(&h, &task_id, &holder, &token).await;
+        let asked = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let mut row = now["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == decision_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("decision not on Now: {now}"));
+        assert_eq!(row["response"], form_response());
+        assert_eq!(row["options"], json!([]));
+        row["op"] = json!("asked");
+        assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/answers",
+            Some(json!({"decision_id": decision_id, "values": {"path": "src/x", "ship": true},
+                        "note": null, "surface": "desktop"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let answered = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
+        assert_eq!(answered["action"], "remove");
+        assert_eq!(answered["data"]["id"], decision_id);
+    }
+
+    #[tokio::test]
+    async fn a_form_outside_the_subset_is_422_naming_the_property() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &holder,
+                json!({
+                    "task_id": task_id, "question": "Which files?",
+                    "response": {"schema": {"type": "object", "properties": {
+                        "files": {"type": "array", "items": {"enum": ["a", "b"]}}}}},
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        let message = body["message"].as_str().unwrap_or_default();
+        assert!(message.contains("files") && message.contains("array"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn bad_values_are_422_naming_the_field_and_record_nothing() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let decision_id = ask_form(&h, &task_id, &holder, &token).await;
+        for (values, needle) in [
+            (json!({"count": 2}), "values.path is required"),
+            (json!({"path": "src/x", "count": 9}), "values.count"),
+            (json!({"path": "lib/x"}), "values.path"),
+        ] {
+            let (status, body) = call(
+                &h,
+                "POST",
+                "/relay/answers",
+                Some(json!({"decision_id": decision_id, "values": values, "surface": "desktop"})),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+            assert!(body["message"].as_str().unwrap_or_default().contains(needle), "{body}");
+        }
+        // Still open: Now lists it.
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(now["decisions"].as_array().unwrap().iter().any(|d| d["id"] == decision_id));
+    }
+
+    #[tokio::test]
+    async fn a_lane_answers_a_form_asked_of_it_with_values() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &coord.0,
+                json!({"question": "Where?", "response": form_response(),
+                       "blocks": [], "asked_of": lane_id}),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let decision_id = body["decision_id"].as_str().unwrap().to_string();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/decisions/{decision_id}/answer"),
+            Some(lane_body(&lane_id, json!({"values": {"path": "src/a"}}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
     /// The next event naming `entity`, skipping others (5 s).
     async fn event_for_entity(
         rx: &mut tokio::sync::broadcast::Receiver<crate::api::events::StateEvent>,
