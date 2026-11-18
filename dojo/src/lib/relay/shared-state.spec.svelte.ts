@@ -175,7 +175,7 @@ describe('RelayState in the dōjō, over the realtime source', () => {
 	it('answers a decision as the dōjō', async () => {
 		const { t, writes } = transport();
 		const s = new RelayState(relayRealtimeSource(t), {}, reads(), { surface: 'dojo' });
-		expect(await s.answer(F.decision(), 'db')).toBeNull();
+		expect(await s.answer(F.decision(), { option: 'db' })).toBeNull();
 		expect(writes).toEqual([
 			{ kind: 'answer', body: { decision_id: 'ask-1', option: 'db', note: null, surface: 'dojo' } }
 		]);
@@ -219,7 +219,7 @@ describe('RelayTaskState in the dōjō, over the realtime task source', () => {
 
 	it('answers as the dōjō, then re-reads the task', async () => {
 		const { t, writes, s } = build();
-		expect(await s.answer(F.decision(), 'file')).toBeNull();
+		expect(await s.answer(F.decision(), { option: 'file' })).toBeNull();
 		expect(writes).toEqual([
 			{ kind: 'answer', body: { decision_id: 'ask-1', option: 'file', note: null, surface: 'dojo' } }
 		]);
