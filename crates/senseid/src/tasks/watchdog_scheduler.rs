@@ -303,6 +303,62 @@ mod tests {
         delete_run(&pg, &id).await;
     }
 
+    /// A hook_gate record is the gate reacting to a tool call, not the run
+    /// advancing. An unattended step that keeps retrying a denied `make deploy`
+    /// appends a fresh `flagged`/`denied` event on every try; if those counted as
+    /// progress the run would never stall and the watchdog would never flag it.
+    /// The same holds for every outcome the gate records (raised, approved,
+    /// declined, allowed).
+    #[tokio::test]
+    async fn tick_stalls_a_run_whose_only_recent_events_are_gate_records() {
+        use crate::dojo::gate::{GateOutcome, classify_hard_block, gate_event};
+
+        let pg = PgStore::test_store().await;
+        let queue = TaskQueue::with_max_repos(16);
+
+        let id = pg.create_run(&NewRun::default()).await.unwrap();
+        force_liveness(&pg, &id, RelayRunStatus::Running, 3600, 0).await; // started 1h ago
+        let hb = classify_hard_block("Bash", &serde_json::json!({ "command": "make deploy" }))
+            .expect("make deploy is a hard-block");
+        for outcome in [
+            GateOutcome::Raised,
+            GateOutcome::Approved,
+            GateOutcome::Declined,
+            GateOutcome::Allowed,
+            GateOutcome::Denied,
+        ] {
+            let (kind, detail) =
+                gate_event(outcome, "Bash", Some(&hb), Some("gate timed out"), &hb.reason);
+            pg.append_run_event(
+                &id,
+                &crate::db::pg_store::RunEventRow {
+                    kind,
+                    phase: None,
+                    feature: None,
+                    detail: &detail,
+                },
+            )
+            .await
+            .unwrap(); // fresh, just now
+        }
+
+        assert_eq!(
+            pg.last_progress_at(&id).await.unwrap(),
+            None,
+            "gate records are not agent progress"
+        );
+        tick(&queue, &pg, Utc::now(), &WatchdogConfig::default()).await;
+
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(
+            run.status,
+            RelayRunStatus::Stalled,
+            "a run looping on gated calls with no real progress must stall"
+        );
+
+        delete_run(&pg, &id).await;
+    }
+
     #[tokio::test]
     async fn tick_recovers_a_stalled_run_under_the_cap() {
         let pg = PgStore::test_store().await;
