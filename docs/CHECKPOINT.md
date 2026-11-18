@@ -1,22 +1,21 @@
-# Checkpoint — 2026-11-18 (relay open items — specs landed, build next)
+# Checkpoint — 2026-11-18 (relay open items — #420 verified, #299 next)
 
-**Slice:** one OpenSpec change per open relay issue, then build them one by one.
-Branch `lane/relay-open-items` (worktree `lanes/relay-open`).
+**Slice:** one OpenSpec change per open relay issue, built one by one.
+Current: `verify-relay-d87-shell` (#420), branch `lane/relay-420-s1` (worktree `lanes/relay-open`).
 
-**Done:**
-- 11 changes under `openspec/changes/`, each `openspec validate --strict` clean:
-  #455 assistant-catalogue, #444 host-ops, #427 dojo-realtime, #420 d87-shell (verify), #414 shared-state-sources,
-  #398 crew-close-dead-lanes, #393 run-archive, #389 decision-response-form, #314 dojo-production-verification,
-  #312 gate-unattended-evidence, #299 dojo-sync-files-workspaces (verify).
-- Reconciled: #389 and #427 now build on #414's `RelayTaskSource`, `realtimeChannel` and dōjō alias
-  (#427 adds only a `fromRelayRow` mapper plus optional `map`/`filter` on `realtimeChannel`).
+**Done (#420):**
+- Re-proved on develop `f880251b8`, no code change needed:
+  - unit: relay-shell, relay-shell-input, ShellScreen specs — 65/65 green.
+  - Tauri e2e: relay-conformance 3/3, relay 3/3, relay-run, relay-timeline, zz-a11y — 9/9 green.
+  - axe: zero violations (any impact) on `/workspace/<id>/relay`, light and dark.
+- Real brew daemon restored on :7744 (`dbName: sensei`).
+- Evidence commented on #420; #420 closed; phone findings pointed at `update-phone-layout`.
+- `openspec validate verify-relay-d87-shell --strict` clean.
 
-**Build order:** #420, #299, #398, #312, #414, #389, #455, #393, #444, #427, #314.
-- Verify-only first; #414 before #389/#427; #398 before #393; UI changes (#389, #455, #398) before #427 moves
-  `app/src/lib/relay` to `packages/ui/relay`.
+**Remaining build order:** #299, #398, #312, #414, #389, #455, #393, #444, #427, #314.
 
-**Next command:** `openspec show verify-relay-d87-shell` then run its tasks (Tauri e2e, `pgrep -f "instance e2e"` first).
+**Next command:** `openspec show verify-dojo-sync-files-workspaces`, then run its tasks.
 
 **Open questions:** none blocking. #314, #312 and #299 need production evidence to close (user's step).
 
-**Known broken:** none from this branch. This worktree needed `bun install` in `app/` and `dojo/` for the hook.
+**Known broken:** none from this branch. The worktree needs `bun install` in `app/` and `dojo/` for the hook.
