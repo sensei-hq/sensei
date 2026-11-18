@@ -633,7 +633,7 @@ pub(crate) async fn hook_gate(
 
     // Raise the gate. Zero-knowledge: the payload names the tool and — for a
     // hard-block — the matched danger CATEGORY + REASON only. Never its
-    // args/code/diffs (the reason is a fixed daemon-owned phrase, not command text).
+    // args/code/diffs (the reason is a fixed daemon-owned phrase, never command or model text).
     let gate_payload = match &hard_block {
         Some(hb) => serde_json::json!({
             "prompt": format!("Hard-block: {}. Approve {tool_name}?", hb.reason),

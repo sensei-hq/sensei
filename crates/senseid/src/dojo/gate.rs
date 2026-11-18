@@ -737,6 +737,8 @@ const SEMANTIC_DEFAULT_CATEGORY: &str = "indirect-run";
 ///
 /// Returns `Some(HardBlock)` ONLY when `dangerous == true` AND a non-empty
 /// `reason` is present; an unknown/missing `category` maps to the safe default.
+/// The block's reason is a daemon-owned phrase naming the category, never the
+/// model's text (D10).
 /// `dangerous:false`, a missing/empty reason, or anything unparseable → `None`
 /// (defer to progress — a model that can't clearly say "dangerous" never blocks).
 pub fn parse_semantic_verdict(content: &str) -> Option<HardBlock> {
@@ -751,13 +753,10 @@ pub fn parse_semantic_verdict(content: &str) -> Option<HardBlock> {
     if v.get("dangerous").and_then(|d| d.as_bool()) != Some(true) {
         return None;
     }
-    // A non-empty reason is required — an unexplained block is not surfaceable.
-    let reason = v
-        .get("reason")
-        .and_then(|r| r.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())?
-        .to_string();
+    // A non-empty reason is required: a model that cannot say why does not block.
+    // The model's text is only checked, never kept: it may quote or decode the
+    // command, and the reason reaches the phone and the run's activity (D10).
+    v.get("reason").and_then(|r| r.as_str()).map(str::trim).filter(|s| !s.is_empty())?;
     // Map the model's category onto the known set; anything else → safe default.
     let category = v
         .get("category")
@@ -765,15 +764,15 @@ pub fn parse_semantic_verdict(content: &str) -> Option<HardBlock> {
         .map(str::trim)
         .and_then(|c| SEMANTIC_CATEGORIES.iter().find(|k| **k == c).copied())
         .unwrap_or(SEMANTIC_DEFAULT_CATEGORY);
-    Some(HardBlock::new(category, reason))
+    Some(HardBlock::new(category, format!("the safety check flagged it as {category}")))
 }
 
 /// System prompt for the gemma4 semantic backstop — a terse, structured
 /// instruction. Daemon-owned + fixed (per the hybrid-routing decision the chain
 /// runs think-off), so the classification is deterministic and JSON-shaped. The
 /// daemon is reasoning about its OWN about-to-run command locally; the command
-/// text never leaves the daemon and never lands in a run_event (zero-knowledge
-/// is N/A here — nothing is published).
+/// text never leaves the daemon and never lands in a run_event: the model's
+/// `reason` is dropped by [`parse_semantic_verdict`] for a fixed phrase (D10).
 pub fn semantic_system_prompt() -> &'static str {
     "You classify whether a single SHELL COMMAND performs a genuinely dangerous or \
 irreversible action. Dangerous means any of: deploy/publish/release; push, merge, \
@@ -1322,7 +1321,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hb.category, "destructive");
-        assert_eq!(hb.reason, "decodes then deletes");
+        assert_eq!(hb.reason, "the safety check flagged it as destructive");
     }
 
     #[test]
@@ -1342,10 +1341,7 @@ mod tests {
         let fenced = "```json\n{\"dangerous\":true,\"category\":\"money\",\"reason\":\"charges a card\"}\n```";
         assert_eq!(parse_semantic_verdict(fenced).map(|h| h.category), Some("money"));
         let prose = "Here's my call:\n{\"dangerous\":true,\"category\":\"deploy\",\"reason\":\"ships to prod\"}\nDone.";
-        assert_eq!(
-            parse_semantic_verdict(prose).map(|h| h.reason),
-            Some("ships to prod".to_string())
-        );
+        assert_eq!(parse_semantic_verdict(prose).map(|h| h.category), Some("deploy"));
     }
 
     #[test]
@@ -1355,7 +1351,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hb.category, "indirect-run", "unknown category → safe default");
-        assert_eq!(hb.reason, "unclear obfuscated run");
+        assert_eq!(hb.reason, "the safety check flagged it as indirect-run");
         // missing category also → default
         let hb2 = parse_semantic_verdict(r#"{"dangerous":true,"reason":"r"}"#).unwrap();
         assert_eq!(hb2.category, "indirect-run");
