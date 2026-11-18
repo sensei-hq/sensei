@@ -61,4 +61,22 @@ describe('HistoryEntry', () => {
     expect(text(by)).toBe('cobalt-lyra');
     expect(by.getAttribute('title')).toBe('L1');
   });
+
+  it('a form answer shows its values, not an empty option (#389)', () => {
+    const base = F.historyWithSteps().find((a) => a.id === 'act-answered')!;
+    const action = { ...base, props: { option: null, values: { target: 'main' }, surface: 'desktop' } } as typeof base;
+    const m = mountComponent(HistoryEntry, { action, lanes: F.laneRefs() });
+    cleanup.push(m.destroy);
+    const root = m.container.querySelector('[data-history-entry="act-answered"]')!;
+    const line = text(root.querySelector('[data-entry-answer]'));
+    expect(line).toBe('target: main · from the desktop');
+  });
+
+  it('a button answer still names its option (#389)', () => {
+    const action = F.historyWithSteps().find((a) => a.id === 'act-answered')!;
+    const m = mountComponent(HistoryEntry, { action, lanes: F.laneRefs() });
+    cleanup.push(m.destroy);
+    const root = m.container.querySelector('[data-history-entry="act-answered"]')!;
+    expect(text(root.querySelector('[data-entry-answer]'))).toBe('db · from the desktop');
+  });
 });

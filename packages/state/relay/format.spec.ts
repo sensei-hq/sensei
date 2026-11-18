@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { crewRepoLabel, crewSizeContext, currentStepKey, nameOf, nameOfCode, taskStateLabel } from './format.js';
+import { answerGist, crewRepoLabel, crewSizeContext, currentStepKey, nameOf, nameOfCode, taskStateLabel } from './format.js';
 import type { ApiError } from '../result.js';
 import type { RelayLane, RelayTaskStep } from './types.js';
 import * as F from './fixtures.js';
@@ -98,5 +98,22 @@ describe('nameOf · a lane by its codename (#425)', () => {
     expect(nameOfCode(lanes, 'L1')).toBe('cobalt-lyra');
     expect(nameOfCode(lanes, 'L3')).toBe('L3');
     expect(nameOfCode(lanes, 'L9')).toBe('L9');
+  });
+});
+
+describe('answerGist (#389)', () => {
+  it('a button answer reads as its option', () => {
+    expect(answerGist({ option: 'db', values: null })).toBe('db');
+  });
+
+  it('a form answer reads its values in order, objects as JSON', () => {
+    expect(answerGist({ option: null, values: { target: 'main', count: 2, ok: true, tags: ['a', 'b'] } })).toBe(
+      'target: main, count: 2, ok: true, tags: ["a","b"]',
+    );
+  });
+
+  it('an answer with neither says so, never "null"', () => {
+    expect(answerGist({ option: null })).toBe('no answer recorded');
+    expect(answerGist({ option: null, values: {} })).toBe('no answer recorded');
   });
 });

@@ -189,6 +189,19 @@ describe('buildTimeline', () => {
     expect(answered[0].title).toBe('Answered: db');
   });
 
+  it('a form answer names its values, never "null" (#389)', () => {
+    const rows = buildTimeline(
+      view([
+        {
+          ...base('answered'),
+          kind: 'answered',
+          props: { option: null, values: { target: 'main', count: 2 }, surface: 'desktop' },
+        } as unknown as RelayAction,
+      ]),
+    );
+    expect(rows[0].title).toBe('Answered: target: main, count: 2');
+  });
+
   it('a message names its target', () => {
     const rows = buildTimeline(
       view([
