@@ -1749,12 +1749,27 @@ pub(crate) async fn close_crew(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
+    emit_released(&state, &out.crew_id, &out.released).await;
     // A crew's lifecycle event: the crew id stands as the run id (§3k).
     emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
+    let released: Vec<String> = out.released.iter().map(|(lane, _)| lane.to_string()).collect();
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,
+        "released": released,
     }))
+}
+
+/// Lanes a close released leave Now on the stream, each followed by the
+/// task it held, now interrupted. The lane close (#398) and the person
+/// close (#419) share it.
+async fn emit_released(state: &AppState, crew_id: &Uuid, released: &[(Uuid, Option<Uuid>)]) {
+    for (lane_id, interrupted) in released {
+        emit_lane(state, LaneChange::Unregistered, lane_id, crew_id).await;
+        if let Some(task_id) = interrupted {
+            emit_task(state, "interrupt", task_id).await;
+        }
+    }
 }
 
 // ─── Person routes ───
@@ -1768,12 +1783,7 @@ pub(crate) async fn person_close_crew(
     let user_id = person_user(&state).await.map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_person_close_crew(user_id, crew_id).await.map_err(err)?;
-    for (lane_id, interrupted) in &out.released {
-        emit_lane(&state, LaneChange::Unregistered, lane_id, &out.crew_id).await;
-        if let Some(task_id) = interrupted {
-            emit_task(&state, "interrupt", task_id).await;
-        }
-    }
+    emit_released(&state, &out.crew_id, &out.released).await;
     if out.closed_now {
         // A crew's lifecycle event: the crew id stands as the run id (§3k).
         emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
