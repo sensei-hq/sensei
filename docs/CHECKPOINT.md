@@ -21,6 +21,11 @@ values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR #500 to dev
   `answerGist` (`@sensei/state` format.ts) reads option, else values by sorted key (jsonb reorders
   keys); both renderers use it. Unit red/green + e2e "the task view reads a form answer as its
   values" (decision-form 2/2, relay-timeline, relay-run, diagrams-schema: 5/5).
+- Review fix 2 (PR #500): ask time now refuses a form no answer can satisfy. A layout must name every
+  property (rokkit draws only its elements; `elements: []` refused). Each enum member must be
+  non-empty and pass its own maxLength, pattern and leak guard; integer bounds must hold a whole
+  number. Red `d376f98db`, green `a40ad31a2`; spec scenario added. relay tests 446/446; e2e
+  decision-form 2/2.
 - Gates: senseid 5051/5052 on the lane template (the one failure is the keychain test
   `discarding_the_forge_refresh_token_…`, untouched code, fails on this machine's keychain); sensei-mcp
   green; clippy `-D warnings` and fmt clean; SQL `run.sh relay` 14/14; app check 0 errors; dōjō check
@@ -28,7 +33,7 @@ values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR #500 to dev
 
 **Remaining:** slice B (the form on the Relay screen, live) and slice R (rokkit issue + widen).
 
-**Next command:** `gh pr checks 500` (lane/relay-389-s1, head `af515d923`); then slice B from tasks.md B1.1.
+**Next command:** `gh pr checks 500` (lane/relay-389-s1, head after review fix 2); then slice B from tasks.md B1.1.
 
 **Open questions:** none blocking.
 
