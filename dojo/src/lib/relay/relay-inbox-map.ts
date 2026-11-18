@@ -127,10 +127,11 @@ export function toRelaySession(
 }
 
 /**
- * An answer to an ask as the daemon reads it (`dojo/gate.rs::decision_from_reply`,
- * fail-open — only `verdict: 'deny'` blocks). An approval is a verdict; a decision
- * is the chosen option, or the typed line; a resume or chat is text. A note rides
- * along.
+ * An answer to an ask as the daemon reads it (`dojo/gate.rs::read_reply`, #312):
+ * only `verdict: 'approve'` approves and only `verdict: 'deny'` declines; anything
+ * else, a typed line included, is unclear, and an unattended run denies a
+ * hard-block on an unclear reply. An approval is a verdict; a decision is the
+ * chosen option, or the typed line; a resume or chat is text. A note rides along.
  */
 export function askReply(ask: RelayAsk, answer: string, note?: string): Record<string, unknown> {
 	const a = answer.trim();

@@ -1,23 +1,26 @@
 ## 1. Reply shapes (daemon, red first)
-- [ ] 1.1 Red: `gate.rs` tests for `read_reply` — `{verdict:"approve"}`, `{verdict:"APPROVE"}`, `{approve:true}` → Approved; `{verdict:"deny"}`, `{approve:false}`, `{verdict:"approve", approve:false}` → Declined; `{}`, `{text:"ok"}`, `{choice:"a"}`, `{note:"x"}`, `"whatever"`, `null`, `{verdict:"maybe"}` → Unclear
-- [ ] 1.2 Red: a decision test — Unclear on an unattended hard-block denies with "not a clear approve or deny" in the reason; Unclear on an interactive hard-block or an allow-list gate allows
-- [ ] 1.3 Green: `read_reply` replaces `decision_from_reply`; `hook_gate` maps Approved → allow, Declined → deny, Unclear → `unanswered_decision`; update the module doc (`gate.rs:1-15`), the handler doc (`sessions.rs:371-386`) and the dōjō `askReply` doc comment that names `decision_from_reply` (`dojo/src/lib/relay/relay-inbox-map.ts:129-134`) to say so
+- [x] 1.1 Red: `gate.rs` tests for `read_reply` — `{verdict:"approve"}`, `{verdict:"APPROVE"}`, `{approve:true}` → Approved; `{verdict:"deny"}`, `{approve:false}`, `{verdict:"approve", approve:false}` → Declined; `{}`, `{text:"ok"}`, `{choice:"a"}`, `{note:"x"}`, `"whatever"`, `null`, `{verdict:"maybe"}` → Unclear
+- [x] 1.2 Red: a decision test — Unclear on an unattended hard-block denies with "not a clear approve or deny" in the reason; Unclear on an interactive hard-block or an allow-list gate allows
+- [x] 1.3 Green: `read_reply` replaces `decision_from_reply`; `hook_gate` maps Approved → allow, Declined → deny, Unclear → `unanswered_decision`; update the module doc (`gate.rs:1-15`), the handler doc (`sessions.rs:371-386`) and the dōjō `askReply` doc comment that names `decision_from_reply` (`dojo/src/lib/relay/relay-inbox-map.ts:129-134`) to say so
 
 ## 2. The run record (daemon, red first)
-- [ ] 2.1 Red: a pure `gate_event(outcome, tool, hard_block, why, reason) -> (RunEventKind, detail)` test per outcome (raised, approved, declined, denied, allowed); detail never holds the tool input
-- [ ] 2.2 Red: `hook_gate_tests` (DB-backed, serial) — create a run, post an unattended `make deploy` with `run_id`: the answer is deny and `list_run_events` holds one `flagged` event with `outcome: "denied"`, `category: "deploy"`, the reason, and no command text
-- [ ] 2.3 Red: interactive `make deploy` with `run_id` → allow and a `flagged` event with `outcome: "allowed"`; `cargo test` with `run_id` → no event; an unknown or non-uuid `run_id` → same decision as without it, no 5xx
-- [ ] 2.4 Green: `hook_gate` reads `run_id`, appends via `append_run_event` on raise and on every gated outcome; a failed append is `tracing::warn!` and never changes the answer
-- [ ] 2.5 `cargo fmt --all --check`, `cargo clippy -p senseid -- -D warnings`, `cargo test -p senseid --  --test-threads=1` (gate + sessions + runs), fabrication-guard and ratchet tests green
+- [x] 2.1 Red: a pure `gate_event(outcome, tool, hard_block, why, reason) -> (RunEventKind, detail)` test per outcome (raised, approved, declined, denied, allowed); detail never holds the tool input
+- [x] 2.2 Red: `hook_gate_tests` (DB-backed, serial) — create a run, post an unattended `make deploy` with `run_id`: the answer is deny and `list_run_events` holds one `flagged` event with `outcome: "denied"`, `category: "deploy"`, the reason, and no command text
+- [x] 2.3 Red: interactive `make deploy` with `run_id` → allow and a `flagged` event with `outcome: "allowed"`; `cargo test` with `run_id` → no event; an unknown or non-uuid `run_id` → same decision as without it, no 5xx
+- [x] 2.4 Green: `hook_gate` reads `run_id`, appends via `append_run_event` on raise and on every gated outcome; a failed append is `tracing::warn!` and never changes the answer
+- [x] 2.5 `cargo fmt --all --check`, `cargo clippy -p senseid -- -D warnings`, `cargo test -p senseid --  --test-threads=1` (gate + sessions + runs), fabrication-guard and ratchet tests green
+
+- [x] 2.5 Red: `tick_stalls_a_run_whose_only_recent_events_are_gate_records` — gate records reset the stall clock (review of #494)
+- [x] 2.6 Green: `last_progress_at` skips `detail.via = GATE_EVENT_VIA`
 
 ## 3. Plugin (red first)
-- [ ] 3.1 Red: `gate.test.ts` — `run_id` equals `SENSEI_RUN_ID` when set; equals the drive's run id in a driven session; absent in an interactive session
-- [ ] 3.2 Green: `drivenRunId($)` in `drive.ts`; `gate.ts` sends `run_id`; update the header comment
+- [x] 3.1 Red: `gate.test.ts` — `run_id` equals `SENSEI_RUN_ID` when set; equals the drive's run id in a driven session; absent in an interactive session
+- [x] 3.2 Green: `drivenRunId($)` in `drive.ts`; `gate.ts` sends `run_id`; update the header comment
 
 ## 4. Tauri e2e proof
-- [ ] 4.1 Write `app/e2e/tests/relay-gate.spec.ts` (relay spec patterns, `DAEMON_URL`): create a run with `POST /api/runs`; unattended `make deploy` with `run_id` and a fresh uuid session → `permissionDecision: "deny"` and a reason naming "unattended"; `GET /api/runs/{id}` lists a `flagged` event with `outcome: "denied"`; interactive → allow and `outcome: "allowed"`; ordinary `cargo test` → allow, no new gate event. Count only events with `detail.via == "hook_gate"`: the scheduler appends a `housekeeping` event to every active run each 15 s tick
-- [ ] 4.2 Check `pgrep -f "instance e2e"` (wait if live), run `make test-app-e2e` or the single spec after the bundle builds; confirm `brew services start sensei` restored the real daemon on :7744
-- [ ] 4.3 `openspec validate update-relay-gate-unattended-evidence --strict`; PR to develop; comment on #312 with the evidence (do not close yet)
+- [x] 4.1 Write `app/e2e/tests/relay-gate.spec.ts` (relay spec patterns, `DAEMON_URL`): create a run with `POST /api/runs`; unattended `make deploy` with `run_id` and a fresh uuid session → `permissionDecision: "deny"` and a reason naming "unattended"; `GET /api/runs/{id}` lists a `flagged` event with `outcome: "denied"`; interactive → allow and `outcome: "allowed"`; ordinary `cargo test` → allow, no new gate event. Count only events with `detail.via == "hook_gate"`: the scheduler appends a `housekeeping` event to every active run each 15 s tick
+- [x] 4.2 Check `pgrep -f "instance e2e"` (wait if live), run `make test-app-e2e` or the single spec after the bundle builds; confirm `brew services start sensei` restored the real daemon on :7744
+- [x] 4.3 `openspec validate update-relay-gate-unattended-evidence --strict`; PR to develop; comment on #312 with the evidence (do not close yet)
 
 ## 5. Runbook for the user (production evidence, not automatable here)
 - [ ] 5.1 Cut the release that carries this change (`make bump` on develop → PR to main → `make release`)

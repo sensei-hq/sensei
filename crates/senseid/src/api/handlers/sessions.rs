@@ -356,6 +356,161 @@ pub(crate) async fn ingest_hook_event(
 
 // ── Hook gate (relay-engine feature B) ───────────────────────────────────────
 
+/// How long a raised gate waits for the phone: under Claude Code's 60s hook cap.
+const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(50);
+
+/// What `/hook/gate` needs to record a gate's outcome in a run's activity
+/// (#312): the run the plugin named, and the call's tool and hard-block.
+struct GateRecord<'a> {
+    state: &'a AppState,
+    run_id: Option<&'a str>,
+    session_id: &'a str,
+    tool: &'a str,
+    hard_block: Option<&'a crate::dojo::gate::HardBlock>,
+    unattended: bool,
+}
+
+impl GateRecord<'_> {
+    /// Append the outcome to the named run's `activity.run_events`. A run id
+    /// that is not a uuid or names no run is a failed record: logged, and it
+    /// never changes the gate's answer.
+    async fn record(
+        &self,
+        outcome: crate::dojo::gate::GateOutcome,
+        why: Option<&str>,
+        reason: &str,
+    ) {
+        let Some(run_id) = self.run_id else { return };
+        let (kind, detail) =
+            crate::dojo::gate::gate_event(outcome, self.tool, self.hard_block, why, reason);
+        let row =
+            crate::db::pg_store::RunEventRow { kind, phase: None, feature: None, detail: &detail };
+        let appended = match uuid::Uuid::parse_str(run_id) {
+            Ok(id) => self.state.pg.append_run_event(&id, &row).await.map(|_| ()),
+            Err(e) => Err(format!("run_id is not a uuid: {e}")),
+        };
+        if let Err(e) = appended {
+            tracing::warn!(
+                run_id,
+                session_id = self.session_id,
+                tool_name = self.tool,
+                error = %e,
+                "hook_gate: could not record the gate outcome in the run — answer unchanged"
+            );
+        }
+    }
+
+    /// A gate with no clear answer — no reply, a failed raise, or an unclear
+    /// reply (`why` names which). Fails open, except a hard-block in an
+    /// unattended run, which is denied with its reason (#312, D28). Recorded.
+    async fn unanswered(&self, why: &str) -> Json<serde_json::Value> {
+        let (decision, reason) =
+            crate::dojo::gate::unanswered_decision(self.unattended, self.hard_block, why);
+        if decision == "deny" {
+            tracing::warn!(
+                session_id = self.session_id,
+                tool_name = self.tool,
+                why,
+                "hook_gate: unanswered hard-block in an unattended run — denied (fail-closed)"
+            );
+        }
+        self.record(crate::dojo::gate::GateOutcome::unanswered(decision), Some(why), &reason).await;
+        gate_decision(decision, &reason)
+    }
+
+    /// Put the gate to the phone through `client` and wait up to `wait` for the
+    /// answer: publish the session, raise the inbox item (`gate_raised`), then
+    /// map the reply. An approval allows (`gate_passed`), a decline denies
+    /// (`flagged`), and an unclear reply, a timeout or a failure is decided like
+    /// no answer ([`Self::unanswered`]).
+    async fn put_to_phone(
+        &self,
+        client: &crate::dojo::client::DojoClient,
+        cwd: Option<&str>,
+        wait: std::time::Duration,
+    ) -> Json<serde_json::Value> {
+        use crate::dojo::gate::{GateOutcome, Reply, UNCLEAR_REPLY, answered_decision, read_reply};
+        let tool = self.tool;
+
+        // Ensure the cloud session exists so the phone can render the gate in
+        // context (Running status; no segments — the gate carries its own prompt).
+        let update = crate::dojo::relay_project::session_update(
+            self.session_id,
+            &crate::dojo::relay_project::title_from_cwd(cwd),
+            &[],
+        );
+        if let Err(e) = client.publish_session_update(&update).await {
+            tracing::warn!(session_id = self.session_id, error = %e, "hook_gate: session update failed — no gate raised");
+            return self.unanswered("gate unavailable").await;
+        }
+
+        // Raise the gate. Zero-knowledge: the payload names the tool and — for a
+        // hard-block — the matched danger CATEGORY + REASON only. Never its
+        // args/code/diffs (the reason is a fixed daemon-owned phrase, never command or model text).
+        let gate_payload = match self.hard_block {
+            Some(hb) => serde_json::json!({
+                "prompt": format!("Hard-block: {}. Approve {tool}?", hb.reason),
+                "tool": self.tool,
+                "category": hb.category,
+                "reason": hb.reason,
+            }),
+            None => serde_json::json!({
+                "prompt": format!("Approve {tool}?"),
+                "tool": self.tool,
+            }),
+        };
+        let item = dojo_protocol::relay::RelayInboxItem {
+            id: None,
+            run_id: self.session_id.to_string(),
+            segment_id: None,
+            kind: dojo_protocol::relay::RelayInboxKind::Approval,
+            direction: dojo_protocol::relay::RelayMessageDirection::AgentToHuman,
+            status: dojo_protocol::relay::RelayInboxStatus::Pending,
+            payload: gate_payload,
+            reply: None,
+            created_at: None,
+            answered_at: None,
+        };
+        let ack = match client.raise_inbox_item(&item).await {
+            Ok(ack) => ack,
+            Err(e) => {
+                tracing::warn!(session_id = self.session_id, tool_name = self.tool, error = %e, "hook_gate: raise failed — no gate raised");
+                return self.unanswered("gate unavailable").await;
+            }
+        };
+        self.record(GateOutcome::Raised, None, "put to your phone").await;
+
+        // Block (bounded < Claude's 60s hook cap) for the human's answer.
+        //
+        // By gate ID, not from `ack.seq`. The cursor form only worked because an
+        // in-DB trigger bumped the row's `seq` on the answering UPDATE, lifting it
+        // back above a watermark the daemon had already passed — a write-side
+        // mechanism compensating for asking the wrong question. The daemon RAISED
+        // this gate and holds its id; "has it been answered" is a lookup.
+        match client.await_reply(&ack.id, wait).await {
+            Ok(None) => self.unanswered("gate timed out").await,
+            Ok(Some(reply)) => match read_reply(&reply) {
+                Reply::Unclear => self.unanswered(UNCLEAR_REPLY).await,
+                answered => {
+                    let (decision, reason) =
+                        answered_decision(answered, self.unattended, self.hard_block);
+                    let outcome = if answered == Reply::Approved {
+                        GateOutcome::Approved
+                    } else {
+                        GateOutcome::Declined
+                    };
+                    self.record(outcome, None, &reason).await;
+                    gate_decision(decision, &reason)
+                }
+            },
+            Err(e) => {
+                tracing::warn!(session_id = self.session_id, tool_name = self.tool, error = %e, "hook_gate: await_reply failed — no answer");
+                self.unanswered("gate unavailable").await
+            }
+        }
+    }
+}
+
 /// Build a Claude Code `PreToolUse` hook decision body. `decision` is `"allow"`
 /// or `"deny"`; `reason` is the human-facing explanation the hook surfaces.
 fn gate_decision(decision: &str, reason: &str) -> Json<serde_json::Value> {
@@ -374,24 +529,29 @@ fn gate_decision(decision: &str, reason: &str) -> Json<serde_json::Value> {
 /// decides whether the tool may proceed. When the tool is in the
 /// `SENSEI_RELAY_GATE_TOOLS` allow-list AND a Dōjō is enrolled, it raises a
 /// blocking relay gate to the phone, waits (bounded ~50s) for the human's
-/// answer, and returns allow/deny. Everything else — gating off, non-uuid
-/// session, no dojo, any raise/poll error, timeout — is **fail-open → allow**,
-/// with one exception (#312, D28): a hard-block in an **unattended** run (the
-/// body's `unattended: true`) that gets no human answer is **denied**, with its
-/// reason.
+/// answer, and returns allow/deny. A reply is read as approved, declined or
+/// unclear (`read_reply`). Everything else — gating off, non-uuid session, no
+/// dojo, any raise/poll error, timeout, an unclear reply — is **fail-open →
+/// allow**, with one exception (#312, D28): a hard-block in an **unattended**
+/// run (the body's `unattended: true`) without a clear human answer is
+/// **denied**, with its reason.
+///
+/// When the body names a run (`run_id`), every gated outcome is appended to that
+/// run's `activity.run_events` (`gate_raised`, `gate_passed`, `flagged`); a
+/// failed append is logged and never changes the answer. An ungated call is not
+/// recorded.
 ///
 /// ALWAYS returns 200 with an allow/deny body; NEVER a 5xx. Fail-open error
 /// paths `tracing::warn!` (never swallowed). Otherwise only an explicit human
-/// `deny` reply blocks. The payload raised to the phone carries only the tool NAME —
+/// decline, or no clear answer to an unattended hard-block, blocks. The payload raised to the phone carries only the tool NAME —
 /// no tool args, code, or diffs (zero-knowledge, D10).
 pub(crate) async fn hook_gate(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     use crate::dojo::gate::{
-        classify_hard_block, decision_from_reply, gated_tools_from_env, needs_semantic_review,
-        parse_semantic_verdict, semantic_system_prompt, semantic_user_message, should_gate,
-        unanswered_decision,
+        classify_hard_block, gated_tools_from_env, needs_semantic_review, parse_semantic_verdict,
+        semantic_system_prompt, semantic_user_message, should_gate,
     };
 
     let session_id = payload["session_id"].as_str().unwrap_or("");
@@ -401,6 +561,8 @@ pub(crate) async fn hook_gate(
     // daemon spawned (SENSEI_RUN_ID) or a session its run drive steers. Absent
     // means interactive (#312, D28).
     let unattended = payload["unattended"].as_bool() == Some(true);
+    // The run the plugin named (#312): its activity records the gate's outcome.
+    let run_id = payload["run_id"].as_str();
     // The PreToolUse event carries the tool's input alongside its name. Parse
     // defensively — a missing/malformed `tool_input` defaults to `{}`, which the
     // classifier treats as progress (no danger inferable ⇒ don't over-block).
@@ -508,26 +670,22 @@ pub(crate) async fn hook_gate(
         );
     }
 
-    // No human answer from here on: fail open, except a hard-block in an
-    // unattended run, which is denied with its reason (#312, D28).
-    let unanswered = |why: &str| {
-        let (decision, reason) = unanswered_decision(unattended, hard_block.as_ref(), why);
-        if decision == "deny" {
-            tracing::warn!(
-                session_id,
-                tool_name,
-                why,
-                "hook_gate: unanswered hard-block in an unattended run — denied (fail-closed)"
-            );
-        }
-        gate_decision(decision, &reason)
+    // Every outcome from here on is recorded in the named run. No human answer
+    // fails open, except a hard-block in an unattended run (#312, D28).
+    let gate = GateRecord {
+        state: &state,
+        run_id,
+        session_id,
+        tool: tool_name,
+        hard_block: hard_block.as_ref(),
+        unattended,
     };
 
     // Fail-open: a non-uuid session (non-Claude harness) would 500 the Worker
     // (relay run_id is uuid NOT NULL), so never gate it.
     if uuid::Uuid::parse_str(session_id).is_err() {
         tracing::warn!(session_id, tool_name, "hook_gate: non-uuid session — no gate to raise");
-        return unanswered("gate unavailable");
+        return gate.unanswered("gate unavailable").await;
     }
 
     // Fail-open: no enrolled Dōjō ⇒ nowhere to raise the gate ⇒ allow.
@@ -535,7 +693,7 @@ pub(crate) async fn hook_gate(
         Ok(ms) => ms.into_iter().filter(|m| m.enabled).collect::<Vec<_>>(),
         Err(e) => {
             tracing::warn!(error = %e, "hook_gate: list_dojo_memberships failed — no gate to raise");
-            return unanswered("gate unavailable");
+            return gate.unanswered("gate unavailable").await;
         }
     };
     // Personal beta = one dōjō. Multi-dōjō gating (which phone answers, quorum,
@@ -551,75 +709,10 @@ pub(crate) async fn hook_gate(
         );
     }
     let Some(membership) = memberships.into_iter().next() else {
-        return unanswered("no dōjō enrolled");
+        return gate.unanswered("no dōjō enrolled").await;
     };
     let client = crate::dojo::client::DojoClient::for_membership(&membership);
-
-    // Ensure the cloud session exists so the phone can render the gate in
-    // context (Running status; no segments — the gate carries its own prompt).
-    let update = crate::dojo::relay_project::session_update(
-        session_id,
-        &crate::dojo::relay_project::title_from_cwd(cwd),
-        &[],
-    );
-    if let Err(e) = client.publish_session_update(&update).await {
-        tracing::warn!(session_id, error = %e, "hook_gate: session update failed — no gate raised");
-        return unanswered("gate unavailable");
-    }
-
-    // Raise the gate. Zero-knowledge: the payload names the tool and — for a
-    // hard-block — the matched danger CATEGORY + REASON only. Never its
-    // args/code/diffs (the reason is a fixed daemon-owned phrase, not command text).
-    let gate_payload = match &hard_block {
-        Some(hb) => serde_json::json!({
-            "prompt": format!("Hard-block: {}. Approve {tool_name}?", hb.reason),
-            "tool": tool_name,
-            "category": hb.category,
-            "reason": hb.reason,
-        }),
-        None => serde_json::json!({
-            "prompt": format!("Approve {tool_name}?"),
-            "tool": tool_name,
-        }),
-    };
-    let item = dojo_protocol::relay::RelayInboxItem {
-        id: None,
-        run_id: session_id.to_string(),
-        segment_id: None,
-        kind: dojo_protocol::relay::RelayInboxKind::Approval,
-        direction: dojo_protocol::relay::RelayMessageDirection::AgentToHuman,
-        status: dojo_protocol::relay::RelayInboxStatus::Pending,
-        payload: gate_payload,
-        reply: None,
-        created_at: None,
-        answered_at: None,
-    };
-    let ack = match client.raise_inbox_item(&item).await {
-        Ok(ack) => ack,
-        Err(e) => {
-            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: raise failed — no gate raised");
-            return unanswered("gate unavailable");
-        }
-    };
-
-    // Block (bounded < Claude's 60s hook cap) for the human's answer.
-    //
-    // By gate ID, not from `ack.seq`. The cursor form only worked because an
-    // in-DB trigger bumped the row's `seq` on the answering UPDATE, lifting it
-    // back above a watermark the daemon had already passed — a write-side
-    // mechanism compensating for asking the wrong question. The daemon RAISED
-    // this gate and holds its id; "has it been answered" is a lookup.
-    match client.await_reply(&ack.id, std::time::Duration::from_secs(50)).await {
-        Ok(None) => unanswered("gate timed out"),
-        Ok(Some(reply)) => match decision_from_reply(Some(&reply)) {
-            "deny" => gate_decision("deny", "declined from your phone"),
-            _ => gate_decision("allow", "approved from your phone"),
-        },
-        Err(e) => {
-            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: await_reply failed — no answer");
-            unanswered("gate unavailable")
-        }
-    }
+    gate.put_to_phone(&client, cwd, GATE_WAIT).await
 }
 
 /// Sessions already nudged this process lifetime. Once-per-session guard so
@@ -923,6 +1016,10 @@ mod hook_gate_tests {
 
     async fn gate(body: Value) -> Value {
         let ctx = crate::tasks::test_support::make_ctx().await;
+        gate_on(&ctx, body).await
+    }
+
+    async fn gate_on(ctx: &crate::tasks::executor::TaskContext, body: Value) -> Value {
         let app = crate::api::routes::create_router(ctx.app_state.clone());
         let req = Request::builder()
             .method("POST")
@@ -971,5 +1068,271 @@ mod hook_gate_tests {
         }))
         .await;
         assert_eq!(out["permissionDecision"], "allow", "{out}");
+    }
+
+    // ── #312: the gate's outcome in the run's activity ──────────────────────
+
+    /// A fresh run on the test DB the router reads, and the state to post with.
+    async fn run() -> (std::sync::Arc<crate::tasks::executor::TaskContext>, uuid::Uuid) {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let new = crate::runs::NewRun {
+            workspace_id: None,
+            plan_ref: None,
+            goal: Some("hook gate record (#312)".into()),
+            dojo_session_id: None,
+            max_concurrency: None,
+            author_name: None,
+            author_email: None,
+            plan_graph: None,
+        };
+        let id = ctx.app_state.pg.create_run(&new).await.expect("a run");
+        (ctx, id)
+    }
+
+    /// The run's events the gate wrote (`detail.via` = `hook_gate`).
+    async fn gate_events(
+        ctx: &crate::tasks::executor::TaskContext,
+        run_id: &uuid::Uuid,
+    ) -> Vec<crate::runs::RunEvent> {
+        let events = ctx.app_state.pg.list_run_events(run_id, 100).await.expect("events");
+        events.into_iter().filter(|e| e.detail["via"] == "hook_gate").collect()
+    }
+
+    fn with_run(mut body: Value, run_id: &str) -> Value {
+        body["run_id"] = json!(run_id);
+        body
+    }
+
+    #[tokio::test]
+    async fn an_unattended_deploy_with_a_run_id_is_denied_and_recorded() {
+        let (ctx, run_id) = run().await;
+        let mut body = with_run(deploy(Some(true)), &run_id.to_string());
+        body["tool_input"]["command"] = json!("make deploy TARGET=arg-marker-312");
+        let out = gate_on(&ctx, body).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+
+        let events = gate_events(&ctx, &run_id).await;
+        assert_eq!(events.len(), 1, "{events:?}");
+        let e = &events[0];
+        assert_eq!(e.kind, crate::runs::RunEventKind::Flagged);
+        assert_eq!(e.detail["outcome"], "denied", "{}", e.detail);
+        assert_eq!(e.detail["category"], "deploy", "{}", e.detail);
+        assert_eq!(e.detail["tool"], "Bash", "{}", e.detail);
+        assert_eq!(e.detail["reason"], out["permissionDecisionReason"], "{}", e.detail);
+        assert!(!e.detail.to_string().contains("arg-marker-312"), "no command text: {}", e.detail);
+        assert!(e.detail.get("tool_input").is_none(), "{}", e.detail);
+    }
+
+    #[tokio::test]
+    async fn an_interactive_deploy_with_a_run_id_is_allowed_and_recorded() {
+        let (ctx, run_id) = run().await;
+        let out = gate_on(&ctx, with_run(deploy(None), &run_id.to_string())).await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
+
+        let events = gate_events(&ctx, &run_id).await;
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].kind, crate::runs::RunEventKind::Flagged);
+        assert_eq!(events[0].detail["outcome"], "allowed", "{}", events[0].detail);
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_call_with_a_run_id_is_not_recorded() {
+        let (ctx, run_id) = run().await;
+        let body = json!({
+            "session_id": "not-a-uuid",
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test" },
+            "unattended": true,
+            "run_id": run_id.to_string(),
+        });
+        let out = gate_on(&ctx, body).await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
+        assert!(gate_events(&ctx, &run_id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_bad_run_id_does_not_change_the_answer() {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let plain = gate_on(&ctx, deploy(Some(true))).await;
+        for bad in ["not-a-uuid", &uuid::Uuid::new_v4().to_string()] {
+            let out = gate_on(&ctx, with_run(deploy(Some(true)), bad)).await;
+            assert_eq!(out, plain, "run_id {bad}");
+        }
+    }
+
+    // ── #312: a gate put to a phone, answered through a mock dōjō ───────────
+
+    /// What the mock dōjō saw and how it answers the gate.
+    #[derive(Clone, Default)]
+    struct Phone {
+        /// The gate's reply; `None` leaves it pending (a timeout).
+        reply: Option<Value>,
+        /// The payloads raised to the inbox.
+        raised: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    }
+
+    /// A mock dōjō: accepts the session publish, acks the raised gate as
+    /// `gate-1`, and answers lookups of it with the phone's reply.
+    async fn mock_dojo(phone: Phone) -> crate::db::pg_store::DojoMembership {
+        use axum::extract::State;
+        use axum::{Json, Router, routing::post};
+        use dojo_protocol::relay::{
+            RelayInboxAck, RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus,
+            RelayMessageDirection,
+        };
+
+        async fn session() -> Json<Value> {
+            Json(json!({ "id": "session-1" }))
+        }
+        async fn raise(State(p): State<Phone>, Json(item): Json<Value>) -> Json<RelayInboxAck> {
+            p.raised.lock().unwrap().push(item["payload"].clone());
+            Json(RelayInboxAck { id: "gate-1".into(), seq: 1 })
+        }
+        async fn lookup(State(p): State<Phone>) -> Json<RelayInboxPull> {
+            let status = if p.reply.is_some() {
+                RelayInboxStatus::Answered
+            } else {
+                RelayInboxStatus::Pending
+            };
+            Json(RelayInboxPull {
+                items: vec![RelayInboxItem {
+                    id: Some("gate-1".into()),
+                    run_id: "run-1".into(),
+                    segment_id: None,
+                    kind: RelayInboxKind::Approval,
+                    direction: RelayMessageDirection::AgentToHuman,
+                    status,
+                    payload: json!({}),
+                    reply: p.reply.clone(),
+                    created_at: None,
+                    answered_at: None,
+                }],
+                cursor: 1,
+            })
+        }
+
+        let app = Router::new()
+            .route("/v1/t/{origin}/{org}/relay/session", post(session))
+            .route("/v1/t/{origin}/{org}/relay/inbox", post(raise).get(lookup))
+            .with_state(phone);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let id = uuid::Uuid::new_v4();
+        crate::dojo::client::test_bearers::set(id, "device-token-gate");
+        crate::db::pg_store::DojoMembership {
+            id,
+            registry_url: format!("http://{addr}"),
+            tenant_key: "github/acme".into(),
+            dojo_url: format!("http://{addr}/github/acme"),
+            kind: "client".into(),
+            org_slugs: vec![],
+            role: "contributor".into(),
+            authenticated_via: "github_oauth".into(),
+            attribution_default: "anonymous".into(),
+            sync_status: "connected".into(),
+            last_seq: 0,
+            last_heartbeat_at: None,
+            enabled: true,
+            persona: None,
+        }
+    }
+
+    /// Put an unattended-or-not `make deploy` gate to the mock phone, recording in
+    /// a fresh run. Returns the gate's answer, the run's gate events in order,
+    /// and the payloads raised to the phone.
+    async fn put_deploy(
+        reply: Option<Value>,
+        unattended: bool,
+    ) -> (Value, Vec<crate::runs::RunEvent>, Vec<Value>) {
+        let (ctx, run_id) = run().await;
+        let raised = std::sync::Arc::default();
+        let phone = Phone { reply, raised: std::sync::Arc::clone(&raised) };
+        let client = crate::dojo::client::DojoClient::for_membership(&mock_dojo(phone).await);
+        let hard_block = crate::dojo::gate::classify_hard_block(
+            "Bash",
+            &json!({ "command": "make deploy TARGET=arg-marker-312" }),
+        );
+        assert!(hard_block.is_some(), "make deploy is a hard-block");
+        let run = run_id.to_string();
+        let session = uuid::Uuid::new_v4().to_string();
+        let gate = super::GateRecord {
+            state: &ctx.app_state,
+            run_id: Some(&run),
+            session_id: &session,
+            tool: "Bash",
+            hard_block: hard_block.as_ref(),
+            unattended,
+        };
+        let out = gate.put_to_phone(&client, None, std::time::Duration::from_secs(2)).await;
+        let mut events = gate_events(&ctx, &run_id).await;
+        events.sort_by_key(|e| e.id);
+        let raised = raised.lock().unwrap().clone();
+        (out.0["hookSpecificOutput"].clone(), events, raised)
+    }
+
+    fn kinds(events: &[crate::runs::RunEvent]) -> Vec<crate::runs::RunEventKind> {
+        events.iter().map(|e| e.kind).collect()
+    }
+
+    #[tokio::test]
+    async fn an_approved_gate_allows_and_records_raised_then_passed() {
+        use crate::runs::RunEventKind::{GatePassed, GateRaised};
+        let (out, events, raised) = put_deploy(Some(json!({ "verdict": "approve" })), true).await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, GatePassed], "{events:?}");
+        assert_eq!(events[0].detail["outcome"], "raised", "{}", events[0].detail);
+        assert_eq!(events[1].detail["outcome"], "approved", "{}", events[1].detail);
+        assert_eq!(events[1].detail["category"], "deploy", "{}", events[1].detail);
+        assert_eq!(raised.len(), 1, "one gate raised: {raised:?}");
+        assert_eq!(raised[0]["category"], "deploy", "{}", raised[0]);
+        for e in &events {
+            assert!(!e.detail.to_string().contains("arg-marker-312"), "{}", e.detail);
+        }
+        assert!(!raised[0].to_string().contains("arg-marker-312"), "{}", raised[0]);
+    }
+
+    #[tokio::test]
+    async fn a_declined_gate_denies_and_records_flagged_declined() {
+        use crate::runs::RunEventKind::{Flagged, GateRaised};
+        let (out, events, _) = put_deploy(Some(json!({ "verdict": "deny" })), false).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, Flagged], "{events:?}");
+        assert_eq!(events[1].detail["outcome"], "declined", "{}", events[1].detail);
+        assert!(events[1].detail.get("why").is_none(), "{}", events[1].detail);
+    }
+
+    /// Spec: "Unattended deploy with a garbled reply" — `/hook/gate` denies.
+    #[tokio::test]
+    async fn an_unattended_deploy_with_a_garbled_reply_is_denied() {
+        use crate::runs::RunEventKind::{Flagged, GateRaised};
+        let (out, events, _) = put_deploy(Some(json!({ "text": "sure" })), true).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, Flagged], "{events:?}");
+        assert_eq!(events[1].detail["outcome"], "denied", "{}", events[1].detail);
+        assert_eq!(events[1].detail["why"], crate::dojo::gate::UNCLEAR_REPLY);
+        assert_eq!(events[1].detail["reason"], out["permissionDecisionReason"]);
+    }
+
+    /// Spec: "Interactive deploy with a garbled reply" — `/hook/gate` allows.
+    #[tokio::test]
+    async fn an_interactive_deploy_with_a_garbled_reply_is_allowed() {
+        use crate::runs::RunEventKind::{Flagged, GateRaised};
+        let (out, events, _) = put_deploy(Some(json!({ "text": "sure" })), false).await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, Flagged], "{events:?}");
+        assert_eq!(events[1].detail["outcome"], "allowed", "{}", events[1].detail);
+        assert_eq!(events[1].detail["why"], crate::dojo::gate::UNCLEAR_REPLY);
+    }
+
+    #[tokio::test]
+    async fn an_unattended_deploy_with_no_reply_in_time_is_denied() {
+        use crate::runs::RunEventKind::{Flagged, GateRaised};
+        let (out, events, _) = put_deploy(None, true).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+        assert_eq!(kinds(&events), [GateRaised, Flagged], "{events:?}");
+        assert_eq!(events[1].detail["outcome"], "denied", "{}", events[1].detail);
+        assert_eq!(events[1].detail["why"], "gate timed out", "{}", events[1].detail);
     }
 }
