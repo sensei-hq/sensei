@@ -57,7 +57,7 @@
     {#if href}<a class="text-accent no-underline hover:underline" {href}>Open the task ›</a>{/if}
   </span>
   {#if decision.response}
-    <DecisionForm bind:this={form} response={decision.response} disabled={busy} />
+    <DecisionForm bind:this={form} response={decision.response} idPrefix={decision.id} disabled={busy} />
   {/if}
   <div class="flex flex-wrap items-center gap-1.5">
     {#each decision.options as option (option.id)}

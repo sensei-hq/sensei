@@ -6,10 +6,20 @@
   // shows each field's message, and hands back the values only when nothing failed.
   import { untrack, type Component } from 'svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
-  import { toAnswerValues, toDecisionForm, type RelayDecisionResponse } from '@sensei/state';
+  import { isEmptyValue, toAnswerValues, toDecisionForm, type RelayDecisionResponse } from '@sensei/state';
   import DecisionCheckbox from './DecisionCheckbox.svelte';
 
-  let { response, disabled = false }: { response: RelayDecisionResponse; disabled?: boolean } = $props();
+  let {
+    response,
+    idPrefix,
+    disabled = false,
+  }: {
+    response: RelayDecisionResponse;
+    /** The decision's id: rokkit names each control's id and its label's `for` after the
+     *  field, so two cards with the same property names would share ids without it. */
+    idPrefix: string;
+    disabled?: boolean;
+  } = $props();
 
   // The form is drawn once for the decision it belongs to; a decision's response never changes.
   const form = untrack(() => toDecisionForm(response));
@@ -32,7 +42,9 @@
   type Element = { scope?: string; type?: string; value?: unknown; props?: Record<string, unknown> };
 
   function change(path: string, value: unknown): void {
-    builder.updateField(path, value);
+    // A control emptied is unset: rokkit's number input reports a cleared box as NaN, which
+    // its own checks read as a bad number rather than as empty.
+    builder.updateField(path, isEmptyValue(value) ? undefined : value);
     // A field already showing a message re-checks as it is fixed.
     if ((builder.validation as Record<string, unknown>)[path]) builder.validateField(path);
   }
@@ -42,7 +54,7 @@
   {@const path = (element.scope ?? '').replace(/^#\//, '')}
   <div data-decision-field={path}>
     <InputField
-      name={element.scope}
+      name={`${idPrefix}-${path}`}
       type={element.type}
       value={element.value}
       {...element.props}

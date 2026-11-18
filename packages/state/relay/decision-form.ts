@@ -1,6 +1,7 @@
 // A form decision's form (#389 D6): what `@rokkit/forms` draws for a decision's `response`.
 // The schema passes through unchanged (no sensei field format); the layout is the lane's,
-// else one element per property in `properties` order; the data starts from each `default`.
+// else one element per property in `properties` order; the data starts from each `default`,
+// and a required yes/no with none starts as no, as its unchecked box shows.
 // `toAnswerValues` keeps what was filled and drops optional fields left empty, so absent stays
 // absent (D83). The daemon re-validates every answer (D3); this is the person's convenience.
 import type { RelayDecisionLayout, RelayDecisionResponse } from './types.js';
@@ -33,14 +34,16 @@ function defaultLayout(schema: DecisionSchema): RelayDecisionLayout {
 
 export function toDecisionForm(response: RelayDecisionResponse): DecisionFormView {
   const data: Record<string, unknown> = {};
+  const required = new Set(response.schema.required ?? []);
   for (const [name, property] of Object.entries(response.schema.properties)) {
     if (property.default !== undefined) data[name] = property.default;
+    else if (property.type === 'boolean' && required.has(name)) data[name] = false;
   }
   return { schema: response.schema, layout: response.layout ?? defaultLayout(response.schema), data };
 }
 
 /** Empty as a form leaves it: never set, cleared, or a number input emptied (NaN). */
-function isEmpty(value: unknown): boolean {
+export function isEmptyValue(value: unknown): boolean {
   return value === undefined || value === null || value === '' || (typeof value === 'number' && Number.isNaN(value));
 }
 
@@ -50,7 +53,7 @@ export function toAnswerValues(schema: DecisionSchema, data: Record<string, unkn
   const values: Record<string, unknown> = {};
   for (const name of Object.keys(schema.properties)) {
     const value = data[name];
-    if (isEmpty(value) && !required.has(name)) continue;
+    if (isEmptyValue(value) && !required.has(name)) continue;
     values[name] = value;
   }
   return values;
