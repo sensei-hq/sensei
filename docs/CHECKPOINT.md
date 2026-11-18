@@ -1,4 +1,4 @@
-# Checkpoint — 2026-11-18 (relay open items — #414 slice 2, review findings fixed)
+# Checkpoint — 2026-11-19 (relay open items — #414 slice 2, second review round fixed)
 
 **Slice:** `update-shared-state-sources` slice 2 (#414): the realtime channel adapter and the dōjō
 host. Branch `lane/relay-414-s2` (worktree `lanes/relay-open`), PR #499 to develop.
@@ -15,7 +15,13 @@ host. Branch `lane/relay-414-s2` (worktree `lanes/relay-open`), PR #499 to devel
 - Table rows vs screen rows: `fromPostgresChange` maps a table row (default `RELAY_TABLES`) to
   `{op, <entity>_id}` and the state re-reads; `{entity, screenRow: true}` carries the row. Specs use
   rows with the DDL's columns; parity specs run only on a screen-shaped map.
-- Checks: app unit 3786/3786, app check 0 errors, dōjō test 2409/2409, check and build clean,
+- Realtime tables: `RELAY_TABLES` names only DDL tables (`lanes`, `leases`, `tasks`, `actions`, `runs`,
+  `items`); a spec checks each against `database/ddl/table/relay/`. An action names its task (an answer
+  re-reads Now and the task view); a lease names its lane.
+- Crew scope: `realtimeChannel` takes a required `crewId` (null = every crew). Crew-scoped bindings carry
+  `crew_id=eq.<crewId>`; a row naming another crew is dropped.
+- Checks: app unit 3795/3795, app check 0 errors, dōjō test 2411/2411, check and build clean. Before
+  this round: app unit 3786/3786, app check 0 errors, dōjō test 2409/2409, check and build clean,
   `openspec validate --strict` valid. Tauri e2e: diagrams-schema + relay-run + relay-timeline +
   relay.spec 6/6 green; real brew daemon restored on :7744.
 
