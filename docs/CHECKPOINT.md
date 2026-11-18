@@ -13,11 +13,15 @@
 - Tests: gate.rs pure, `hook_gate_tests` router (DB), plugin `gate.test.ts`,
   Tauri e2e `app/e2e/tests/relay-gate.spec.ts` (red then green).
 - `openspec validate update-relay-gate-unattended-evidence --strict` clean.
+- PR #494 review fixes: a semantic (gemma4) hard-block's reason is now a daemon phrase
+  (`the safety check flagged it as <category>`), never the model's text (D10). The raise-and-wait
+  leg moved to `GateRecord::put_to_phone`; handler tests drive it against a mock dōjō
+  (approve, decline, garbled reply unattended/interactive, timeout). Mutations caught.
 
 **Remaining:** tasks §5 is the user's production runbook (release, a live unattended run hitting a
 hard-block, then close #312). Other open relay items: #398, #414, #389, #455, #393, #444, #427, #314.
 
-**Next command:** review and merge the #312 PR into develop.
+**Next command:** re-review PR #494 and merge it into develop.
 
 **Open questions:** none blocking.
 
