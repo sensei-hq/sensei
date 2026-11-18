@@ -13,6 +13,7 @@
 // the store land in phase B. Removed then (like L4's F6 comments).
 #![allow(dead_code)]
 
+pub mod decision_schema;
 pub mod envelope;
 pub mod gate;
 pub mod plan;
@@ -1643,8 +1644,11 @@ mod tests {
         );
         assert!(validate_props(K::Reviewed, &json!({"findings": []})).is_err());
         assert!(
-            validate_props(K::Asked, &json!({"options": [], "blocks": [], "asked_of": "person"}))
-                .is_ok()
+            validate_props(
+                K::Asked,
+                &json!({"options": [{"id": "db", "label": "Db"}], "blocks": [], "asked_of": "person"})
+            )
+            .is_ok()
         );
         assert!(validate_props(K::Asked, &json!({"options": []})).is_err());
         assert!(
@@ -1890,8 +1894,50 @@ mod tests {
             "asked_of": "person"
         });
         assert!(validate_props(K::Asked, &no_label).is_err());
-        let empty_asked_of = json!({"options": [], "blocks": [], "asked_of": ""});
+        let empty_asked_of =
+            json!({"options": [{"id": "db", "label": "Db"}], "blocks": [], "asked_of": ""});
         assert!(validate_props(K::Asked, &empty_asked_of).is_err());
+    }
+
+    /// #389: a decision carries options (non-empty) or a response, never both
+    /// or neither; the response is checked against the subset at ask time.
+    #[test]
+    fn validate_props_asked_options_or_response_389() {
+        use RelayActionKind as K;
+        let response = json!({"schema": {"type": "object",
+            "properties": {"path": {"type": "string"}}, "required": ["path"]}});
+        let form = json!({"response": response, "blocks": [], "asked_of": "person"});
+        assert_eq!(validate_props(K::Asked, &form), Ok(()));
+        let both = json!({"options": [{"id": "db", "label": "Db"}], "response": response,
+                          "blocks": [], "asked_of": "person"});
+        let err = validate_props(K::Asked, &both).unwrap_err();
+        assert!(err.message.contains("options") && err.message.contains("response"), "{err:?}");
+        let neither = json!({"blocks": [], "asked_of": "person"});
+        assert!(validate_props(K::Asked, &neither).is_err());
+        let empty = json!({"options": [], "blocks": [], "asked_of": "person"});
+        assert!(validate_props(K::Asked, &empty).is_err(), "an empty options list is a blank card");
+        // recommended belongs to options.
+        let rec =
+            json!({"response": response, "recommended": "db", "blocks": [], "asked_of": "person"});
+        assert!(validate_props(K::Asked, &rec).is_err());
+        // Out of the subset: delegated to decision_schema, its message kept.
+        let array = json!({"response": {"schema": {"type": "object",
+            "properties": {"files": {"type": "array", "items": {"enum": ["a"]}}}}},
+            "blocks": [], "asked_of": "person"});
+        let err = validate_props(K::Asked, &array).unwrap_err();
+        assert!(err.message.contains("files") && err.message.contains("array"), "{err:?}");
+    }
+
+    #[test]
+    fn validate_props_answered_option_or_values_389() {
+        use RelayActionKind as K;
+        let values = json!({"values": {"path": "src/"}, "surface": "desktop"});
+        assert_eq!(validate_props(K::Answered, &values), Ok(()));
+        let both = json!({"option": "db", "values": {"path": "src/"}, "surface": "desktop"});
+        assert!(validate_props(K::Answered, &both).is_err());
+        assert!(validate_props(K::Answered, &json!({"surface": "desktop"})).is_err());
+        let not_object = json!({"values": ["src/"], "surface": "desktop"});
+        assert!(validate_props(K::Answered, &not_object).is_err());
     }
 
     #[test]
@@ -2032,7 +2078,7 @@ mod tests {
     #[test]
     fn validate_props_asked_of_person_or_uuid_q1() {
         use RelayActionKind as K;
-        let asked = |of: &str| json!({"options": [], "blocks": [], "asked_of": of});
+        let asked = |of: &str| json!({"options": [{"id": "db", "label": "Db"}], "blocks": [], "asked_of": of});
         assert!(validate_props(K::Asked, &asked("person")).is_ok());
         assert!(validate_props(K::Asked, &asked(LANE_A)).is_ok());
         assert!(validate_props(K::Asked, &asked("L1")).is_err());
