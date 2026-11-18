@@ -923,7 +923,11 @@ mod hook_gate_tests {
 
     async fn gate(body: Value) -> Value {
         let ctx = crate::tasks::test_support::make_ctx().await;
-        let app = crate::api::routes::create_router(ctx.app_state.clone());
+        gate_on(&ctx.app_state, body).await
+    }
+
+    async fn gate_on(state: &crate::api::state::AppState, body: Value) -> Value {
+        let app = crate::api::routes::create_router(state.clone());
         let req = Request::builder()
             .method("POST")
             .uri("/hook/gate")
@@ -971,5 +975,92 @@ mod hook_gate_tests {
         }))
         .await;
         assert_eq!(out["permissionDecision"], "allow", "{out}");
+    }
+
+    // ── #312: the gate's outcome in the run's activity ──────────────────────
+
+    /// A fresh run on the test DB the router reads, and the state to post with.
+    async fn run() -> (std::sync::Arc<crate::tasks::executor::TaskContext>, uuid::Uuid) {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let new = crate::runs::NewRun {
+            workspace_id: None,
+            plan_ref: None,
+            goal: Some("hook gate record (#312)".into()),
+            dojo_session_id: None,
+            max_concurrency: None,
+            author_name: None,
+            author_email: None,
+            plan_graph: None,
+        };
+        let id = ctx.app_state.pg.create_run(&new).await.expect("a run");
+        (ctx, id)
+    }
+
+    /// The run's events the gate wrote (`detail.via` = `hook_gate`).
+    async fn gate_events(
+        state: &crate::api::state::AppState,
+        run_id: &uuid::Uuid,
+    ) -> Vec<crate::runs::RunEvent> {
+        let events = state.pg.list_run_events(run_id, 100).await.expect("events");
+        events.into_iter().filter(|e| e.detail["via"] == "hook_gate").collect()
+    }
+
+    fn with_run(mut body: Value, run_id: &str) -> Value {
+        body["run_id"] = json!(run_id);
+        body
+    }
+
+    #[tokio::test]
+    async fn an_unattended_deploy_with_a_run_id_is_denied_and_recorded() {
+        let (ctx, run_id) = run().await;
+        let out = gate_on(&ctx.app_state, with_run(deploy(Some(true)), &run_id.to_string())).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+
+        let events = gate_events(&ctx.app_state, &run_id).await;
+        assert_eq!(events.len(), 1, "{events:?}");
+        let e = &events[0];
+        assert_eq!(e.kind, crate::runs::RunEventKind::Flagged);
+        assert_eq!(e.detail["outcome"], "denied", "{}", e.detail);
+        assert_eq!(e.detail["category"], "deploy", "{}", e.detail);
+        assert_eq!(e.detail["tool"], "Bash", "{}", e.detail);
+        assert_eq!(e.detail["reason"], out["permissionDecisionReason"], "{}", e.detail);
+        assert!(!e.detail.to_string().contains("make deploy"), "no command text: {}", e.detail);
+    }
+
+    #[tokio::test]
+    async fn an_interactive_deploy_with_a_run_id_is_allowed_and_recorded() {
+        let (ctx, run_id) = run().await;
+        let out = gate_on(&ctx.app_state, with_run(deploy(None), &run_id.to_string())).await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
+
+        let events = gate_events(&ctx.app_state, &run_id).await;
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].kind, crate::runs::RunEventKind::Flagged);
+        assert_eq!(events[0].detail["outcome"], "allowed", "{}", events[0].detail);
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_call_with_a_run_id_is_not_recorded() {
+        let (ctx, run_id) = run().await;
+        let body = json!({
+            "session_id": "not-a-uuid",
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test" },
+            "unattended": true,
+            "run_id": run_id.to_string(),
+        });
+        let out = gate_on(&ctx.app_state, body).await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
+        assert!(gate_events(&ctx.app_state, &run_id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_bad_run_id_does_not_change_the_answer() {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let plain = gate_on(&ctx.app_state, deploy(Some(true))).await;
+        for bad in ["not-a-uuid", &uuid::Uuid::new_v4().to_string()] {
+            let out = gate_on(&ctx.app_state, with_run(deploy(Some(true)), bad)).await;
+            assert_eq!(out, plain, "run_id {bad}");
+        }
     }
 }

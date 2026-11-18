@@ -53,6 +53,49 @@ pub fn decision_from_reply(reply: Option<&serde_json::Value>) -> &'static str {
     if verdict_deny || approve_false { "deny" } else { "allow" }
 }
 
+/// How a person's reply to a gate reads (#312).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reply {
+    Approved,
+    Declined,
+    Unclear,
+}
+
+/// Read a gate reply. Red stub (#312).
+pub fn read_reply(_reply: &serde_json::Value) -> Reply {
+    todo!("#312: read_reply")
+}
+
+/// The decision for an answered gate. Red stub (#312).
+pub fn answered_decision(
+    _reply: Reply,
+    _unattended: bool,
+    _hard_block: Option<&HardBlock>,
+) -> (&'static str, String) {
+    todo!("#312: answered_decision")
+}
+
+/// Which way a gate went, as the run's activity records it (#312).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateOutcome {
+    Raised,
+    Approved,
+    Declined,
+    Denied,
+    Allowed,
+}
+
+/// The run event for a gate outcome. Red stub (#312).
+pub fn gate_event(
+    _outcome: GateOutcome,
+    _tool: &str,
+    _hard_block: Option<&HardBlock>,
+    _why: Option<&str>,
+    _reason: &str,
+) -> (crate::runs::RunEventKind, serde_json::Value) {
+    todo!("#312: gate_event")
+}
+
 /// The decision when a raised gate got no human answer — no dōjō to ask, a
 /// failed raise, an unreachable relay or a timeout (`why` names which).
 ///
@@ -776,32 +819,104 @@ mod tests {
         assert!(!should_gate("Write", &[]));
     }
 
+    // ── #312: reading a reply ────────────────────────────────────────────────
+
     #[test]
-    fn decision_deny_only_on_explicit_deny() {
-        // explicit deny verdict → deny
-        assert_eq!(decision_from_reply(Some(&json!({"verdict": "deny"}))), "deny");
-        // case-insensitive verdict match
-        assert_eq!(decision_from_reply(Some(&json!({"verdict": "DENY"}))), "deny");
-        // approve == false → deny
-        assert_eq!(decision_from_reply(Some(&json!({"approve": false}))), "deny");
+    fn only_an_explicit_approval_is_read_as_approved() {
+        for reply in
+            [json!({"verdict": "approve"}), json!({"verdict": "APPROVE"}), json!({"approve": true})]
+        {
+            assert_eq!(read_reply(&reply), Reply::Approved, "{reply}");
+        }
     }
 
     #[test]
-    fn decision_allow_on_approve_or_anything_else() {
-        // explicit approve verdict → allow
-        assert_eq!(decision_from_reply(Some(&json!({"verdict": "approve"}))), "allow");
-        // approve == true → allow
-        assert_eq!(decision_from_reply(Some(&json!({"approve": true}))), "allow");
-        // free-text / unrelated shapes → allow (fail-open)
-        assert_eq!(decision_from_reply(Some(&json!({"note": "looks fine"}))), "allow");
-        assert_eq!(decision_from_reply(Some(&json!("whatever"))), "allow");
-        assert_eq!(decision_from_reply(Some(&json!({}))), "allow");
+    fn an_explicit_decline_is_read_as_declined_and_wins_over_an_approval() {
+        for reply in [
+            json!({"verdict": "deny"}),
+            json!({"verdict": "DENY"}),
+            json!({"approve": false}),
+            json!({"verdict": "approve", "approve": false}),
+        ] {
+            assert_eq!(read_reply(&reply), Reply::Declined, "{reply}");
+        }
     }
 
     #[test]
-    fn decision_allow_on_none_timeout() {
-        // No reply (the await_reply timeout path) is fail-open → allow.
-        assert_eq!(decision_from_reply(None), "allow");
+    fn every_other_reply_is_unclear() {
+        for reply in [
+            json!({}),
+            json!({"text": "ok"}),
+            json!({"choice": "a"}),
+            json!({"note": "x"}),
+            json!("whatever"),
+            json!(null),
+            json!({"verdict": "maybe"}),
+        ] {
+            assert_eq!(read_reply(&reply), Reply::Unclear, "{reply}");
+        }
+    }
+
+    #[test]
+    fn an_answered_gate_follows_the_reply() {
+        assert_eq!(answered_decision(Reply::Approved, true, Some(&deploy())).0, "allow");
+        assert_eq!(answered_decision(Reply::Declined, false, None).0, "deny");
+    }
+
+    #[test]
+    fn an_unclear_reply_to_an_unattended_hard_block_is_denied() {
+        let (decision, reason) = answered_decision(Reply::Unclear, true, Some(&deploy()));
+        assert_eq!(decision, "deny");
+        assert!(reason.contains("not a clear approve or deny"), "{reason}");
+        assert!(reason.contains("make deploy ships to an environment"), "{reason}");
+    }
+
+    #[test]
+    fn an_unclear_reply_is_allowed_when_interactive_or_allow_listed() {
+        assert_eq!(answered_decision(Reply::Unclear, false, Some(&deploy())).0, "allow");
+        assert_eq!(answered_decision(Reply::Unclear, true, None).0, "allow");
+    }
+
+    // ── #312: the gate's record in the run's activity ────────────────────────
+
+    #[test]
+    fn each_gate_outcome_maps_to_its_run_event() {
+        use crate::runs::RunEventKind;
+        let hb = deploy();
+        let cases = [
+            (GateOutcome::Raised, RunEventKind::GateRaised, "raised"),
+            (GateOutcome::Approved, RunEventKind::GatePassed, "approved"),
+            (GateOutcome::Declined, RunEventKind::Flagged, "declined"),
+            (GateOutcome::Denied, RunEventKind::Flagged, "denied"),
+            (GateOutcome::Allowed, RunEventKind::Flagged, "allowed"),
+        ];
+        for (outcome, kind, word) in cases {
+            let (got, detail) =
+                gate_event(outcome, "Bash", Some(&hb), Some("gate timed out"), "the reason");
+            assert_eq!(got, kind, "{word}");
+            assert_eq!(detail["via"], "hook_gate");
+            assert_eq!(detail["tool"], "Bash");
+            assert_eq!(detail["category"], "deploy");
+            assert_eq!(detail["outcome"], word);
+            assert_eq!(detail["why"], "gate timed out");
+            assert_eq!(detail["reason"], "the reason");
+        }
+    }
+
+    #[test]
+    fn a_gate_event_names_no_category_or_cause_it_does_not_have() {
+        let (_, detail) =
+            gate_event(GateOutcome::Approved, "Write", None, None, "approved from your phone");
+        let mut keys: Vec<&String> = detail.as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["outcome", "reason", "tool", "via"], "{detail}");
+    }
+
+    #[test]
+    fn a_gate_event_never_holds_the_tool_input() {
+        let (_, detail) =
+            gate_event(GateOutcome::Denied, "Bash", Some(&deploy()), Some("no dōjō enrolled"), "r");
+        assert!(detail.get("tool_input").is_none() && detail.get("command").is_none(), "{detail}");
     }
 
     // ── Hard-block classifier ────────────────────────────────────────────────
