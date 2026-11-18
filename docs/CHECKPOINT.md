@@ -1,43 +1,27 @@
-# Checkpoint — 2026-11-19 (relay open items — #389 slice 1, the wire)
+# Checkpoint
 
-**Slice:** `add-relay-decision-response-form` slice A (#389): ask with a response schema, answer with
-values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR #500 to develop.
+**Slice:** #398 — lane close tolerates and releases dead-lease lanes (`fix-relay-crew-close-dead-lanes`, 1/1).
+**Branch:** `lane/relay-398-s1` (worktree `lanes/relay-open`), PR to develop.
 
-**Done (tasks A1–A6, red then green each):**
-- `relay/decision_schema.rs`: `validate_response` (the closed subset, refused by keyword and property)
-  and `validate_values` (unknown keys, required, type, enum, bounds, maxLength/600, pattern, leak guard).
-- `validate_props`: Asked takes `options` (non-empty) or `response`, never both or neither; Answered
-  takes `option` or `values`.
-- Store: `RelayAskInput.response`, `RelayAnswerInput {option?, values?}`; the answer is checked against
-  the stored schema before the write. `relay.now` `open_asked` carries `response`; Now, the stream row,
-  the task view, history and the envelope (`EnvelopeAnswer.option?`, `values?`) read it.
-- Routes and MCP: `AskBody.response`, answer bodies take `values`; MCP forwards both, `options`/`option`
-  are optional tool args.
-- `@sensei/state`: `RelayDecision.response`, `RelayAnswer` union, `answer(decision, {option}|{values})`.
-- Docs: `lanes-data.md` props table, `lanes.md` §7 decisions.
-- e2e: `relay-decision-form.spec.ts` "the broker round-trips a form decision" green, with
-  `diagrams-schema` + `relay-run` (3/3); real brew daemon restored on :7744.
-- Review fix (PR #500): a form answer read "null"/empty in the task timeline and HistoryEntry.
-  `answerGist` (`@sensei/state` format.ts) reads option, else values by sorted key (jsonb reorders
-  keys); both renderers use it. Unit red/green + e2e "the task view reads a form answer as its
-  values" (decision-form 2/2, relay-timeline, relay-run, diagrams-schema: 5/5).
-- Review fix 2 (PR #500): ask time now refuses a form no answer can satisfy. A layout must name every
-  property (rokkit draws only its elements; `elements: []` refused). Each enum member must be
-  non-empty and pass its own maxLength, pattern and leak guard; integer bounds must hold a whole
-  number. Red `d376f98db`, green `a40ad31a2`; spec scenario added. relay tests 446/446; e2e
-  decision-form 2/2.
-- Gates: senseid 5051/5052 on the lane template (the one failure is the keychain test
-  `discarding_the_forge_refresh_token_…`, untouched code, fails on this machine's keychain); sensei-mcp
-  green; clippy `-D warnings` and fmt clean; SQL `run.sh relay` 14/14; app check 0 errors; dōjō check
-  0 errors.
+## Done
+- Store: `relay_close_crew` judges liveness by the lane lease via `relay_crew_has_live_lane`
+  (shared with run start), locks crew then lanes, releases each dead lane through
+  `relay_unregister_tx`; `RelayCloseOutput.released`.
+- Handler: `close_crew` emits `lane.unregistered` + `task.interrupt` per released lane
+  (`emit_released`, shared with the person close), then `run.completed`; answer gains `released`.
+- MCP `relay_close_crew` text and `lanes.md` §12 updated.
+- e2e `app/e2e/tests/relay-crew-close.spec.ts`: red on the pre-fix daemon (409), green on this branch.
+- Gate: fmt, clippy (senseid, sensei-mcp), relay DB tests (451, serial), test-fast, app check,
+  openspec validate --strict.
 
-**Remaining:** slice B (the form on the Relay screen, live) and slice R (rokkit issue + widen).
+## Remaining
+- PR review and merge to develop (not merged by the lane).
 
-**Next command:** `gh pr checks 500` (lane/relay-389-s1, head after review fix 2); then slice B from tasks.md B1.1.
+## Next command
+`gh pr view --web` on the slice PR.
 
-**Open questions:** none blocking.
+## Open questions
+- None.
 
-**Known broken:** none from this branch. The lane DB tests run against the lane template
-`sensei_test_relay_389_s1` (`TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_389_s1`),
-built from this tree's DDL (the `relay.now` view changed). Relay e2e specs alone after
-`make reset-e2e-db` need a workspace first: include `diagrams-schema` in the run.
+## Known-broken
+- None.
