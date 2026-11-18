@@ -14606,4 +14606,122 @@ mod tests {
         .unwrap();
         assert_eq!(granted, 0, "a released lane was regranted a lease");
     }
+
+    /// Close's first step, held open: the crew row `for update`.
+    async fn close_holding_crew(
+        pg: &PgStore,
+        crew: Uuid,
+    ) -> sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres> {
+        let mut close = pg.pool().begin().await.unwrap();
+        sqlx_core::query::query("set local lock_timeout = '2s'")
+            .execute(&mut *close)
+            .await
+            .unwrap();
+        sqlx_core::query_scalar::query_scalar::<_, String>(
+            "select status from relay.crews where user_id = $1 and id = $2 for update",
+        )
+        .bind(u1())
+        .bind(crew)
+        .fetch_one(&mut *close)
+        .await
+        .unwrap();
+        close
+    }
+
+    /// True once some session in this database waits on a lock.
+    async fn some_session_waits_on_a_lock(pg: &PgStore) -> bool {
+        for _ in 0..100 {
+            let waiting: i64 = sqlx_core::query_scalar::query_scalar(
+                "select count(*) from pg_locks l join pg_stat_activity a on a.pid = l.pid
+                 where not l.granted and a.datname = current_database()",
+            )
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            if waiting > 0 {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    /// Close's last step: the crew turns closed and the close commits.
+    async fn close_commits(
+        mut close: sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres>,
+        crew: Uuid,
+    ) {
+        sqlx_core::query::query(
+            "update relay.crews set status = 'closed', completed_at = current_timestamp
+             where user_id = $1 and id = $2",
+        )
+        .bind(u1())
+        .bind(crew)
+        .execute(&mut *close)
+        .await
+        .unwrap();
+        close.commit().await.unwrap();
+    }
+
+    /// A register joining a crew while a close holds it waits for the
+    /// close, then sees the crew closed: `409 crew is closed`, and the
+    /// closed crew gains no lane.
+    #[tokio::test]
+    async fn register_racing_a_close_is_refused_once_the_crew_closes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, _, _, _) = fx_two_crews(&pg).await;
+        let close = close_holding_crew(&pg, c1).await;
+        let store = pg.clone();
+        let register = tokio::spawn(async move {
+            store.relay_register(u1(), register_input(RelayRole::Contributor, Some(c1)), t0()).await
+        });
+        assert!(some_session_waits_on_a_lock(&pg).await, "register never waited on the close");
+        close_commits(close, c1).await;
+        let out = register.await.unwrap();
+        assert!(
+            matches!(&out, Err(RelayError::Conflict(m)) if m == "crew is closed"),
+            "{:?}",
+            out.as_ref().map(|o| o.lane_id)
+        );
+        let lanes: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.lanes where crew_id = $1",
+        )
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(lanes, 2, "a lane joined the closed crew");
+    }
+
+    /// A reregister racing a close waits for it, then is refused: the
+    /// lane stays unregistered and gains no lease in the closed crew.
+    #[tokio::test]
+    async fn reregister_racing_a_close_is_refused_once_the_crew_closes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        pg.relay_unregister(a2).await.unwrap();
+        let close = close_holding_crew(&pg, c1).await;
+        let store = pg.clone();
+        let reregister = tokio::spawn(async move { store.relay_reregister(a2, t0()).await });
+        assert!(some_session_waits_on_a_lock(&pg).await, "reregister never waited on the close");
+        close_commits(close, c1).await;
+        let out = reregister.await.unwrap();
+        assert!(
+            matches!(&out, Err(RelayError::Conflict(m)) if m == "crew is closed"),
+            "{:?}",
+            out.as_ref().map(|o| o.lane_id)
+        );
+        let (unregistered, granted): (bool, i64) = sqlx_core::query_as::query_as(
+            "select l.unregistered_at is not null,
+                    (select count(*) from relay.leases s
+                     where s.lane_id = l.id and s.kind = 'lane' and s.state = 'granted')
+             from relay.lanes l where l.id = $1",
+        )
+        .bind(a2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(unregistered, "the lane came back live in a closed crew");
+        assert_eq!(granted, 0, "the lane was granted a lease in a closed crew");
+    }
 }
