@@ -1,43 +1,30 @@
-# Checkpoint — 2026-11-19 (relay open items — #389 slice 1, the wire)
+# Checkpoint — 2026-11-18 (relay open items — #389 slice 2, the form on the Relay screen)
 
-**Slice:** `add-relay-decision-response-form` slice A (#389): ask with a response schema, answer with
-values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR #500 to develop.
+**Slice:** `add-relay-decision-response-form` slice B + C1 (#389): a form decision on Needs you and the
+task view, live with no refresh. Branch `lane/relay-389-s2` (worktree `lanes/relay-open`), from develop
+after PR #500 (slice A) merged.
 
-**Done (tasks A1–A6, red then green each):**
-- `relay/decision_schema.rs`: `validate_response` (the closed subset, refused by keyword and property)
-  and `validate_values` (unknown keys, required, type, enum, bounds, maxLength/600, pattern, leak guard).
-- `validate_props`: Asked takes `options` (non-empty) or `response`, never both or neither; Answered
-  takes `option` or `values`.
-- Store: `RelayAskInput.response`, `RelayAnswerInput {option?, values?}`; the answer is checked against
-  the stored schema before the write. `relay.now` `open_asked` carries `response`; Now, the stream row,
-  the task view, history and the envelope (`EnvelopeAnswer.option?`, `values?`) read it.
-- Routes and MCP: `AskBody.response`, answer bodies take `values`; MCP forwards both, `options`/`option`
-  are optional tool args.
-- `@sensei/state`: `RelayDecision.response`, `RelayAnswer` union, `answer(decision, {option}|{values})`.
-- Docs: `lanes-data.md` props table, `lanes.md` §7 decisions.
-- e2e: `relay-decision-form.spec.ts` "the broker round-trips a form decision" green, with
-  `diagrams-schema` + `relay-run` (3/3); real brew daemon restored on :7744.
-- Review fix (PR #500): a form answer read "null"/empty in the task timeline and HistoryEntry.
-  `answerGist` (`@sensei/state` format.ts) reads option, else values by sorted key (jsonb reorders
-  keys); both renderers use it. Unit red/green + e2e "the task view reads a form answer as its
-  values" (decision-form 2/2, relay-timeline, relay-run, diagrams-schema: 5/5).
-- Review fix 2 (PR #500): ask time now refuses a form no answer can satisfy. A layout must name every
-  property (rokkit draws only its elements; `elements: []` refused). Each enum member must be
-  non-empty and pass its own maxLength, pattern and leak guard; integer bounds must hold a whole
-  number. Red `d376f98db`, green `a40ad31a2`; spec scenario added. relay tests 446/446; e2e
-  decision-form 2/2.
-- Gates: senseid 5051/5052 on the lane template (the one failure is the keychain test
-  `discarding_the_forge_refresh_token_…`, untouched code, fails on this machine's keychain); sensei-mcp
-  green; clippy `-D warnings` and fmt clean; SQL `run.sh relay` 14/14; app check 0 errors; dōjō check
-  0 errors.
+**Done (B1–B3, C1; red then green):**
+- `@sensei/state` `relay/decision-form.ts`: `toDecisionForm` (schema through, lane layout else one built
+  from the schema, data from `default`) and `toAnswerValues` (empty optional fields dropped, D83).
+- `DecisionForm.svelte`: `@rokkit/forms` FormRenderer, each field in `data-decision-field` via the
+  `child` snippet; `collect()` checks inline with `validateAll`. `DecisionRow` sends `{values}` once and
+  keeps them on a refusal; NeedsYou, RelayScreen and RelayTaskScreen pass a `RelayDecisionChoice`.
+- The yes/no draws native (`DecisionCheckbox.svelte`): rokkit's custom checkbox fails axe
+  `aria-hidden-focus` — raised as sensei-hq/rokkit#190.
+- Catalogue: `DecisionRow/form`, `DecisionRow/form-layout`. Fields stack at phone width (`md:` 2 cols).
+- e2e `relay-decision-form.spec.ts` 6/6 (arrives, refuses inline, resolves, task view, + slice A's two);
+  relay-run, relay-conformance, zz-a11y, relay, relay-timeline, relay-sprint, relay-gate all green.
+  Evidence DOM dumps under `app/test-results/relay-decision-form/`. Real brew daemon restored on :7744.
+- Gates: app `bun run check` 0 errors; `bun run test:unit` all green; `openspec validate --strict` valid.
 
-**Remaining:** slice B (the form on the Relay screen, live) and slice R (rokkit issue + widen).
+**Remaining:** C2 (close #389 on merge, with the e2e evidence; design review of the card by iris-deneb
+is a follow-up the user runs). Slice R (R1 rokkit issue for pick-several + long text, R2 widen) is not
+built and needs its own issue once #389 closes.
 
-**Next command:** `gh pr checks 500` (lane/relay-389-s1, head after review fix 2); then slice B from tasks.md B1.1.
+**Next command:** `gh pr checks <PR>` for `lane/relay-389-s2`.
 
-**Open questions:** none blocking.
+**Open questions:** none blocking. jsonb keeps its own key order, so a form with no lane layout lists
+fields in the wire's order, not the order the lane wrote; a lane that needs an order sends a layout.
 
-**Known broken:** none from this branch. The lane DB tests run against the lane template
-`sensei_test_relay_389_s1` (`TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_389_s1`),
-built from this tree's DDL (the `relay.now` view changed). Relay e2e specs alone after
-`make reset-e2e-db` need a workspace first: include `diagrams-schema` in the run.
+**Known broken:** none from this branch.
