@@ -39,10 +39,10 @@ function fakeSocket() {
 /** A realtime transport the test drives: changes and channel statuses. */
 function fakeChannel() {
   let on: ((e: Tick) => void) | null = null;
-  let onStatus: ((s: ChannelStatus) => void) | null = null;
+  let onStatus: ((s: ChannelStatus, err?: Error) => void) | null = null;
   return {
     stopped: 0,
-    subscribe(handler: (e: Tick) => void, statusHandler: (s: ChannelStatus) => void) {
+    subscribe(handler: (e: Tick) => void, statusHandler: (s: ChannelStatus, err?: Error) => void) {
       on = handler;
       onStatus = statusHandler;
       return () => {
@@ -52,7 +52,7 @@ function fakeChannel() {
       };
     },
     emit: (e: Tick) => on?.(e),
-    status: (s: ChannelStatus) => onStatus?.(s),
+    status: (s: ChannelStatus, err?: Error) => onStatus?.(s, err),
   };
 }
 
@@ -112,5 +112,19 @@ describe('realtimeEvents — a StateStream over a channel, for any event type', 
     expect(channel.stopped).toBe(1);
     channel.emit({ id: 'c', n: 3 });
     expect(seen).toHaveLength(2);
+  });
+
+  it('reports a channel that failed, timed out or closed as a fault, with the reason; a SUBSCRIBED is not one', () => {
+    const channel = fakeChannel();
+    const faults: string[] = [];
+    realtimeEvents<Tick>(channel)(() => {}, () => {}, (reason) => faults.push(reason));
+    channel.status('SUBSCRIBED');
+    channel.status('CHANNEL_ERROR', new Error('JWT expired'));
+    channel.status('TIMED_OUT');
+    channel.status('CLOSED');
+    expect(faults).toHaveLength(3);
+    expect(faults[0]).toContain('JWT expired');
+    expect(faults[1]).toMatch(/timed out/);
+    expect(faults[2]).toMatch(/closed/);
   });
 });

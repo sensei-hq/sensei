@@ -187,3 +187,30 @@ describe('relayRealtimeTaskSource — the dōjō, for one task view (#414)', () 
     expect(!read.ok && read.error.status).toBe(503);
   });
 });
+
+// A live channel that drops is a fault the screen can show (D83: stale data is a fault),
+// cleared when it subscribes again.
+describe('the states hold a realtime fault (#414)', () => {
+  it('RelayState: a CHANNEL_ERROR sets streamFault with its reason; the next SUBSCRIBED clears it', async () => {
+    const { RelayState } = await import('../relay-state.svelte.js');
+    const t = cannedRealtime({ now: F.now(), queue: F.queue() });
+    const s = new RelayState(relayRealtimeSource(t), {}, { now: F.now(), nowError: null, queue: F.queue(), queueError: null });
+    s.connect();
+    expect(s.streamFault).toBeNull();
+    t.status('CHANNEL_ERROR', new Error('permission denied for table lanes'));
+    expect(s.streamFault).toContain('permission denied for table lanes');
+    t.status('SUBSCRIBED');
+    expect(s.streamFault).toBeNull();
+  });
+
+  it('RelayTaskState: a TIMED_OUT sets streamFault; the next SUBSCRIBED clears it', async () => {
+    const { RelayTaskState } = await import('../task-state.svelte.js');
+    const t = cannedRealtime({ now: null, queue: null, task: F.taskView() });
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, relayRealtimeTaskSource(t), F.CREW_ID, 't-1');
+    s.connect();
+    t.status('TIMED_OUT');
+    expect(s.streamFault).toMatch(/timed out/);
+    t.status('SUBSCRIBED');
+    expect(s.streamFault).toBeNull();
+  });
+});

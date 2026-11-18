@@ -150,6 +150,24 @@ describe('realtimeChannel — a transport subscribe over a supabase-shaped clien
     expect(on).toHaveBeenCalledTimes(1);
   });
 
+  it('logs a channel that failed, timed out or closed, with the error supabase-js gave, and forwards it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const f = fakeClient();
+    const onStatus = vi.fn();
+    realtimeChannel(f.client, spec).subscribe(vi.fn(), onStatus);
+    const denied = new Error('permission denied for table lanes');
+    f.channels[0].status?.('CHANNEL_ERROR', denied);
+    expect(onStatus).toHaveBeenLastCalledWith('CHANNEL_ERROR', denied);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0].map(String).join(' ')).toContain('relay:crew-1');
+    expect(warn.mock.calls[0]).toContain(denied);
+    f.channels[0].status?.('TIMED_OUT');
+    f.channels[0].status?.('CLOSED');
+    expect(warn).toHaveBeenCalledTimes(3);
+    f.channels[0].status?.('SUBSCRIBED');
+    expect(warn).toHaveBeenCalledTimes(3);
+  });
+
   it('logs a status it does not know instead of forwarding it', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const f = fakeClient();
