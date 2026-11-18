@@ -6480,6 +6480,104 @@ mod tests {
         assert_eq!(now["crews"][0]["status"], "active");
     }
 
+    /// Back-date a lane's lease past its end: the session died and the
+    /// sweeper has not run yet (#398).
+    async fn kill_lane_lease(h: &Harness, lane_id: &str) {
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp - interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane' and state = 'granted'",
+        )
+        .bind(lane_id)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_with_dead_lane_closes() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        kill_lane_lease(&h, &lane_id).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "closed");
+        assert_eq!(body["released"], json!([lane_id]));
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(
+            !now["crews"].as_array().unwrap().iter().any(|c| c["id"] == coord.2),
+            "the closed crew is not on Now: {now}"
+        );
+        // The dead session comes back: gone, and the crew is closed to it.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::GONE, "{body}");
+        assert_eq!(body["error"], "relay_lane_gone");
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/reregister",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["message"].as_str().unwrap_or("").contains("crew is closed"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn close_emits_lane_unregistered_for_released_lanes() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        kill_lane_lease(&h, &lane_id).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // In order: the lane leaves, its task is interrupted, the crew completes.
+        let mut seen = Vec::new();
+        loop {
+            let event = serde_json::to_value(next_event(&mut rx).await).unwrap();
+            let done = event["entity"] == "run" && event["data"]["op"] == "completed";
+            seen.push(event);
+            if done {
+                break;
+            }
+        }
+        let at = |pred: &dyn Fn(&Value) -> bool| seen.iter().position(pred);
+        let lane_gone =
+            at(&|e| e["entity"] == "lane" && e["action"] == "remove" && e["data"]["id"] == lane_id);
+        let interrupted = at(&|e| {
+            e["entity"] == "task"
+                && e["data"]["op"] == "interrupt"
+                && e["data"]["task_id"] == task_id
+        });
+        let completed = seen.len() - 1;
+        assert!(lane_gone.is_some_and(|i| i < completed), "{seen:?}");
+        assert!(interrupted.is_some_and(|i| i < completed), "{seen:?}");
+    }
+
     #[tokio::test]
     async fn close_requires_coordinator() {
         let h = harness().await;
