@@ -17,6 +17,10 @@ values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR #500 to dev
 - Docs: `lanes-data.md` props table, `lanes.md` §7 decisions.
 - e2e: `relay-decision-form.spec.ts` "the broker round-trips a form decision" green, with
   `diagrams-schema` + `relay-run` (3/3); real brew daemon restored on :7744.
+- Review fix (PR #500): a form answer read "null"/empty in the task timeline and HistoryEntry.
+  `answerGist` (`@sensei/state` format.ts) reads option, else values by sorted key (jsonb reorders
+  keys); both renderers use it. Unit red/green + e2e "the task view reads a form answer as its
+  values" (decision-form 2/2, relay-timeline, relay-run, diagrams-schema: 5/5).
 - Gates: senseid 5051/5052 on the lane template (the one failure is the keychain test
   `discarding_the_forge_refresh_token_…`, untouched code, fails on this machine's keychain); sensei-mcp
   green; clippy `-D warnings` and fmt clean; SQL `run.sh relay` 14/14; app check 0 errors; dōjō check
@@ -24,7 +28,7 @@ values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR #500 to dev
 
 **Remaining:** slice B (the form on the Relay screen, live) and slice R (rokkit issue + widen).
 
-**Next command:** `gh pr checks 500` (lane/relay-389-s1); then slice B from tasks.md B1.1.
+**Next command:** `gh pr checks 500` (lane/relay-389-s1, head `af515d923`); then slice B from tasks.md B1.1.
 
 **Open questions:** none blocking.
 
