@@ -88,13 +88,13 @@ test.describe('relay decision form (#389)', () => {
     const missing = await person('POST', '/relay/answers', { decision_id: decisionId, values: { ship: true }, note: null, surface: 'desktop' });
     expect(missing.status).toBe(422);
     expect(missing.body.message).toContain('values.target is required');
-    expect((await lane.envelope()).answers.filter((a: { decision_id: string }) => a.decision_id === decisionId)).toEqual([]);
+    expect((await lane.envelope()).answers.filter((a) => a.decision_id === decisionId)).toEqual([]);
 
     // The person answers; the asking lane reads the exact values, option null.
     const values = { target: 'main', count: 3, ship: true };
     const ok = await person('POST', '/relay/answers', { decision_id: decisionId, values, note: null, surface: 'desktop' });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    const answer = (await lane.envelope()).answers.find((a: { decision_id: string }) => a.decision_id === decisionId);
+    const answer = (await lane.envelope()).answers.find((a) => a.decision_id === decisionId);
     expect(answer).toMatchObject({ decision_id: decisionId, option: null, values });
 
     // Answered: it leaves Now.
