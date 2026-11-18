@@ -233,6 +233,9 @@ impl PgStore {
     /// the stall signal's reference. Excludes the daemon's cadence/lifecycle kinds
     /// (`RunEventKind::is_progress() == false`, built from the enum so it never
     /// drifts) so the every-tick `housekeeping` marker can't mask an agent stall.
+    /// Also excludes the hook gate's own records (`detail.via =`
+    /// [`crate::dojo::gate::GATE_EVENT_VIA`]): a step retrying a denied call
+    /// writes one per try, and counting them would keep a stuck run "fresh".
     /// `None` when the run has emitted no progress event yet (caller falls back to
     /// `started_at`).
     pub async fn last_progress_at(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
@@ -247,10 +250,12 @@ impl PgStore {
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
             "SELECT to_json(created_at)#>>'{}' FROM activity.run_events
               WHERE run_id = $1 AND kind::text <> ALL($2)
+                AND COALESCE(detail->>'via', '') <> $3
               ORDER BY created_at DESC, id DESC LIMIT 1",
         )
         .bind(run_id)
         .bind(&excluded)
+        .bind(crate::dojo::gate::GATE_EVENT_VIA)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

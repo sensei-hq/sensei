@@ -10,6 +10,9 @@
 - [x] 2.4 Green: `hook_gate` reads `run_id`, appends via `append_run_event` on raise and on every gated outcome; a failed append is `tracing::warn!` and never changes the answer
 - [x] 2.5 `cargo fmt --all --check`, `cargo clippy -p senseid -- -D warnings`, `cargo test -p senseid --  --test-threads=1` (gate + sessions + runs), fabrication-guard and ratchet tests green
 
+- [x] 2.5 Red: `tick_stalls_a_run_whose_only_recent_events_are_gate_records` — gate records reset the stall clock (review of #494)
+- [x] 2.6 Green: `last_progress_at` skips `detail.via = GATE_EVENT_VIA`
+
 ## 3. Plugin (red first)
 - [x] 3.1 Red: `gate.test.ts` — `run_id` equals `SENSEI_RUN_ID` when set; equals the drive's run id in a driven session; absent in an interactive session
 - [x] 3.2 Green: `drivenRunId($)` in `drive.ts`; `gate.ts` sends `run_id`; update the header comment

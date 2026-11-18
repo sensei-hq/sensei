@@ -46,6 +46,9 @@ flowchart TD
    - `detail`: `{ via: "hook_gate", tool, category?, outcome, why?, reason }`. `reason` is the daemon-owned
      phrase already returned to Claude. Never the command text or tool input (D10).
    - No event for an ungated call (`not gated`): that is ordinary progress and would flood the feed.
+   - **Gate records are not agent progress.** The watchdog's stall clock (`last_progress_at`) skips events
+     whose `detail.via` is `"hook_gate"`. A step that keeps retrying a denied `make deploy` writes one record
+     per try; counted as progress, the run would never stall and the dōjō would show "last progress just now".
 4. **The record never changes the decision.** The run id must parse as a uuid; a failed append is logged with
    `tracing::warn!` (the no-silent-errors rule) and the hook answer is returned unchanged. A gate must not
    block or unblock because the activity write failed.

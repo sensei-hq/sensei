@@ -110,6 +110,12 @@ impl GateOutcome {
     }
 }
 
+/// The `detail.via` stamp on every run event the hook gate writes. The stall
+/// signal ([`crate::db::pg_store::PgStore::last_progress_at`]) leaves these out:
+/// a gate record is the gate reacting to a tool call, not the run advancing, so
+/// a step looping on a denied call still stalls.
+pub const GATE_EVENT_VIA: &str = "hook_gate";
+
 /// The run event that records a gate outcome: `gate_raised` when the gate goes
 /// to a phone, `gate_passed` on approval, `flagged` otherwise (nobody approved
 /// an `allowed` outcome, so it is flagged, not passed). `detail` names the tool,
@@ -129,7 +135,7 @@ pub fn gate_event(
         GateOutcome::Declined | GateOutcome::Denied | GateOutcome::Allowed => RunEventKind::Flagged,
     };
     let mut detail = serde_json::json!({
-        "via": "hook_gate",
+        "via": GATE_EVENT_VIA,
         "tool": tool,
         "outcome": outcome.as_str(),
         "reason": reason,
