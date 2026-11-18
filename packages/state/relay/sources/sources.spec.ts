@@ -13,6 +13,8 @@ import {
   cannedRealtime,
   type RelayRealtimeTransport,
 } from './realtime.js';
+import { RelayState } from '../relay-state.svelte.js';
+import { RelayTaskState } from '../task-state.svelte.js';
 
 function fakeApi(): RelayApi & Record<string, ReturnType<typeof vi.fn>> {
   return {
@@ -148,6 +150,13 @@ describe('relayRealtimeSource — the dōjō seam', () => {
     expect(t.writes.map((w) => w.kind)).toEqual(['send']);
   });
 
+  it('forwards a form answer whole through RelayState: the values, and no option (#389)', async () => {
+    const t = cannedRealtime({ now: F.now(), queue: F.queue() });
+    const s = new RelayState(relayRealtimeSource(t), {}, { now: F.now(), queue: F.queue(), nowError: null, queueError: null } as never, { surface: 'dojo' });
+    expect(await s.answer(F.decision(), { values: { path: 'src/' } })).toBeNull();
+    expect(t.writes).toEqual([{ kind: 'answer', body: { decision_id: 'ask-1', values: { path: 'src/' }, note: null, surface: 'dojo' } }]);
+  });
+
   it('a transport that cannot read says so, never an empty crew (D83)', async () => {
     const t: RelayRealtimeTransport = { ...cannedRealtime({ now: null, queue: null }) };
     const now = await relayRealtimeSource(t).readNow({});
@@ -164,6 +173,13 @@ describe('relayRealtimeTaskSource — the dōjō, for one task view (#414)', () 
     const answer = { decision_id: 'd', option: 'db', note: null, surface: 'dojo' as const };
     await source.answer(answer);
     expect(t.writes).toEqual([{ kind: 'answer', body: answer }]);
+  });
+
+  it('forwards a form answer whole: the values, and no option (#389)', async () => {
+    const t = cannedRealtime({ now: null, queue: null, task: F.taskView() });
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, relayRealtimeTaskSource(t), F.CREW_ID, 't-1', { surface: 'dojo' });
+    expect(await s.answer(F.decision(), { values: { path: 'src/' } })).toBeNull();
+    expect(t.writes).toEqual([{ kind: 'answer', body: { decision_id: 'ask-1', values: { path: 'src/' }, note: null, surface: 'dojo' } }]);
   });
 
   it('streams through the channel: each SUBSCRIBED is an open, and the teardown stops it', () => {

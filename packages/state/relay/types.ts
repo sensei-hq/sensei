@@ -219,6 +219,35 @@ export interface RelayDecisionOption {
   detail: string | null;
 }
 
+/** One form property: the flat JSON Schema subset the daemon accepts (#389 D1). */
+export interface RelayDecisionProperty {
+  type: 'string' | 'number' | 'integer' | 'boolean';
+  title?: string;
+  description?: string;
+  default?: string | number | boolean;
+  /** Pick one, on a string. */
+  enum?: string[];
+  maxLength?: number;
+  pattern?: string;
+  minimum?: number;
+  maximum?: number;
+}
+
+/** A rokkit vertical layout: labels, help and placeholders, nothing that picks a control. */
+export interface RelayDecisionLayout {
+  type: 'vertical';
+  elements: Array<{ scope: string; label?: string; description?: string; props?: { placeholder?: string } }>;
+}
+
+/** A form decision's response (#389): the schema `@rokkit/forms` draws, and an optional layout. */
+export interface RelayDecisionResponse {
+  schema: { type: 'object'; properties: Record<string, RelayDecisionProperty>; required?: string[] };
+  layout?: RelayDecisionLayout;
+}
+
+/** How the person answers: a pick for an options decision, values for a form (#389 D7). */
+export type RelayDecisionChoice = { option: string } | { values: Record<string, unknown> };
+
 /** An open `asked` action for the person (`props.asked_of = 'person'`). */
 export interface RelayDecision {
   /** The `asked` action's id; the answer replies to it. */
@@ -229,8 +258,11 @@ export interface RelayDecision {
   /** `body_md` of the `asked` action. */
   question: string;
   context: string | null;
+  /** Buttons; empty for a form decision. */
   options: RelayDecisionOption[];
   recommended: string | null;
+  /** A form in place of buttons; null for an options decision (#389). */
+  response: RelayDecisionResponse | null;
   asked_at: string;
 }
 
@@ -546,11 +578,14 @@ export interface RelayActionProps {
     context: string | null;
     options: RelayDecisionOption[];
     recommended: string | null;
+    /** A form decision's response (#389); null for options. */
+    response?: RelayDecisionResponse | null;
     blocks: string[];
     /** `person`, or a lane id. */
     asked_of: string;
   };
-  answered: { option: string; surface: RelaySurface };
+  /** `option` for an options decision, `values` for a form (#389). */
+  answered: { option: string | null; values?: Record<string, unknown> | null; surface: RelaySurface };
   message: { to: RelayMessageTo; surface: RelaySurface };
   /** Receipts: `reply_to` = the message, one per recipient (L0 ruling 2). */
   delivered: Record<string, never>;
@@ -637,15 +672,14 @@ export interface RelaySendMessage {
   waiting_min?: number;
 }
 
-/** CONTRACT §3e `answer_decision`. */
-export interface RelayAnswer {
+/** CONTRACT §3e `answer_decision`: a pick or a form's values (#389 D7). */
+export type RelayAnswer = {
   decision_id: string;
-  option: string;
   note: string | null;
   /** No `by`: the daemon records the person as `lane_id = null` (lanes-data), CONTRACT §3e's `by: 'person'`. */
   /** Person-only: 'lane' is set by the daemon, never sent (Q12). */
   surface: 'desktop' | 'dojo';
-}
+} & RelayDecisionChoice;
 
 /** CONTRACT §3h `add_to_backlog`: a manual item by id, a tracker task by its identity. */
 export type RelayAddToBacklog =

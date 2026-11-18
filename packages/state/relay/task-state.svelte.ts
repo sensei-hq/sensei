@@ -5,7 +5,7 @@
 // same question again. Everything else that fails is a fault with a Retry.
 import { failureReason, type ApiError, type ApiResult } from '../result.js';
 import type { RelayEvents } from './relay-state.svelte.js';
-import type { RelayAnswer, RelayDecision, RelayStreamEvent, RelayTaskStep, RelayTaskView } from './types.js';
+import type { RelayAnswer, RelayDecision, RelayDecisionChoice, RelayStreamEvent, RelayTaskStep, RelayTaskView } from './types.js';
 
 export interface TaskReads {
   view: RelayTaskView | null;
@@ -81,10 +81,10 @@ export class RelayTaskState {
   }
 
   /** Answer the task's open decision: its reason when refused, else null. */
-  async answer(decision: RelayDecision, option: string): Promise<string | null> {
+  async answer(decision: RelayDecision, choice: RelayDecisionChoice): Promise<string | null> {
     const answer = await this.source.answer({
       decision_id: decision.id,
-      option,
+      ...choice,
       note: null,
       surface: this.surface,
     });

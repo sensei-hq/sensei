@@ -273,16 +273,26 @@ describe('RelayState · the person’s writes', () => {
   it('an answer goes to the source and the event it causes confirms it: no read of its own', async () => {
     const { source } = fakeSource();
     const s = new RelayState(source, {}, reads(F.now({ decisions: [F.decision()] })));
-    const reason = await s.answer(s.decisions.items[0], 'db');
+    const reason = await s.answer(s.decisions.items[0], { option: 'db' });
     expect(reason).toBeNull();
     expect(source.answer).toHaveBeenCalledWith({ decision_id: s.decisions.items[0].id, option: 'db', note: null, surface: 'desktop' });
     expect(source.readNow).not.toHaveBeenCalled();
   });
 
+  it('a form decision keeps its response, and its answer sends the values and no option (#389)', async () => {
+    const { source } = fakeSource();
+    const response = { schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } };
+    const s = new RelayState(source, {}, reads(F.now({ decisions: [F.decision({ options: [], recommended: null, response })] })));
+    expect(s.decisions.items[0].response).toEqual(response);
+    expect(await s.answer(s.decisions.items[0], { values: { path: 'src/' } })).toBeNull();
+    expect(source.answer).toHaveBeenCalledWith({ decision_id: s.decisions.items[0].id, values: { path: 'src/' }, note: null, surface: 'desktop' });
+    expect(source.answer.mock.calls[0][0]).not.toHaveProperty('option');
+  });
+
   it('a refused answer says why', async () => {
     const { source } = fakeSource({ answer: vi.fn(async () => F.fail(409, 'already answered')) });
     const s = new RelayState(source, {}, reads(F.now({ decisions: [F.decision()] })));
-    expect(await s.answer(s.decisions.items[0], 'db')).toBe('already answered');
+    expect(await s.answer(s.decisions.items[0], { option: 'db' })).toBe('already answered');
   });
 
   it('a message goes to the source; its reason when refused', async () => {

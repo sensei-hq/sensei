@@ -177,16 +177,24 @@ describe('RelayTaskState over a RelayTaskSource', () => {
   it('answers as the desktop by default, then re-reads through the source', async () => {
     const source = fakeSource();
     const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1');
-    expect(await s.answer(decision(), 'db')).toBeNull();
+    expect(await s.answer(decision(), { option: 'db' })).toBeNull();
     expect(source.answer).toHaveBeenCalledWith({ decision_id: decision().id, option: 'db', note: null, surface: 'desktop' });
     expect(source.readTask).toHaveBeenCalledWith('crew-1', 'task-1');
+  });
+
+  it('answers a form with its values and no option (#389)', async () => {
+    const source = fakeSource();
+    const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1');
+    expect(await s.answer(decision(), { values: { path: 'src/', count: 2 } })).toBeNull();
+    expect(source.answer).toHaveBeenCalledWith({ decision_id: decision().id, values: { path: 'src/', count: 2 }, note: null, surface: 'desktop' });
+    expect(source.answer.mock.calls[0][0]).not.toHaveProperty('option');
   });
 
   it('answers as the dōjō when built for it', async () => {
     const source = fakeSource();
     const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1', { surface: 'dojo' });
     expect(s.surface).toBe('dojo');
-    await s.answer(decision(), 'db');
+    await s.answer(decision(), { option: 'db' });
     expect(source.answer).toHaveBeenCalledWith(expect.objectContaining({ surface: 'dojo' }));
     expect(source.readTask).toHaveBeenCalledTimes(1);
   });
@@ -195,7 +203,7 @@ describe('RelayTaskState over a RelayTaskSource', () => {
     const source = fakeSource();
     source.answer.mockResolvedValue(F.fail(409, 'already answered'));
     const s = new RelayTaskState({ view: F.taskView(), error: null }, source, 'crew-1', 'task-1');
-    expect(await s.answer(decision(), 'db')).toBeTruthy();
+    expect(await s.answer(decision(), { option: 'db' })).toBeTruthy();
     expect(source.readTask).not.toHaveBeenCalled();
   });
 

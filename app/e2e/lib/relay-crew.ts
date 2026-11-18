@@ -11,8 +11,9 @@ export class RelayCallError extends Error {
     readonly path: string,
     readonly status: number,
     readonly body: unknown,
+    readonly method = 'POST',
   ) {
-    super(`POST ${path}: HTTP ${status}: ${JSON.stringify(body)}`);
+    super(`${method} ${path}: HTTP ${status}: ${JSON.stringify(body)}`);
   }
 }
 
@@ -58,6 +59,24 @@ export interface ReportBody {
 export interface Claim {
   claim_type: 'task' | 'review' | 'none';
   task?: { id: string; title?: string; deps_status?: string };
+}
+
+/** A decision answer in the envelope: a pick, or a form's values (#389). */
+export interface EnvelopeAnswer {
+  id: string;
+  decision_id: string;
+  task_id: string | null;
+  option: string | null;
+  values: Record<string, unknown> | null;
+  note: string | null;
+}
+
+/** The lane envelope (`GET /api/relay/tasks`); the fields the journeys read. */
+export interface Envelope {
+  messages: unknown[];
+  answers: EnvelopeAnswer[];
+  reviews: unknown[];
+  assignments: unknown[];
 }
 
 type Fetch = typeof globalThis.fetch;
@@ -120,15 +139,33 @@ export class RelayLane {
     return this.#post(`/api/relay/tasks/${taskId}/checkpoint`, body);
   }
 
+  /** Plan a task on the crew's board (coordinator); its id. */
+  async plan(body: { title: string; phase: string; repo_key: string }): Promise<string> {
+    const planned = await this.#post<{ task_id: string }>('/api/relay/tasks/plan', body);
+    return planned.task_id;
+  }
+
+  /** Ask the person: buttons (`options`) or a form (`response`, #389), never both. */
   async ask(body: {
     task_id?: string;
     question: string;
-    options: Array<{ id: string; label: string; detail?: string }>;
+    options?: Array<{ id: string; label: string; detail?: string }>;
     recommended?: string;
+    response?: unknown;
     context?: string;
   }): Promise<string> {
     const created = await this.#post<{ decision_id: string }>('/api/relay/decisions', { asked_of: 'person', ...body });
     return created.decision_id;
+  }
+
+  /** The lane's envelope, now: what is addressed to it, answers to its asks included. */
+  async envelope(): Promise<Envelope> {
+    const path = `/api/relay/tasks?lane_id=${encodeURIComponent(this.id)}`;
+    const res = await this.crew.fetch(`${this.crew.base}${path}`, { method: 'GET', headers: { Authorization: `Bearer ${this.#token}` } });
+    const text = await res.text();
+    const parsed: unknown = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new RelayCallError(path, res.status, parsed, 'GET');
+    return parsed as Envelope;
   }
 
   report(taskId: string, body: ReportBody): Promise<{ state?: string }> {
