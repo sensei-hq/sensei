@@ -146,6 +146,30 @@ export function decision(over: Partial<RelayDecision> = {}): RelayDecision {
   };
 }
 
+/** A form decision (#389): no buttons, a three-field schema — a pick-one string
+ *  (required), a bounded integer and a yes/no — and no layout, so the form builds its own. */
+export function formDecision(over: Partial<RelayDecision> = {}): RelayDecision {
+  return decision({
+    id: 'ask-form',
+    question: 'Where does it ship?',
+    context: null,
+    options: [],
+    recommended: null,
+    response: {
+      schema: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', enum: ['develop', 'main'], title: 'Target branch' },
+          max_retries: { type: 'integer', minimum: 1, maximum: 5, default: 2 },
+          ship: { type: 'boolean', description: 'Ship it now?' },
+        },
+        required: ['target'],
+      },
+    },
+    ...over,
+  });
+}
+
 export function personMessage(over: Partial<RelayPersonMessage> = {}): RelayPersonMessage {
   return {
     id: 'msg-1',
