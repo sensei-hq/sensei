@@ -260,6 +260,9 @@ pub struct RelayStepOutput {
 pub struct RelayCloseOutput {
     pub crew_id: Uuid,
     pub status: String,
+    /// Each dead-lease lane the close released (#398), with the task it
+    /// held, now `interrupted`.
+    pub released: Vec<(Uuid, Option<Uuid>)>,
 }
 
 /// One reported file. No `outside_owned`: the broker computes it from the
@@ -6110,7 +6113,7 @@ impl PgStore {
             .map_err(db_err)?;
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayCloseOutput { crew_id, status: "closed".to_string() })
+        Ok(RelayCloseOutput { crew_id, status: "closed".to_string(), released: Vec::new() })
     }
 
     /// `POST /relay/crews/{id}/close` (#419; CONTRACT §3k): the person
@@ -14386,5 +14389,115 @@ mod tests {
         .unwrap();
         assert_eq!(row.0, "closed");
         assert!(row.1.is_some());
+    }
+
+    // ── #398: the lane close passes over dead-lease lanes and releases them ──
+
+    /// A lane lease good for five minutes by the DB clock (close reads the
+    /// transaction's clock, so the fixture's `t0()` lease is already dead).
+    async fn fx_live_lease(pg: &PgStore, lane: Uuid) {
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp + interval '5 minutes'
+             where lane_id = $1 and kind = 'lane' and state = 'granted'",
+        )
+        .bind(lane)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+
+    async fn lane_gone(pg: &PgStore, lane: Uuid) -> (bool, String) {
+        sqlx_core::query_as::query_as(
+            "select l.unregistered_at is not null,
+                    (select state::text from relay.leases
+                     where lane_id = l.id and kind = 'lane'
+                     order by granted_at desc nulls last, id desc limit 1)
+             from relay.lanes l where l.id = $1",
+        )
+        .bind(lane)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    /// C1 with a second contributor A3 whose lease is dead (fixture time).
+    async fn fx_dead_second_contributor(pg: &PgStore, c1: Uuid) -> Uuid {
+        let a3 = v7(0x14);
+        fx_lane(pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
+        fx_lease(pg, u1(), c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
+        a3
+    }
+
+    #[tokio::test]
+    async fn close_crew_passes_over_dead_lease_lanes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = fx_dead_second_contributor(&pg, c1).await;
+        let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        assert_eq!(out.status, "closed");
+        let mut released: Vec<Uuid> = out.released.iter().map(|(lane, _)| *lane).collect();
+        released.sort();
+        assert_eq!(released, vec![a2, a3]);
+        assert!(out.released.iter().all(|(_, task)| task.is_none()));
+        for lane in [a2, a3] {
+            assert_eq!(lane_gone(&pg, lane).await, (true, "released".to_string()));
+        }
+        // The caller is not released by close: it unregisters next itself.
+        assert!(!lane_gone(&pg, a1).await.0);
+        let status: String =
+            sqlx_core::query_scalar::query_scalar("select status from relay.crews where id = $1")
+                .bind(c1)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(status, "closed");
+    }
+
+    #[tokio::test]
+    async fn close_crew_refuses_a_live_lease_lane() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = fx_dead_second_contributor(&pg, c1).await;
+        fx_live_lease(&pg, a2).await;
+        let err = pg.relay_close_crew(u1(), a1, c1).await.unwrap_err();
+        assert!(matches!(&err, RelayError::Conflict(m) if m == "crew has live lanes"), "{err:?}");
+        // The refusal wrote nothing: the dead lane is still registered.
+        assert_eq!(lane_gone(&pg, a3).await, (false, "granted".to_string()));
+        assert_eq!(lane_gone(&pg, a2).await, (false, "granted".to_string()));
+        let status: String =
+            sqlx_core::query_scalar::query_scalar("select status from relay.crews where id = $1")
+                .bind(c1)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(status, "active");
+    }
+
+    #[tokio::test]
+    async fn close_crew_interrupts_a_dead_lanes_task() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xfa);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        assert_eq!(out.released, vec![(a2, Some(t))]);
+        let state: String = sqlx_core::query_scalar::query_scalar(
+            "select state::text from relay.tasks where id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(state, "interrupted");
+        let actions: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions
+             where task_id = $1 and lane_id = $2 and kind = 'interrupted'",
+        )
+        .bind(t)
+        .bind(a2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(actions, 1);
     }
 }
