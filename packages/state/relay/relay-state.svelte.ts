@@ -139,6 +139,9 @@ export class RelayState {
   /** A read the person asked for is in flight: the body says so instead of showing a stale crew. */
   reading = $state(false);
   readingQueue = $state(false);
+  /** Why the live stream is down, so what the screen shows may be stale (D83); null while
+   *  it is up. The stream's next open clears it. */
+  streamFault = $state<string | null>(null);
 
   // ── The screen's own state ──
   /** Now's Lanes grouped by run or by agent (#422); the person's choice, kept. */
@@ -305,7 +308,13 @@ export class RelayState {
       case 'lane':
       case 'task':
       case 'relay':
+      case 'decision':
+      case 'message':
         void this.reReadNow();
+        return;
+      case 'item':
+        // A queue row named by its id alone (a relay.items change, #414): read the queue.
+        void this.reReadQueue();
         return;
       default:
         // A step is the task screen's; anything else names nothing this state holds.
@@ -352,8 +361,12 @@ export class RelayState {
     return this.source.events(
       (event) => this.apply(event),
       () => {
+        this.streamFault = null;
         void this.reReadNow();
         void this.reReadQueue();
+      },
+      (reason) => {
+        this.streamFault = reason;
       },
     );
   }

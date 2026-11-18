@@ -38,11 +38,25 @@ export {
 export { relaySseSource, relayTaskSseSource, type RelayEventStream } from './relay/sources/sse.js';
 export {
   relayRealtimeSource,
+  relayRealtimeTaskSource,
   cannedRealtime,
   type CannedWrite,
   type RelayChannelStatus,
   type RelayRealtimeTransport,
 } from './relay/sources/realtime.js';
+export {
+  fromPostgresChange,
+  RELAY_TABLES,
+  type PostgresChangePayload,
+  type RelayTableEntry,
+  type RelayTableMap,
+} from './relay/sources/postgres-change.js';
+export {
+  realtimeChannel,
+  type RealtimeChannelLike,
+  type RealtimeChannelSpec,
+  type RealtimeClientLike,
+} from './relay/sources/channel.js';
 export {
   toStats,
   firstPassLine,
