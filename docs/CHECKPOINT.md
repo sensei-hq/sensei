@@ -20,6 +20,10 @@ after PR #500 (slice A) merged.
   task view `{#key decision.id}`; cleared number → unset (rokkit#193); required yes/no seeds `false`;
   field ids prefixed by decision id (Select label gap: rokkit#194); arrival e2e closes its crew; inline
   refusal proven by a fetch counter; D6/spec/ask tool say no-layout order is jsonb's. e2e 7/7 with relay-run.
+- Review r2 fix (red `20bfe00c2`, green `e07d85712`): a pattern means the same to daemon and form. The
+  daemon refuses at ask time what the browser reads differently (`check_pattern_dialect`: `\w \d \s \b`,
+  `\A \z`, hex, POSIX/nested classes, set ops); the form checks patterns itself with a `u` RegExp
+  (`toPatternRegExp`), not rokkit's plain one. e2e `relay-decision-form` 6/6 again.
 - Gates: app `bun run check` 0 errors; `bun run test:unit` all green; `openspec validate --strict` valid.
 
 **Remaining:** C2 (close #389 on merge, with the e2e evidence; design review of the card by iris-deneb
