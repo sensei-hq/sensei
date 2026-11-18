@@ -1,11 +1,19 @@
 ## ADDED Requirements
 
 ### Requirement: Decision response schema
-A relay decision SHALL carry either a non-empty `options` list (option-pick) or a `response` schema (form), and never both or neither. A `response` SHALL be a list of 1 to 12 fields, each with a unique `id` matching `^[a-z][a-z0-9_]{0,39}$`, a `label`, a `kind` of `text`, `textarea`, `number`, `boolean` or `select`, an optional `required` flag, `options` when and only when the kind is `select`, an optional `default`, and optional `help`. The daemon SHALL refuse a malformed schema with 422 before any write.
+A relay decision SHALL carry either a non-empty `options` list (option-pick) or a `response` (form), and never both or neither. A `response` SHALL be `{schema, layout?}` where `schema` is a flat JSON Schema subset: one `type: "object"` with 1 to 12 `properties`, each named by `^[a-z][a-z0-9_]{0,39}$` and of type `string`, `number`, `integer` or `boolean`; an optional `required` list naming those properties; `enum` (pick one) on a string; `minimum` and `maximum` on a number or integer; `maxLength` (at most 600) and `pattern` on a string; and the annotations `title`, `description` and `default`. `layout` SHALL be an optional rokkit vertical layout whose elements carry only `scope` (naming a schema property), `label`, `description` and `props.placeholder`. The daemon SHALL refuse with 422, before any write, a `response` that uses anything outside this subset, including `type: "array"` (pick several), `items`, `format`, nested objects, schema composition, a layout `renderer` or `override`, and a `pattern` that does not compile or uses `(?`; the message SHALL name the property and the keyword. There SHALL be no sensei-specific field format: the schema the lane sends is the schema `@rokkit/forms` draws.
 
 #### Scenario: A lane asks with a schema
-- **WHEN** a lane posts `POST /api/relay/decisions` with `asked_of: "person"` and a `response` of three valid fields and no options
+- **WHEN** a lane posts `POST /api/relay/decisions` with `asked_of: "person"`, no options, and a `response` whose schema has a required string with `enum`, an integer with `minimum` and `maximum`, and a boolean
 - **THEN** the daemon stores `asked.props.response` and `GET /relay/now` lists the decision with that `response` and empty `options`
+
+#### Scenario: Pick-several is refused until rokkit draws it
+- **WHEN** a lane asks with a property of `type: "array"` and `items.enum`
+- **THEN** the daemon answers 422 naming that property and `array`, and no decision or task block is recorded
+
+#### Scenario: A layout cannot choose a control
+- **WHEN** a lane asks with a layout element carrying `renderer: "textarea"`, or a schema property carrying `format: "textarea"`
+- **THEN** the daemon answers 422 naming the keyword, and no decision is recorded
 
 #### Scenario: Options and response together are refused
 - **WHEN** a lane asks with both `options` and `response`
@@ -15,23 +23,27 @@ A relay decision SHALL carry either a non-empty `options` list (option-pick) or 
 - **WHEN** a lane asks with `options` and `recommended` and no `response`
 - **THEN** the decision behaves exactly as before: Now lists it with `response: null`, and the option-pick journey in `app/e2e/tests/relay-run.spec.ts` passes
 
-### Requirement: Structured answer in one validated write
-Answering a form decision SHALL carry `values` (an object keyed by field id) and no `option`; answering an option decision SHALL carry `option` and no `values`. The daemon SHALL validate every value against the stored schema before writing: unknown keys, missing or empty required fields, a value of the wrong kind, a `select` value that is not one of its options, and text over 600 characters or tripping the leak guard SHALL each be refused with 422 naming the field. A refused answer SHALL record nothing and leave the decision open. An absent optional field SHALL stay absent; the daemon SHALL NOT fill it from the field's `default`.
+### Requirement: Structured answer validated by the daemon before storing
+Answering a form decision SHALL carry `values` (an object keyed by property name) and no `option`; answering an option decision SHALL carry `option` and no `values`. The daemon SHALL validate every value against the schema stored with the decision before writing, whatever the client already checked: unknown keys, a required property absent, null or empty, a value of the wrong type (`integer` SHALL be a whole number), a string not in its `enum`, a number outside `minimum`/`maximum`, a string over its `maxLength` (or over 600 characters when none is set), a string not matching its `pattern`, and text tripping the leak guard SHALL each be refused with 422 naming the property. A refused answer SHALL record nothing and leave the decision open. An absent optional property SHALL stay absent; the daemon SHALL NOT fill it from `default`.
 
 #### Scenario: The person answers with valid values
 - **WHEN** the person posts `POST /relay/answers` with `decision_id`, `values` satisfying the schema, and `surface: "desktop"`
 - **THEN** the daemon records one `answered` action with `props.values`, resumes the tasks the ask blocked, and emits the decision `remove` event
 
-#### Scenario: A required field is missing
-- **WHEN** the answer's `values` omit a required field
-- **THEN** the daemon answers 422 with a message naming that field, records no `answered` action, and the decision stays on Now
+#### Scenario: A required property is missing
+- **WHEN** the answer's `values` omit a required property
+- **THEN** the daemon answers 422 with a message naming that property, records no `answered` action, and the decision stays on Now
+
+#### Scenario: A value breaks a constraint the client skipped
+- **WHEN** a caller posts `values` directly (no form) with an integer above its `maximum`, or a string that does not match its `pattern`
+- **THEN** the daemon answers 422 naming that property and rule, and records nothing
 
 #### Scenario: The lane reads the values back
 - **WHEN** the asking lane reads its envelope after the person answered a form decision
 - **THEN** the envelope's answer carries `values` equal to what the person sent and `option: null`
 
 ### Requirement: Form decisions render as a validated form
-The Relay screen SHALL render a decision that carries a `response` as a form drawn with `@rokkit/forms` from the schema, one control per field, inside the existing decision card, in both Needs you and the task view. It SHALL validate inline before sending: a missing required field SHALL show its message and send nothing. Answer SHALL send the values once (a second press while the write is in flight sends nothing) and SHALL show the daemon's refusal in place without clearing the entered values. A decision with `options` SHALL render as option buttons, as today.
+The Relay screen SHALL render a decision that carries a `response` as a form drawn by `@rokkit/forms` `FormRenderer` from the decision's schema and layout (a default layout built from the schema when the lane sent none), one control per property, inside the existing decision card, in both Needs you and the task view. It SHALL validate inline before sending: a missing required field, or a value breaking a bound or `pattern`, SHALL show its message and send nothing. Answer SHALL send the values once (a second press while the write is in flight sends nothing) and SHALL show the daemon's refusal in place without clearing the entered values. A decision with `options` SHALL render as option buttons, as today.
 
 #### Scenario: Required field refused inline
 - **WHEN** the person presses Answer on a form decision with a required field empty
