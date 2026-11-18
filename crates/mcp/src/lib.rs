@@ -1783,7 +1783,7 @@ pub fn handle_list_tools() -> Value {
                     ("note", "string", "The ≤600-char note on the pause"),
                 ]),
             tool("relay_close_crew",
-                "Close the crew when its lanes are gone (besides the caller, who unregisters after). Closed crews refuse register/reregister/plan/assign. Coordinator only.",
+                "Close the crew when no other lane holds a live lease (the caller unregisters after). Lanes with no live lease do not block: close releases them (their held task is interrupted) and names them in `released`. Closed crews refuse register/reregister/plan/assign. Coordinator only.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),

@@ -242,6 +242,11 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
 `relay_merge_task`, `relay_cancel_task`, `relay_handover_task`, `relay_close_crew` (coordinator) ·
 `relay_post_step`. A sprint run is the person's (`POST /relay/runs`), not a lane tool. The guidance `register`
 answers (v2) spells the loop out.
+**The lane close (#398):** `relay_close_crew` (`POST /api/relay/crews/{id}/close`) counts a lane as live by its lease,
+not its registration. Only another lane holding a live lane lease refuses it (`409 crew has live lanes`). Each lane
+with no live lease is released in the same transaction — unregistered, its held task `interrupted`, its resource
+grants freed — and named in the answer's `released`. A dead session that comes back gets `410 relay_lane_gone`, then
+`409 "crew is closed"` on reregister.
 **The person's routes (#419), not lane tools:** `POST /relay/runs` drafts a run (`start: true` starts it at once) ·
 `POST /relay/runs/{id}/start` (binds the crew, which needs a live lane; mints Task 0) · `POST /relay/runs/{id}/cancel`
 (cancels its open tasks, gives its planned items back to the backlog) · `GET /relay/runs` · `GET /relay/runs/{id}` ·
