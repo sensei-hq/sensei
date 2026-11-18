@@ -105,7 +105,7 @@ describe('realtimeChannel — a transport subscribe over a supabase-shaped clien
     f.channels[0].listeners[0].cb({ ...lanePayload(), table: 'actions' });
     expect(on).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0][0])).toContain('actions');
+    expect(warn.mock.calls[0].join(' ')).toContain('relay.actions');
     f.change(0, lanePayload());
     expect(on).toHaveBeenCalledTimes(1);
   });
