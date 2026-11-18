@@ -14,7 +14,10 @@
 - Review fix (PR #502): heartbeat now takes the crew row, then the lane `for share`, then its lease —
   the order close uses — so close and heartbeat no longer deadlock (40P01); a heartbeat queued behind
   close answers 410. Red `480fe1a3f`, green `875c3a080`; design.md decision 4 amended.
-- Gate: fmt, clippy (senseid, sensei-mcp), relay DB tests (452), test-fast, app check,
+- Review fix 2 (PR #502): `relay_require_crew_open` reads the crew `for share`, so a register-join
+  or reregister racing a close waits, then answers `409 crew is closed` — no lane or lease lands in a
+  closed crew. Red `6eace665a`, green `a9fcc6f01`; design.md decision 3 amended.
+- Gate: fmt, clippy (senseid, sensei-mcp), relay DB tests (454), e2e relay-crew-close.spec.ts,
   openspec validate --strict.
 
 ## Remaining
