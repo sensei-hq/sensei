@@ -14,8 +14,20 @@ export interface PostgresChangePayload {
   old: Record<string, unknown>;
 }
 
-/** Table → the entity the daemon's stream names. The default for `fromPostgresChange`;
- *  the dōjō passes its own map where its table names differ. */
+/** One table's entry: the entity it holds, and whether its rows are the screen's rows.
+ *  A bare entity name is a table row (today's `relay` schema): its columns are not what
+ *  the screen holds (`relay.items` has `state`, not `stage`; `relay.runs` has no task
+ *  counts; `relay.lanes` carries `token_hash`), so the change names the row's id and the
+ *  state re-reads it. `{entity, screenRow: true}` is a table a publisher writes in the
+ *  screen's shape: its row is applied as it is. */
+export type RelayTableEntry = string | { entity: string; screenRow: true };
+
+/** Table → entry. */
+export type RelayTableMap = Readonly<Record<string, RelayTableEntry>>;
+
+/** Table → the entity the daemon's stream names, for today's `relay` schema: table rows,
+ *  so each change re-reads. The default for `fromPostgresChange`; the dōjō passes its own
+ *  map where its table names or row shapes differ. */
 export const RELAY_TABLES: Readonly<Record<string, string>> = {
   lanes: 'lane',
   tasks: 'task',
@@ -30,16 +42,22 @@ const ID_KEYS: Readonly<Record<string, string>> = { task: 'task_id', lane: 'lane
 
 const ACTIONS = { INSERT: 'add', UPDATE: 'update', DELETE: 'remove' } as const;
 
-/** The daemon's event for one change; null for a table the map does not name (the caller reports it). */
-export function fromPostgresChange(
-  payload: PostgresChangePayload,
-  tables: Readonly<Record<string, string>> = RELAY_TABLES,
-): RelayStreamEvent | null {
-  const entity = Object.hasOwn(tables, payload.table) ? tables[payload.table] : undefined;
-  if (!entity) return null;
+/** The daemon's event for one change; null for a table the map does not name (the caller
+ *  reports it). A table row becomes `{op, <entity>_id}` with no `id`, which the states
+ *  read as "this changed, re-read it"; a screen-shaped row is carried whole. */
+export function fromPostgresChange(payload: PostgresChangePayload, tables: RelayTableMap = RELAY_TABLES): RelayStreamEvent | null {
+  const entry = Object.hasOwn(tables, payload.table) ? tables[payload.table] : undefined;
+  if (!entry) return null;
+  const entity = typeof entry === 'string' ? entry : entry.entity;
   const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+  const action = ACTIONS[payload.eventType];
+  if (typeof entry === 'string') {
+    const data: Record<string, unknown> = { op: payload.eventType.toLowerCase() };
+    if (typeof row.id === 'string') data[ID_KEYS[entity] ?? `${entity}_id`] = row.id;
+    return { action, entity, data: data as RelayStreamEvent['data'] };
+  }
   const data: Record<string, unknown> = { ...row };
   const key = ID_KEYS[entity];
   if (key && typeof row.id === 'string') data[key] = row.id;
-  return { action: ACTIONS[payload.eventType], entity, data: data as RelayStreamEvent['data'] };
+  return { action, entity, data: data as RelayStreamEvent['data'] };
 }

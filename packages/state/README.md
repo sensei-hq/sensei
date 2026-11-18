@@ -29,7 +29,9 @@ A state never fetches. It is built with a source, and the page builds the source
   whose `subscribe` is `realtimeChannel(client, {topic, schema, tables})`. Each subscription opens its own
   channel (`<topic>:<n>`): supabase-js reuses the channel it holds for a topic, and a listener added after
   `subscribe()` throws. `fromPostgresChange` maps a
-  `postgres_changes` payload to the daemon's event, so the state cannot tell the two apart. The client is any
+  `postgres_changes` payload to the daemon's event. A table row (`RELAY_TABLES`, today's `relay` schema) is not the
+  screen's row, so it maps to the entity's id key alone and the state re-reads; a table declared
+  `{entity, screenRow: true}` carries its row and applies with no re-read. The client is any
   object with the supabase-js `channel` / `on` / `subscribe` / `removeChannel` shape.
 
 ```mermaid

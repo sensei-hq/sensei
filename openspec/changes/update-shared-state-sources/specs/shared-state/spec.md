@@ -30,12 +30,18 @@ default). The app's task pages SHALL build it with the SSE task source.
 
 ### Requirement: Supabase changes map to the daemon's event shape
 
-The package SHALL map a `postgres_changes` payload on a relay table to the same `StateEvent` the daemon streams:
-INSERT → add, UPDATE → update, DELETE → remove, data from `new` (or `old` on DELETE), plus the id key the daemon names
-that entity by. A payload on an unmapped table SHALL be reported, not dropped silently.
+The package SHALL map a `postgres_changes` payload on a relay table to a `StateEvent` the states apply as they apply
+the daemon's: INSERT → add, UPDATE → update, DELETE → remove. A table row SHALL map to the id key the daemon names
+that entity by, with none of the table's columns, so the state re-reads it. A table declared screen-shaped SHALL carry
+its row (from `new`, or `old` on DELETE) plus that id key. A payload on an unmapped table SHALL be reported, not
+dropped silently.
 
-#### Scenario: The state cannot tell the planes apart
-- **WHEN** a spec applies a lane, run, item, decision and message to one `RelayState` through SSE fixture events and to another through the mapped `postgres_changes` payloads for the same rows
+#### Scenario: A relay table row re-reads what it names
+- **WHEN** a spec maps a row with the columns of `relay.items`, `relay.runs` or `relay.lanes` and applies it to `RelayState`
+- **THEN** the state re-reads the queue (item) or Now (run, lane), the item shows in the backlog, the run keeps its task counts, and no table column lands on the lane
+
+#### Scenario: A screen-shaped table and the daemon leave the same state
+- **WHEN** a spec applies a lane, run, item, decision and message to one `RelayState` through SSE fixture events and to another through `postgres_changes` payloads on tables declared screen-shaped
 - **THEN** both states hold the same rows and the selectors return the same views
 
 #### Scenario: A task change reaches the task view
@@ -44,9 +50,19 @@ that entity by. A payload on an unmapped table SHALL be reported, not dropped si
 
 ### Requirement: A realtime channel adapter over a structural client
 
-The package SHALL provide `realtimeChannel(client, spec)` that opens one channel with a `postgres_changes` listener per
-relay table, forwards mapped events and channel statuses, and removes the channel on teardown. It SHALL accept any
-client with the supabase-js `channel` / `on` / `subscribe` / `removeChannel` shape and SHALL add no package dependency.
+The package SHALL provide `realtimeChannel(client, spec)` that opens one channel per subscription, under its own
+topic, with a `postgres_changes` listener per relay table, forwards mapped events and channel statuses, and removes
+the channel on teardown. A channel that fails, times out or closes SHALL be logged with the supabase-js error and
+reported to the state as a fault. It SHALL accept any client with the supabase-js `channel` / `on` / `subscribe` /
+`removeChannel` shape and SHALL add no package dependency.
+
+#### Scenario: Two subscribers share a client and a crew
+- **WHEN** two subscribers on one real supabase-js client subscribe to the same crew topic
+- **THEN** both open, each on its own channel, and neither throws
+
+#### Scenario: A dropped channel is a fault
+- **WHEN** the channel reports `CHANNEL_ERROR` with an error
+- **THEN** it is logged with the topic and the error, the state's `streamFault` holds the reason, and the next `SUBSCRIBED` clears it
 
 #### Scenario: Teardown removes the channel
 - **WHEN** a subscriber built on `realtimeChannel` with a fake client is torn down
@@ -59,7 +75,7 @@ over the realtime source in a spec, with no DOM and no daemon.
 
 #### Scenario: The dōjō state moves on canned realtime payloads
 - **WHEN** `dojo/src/lib/relay/shared-state.spec.svelte.ts` emits canned `postgres_changes` payloads through a fake supabase client
-- **THEN** the lanes, decisions and task view update without a re-read, a `SUBSCRIBED` status triggers one re-read, and `bun run build` in `dojo/` succeeds with the alias
+- **THEN** on screen-shaped tables the lanes and decisions update without a re-read, a row from today's relay tables re-reads, the task view re-reads its own task, a `SUBSCRIBED` status triggers one re-read, and `bun run build` in `dojo/` succeeds with the alias
 
 ### Requirement: The migration order and checklist are recorded
 

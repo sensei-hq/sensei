@@ -44,7 +44,13 @@ export {
   type RelayChannelStatus,
   type RelayRealtimeTransport,
 } from './relay/sources/realtime.js';
-export { fromPostgresChange, RELAY_TABLES, type PostgresChangePayload } from './relay/sources/postgres-change.js';
+export {
+  fromPostgresChange,
+  RELAY_TABLES,
+  type PostgresChangePayload,
+  type RelayTableEntry,
+  type RelayTableMap,
+} from './relay/sources/postgres-change.js';
 export {
   realtimeChannel,
   type RealtimeChannelLike,

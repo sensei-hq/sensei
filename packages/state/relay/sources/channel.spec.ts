@@ -98,8 +98,8 @@ describe('realtimeChannel — a transport subscribe over a supabase-shaped clien
     expect(() => realtimeChannel(f.client, spec).subscribe(second, vi.fn())).not.toThrow();
     f.change(0, lanePayload('l-1'));
     f.change(1, lanePayload('l-2'));
-    expect(first.mock.calls.map((c) => c[0].data.id)).toEqual(['l-1']);
-    expect(second.mock.calls.map((c) => c[0].data.id)).toEqual(['l-2']);
+    expect(first.mock.calls.map((c) => c[0].data.lane_id)).toEqual(['l-1']);
+    expect(second.mock.calls.map((c) => c[0].data.lane_id)).toEqual(['l-2']);
   });
 
   it('a re-subscribe before the last teardown finishes removing still opens', () => {
@@ -127,7 +127,7 @@ describe('realtimeChannel — a transport subscribe over a supabase-shaped clien
     expect(on).toHaveBeenCalledWith({
       action: 'update',
       entity: 'lane',
-      data: { id: 'l-1', title: 'Live', lane_id: 'l-1' },
+      data: { op: 'update', lane_id: 'l-1' },
     } satisfies RelayStreamEvent);
     f.channels[0].status?.('SUBSCRIBED');
     f.channels[0].status?.('CHANNEL_ERROR', new Error('dropped'));

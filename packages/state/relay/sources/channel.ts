@@ -4,7 +4,7 @@
 
 import type { ChannelStatus } from '../../source.js';
 import type { RelayStreamEvent } from '../types.js';
-import { fromPostgresChange, RELAY_TABLES, type PostgresChangePayload } from './postgres-change.js';
+import { fromPostgresChange, RELAY_TABLES, type PostgresChangePayload, type RelayTableMap } from './postgres-change.js';
 
 /** What the adapter needs of a channel: a `postgres_changes` listener and a subscribe. */
 export interface RealtimeChannelLike {
@@ -27,8 +27,8 @@ export interface RealtimeChannelSpec {
   topic: string;
   /** The schema the relay tables live in. */
   schema: string;
-  /** Table → entity; `RELAY_TABLES` when not given. */
-  tables?: Readonly<Record<string, string>>;
+  /** Table → entry (see `RelayTableEntry`); `RELAY_TABLES` when not given. */
+  tables?: RelayTableMap;
 }
 
 const STATUSES: readonly string[] = ['SUBSCRIBED', 'TIMED_OUT', 'CLOSED', 'CHANNEL_ERROR'] satisfies ChannelStatus[];

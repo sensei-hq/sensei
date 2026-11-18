@@ -308,7 +308,13 @@ export class RelayState {
       case 'lane':
       case 'task':
       case 'relay':
+      case 'decision':
+      case 'message':
         void this.reReadNow();
+        return;
+      case 'item':
+        // A queue row named by its id alone (a relay.items change, #414): read the queue.
+        void this.reReadQueue();
         return;
       default:
         // A step is the task screen's; anything else names nothing this state holds.
