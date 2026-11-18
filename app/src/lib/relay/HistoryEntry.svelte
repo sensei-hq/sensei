@@ -8,7 +8,7 @@
   import { Pill } from '@rokkit/ui';
   import type { RelayAction, RelayLaneRef } from '$lib/relay-api.js';
   import type { RelayTone } from '@sensei/state';
-  import { hhmm, nameOf, nameOfCode } from './relay-format.js';
+  import { answerGist, hhmm, nameOf, nameOfCode } from './relay-format.js';
   import { historyTone } from './relay-timeline.js';
 
   let {
@@ -146,7 +146,7 @@
     {@render say(null, action.body_md)}
 
   {:else if action.kind === 'answered'}
-    <p class="text-xs text-ink-mute m-0">{action.props.option} · from the {action.props.surface}</p>
+    <p data-entry-answer class="text-xs text-ink-mute m-0">{answerGist(action.props)} · from the {action.props.surface}</p>
 
   {:else if action.kind === 'compacted'}
     <p class="text-xs text-ink-mute m-0">{num(action.props.context_tokens_before)} → {num(action.props.context_tokens_after)} tokens</p>

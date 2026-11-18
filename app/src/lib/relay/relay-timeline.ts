@@ -5,7 +5,7 @@
 // so a cancelled task gains a derived row stamped from the header.
 import type { RelayAction, RelayLaneRef, RelayTaskView } from '$lib/relay-api.js';
 import type { RelayTone } from '@sensei/state';
-import { nameOf } from './relay-format.js';
+import { answerGist, nameOf } from './relay-format.js';
 
 export interface TimelineRow {
   /** Stable: the action id, or 'terminal-cancelled' for the derived row. */
@@ -40,7 +40,7 @@ function titleFor(action: RelayAction, lanes: RelayLaneRef[]): string | null {
     case 'asked':
       return action.props.asked_of === 'person' ? 'Asked you' : `Asked ${nameOf(lanes, action.props.asked_of)}`;
     case 'answered':
-      return `Answered: ${action.props.option}`;
+      return `Answered: ${answerGist(action.props)}`;
     case 'message':
       return `Message to ${action.props.to.kind === 'lane' ? nameOf(lanes, action.props.to.lane_id) : action.props.to.kind}`;
     case 'merged':

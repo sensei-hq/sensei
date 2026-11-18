@@ -88,6 +88,7 @@ export {
   taskStateLabel,
   ticketLabel,
   todayLine,
+  answerGist,
 } from './relay/format.js';
 export {
   assistantLabel,
