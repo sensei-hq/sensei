@@ -170,4 +170,43 @@ describe('DecisionRow · a form decision', () => {
     await settle();
     expect(onanswer).toHaveBeenLastCalledWith({ values: { target: 'main', max_retries: 4 } });
   });
+
+  it('an optional number typed then cleared is left out, and Answer still sends', async () => {
+    const onanswer = vi.fn(async () => null);
+    const c = mount(F.formDecision(), onanswer);
+    await pick(c, 'target', 'main');
+    setNumber(c, 'max_retries', '3');
+    await settle();
+    setNumber(c, 'max_retries', '');
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(field(c, 'max_retries')!.querySelector('[data-message]')).toBeNull();
+    expect(onanswer).toHaveBeenCalledWith({ values: { target: 'main' } });
+  });
+
+  it('a required yes/no left unchecked answers no', async () => {
+    const onanswer = vi.fn(async () => null);
+    const decision = F.formDecision({
+      response: { schema: { type: 'object', properties: { confirm: { type: 'boolean' } }, required: ['confirm'] } },
+    });
+    const c = mount(decision, onanswer);
+    expect(field(c, 'confirm')!.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(false);
+    answerButton(c).click();
+    await settle();
+    expect(field(c, 'confirm')!.querySelector('[data-message]')).toBeNull();
+    expect(onanswer).toHaveBeenCalledWith({ values: { confirm: false } });
+  });
+
+  it('two cards with the same property names keep their ids apart; each label names its own control', () => {
+    const c1 = mount(F.formDecision({ id: 'ask-1' }));
+    const c2 = mount(F.formDecision({ id: 'ask-2' }));
+    const ids = [...document.querySelectorAll('[data-decision-form] [id]')].map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const c of [c1, c2]) {
+      for (const label of c.querySelectorAll<HTMLLabelElement>('[data-decision-form] label[for]')) {
+        expect(c.querySelector(`[id="${CSS.escape(label.htmlFor)}"]`)).not.toBeNull();
+      }
+    }
+  });
 });

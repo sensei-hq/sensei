@@ -42,6 +42,13 @@ describe('toDecisionForm', () => {
     expect(toDecisionForm(response()).data).toEqual({ max_retries: 2 });
   });
 
+  it('a required yes/no with no default starts as no, as its unchecked box shows; an optional one stays unset', () => {
+    const r = response();
+    r.schema.required = ['target', 'ship'];
+    expect(toDecisionForm(r).data).toEqual({ max_retries: 2, ship: false });
+    expect(toDecisionForm(response()).data).toEqual({ max_retries: 2 });
+  });
+
   it('a default of false still seeds the field', () => {
     const r = response();
     r.schema.properties.ship.default = false;
