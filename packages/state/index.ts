@@ -65,7 +65,15 @@ export {
   minutesSince,
   type RelayStats,
 } from './relay/relay-selectors.js';
-export { toDecisionForm, toAnswerValues, isEmptyValue, type DecisionFormView } from './relay/decision-form.js';
+export {
+  toDecisionForm,
+  toAnswerValues,
+  isEmptyValue,
+  patternMisses,
+  toPatternRegExp,
+  withoutPatterns,
+  type DecisionFormView,
+} from './relay/decision-form.js';
 export {
   RelayTaskState,
   type RelayTaskSource,

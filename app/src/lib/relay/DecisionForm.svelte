@@ -6,7 +6,14 @@
   // shows each field's message, and hands back the values only when nothing failed.
   import { untrack, type Component } from 'svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
-  import { isEmptyValue, toAnswerValues, toDecisionForm, type RelayDecisionResponse } from '@sensei/state';
+  import {
+    isEmptyValue,
+    patternMisses,
+    toAnswerValues,
+    toDecisionForm,
+    withoutPatterns,
+    type RelayDecisionResponse,
+  } from '@sensei/state';
   import DecisionCheckbox from './DecisionCheckbox.svelte';
 
   let {
@@ -25,11 +32,30 @@
   const form = untrack(() => toDecisionForm(response));
   // `override` routes every field through the snippet below; it picks no control (the schema does).
   const layout = { ...form.layout, elements: form.layout.elements.map((element) => ({ ...element, override: true })) };
-  const builder = new FormBuilder({ ...form.data }, form.schema, layout);
+  // rokkit checks `pattern` with a plain `new RegExp`, which reads some patterns otherwise than
+  // the daemon does; it checks the rest, and the form checks patterns as the daemon reads them.
+  const checked = withoutPatterns(form.schema);
+  const builder = new FormBuilder({ ...form.data }, checked, layout);
+  const labels: Record<string, string> = Object.fromEntries(
+    form.layout.elements.map((e) => {
+      const path = e.scope.replace(/^#\//, '');
+      return [path, e.label ?? path];
+    }),
+  );
+  const patternMessage = (path: string) => ({ state: 'error', text: `${labels[path] ?? path} format is invalid` });
+
+  /** The messages for `paths`: rokkit's, else a pattern miss. */
+  function messagesFor(paths: string[]): Record<string, unknown> {
+    const messages = { ...validateAll(builder.data, checked, layout) } as Record<string, unknown>;
+    for (const path of patternMisses(form.schema, builder.data)) {
+      if (paths.includes(path) && !messages[path]) messages[path] = patternMessage(path);
+    }
+    return messages;
+  }
 
   /** Check the form; show every failing field's message. The values when it passes, else null. */
   export function collect(): Record<string, unknown> | null {
-    const messages = validateAll(builder.data, form.schema, layout);
+    const messages = messagesFor(Object.keys(form.schema.properties));
     builder.validation = messages;
     return Object.keys(messages).length > 0 ? null : toAnswerValues(form.schema, builder.data);
   }
@@ -46,7 +72,9 @@
     // its own checks read as a bad number rather than as empty.
     builder.updateField(path, isEmptyValue(value) ? undefined : value);
     // A field already showing a message re-checks as it is fixed.
-    if ((builder.validation as Record<string, unknown>)[path]) builder.validateField(path);
+    if ((builder.validation as Record<string, unknown>)[path]) {
+      builder.setFieldValidation(path, (messagesFor([path])[path] as never) ?? null);
+    }
   }
 </script>
 

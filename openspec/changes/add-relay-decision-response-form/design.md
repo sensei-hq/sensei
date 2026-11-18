@@ -170,8 +170,12 @@ override in the meantime.
 1. **Annotations allowed:** `title`, `description` and `default` ride the schema (D1); they label and seed the
    form and never change validation.
 2. **The checker is hand-written** (D5) rather than a JSON Schema crate.
-3. **`pattern` dialect:** must compile with Rust `regex` and contain no `(?`, so the daemon and the browser's
-   `RegExp` agree on what it means.
+3. **`pattern` dialect:** must compile with Rust `regex`, contain no `(?`, and use only constructs both engines
+   read alike (`check_pattern_dialect`): escaped syntax characters, `\n \t \r \f \v`, `\p{X}` with X a general
+   category, plain classes and `{m}`/`{m,}`/`{m,n}`. `\w \d \s \b`, `\A`/`\z`, hex escapes, POSIX or nested
+   classes and class set operations are refused at ask time. The form checks a pattern itself with
+   `new RegExp(p, 'u')` and each bare `.` read as `[^\n]` (`toPatternRegExp`), not through rokkit's plain
+   `new RegExp`, so it never refuses a value the daemon would take.
 4. **No `note` field in the form UI.** The wire keeps `note` (unchanged); the form does not add a free-text
    note box, since free text is out of scope.
 5. **Limits:** 12 properties, 50 enum members, 600 chars per text value (the summary cap, `relay/mod.rs:364`).
@@ -187,9 +191,9 @@ override in the meantime.
   empty `options` list (`relay/mod.rs:586-587` only requires the array; nothing else checks it is non-empty). The MCP and daemon ship together in
   one release, so installed pairs agree; this change also makes an empty `options` without `response` a 422
   (D2), closing the empty-card case.
-- The daemon's `regex` and the browser's `RegExp` are different engines. Refusing `(?` covers the syntax that
-  differs in practice; a pattern both accept but read differently is possible in theory, and the daemon's
-  answer is the one that counts.
+- The daemon's `regex` and the browser's `RegExp` are different engines. The ask-time dialect check (Decision
+  3) refuses what they read differently; if the browser still cannot compile a pattern, the form skips its
+  inline check and the daemon's answer counts. Unicode version drift in `\p{..}` remains possible.
 
 ## Migration Plan
 

@@ -199,6 +199,7 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
             return Err(format!("{at}.pattern may not use (? groups or flags"));
         }
         regex::Regex::new(pattern).map_err(|_| format!("{at}.pattern does not compile"))?;
+        check_pattern_dialect(pattern).map_err(|why| format!("{at}.pattern {why}"))?;
     }
     let bound = |key: &str| -> Result<Option<f64>, String> {
         match obj.get(key) {
@@ -238,6 +239,102 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
     }
     if let Some(default) = obj.get("default") {
         check_value(&format!("{at}.default"), prop, default)?;
+    }
+    Ok(())
+}
+
+/// The Unicode general categories `\p{..}` may name: both engines read these alike.
+const PATTERN_CATEGORIES: &[&str] = &[
+    "L", "Lu", "Ll", "Lt", "Lm", "Lo", "M", "Mn", "Mc", "Me", "N", "Nd", "Nl", "No", "P", "Pc",
+    "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "S", "Sm", "Sc", "Sk", "So", "Z", "Zs", "Zl", "Zp",
+];
+
+/// A pattern means the same to Rust `regex` (here) and to the browser's `RegExp` with the
+/// `u` flag (the inline check, `toPatternRegExp`), or the first construct that does not.
+/// An allow-list: escapes of syntax characters, `\n \t \r \f \v`, `\p{..}` of a general
+/// category, plain classes and `{m}` / `{m,}` / `{m,n}` counts. Refused: the Perl classes
+/// (`\w \d \s \b`: Unicode here, ASCII there), `\A`/`\z`, hex and other escapes, POSIX and
+/// nested classes, class set operations, a leading `]` in a class, and a stray `]`, `{` or `}`.
+fn check_pattern_dialect(pattern: &str) -> Result<(), String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    let mut in_class = false;
+    let mut class_start = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' {
+            let Some(&next) = chars.get(i + 1) else {
+                return Err("ends in a lone \\".into());
+            };
+            i += 2;
+            match next {
+                '^' | '$' | '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}'
+                | '|' | '/' | 'n' | 't' | 'r' | 'f' | 'v' => {}
+                '-' if in_class => {}
+                'p' | 'P' => {
+                    let name: String = chars[i..].iter().take_while(|&&c| c != '}').collect();
+                    let closed = chars.get(i + name.len()) == Some(&'}');
+                    let name = name.strip_prefix('{').filter(|_| closed);
+                    match name {
+                        Some(n) if PATTERN_CATEGORIES.contains(&n) => i += n.len() + 2,
+                        _ => {
+                            return Err(format!(
+                                "may use \\{next} only as \\{next}{{X}} with X a Unicode general category such as L or Lu"
+                            ));
+                        }
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "may not use \\{other}: the browser reads it differently (spell the characters out, e.g. [0-9] or \\p{{L}})"
+                    ));
+                }
+            }
+            class_start = false;
+            continue;
+        }
+        if in_class {
+            match c {
+                ']' if class_start => {
+                    return Err("may not open a class with ] (escape it as \\])".into());
+                }
+                ']' => in_class = false,
+                '[' => return Err("may not nest a class or use [:name:] (escape [ as \\[)".into()),
+                '&' | '-' | '~' if chars.get(i + 1) == Some(&c) => {
+                    return Err(format!("may not use {c}{c} in a class"));
+                }
+                '^' if class_start && chars.get(i - 1) == Some(&'[') => {
+                    // `[^` negates; the class body starts after it.
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+            class_start = false;
+            i += 1;
+            continue;
+        }
+        match c {
+            '[' => {
+                in_class = true;
+                class_start = true;
+            }
+            ']' | '}' => return Err(format!("may not use a bare {c} (escape it as \\{c})")),
+            '{' => {
+                let body: String = chars[i + 1..].iter().take_while(|&&c| c != '}').collect();
+                let closed = chars.get(i + 1 + body.len()) == Some(&'}');
+                let (low, high) = body.split_once(',').unwrap_or((&body, ""));
+                let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
+                if !closed || low.is_empty() || !digits(low) || !digits(high) {
+                    return Err(
+                        "may count only as {m}, {m,} or {m,n} (escape a literal { as \\{)".into()
+                    );
+                }
+                i += body.len() + 1;
+            }
+            _ => {}
+        }
+        i += 1;
     }
     Ok(())
 }
