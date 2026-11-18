@@ -14532,4 +14532,65 @@ mod tests {
         .unwrap();
         assert_eq!(actions, 1);
     }
+
+    /// Close holds the crew row, then releases a dead lane's lease. A
+    /// heartbeat racing it must take the crew row first too, so it waits
+    /// behind close instead of holding the lease close needs (a 40P01
+    /// deadlock), and once close commits it answers `410`, not a fresh
+    /// lease on a released lane.
+    #[tokio::test]
+    async fn close_and_heartbeat_take_the_crew_row_first() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        // Close's first step: the crew row, held.
+        let mut close = pg.pool().begin().await.unwrap();
+        sqlx_core::query::query("set local lock_timeout = '500ms'")
+            .execute(&mut *close)
+            .await
+            .unwrap();
+        sqlx_core::query_scalar::query_scalar::<_, String>(
+            "select status from relay.crews where user_id = $1 and id = $2 for update",
+        )
+        .bind(u1())
+        .bind(c1)
+        .fetch_one(&mut *close)
+        .await
+        .unwrap();
+        let hb_store = pg.clone();
+        let heartbeat = tokio::spawn(async move {
+            hb_store.relay_heartbeat(a2, t0() + chrono::Duration::seconds(3600)).await
+        });
+        // Wait until the heartbeat is blocked on a lock.
+        let mut blocked = false;
+        for _ in 0..100 {
+            let waiting: i64 = sqlx_core::query_scalar::query_scalar(
+                "select count(*) from pg_locks l join pg_stat_activity a on a.pid = l.pid
+                 where not l.granted and a.datname = current_database()",
+            )
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            if waiting > 0 {
+                blocked = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(blocked, "the heartbeat never waited on close's crew lock");
+        // Close's next step: release the dead lane (its lease included).
+        let released = PgStore::relay_unregister_tx(&mut close, u1(), c1, a2).await;
+        assert!(released.is_ok(), "close blocked on the heartbeat's lease lock: {released:?}");
+        close.commit().await.unwrap();
+        let hb = heartbeat.await.unwrap();
+        assert!(matches!(&hb, Err(RelayError::Gone(_))), "{hb:?}");
+        let granted: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.leases
+             where lane_id = $1 and kind = 'lane' and state = 'granted'",
+        )
+        .bind(a2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(granted, 0, "a released lane was regranted a lease");
+    }
 }
