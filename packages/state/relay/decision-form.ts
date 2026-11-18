@@ -1,6 +1,7 @@
 // A form decision's form (#389 D6): what `@rokkit/forms` draws for a decision's `response`.
 // The schema passes through unchanged (no sensei field format); the layout is the lane's,
-// else one element per property in `properties` order; the data starts from each `default`,
+// else one element per property in the order the wire lists `properties` (jsonb's order, not
+// the lane's: a lane that needs an order sends a layout); the data starts from each `default`,
 // and a required yes/no with none starts as no, as its unchecked box shows.
 // `toAnswerValues` keeps what was filled and drops optional fields left empty, so absent stays
 // absent (D83). The daemon re-validates every answer (D3); this is the person's convenience.

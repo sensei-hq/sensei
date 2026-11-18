@@ -113,9 +113,13 @@ closed subset is a few dozen lines over `serde_json::Value` plus the `regex` cra
 ### D6. Client mapping and validation
 
 `toDecisionForm(response)` in `packages/state/relay/decision-form.ts` returns `{schema, layout, data}`: the
-schema unchanged; the lane's layout when sent, else a vertical layout with one element per property in
-`properties` order, labelled from `title` (else the property name in words) with `description` as help; and
-`data` seeded from each `default`. Inline validation uses rokkit `validateAll` (`required` honoured from the
+schema unchanged; the lane's layout when sent, else a vertical layout with one element per property in the
+order the daemon returns `properties`, labelled from `title` (else the property name in words) with
+`description` as help; and `data` seeded from each `default`, with a required boolean that has no default seeded
+`false` (its unchecked box reads as no, so an untouched box answers no rather than failing `required`). The
+returned order is not the lane's: the daemon keeps it in memory, but `relay.actions.props` is jsonb, which stores
+object keys shorter-first, then by bytes. A lane that needs a set order sends a layout (an array, so its order
+survives). Inline validation uses rokkit `validateAll` (`required` honoured from the
 object's list, per the rokkit README). `toAnswerValues(schema, data)` drops empty optional properties so absent
 stays absent. The daemon re-validates (D3).
 

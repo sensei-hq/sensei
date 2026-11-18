@@ -1654,7 +1654,7 @@ pub fn handle_list_tools() -> Value {
                     ("telemetry", "object", "Review telemetry"),
                 ]),
             tool("relay_ask_decision",
-                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered). Send options (buttons) or response (a form), never both. A response is {schema, layout?}: one object schema of 1-12 string/number/integer/boolean properties with enum (pick one), required, minimum/maximum, maxLength (≤600) and pattern; anything else (arrays, format, nested objects) is refused with 422.",
+                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered). Send options (buttons) or response (a form), never both. A response is {schema, layout?}: one object schema of 1-12 string/number/integer/boolean properties with enum (pick one), required, minimum/maximum, maxLength (≤600) and pattern; anything else (arrays, format, nested objects) is refused with 422. Fields show in the order layout lists them; without a layout their order is not kept.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
