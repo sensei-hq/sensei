@@ -1981,7 +1981,8 @@ impl PgStore {
     /// A lane leaves, inside the caller's transaction: its lease released,
     /// its held task suspended (`interrupted`, named in the answer), its
     /// resource grants freed to their next waiters. The lane's own
-    /// unregister and the person's crew close (#419) share it.
+    /// unregister, the person's crew close (#419) and the lane close's
+    /// release of dead-lease lanes (#398) share it.
     async fn relay_unregister_tx(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         user_id: Uuid,
@@ -4562,6 +4563,36 @@ impl PgStore {
         Ok(started)
     }
 
+    /// Does the crew have a live lane — registered, holding a granted lane
+    /// lease not past its end at `at` (the transaction's clock when `None`)?
+    /// `except` leaves one lane out (the closing caller). Run start and the
+    /// lane close (#398) share it: liveness is the lease, not the flag.
+    async fn relay_crew_has_live_lane(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+        at: Option<DateTime<Utc>>,
+        except: Option<Uuid>,
+    ) -> Result<bool, RelayError> {
+        sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.lanes l
+                join relay.leases ls on ls.user_id = l.user_id and ls.lane_id = l.id
+                                    and ls.kind = 'lane'
+               where l.user_id = $1 and l.crew_id = $2 and l.unregistered_at is null
+                 and ($4::uuid is null or l.id <> $4)
+                 and ls.state = 'granted'
+                 and ls.expires_at > coalesce($3::timestamptz, current_timestamp))",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .bind(at)
+        .bind(except)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)
+    }
+
     async fn relay_start_run_tx(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         start: RunStart,
@@ -4605,20 +4636,7 @@ impl PgStore {
         Self::relay_require_crew_open(tx, user_id, crew_id).await?;
         // A crew with nobody answering cannot take Task 0: one live lane at
         // least (registered, its lease granted and not past its end).
-        let live: bool = sqlx_core::query_scalar::query_scalar(
-            "select exists (
-               select 1 from relay.lanes l
-                join relay.leases ls on ls.user_id = l.user_id and ls.lane_id = l.id
-                                    and ls.kind = 'lane'
-               where l.user_id = $1 and l.crew_id = $2 and l.unregistered_at is null
-                 and ls.state = 'granted' and ls.expires_at > $3)",
-        )
-        .bind(user_id)
-        .bind(crew_id)
-        .bind(now)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db_err)?;
+        let live = Self::relay_crew_has_live_lane(tx, user_id, crew_id, Some(now), None).await?;
         if !live {
             return Err(RelayError::Conflict("the crew has no live lane to start the run".into()));
         }
@@ -6060,9 +6078,14 @@ impl PgStore {
     /// Close a crew (coordinator only, F3): the crew's work is over when
     /// its lanes are gone. "Zero live lanes" counts beside the caller —
     /// the coordinator closes, then unregisters (a strict zero is
-    /// uncallable: closing needs a live lane to auth). Idempotent:
-    /// closing a closed crew re-asserts the state. Closed crews refuse
-    /// register/reregister/plan/assign (`relay_require_crew_open`).
+    /// uncallable: closing needs a live lane to auth). A lane is live by
+    /// its lease, not its flag (#398): a registered lane with no live lane
+    /// lease does not block, and close releases it through the shared
+    /// unregister path (lease released, held task interrupted, resource
+    /// grants freed), so a revived session finds `410`, then `409 crew is
+    /// closed`. Idempotent: closing a closed crew re-asserts the state.
+    /// Closed crews refuse register/reregister/plan/assign
+    /// (`relay_require_crew_open`).
     pub async fn relay_close_crew(
         &self,
         user_id: Uuid,
@@ -6074,8 +6097,9 @@ impl PgStore {
             return Err(RelayError::NotFound("crew not found".into()));
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // Lock order matches the person close: the crew, then its lanes.
         let status: Option<String> = sqlx_core::query_scalar::query_scalar(
-            "select status from relay.crews where user_id = $1 and id = $2",
+            "select status from relay.crews where user_id = $1 and id = $2 for update",
         )
         .bind(user_id)
         .bind(crew_id)
@@ -6085,21 +6109,29 @@ impl PgStore {
         let Some(status) = status else {
             return Err(RelayError::NotFound("crew not found".into()));
         };
+        let mut released = Vec::new();
         if status != "closed" {
-            let live: bool = sqlx_core::query_scalar::query_scalar(
-                "select exists (
-                   select 1 from relay.lanes
-                   where user_id = $1 and crew_id = $2
-                     and unregistered_at is null and id <> $3)",
+            let live =
+                Self::relay_crew_has_live_lane(&mut tx, user_id, crew_id, None, Some(caller_lane))
+                    .await?;
+            if live {
+                return Err(RelayError::Conflict("crew has live lanes".into()));
+            }
+            let dead: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select id from relay.lanes
+                 where user_id = $1 and crew_id = $2 and unregistered_at is null and id <> $3
+                 order by id for update",
             )
             .bind(user_id)
             .bind(crew_id)
             .bind(caller_lane)
-            .fetch_one(&mut *tx)
+            .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
-            if live {
-                return Err(RelayError::Conflict("crew has live lanes".into()));
+            for lane_id in dead {
+                let interrupted =
+                    Self::relay_unregister_tx(&mut tx, user_id, crew_id, lane_id).await?;
+                released.push((lane_id, interrupted));
             }
             sqlx_core::query::query(
                 "update relay.crews set status = 'closed',
@@ -6113,7 +6145,7 @@ impl PgStore {
             .map_err(db_err)?;
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayCloseOutput { crew_id, status: "closed".to_string(), released: Vec::new() })
+        Ok(RelayCloseOutput { crew_id, status: "closed".to_string(), released })
     }
 
     /// `POST /relay/crews/{id}/close` (#419; CONTRACT §3k): the person
