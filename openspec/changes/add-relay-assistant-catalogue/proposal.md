@@ -17,11 +17,20 @@ The lane `host` shipped in `add-relay-lane-host` (#396): register takes a self-r
   (`app/src/lib/relay/AddMember.svelte:4-5`, `packages/state/relay/crew-selectors.ts:2-4`).
 - Sessions and transcripts do not carry their host editor.
 - The host is only what the session says. The MCP server ignores the client's `initialize` params
-  (`crates/mcp/src/main.rs:177`), so nothing checks or fills it from the environment.
+  (`crates/mcp/src/main.rs:177` calls `handle_initialize()` with no arguments, `crates/mcp/src/lib.rs:1084`), and
+  `handle_call_tool` never sees them (`main.rs:200-205`), so nothing detects the host from the client or its
+  environment. The daemon cannot do it itself: it is a background service, and only the MCP process the client
+  starts sees the client's name and environment.
 
 ## What Changes
-- **Classification.** A tool catalogue in senseid gives every known tool a `kind` (`assistant | editor`) and a
-  display name. A tool the catalogue does not know reads as an assistant, never as an editor.
+- **Classification (user decision, 2026-11-18).** The supported tools are a seeded catalogue in the database
+  (`sensei.assistant_catalogue`, loaded by `dbd import` from `database/import/staging/assistant_catalogue.jsonl`):
+  each row has a display name, a `kind` (`assistant | editor`) and its aliases. A tool the catalogue does not
+  know reads as `unknown`: it is never guessed to be an assistant or an editor.
+- **Installs (user decision, 2026-11-18).** What is installed on this machine is detected on first run (the setup
+  wizard's assistants step, or daemon start with no rows) and kept in `sensei.assistant_installs`, one row per
+  catalogue tool; configure/remove/upgrade keep it current and Settings → Assistants reads it and can detect
+  again. It replaces the unused `sensei.assistants` table.
 - **Session host.** `activity.sessions` gains `host` (the editor). Every transcript adapter declares its host:
   Cursor, Zed and VS Code transcripts set it; terminal assistants (Claude Code, Copilot CLI, OpenCode) leave it
   null. The sessions API serves it. Model metrics already group by `(provider, model)`
@@ -29,22 +38,28 @@ The lane `host` shipped in `add-relay-lane-host` (#396): register takes a self-r
   under its model and never under the editor.
 - **Catalogue read.** `GET /relay/catalogue` serves what sensei has seen on this machine, in two groups.
   Assistants: name, last used, sessions this week. Editors: name, last used, models seen, and where sensei's MCP
-  config was found.
+  config was found. A seen tool the catalogue does not know is served under `unknown` and is not offered in
+  the picker.
 - **AddMember picker.** AddMember lists Assistants and Editors from that read. Picking one words the line for it:
   a terminal session for an assistant, or the editor's agent chat plus the config location for an editor. The
   line stays the paste line. Launch templates come later (issue: "launch templates later").
-- **Host detection.** At register, the MCP server sends `host_detected`, worked out from the MCP client name
-  (`initialize.clientInfo.name`) and the environment (`TERM_PROGRAM`, `CURSOR_TRACE_ID`). The daemon keeps the
-  self-reported host when there is one, fills a blank one from detection, and stores `host_detected` on the lane
-  as the check. The member card title says when the two disagree.
+- **Host detection (user decision, 2026-11-18).** The host is detected, not taken on the session's word. The
+  MCP server keeps `initialize.clientInfo.name` and, at `relay_register`, sends `host_detected`: the editor the
+  client name names, else the editor `TERM_PROGRAM` (with `CURSOR_TRACE_ID`) names, else nothing. The daemon
+  stores the detected host when there is one and the lane's self-reported `host` only as the fallback. When both
+  are set and differ, the daemon logs a warning and the detected value wins. Detection only ever yields an editor
+  the catalogue knows; anything else is no detection, never a guess.
 
 ## Impact
 - Specs: `assistant-catalogue` (new), `session-attribution` (new), `relay-crew` (picker, detection).
-- DDL: `activity.sessions.host`, `relay.lanes.host_detected`, the `relay.now` lane shape (dbd full files).
-- Code: `crates/senseid/src/transcript/*` (adapter `host()`), `crates/senseid/src/assistants/` (catalogue),
+- DDL: enum `sensei.tool_kind`; tables `sensei.assistant_catalogue`, `sensei.assistant_installs`; view
+  `sensei.assistant_catalogue_words`; the staging pair and seed file; `activity.sessions.host`; removes the empty
+  `sensei.assistants`. Detection adds no column: `relay.lanes.host` keeps the resolved host.
+- Code: `crates/senseid/src/transcript/*` (adapter `host()`), `crates/senseid/src/assistants/` (install sync),
   `crates/senseid/src/api/handlers/relay.rs` (catalogue route, register), `crates/senseid/src/db/pg_store/`
-  (sessions, relay), `crates/mcp` (initialize capture, detection), `packages/state/relay` (types, client,
-  selectors, state), `app/src/lib/relay/AddMember.svelte`, `RelayScreen.svelte`.
+  (sessions, relay), `crates/mcp` (`main.rs` initialize capture, `lib.rs` detection + register body), `packages/state/relay` (types, client,
+  selectors, state), `app/src/lib/relay/AddMember.svelte`, `RelayScreen.svelte`, the setup wizard's assistants
+  stage and Settings → Assistants.
 - e2e: new `app/e2e/tests/relay-catalogue.spec.ts` and `app/e2e/tests/relay-host.spec.ts`.
 - Builds on `add-relay-lane-host` (done). Does not touch `add-relay-run-grouped-lanes` or
   `update-relay-task-view-attribution`.

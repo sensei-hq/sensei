@@ -5,7 +5,7 @@ AddMember SHALL read `GET /relay/catalogue` when the Crew view opens. It SHALL s
 **Assistants** SHALL show each assistant's name, when it was last used ("not used yet" when never), and its sessions
 this week. **Editors** SHALL show each editor's name, when it was last used, the models seen, and where sensei's
 tools were found. Picking an assistant SHALL word the note for a session of that assistant opened in the workspace's
-repository. Picking an editor SHALL word the note for that editor's agent chat and name its config location. The
+repository. Picking an editor SHALL word the note for that editor's agent chat and name its config location. Tools the catalogue does not know, and tools that cannot join a crew (Claude Desktop), SHALL NOT be offered. The
 paste line text SHALL stay the same; launch templates are out of scope. A failed read SHALL show an error Notice
 with Retry, never empty groups.
 
@@ -26,28 +26,27 @@ with Retry, never empty groups.
 - **WHEN** the catalogue read fails
 - **THEN** AddMember shows "Couldn't read the assistants" with Retry, and the paste line stays usable
 
-### Requirement: The host is checked against the session's environment
-On `relay_register`, the MCP server SHALL send `host_detected` when the MCP client name or the environment
-(`TERM_PROGRAM`, `CURSOR_TRACE_ID`) points to an editor in the catalogue, and SHALL omit it otherwise. The daemon
-SHALL keep a reported `host` when there is one, take `host_detected` when no host was reported, and store
-`host_detected` on the lane either way. When both are set and differ, the daemon SHALL log a warning, and the member
-card's host tag title SHALL add "The session's environment says <Editor>." A `host_detected` longer than 64
-characters SHALL be refused.
+### Requirement: The host is detected, with the self-report as fallback
+On `relay_register`, the MCP server SHALL send `host_detected` when the MCP client name from the `initialize` handshake (`clientInfo.name`) names an editor, or, failing that, when `TERM_PROGRAM` (with `CURSOR_TRACE_ID`) names one, and SHALL omit it otherwise. The daemon SHALL store as the lane's host the detected value when the catalogue knows it as an editor, else the lane's self-reported `host` (trimmed, non-blank), else none. When both are set and differ, the daemon SHALL log a warning naming the lane and both values, and the detected value SHALL win. A `host_detected` the catalogue does not know as an editor SHALL be ignored with a warning and never stored. Detection SHALL NOT guess: a client name or environment it does not recognise SHALL give no detection. A `host_detected` longer than 64 characters SHALL be refused.
 
 #### Scenario: Detection fills a blank host (e2e `app/e2e/tests/relay-host.spec.ts`)
 - **GIVEN** a lane registers with `host_detected: "zed"` and no `host`
 - **WHEN** the person is on the Crew view
 - **THEN** its card appears with no reload and shows "in Zed"
 
-#### Scenario: Reported and detected disagree (e2e `app/e2e/tests/relay-host.spec.ts`)
+#### Scenario: Detected wins over a different report (e2e `app/e2e/tests/relay-host.spec.ts`)
 - **GIVEN** a lane registers with `host: "cursor"` and `host_detected: "zed"`
+- **THEN** its card shows "in Zed"
+- **AND** the daemon logs a warning naming both values
+
+#### Scenario: The self-report is the fallback (e2e `app/e2e/tests/relay-host.spec.ts`)
+- **GIVEN** a lane registers with `host: "cursor"` and no `host_detected` (for example over plain HTTP)
 - **THEN** its card shows "in Cursor"
-- **AND** the tag's title contains "The session's environment says Zed."
 
 #### Scenario: Client name detection
-- **WHEN** the MCP client's `initialize` names Cursor and `relay_register` runs with no `host`
+- **WHEN** the MCP client's `initialize` names Cursor and `relay_register` runs
 - **THEN** the register body carries `host_detected: "cursor"`
 
 #### Scenario: Terminal session
-- **WHEN** the client is Claude Code and `TERM_PROGRAM` is `Apple_Terminal`
+- **WHEN** the client is Claude Code and `TERM_PROGRAM` is `Apple_Terminal`, and no `host` is reported
 - **THEN** the register body has no `host_detected`, and the card shows no host tag
