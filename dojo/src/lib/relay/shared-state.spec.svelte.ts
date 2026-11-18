@@ -9,10 +9,12 @@ import {
 	RelayTaskState,
 	cannedRealtime,
 	realtimeChannel,
+	RELAY_TABLES,
 	relayRealtimeSource,
 	relayRealtimeTaskSource,
 	type PostgresChangePayload,
 	type RealtimeClientLike,
+	type RelayTableMap,
 	type RelayRealtimeTransport
 } from '@sensei/state';
 import * as F from '../../../../packages/state/relay/fixtures.js';
@@ -62,8 +64,14 @@ function fakeSupabase() {
 	};
 }
 
+/** The relay tables as a publisher that writes the screen's rows declares them (#427's
+ *  to build): each row is applied as it is, with no re-read. */
+const SCREEN_TABLES = Object.fromEntries(
+	Object.entries(RELAY_TABLES).map(([table, entity]) => [table, { entity, screenRow: true as const }])
+);
+
 /** The dōjō's transport: canned reads (spied), recorded writes, and the realtime channel. */
-function transport() {
+function transport(tables: RelayTableMap = SCREEN_TABLES) {
 	const sb = fakeSupabase();
 	const canned = cannedRealtime({
 		now: F.now({ decisions: [F.decision()] }),
@@ -75,7 +83,7 @@ function transport() {
 		readNow: vi.fn(canned.readNow),
 		readQueue: vi.fn(canned.readQueue),
 		readTask: vi.fn(canned.readTask),
-		subscribe: realtimeChannel(sb.client, { topic: `relay:${F.CREW_ID}`, schema: 'relay' }).subscribe
+		subscribe: realtimeChannel(sb.client, { topic: `relay:${F.CREW_ID}`, schema: 'relay', tables }).subscribe
 	} satisfies RelayRealtimeTransport;
 	return { t, sb, writes: canned.writes };
 }
@@ -96,6 +104,17 @@ describe('RelayState in the dōjō, over the realtime source', () => {
 		expect(s.now?.decisions).toEqual([]);
 		expect(t.readNow).not.toHaveBeenCalled();
 		expect(t.readQueue).not.toHaveBeenCalled();
+	});
+
+	it('a row from today’s relay tables re-reads Now: its columns are not the screen’s lane', async () => {
+		const { t, sb } = transport(RELAY_TABLES);
+		const s = new RelayState(relayRealtimeSource(t), {}, reads(), { surface: 'dojo' });
+		s.connect();
+		const lane = s.lanes.items[0];
+		sb.change('lanes', 'UPDATE', { id: lane.id, code: lane.code, token_hash: 'not-for-the-screen' });
+		await settle();
+		expect(t.readNow).toHaveBeenCalledTimes(1);
+		expect(s.lanes.get(lane.id)).not.toHaveProperty('token_hash');
 	});
 
 	it('re-reads once on each SUBSCRIBED, the first and after a drop', async () => {
@@ -127,7 +146,7 @@ describe('RelayState in the dōjō, over the realtime source', () => {
 describe('RelayTaskState in the dōjō, over the realtime task source', () => {
 	const taskId = F.taskView().task.id;
 	const build = () => {
-		const x = transport();
+		const x = transport(RELAY_TABLES);
 		const s = new RelayTaskState(
 			{ view: F.taskView(), error: null },
 			relayRealtimeTaskSource(x.t),

@@ -24,31 +24,45 @@ const payload = (
   old: eventType === 'DELETE' ? row : {},
 });
 
-describe('fromPostgresChange — the change, as the daemon names it', () => {
-  it('INSERT is add, UPDATE is update, DELETE is remove with the data from old', () => {
-    const msg = F.personMessage();
-    expect(fromPostgresChange(payload('messages', 'INSERT', msg))).toEqual({
+/** The relay tables as a publisher that writes the screen's rows would declare them:
+ *  each row is applied as it is. Nothing in today's `relay` schema is such a table. */
+const SCREEN_TABLES = Object.fromEntries(
+  Object.entries(RELAY_TABLES).map(([table, entity]) => [table, { entity, screenRow: true as const }]),
+);
+
+describe('fromPostgresChange — a table row names what changed', () => {
+  it('INSERT is add, UPDATE is update, DELETE is remove with the id from old', () => {
+    expect(fromPostgresChange(payload('messages', 'INSERT', { id: 'm-1', body_md: 'hi' }))).toEqual({
       action: 'add',
       entity: 'message',
-      data: msg,
+      data: { op: 'insert', message_id: 'm-1' },
     });
-    expect(fromPostgresChange(payload('messages', 'UPDATE', msg))?.action).toBe('update');
-    expect(fromPostgresChange(payload('messages', 'DELETE', { id: msg.id }))).toEqual({
+    expect(fromPostgresChange(payload('messages', 'UPDATE', { id: 'm-1' }))?.action).toBe('update');
+    expect(fromPostgresChange(payload('messages', 'DELETE', { id: 'm-1' }))).toEqual({
       action: 'remove',
       entity: 'message',
-      data: { id: msg.id },
+      data: { op: 'delete', message_id: 'm-1' },
     });
   });
 
-  it('a task row carries task_id, a lane lane_id, a run run_id: the keys the daemon names them by', () => {
+  it('names each entity by the id key the daemon uses, and carries none of the table columns', () => {
     expect(fromPostgresChange(payload('tasks', 'UPDATE', { id: 't-1', state: 'working' }))?.data).toEqual({
-      id: 't-1',
-      state: 'working',
+      op: 'update',
       task_id: 't-1',
     });
-    expect(fromPostgresChange(payload('lanes', 'UPDATE', { id: 'l-1' }))?.data).toEqual({ id: 'l-1', lane_id: 'l-1' });
-    expect(fromPostgresChange(payload('runs', 'DELETE', { id: 'r-1' }))?.data).toEqual({ id: 'r-1', run_id: 'r-1' });
-    expect(fromPostgresChange(payload('items', 'INSERT', { id: 'i-1' }))?.data).toEqual({ id: 'i-1' });
+    expect(fromPostgresChange(payload('lanes', 'UPDATE', { id: 'l-1', token_hash: 'x' }))?.data).toEqual({
+      op: 'update',
+      lane_id: 'l-1',
+    });
+    expect(fromPostgresChange(payload('runs', 'DELETE', { id: 'r-1' }))?.data).toEqual({ op: 'delete', run_id: 'r-1' });
+    expect(fromPostgresChange(payload('items', 'INSERT', { id: 'i-1', state: 'backlog' }))?.data).toEqual({
+      op: 'insert',
+      item_id: 'i-1',
+    });
+    expect(fromPostgresChange(payload('decisions', 'INSERT', { id: 'd-1' }))?.data).toEqual({
+      op: 'insert',
+      decision_id: 'd-1',
+    });
   });
 
   it('maps every relay table to its entity, and an unmapped table to null', () => {
@@ -67,6 +81,25 @@ describe('fromPostgresChange — the change, as the daemon names it', () => {
     const tables = { relay_asks: 'decision' };
     expect(fromPostgresChange(payload('relay_asks', 'INSERT', { id: 'ask-9' }), tables)?.entity).toBe('decision');
     expect(fromPostgresChange(payload('decisions', 'INSERT', { id: 'ask-9' }), tables)).toBeNull();
+  });
+
+  it('a table declared in the screen’s shape carries its row, with the daemon’s id key beside id', () => {
+    const msg = F.personMessage();
+    expect(fromPostgresChange(payload('messages', 'INSERT', msg), SCREEN_TABLES)).toEqual({
+      action: 'add',
+      entity: 'message',
+      data: msg,
+    });
+    expect(fromPostgresChange(payload('tasks', 'UPDATE', { id: 't-1', state: 'working' }), SCREEN_TABLES)?.data).toEqual({
+      id: 't-1',
+      state: 'working',
+      task_id: 't-1',
+    });
+    expect(fromPostgresChange(payload('messages', 'DELETE', { id: msg.id }), SCREEN_TABLES)).toEqual({
+      action: 'remove',
+      entity: 'message',
+      data: { id: msg.id },
+    });
   });
 });
 
@@ -96,7 +129,7 @@ async function both(now: RelayNow, sse: RelayStreamEvent, pg: PostgresChangePayl
   const viaSse = new RelayState(quietSource(), {}, reads(now));
   const viaPg = new RelayState(quietSource(), {}, reads(now));
   viaSse.apply(sse);
-  const mapped = fromPostgresChange(pg);
+  const mapped = fromPostgresChange(pg, SCREEN_TABLES);
   expect(mapped).not.toBeNull();
   viaPg.apply(mapped as RelayStreamEvent);
   await settle();
@@ -112,7 +145,9 @@ function expectSame({ viaSse, viaPg }: { viaSse: RelayState; viaPg: RelayState }
   expect(viaPg.source.readQueue).not.toHaveBeenCalled();
 }
 
-describe('parity — the SSE event and the mapped payload leave the same state', () => {
+// Parity holds only for a table that publishes the screen's rows: SCREEN_TABLES declares
+// that. Today's `relay` rows are not those rows; the next block covers them.
+describe('parity — a screen-shaped table and the SSE event leave the same state', () => {
   it('a lane', async () => {
     const lane = { ...F.lane(), title: 'Renamed', lease_state: 'expired' as const };
     const sse = { action: 'update', entity: 'lane', data: { ...lane, op: 'suspended', lane_id: lane.id } } as RelayStreamEvent;
@@ -153,6 +188,96 @@ describe('parity — the SSE event and the mapped payload leave the same state',
     const states = await both(F.now({ person_messages: [] }), sse, payload('messages', 'INSERT', msg));
     expect(states.viaPg.now?.person_messages.map((m) => m.id)).toEqual(['msg-9']);
     expectSame(states);
+  });
+});
+
+/** Rows with the columns `database/ddl/table/relay/*.ddl` gives them, and nothing else. */
+const tableRow = {
+  item: (id: string) => ({
+    user_id: 'u-1',
+    id,
+    workspace_id: 'w1',
+    repo_key: F.REPO,
+    ticket_provider: null,
+    ticket_key: null,
+    title: 'Gap',
+    kind: 'gap',
+    tags: null,
+    state: 'backlog',
+    position: 3,
+    added_by: null,
+    added_at: '2026-11-18T10:00:00Z',
+  }),
+  run: (id: string) => ({
+    user_id: 'u-1',
+    id,
+    crew_id: F.CREW_ID,
+    title: 'Sprint',
+    goal: 'Ship it',
+    state: 'active',
+    repo_key: F.REPO,
+    workspace_id: 'w1',
+    config: {},
+    created_at: '2026-11-18T10:00:00Z',
+    started_at: '2026-11-18T10:05:00Z',
+    completed_at: null,
+  }),
+  lane: (id: string) => ({
+    user_id: 'u-1',
+    id,
+    crew_id: F.CREW_ID,
+    code: 'L1',
+    title: 'Renamed in the table',
+    role: 'contributor',
+    family: 'claude-code',
+    token_hash: 'not-for-the-screen',
+    registered_at: '2026-11-18T10:00:00Z',
+  }),
+};
+
+/** A source whose reads answer: the re-read is how a table row reaches the screen. */
+function readingSource(now: RelayNow, queue: RelayQueue) {
+  const source = quietSource();
+  source.readNow.mockImplementation(async () => F.ok(now));
+  source.readQueue.mockImplementation(async () => F.ok(queue));
+  return source;
+}
+
+describe('a relay table row (today’s schema) re-reads what it names', () => {
+  it('an INSERT on relay.items re-reads the queue, and the item shows in the backlog', async () => {
+    const added = F.backlogItem({ item_id: 'item-new', title: 'Gap', position: 3 });
+    const queue = F.queue({ backlog: [...F.queue().backlog, added] });
+    const source = readingSource(F.now(), queue);
+    const s = new RelayState(source, {}, reads(F.now()));
+    s.apply(fromPostgresChange(payload('items', 'INSERT', tableRow.item('item-new'))) as RelayStreamEvent);
+    await settle();
+    expect(source.readQueue).toHaveBeenCalledTimes(1);
+    expect(s.items.backlog.map((b) => b.item_id)).toContain('item-new');
+    expect(s.items.items.every((i) => i.stage === 'triage' || i.stage === 'backlog')).toBe(true);
+  });
+
+  it('an UPDATE on relay.runs re-reads Now, and the run keeps its task counts', async () => {
+    const now = F.sprintNow();
+    const after = { ...now, runs: [{ ...now.runs[0], done_tasks: 9 }] };
+    const source = readingSource(after, F.queue());
+    const s = new RelayState(source, {}, reads(now));
+    s.apply(fromPostgresChange(payload('runs', 'UPDATE', tableRow.run(now.runs[0].run_id))) as RelayStreamEvent);
+    await settle();
+    expect(source.readNow).toHaveBeenCalled();
+    expect(s.now?.runs[0].done_tasks).toBe(9);
+    expect(s.now?.runs[0].total_tasks).toBeTypeOf('number');
+  });
+
+  it('an UPDATE on relay.lanes re-reads Now and puts no table column on the lane', async () => {
+    const now = F.now();
+    const id = now.lanes[0].id;
+    const source = readingSource(now, F.queue());
+    const s = new RelayState(source, {}, reads(now));
+    s.apply(fromPostgresChange(payload('lanes', 'UPDATE', tableRow.lane(id))) as RelayStreamEvent);
+    await settle();
+    expect(source.readNow).toHaveBeenCalled();
+    expect(s.lanes.get(id)).not.toHaveProperty('token_hash');
+    expect(s.lanes.get(id)).toHaveProperty('presence');
   });
 });
 
