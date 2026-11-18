@@ -36,8 +36,10 @@ flowchart TD
    `relay.rs:1745-1780`, and checks only `unregistered_at`). Releasing through `relay_unregister_tx` reuses the
    person close's path and gives the revived session `410` then `409 crew is closed`, as `lanes.md:60-61` states.
 3. **Lock order.** Close takes `select ... from relay.crews ... for update`, then the dead lanes `order by id for
-   update`, matching the person close (`relay.rs:6089`, `6116-6121`), so two closes and a close racing a register
-   serialize.
+   update`, matching the person close (`relay.rs:6089`, `6116-6121`), so two closes serialize. A register-join,
+   reregister, plan, assign or claim passes `relay_require_crew_open`, which reads the crew `for share` (PR #502
+   review): a close racing one of them serializes with it, and the gate sees the status the close committed, so a
+   closed crew never gains a lane or a lease.
 4. **Heartbeat race.** A heartbeat that commits between the liveness read and the close's commit is still released
    by close (the lane row is locked and unregistered in the same transaction); its next call gets `410`. Heartbeat
    takes the same order as close (PR #502 review): it updates the crew row first, then reads the lane `for share`,

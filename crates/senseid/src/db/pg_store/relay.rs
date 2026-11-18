@@ -2365,14 +2365,17 @@ impl PgStore {
     /// A closed crew refuses new work (F3): register-join, reregister, plan
     /// and assign all pass through here inside their write transaction. A
     /// missing crew is not this gate's verdict — each caller rules
-    /// existence its own way.
+    /// existence its own way. The crew row is held `for share` to the end
+    /// of the caller's transaction: a close (`for update`) racing it
+    /// serializes, so the gate reads the status the close committed and a
+    /// closed crew never gains a lane, lease or task.
     async fn relay_require_crew_open(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         user_id: Uuid,
         crew_id: Uuid,
     ) -> Result<(), RelayError> {
         let status: Option<String> = sqlx_core::query_scalar::query_scalar(
-            "select status from relay.crews where user_id = $1 and id = $2",
+            "select status from relay.crews where user_id = $1 and id = $2 for share",
         )
         .bind(user_id)
         .bind(crew_id)
