@@ -111,6 +111,11 @@ Red commit first for every numbered group; green in the next commit.
   `/workspace/<id>/relay/<crew>/<task>` leaves with no refresh
 - [x] B3.5 `relay-run.spec.ts` (option-pick) and `relay-conformance.spec.ts` unregressed; `zz-a11y.spec.ts` stays at
   0 serious on the Relay screen with a form decision showing
+- [x] B3.7 Review r1 on PR #501 (red then green): the task view keys the card by decision id, so a new open
+  decision draws its own form; a cleared number is unset, not NaN (sensei-hq/rokkit#193); a required yes/no with no
+  default starts as no; each field's id carries the decision id, so two cards never share ids (the Select's label
+  names no control upstream: sensei-hq/rokkit#194); the arrival e2e closes its crew and the inline refusal counts
+  posted answers; D6, the spec delta and the ask tool say a form without a layout is in jsonb's order
 - [x] B3.6 Gates: `bun run check`, `bun run test` in `app/`, `make test-app-e2e` relay specs green; evidence DOM dumps
   under `test-results/relay-decision-form/`
 
