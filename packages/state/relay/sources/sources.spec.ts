@@ -7,7 +7,12 @@ import type { RelayApi } from '../client.js';
 import type { RelayStreamEvent } from '../types.js';
 import * as F from '../fixtures.js';
 import { relaySseSource, relayTaskSseSource, type RelayEventStream } from './sse.js';
-import { relayRealtimeSource, cannedRealtime, type RelayRealtimeTransport } from './realtime.js';
+import {
+  relayRealtimeSource,
+  relayRealtimeTaskSource,
+  cannedRealtime,
+  type RelayRealtimeTransport,
+} from './realtime.js';
 
 function fakeApi(): RelayApi & Record<string, ReturnType<typeof vi.fn>> {
   return {
@@ -147,5 +152,38 @@ describe('relayRealtimeSource — the dōjō seam', () => {
     const t: RelayRealtimeTransport = { ...cannedRealtime({ now: null, queue: null }) };
     const now = await relayRealtimeSource(t).readNow({});
     expect(now.ok).toBe(false);
+  });
+});
+
+describe('relayRealtimeTaskSource — the dōjō, for one task view (#414)', () => {
+  it('reads the task and answers through the transport', async () => {
+    const t = cannedRealtime({ now: null, queue: null, task: F.taskView() });
+    const source = relayRealtimeTaskSource(t);
+    const read = await source.readTask(F.CREW_ID, 't-1');
+    expect(read.ok && read.data.task.id).toBe(F.taskView().task.id);
+    const answer = { decision_id: 'd', option: 'db', note: null, surface: 'dojo' as const };
+    await source.answer(answer);
+    expect(t.writes).toEqual([{ kind: 'answer', body: answer }]);
+  });
+
+  it('streams through the channel: each SUBSCRIBED is an open, and the teardown stops it', () => {
+    const t = cannedRealtime({ now: null, queue: null });
+    const source = relayRealtimeTaskSource(t);
+    const on = vi.fn();
+    const opened = vi.fn();
+    const stop = source.events(on, opened);
+    t.status('SUBSCRIBED');
+    t.emit(lane());
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(on).toHaveBeenCalledWith(lane());
+    stop();
+    t.emit(lane());
+    expect(on).toHaveBeenCalledTimes(1);
+  });
+
+  it('a canned transport with no task says it is not synced, never an empty task (D83)', async () => {
+    const read = await relayRealtimeTaskSource(cannedRealtime({ now: null, queue: null })).readTask(F.CREW_ID, 't-1');
+    expect(read.ok).toBe(false);
+    expect(!read.ok && read.error.status).toBe(503);
   });
 });
