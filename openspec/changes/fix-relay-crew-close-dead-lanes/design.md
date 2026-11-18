@@ -39,9 +39,11 @@ flowchart TD
    update`, matching the person close (`relay.rs:6089`, `6116-6121`), so two closes and a close racing a register
    serialize.
 4. **Heartbeat race.** A heartbeat that commits between the liveness read and the close's commit is still released
-   by close (the lane row is locked and unregistered in the same transaction); its next call gets `410`. A heartbeat
-   that slips a fresh lease row in after close commits leaves a granted lease on an unregistered lane; the sweeper
-   expires it on its next pass with no task to interrupt. Acceptable; no new lock in heartbeat.
+   by close (the lane row is locked and unregistered in the same transaction); its next call gets `410`. Heartbeat
+   takes the same order as close (PR #502 review): it updates the crew row first, then reads the lane `for share`,
+   then touches its leases. Renewing the lease before the crew row would hold the lease close releases while
+   waiting on the crew row close holds, a deadlock (`40P01`). A heartbeat that waited behind close sees the lane
+   unregistered and answers `410` instead of granting a fresh lease on a released lane.
 5. **Events.** The handler emits what the person close emits, so the screen drops the lanes from the stream without
    a re-read: `lane.unregistered` per released lane, `task.interrupt` per interrupted task, then `run.completed` with
    the crew id (existing).

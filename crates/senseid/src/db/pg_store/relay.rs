@@ -1753,6 +1753,28 @@ impl PgStore {
         }
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // Lock order matches the closes: the crew row, then the lane, then
+        // its leases. A close that released this lane while the heartbeat
+        // waited is seen here, so a released lane is not regranted.
+        sqlx_core::query::query(
+            "update relay.crews set heartbeat_at = $1 where user_id = $2 and id = $3",
+        )
+        .bind(now)
+        .bind(user_id)
+        .bind(crew_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let unregistered: Option<DateTime<Utc>> = sqlx_core::query_scalar::query_scalar(
+            "select unregistered_at from relay.lanes where id = $1 for share",
+        )
+        .bind(lane_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if unregistered.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
         // Renew the current granted lease; a lane whose lease lapsed or was
         // released gets a fresh granted row (history is kept, not rewritten).
         let renewed = sqlx_core::query::query(
@@ -1784,15 +1806,6 @@ impl PgStore {
             .await
             .map_err(db_err)?;
         }
-        sqlx_core::query::query(
-            "update relay.crews set heartbeat_at = $1 where user_id = $2 and id = $3",
-        )
-        .bind(now)
-        .bind(user_id)
-        .bind(crew_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
         // Item 3 (Q4): the heartbeat renews the lane's held resource
         // grants alongside its lane lease. Queued rows claim no grant,
         // so they are untouched.
