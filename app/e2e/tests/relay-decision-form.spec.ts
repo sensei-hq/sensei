@@ -266,6 +266,7 @@ test.describe('relay decision form (#389)', () => {
       })()`)) as string,
     );
     expect(violations, 'serious/critical a11y violations on the form card').toEqual([]);
+    if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
   });
 
   test('required fields refuse inline', async ({ tauriPage }) => {
@@ -277,11 +278,26 @@ test.describe('relay decision form (#389)', () => {
     const card = `${NEEDS} [data-decision="${decisionId}"]`;
     await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
 
+    // Every answer the page posts is counted: the inline refusal must send none, which a
+    // daemon 422 (the card stays, the envelope stays empty) could not tell apart.
+    await tauriPage.evaluate(`(() => {
+      window.__answerPosts = 0;
+      if (!window.__answerSpy) {
+        const real = window.fetch;
+        window.fetch = (input, init) => {
+          const url = typeof input === 'string' ? input : input.url;
+          if (url.includes('/relay/answers')) window.__answerPosts += 1;
+          return real(input, init);
+        };
+        window.__answerSpy = true;
+      }
+      return true;
+    })()`);
     await tauriPage.locator(`${card} [data-decision-answer]`).click();
     await expect
       .poll(async () => (await textsOf(tauriPage, `${card} [data-decision-field="target"] [data-message]`))[0] ?? '', { timeout: STREAM })
       .toContain('is required');
-    await new Promise((r) => setTimeout(r, 1500));
+    expect(Number(await tauriPage.evaluate('window.__answerPosts'))).toBe(0);
     expect(await countOf(tauriPage, card)).toBe(1);
     expect((await coord.envelope()).answers.filter((a) => a.decision_id === decisionId)).toEqual([]);
     await evidence(tauriPage, '2-refused-inline', card);
