@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Decision response schema
-A relay decision SHALL carry either a non-empty `options` list (option-pick) or a `response` (form), and never both or neither. A `response` SHALL be `{schema, layout?}` where `schema` is a flat JSON Schema subset: one `type: "object"` with 1 to 12 `properties`, each named by `^[a-z][a-z0-9_]{0,39}$` and of type `string`, `number`, `integer` or `boolean`; an optional `required` list naming those properties; `enum` (pick one) on a string; `minimum` and `maximum` on a number or integer; `maxLength` (at most 600) and `pattern` on a string; and the annotations `title`, `description` and `default`. `layout` SHALL be an optional rokkit vertical layout whose elements carry only `scope` (naming a schema property), `label`, `description` and `props.placeholder`. The daemon SHALL refuse with 422, before any write, a `response` that uses anything outside this subset, including `type: "array"` (pick several), `items`, `format`, nested objects, schema composition, a layout `renderer` or `override`, and a `pattern` that does not compile or uses `(?`; the message SHALL name the property and the keyword. There SHALL be no sensei-specific field format: the schema the lane sends is the schema `@rokkit/forms` draws.
+A relay decision SHALL carry either a non-empty `options` list (option-pick) or a `response` (form), and never both or neither. A `response` SHALL be `{schema, layout?}` where `schema` is a flat JSON Schema subset: one `type: "object"` with 1 to 12 `properties`, each named by `^[a-z][a-z0-9_]{0,39}$` and of type `string`, `number`, `integer` or `boolean`; an optional `required` list naming those properties; `enum` (pick one) on a string; `minimum` and `maximum` on a number or integer; `maxLength` (at most 600) and `pattern` on a string; and the annotations `title`, `description` and `default`. `layout` SHALL be an optional rokkit vertical layout whose elements carry only `scope` (naming a schema property), `label`, `description` and `props.placeholder`, and which names every property exactly once (rokkit draws only the layout's elements). Every property SHALL be answerable: each `enum` member SHALL be non-empty and pass the property's own `maxLength`, `pattern` and leak guard, and an integer's `minimum` and `maximum` SHALL hold a whole number between them. The daemon SHALL refuse with 422, before any write, a `response` that uses anything outside this subset, including `type: "array"` (pick several), `items`, `format`, nested objects, schema composition, a layout `renderer` or `override`, and a `pattern` that does not compile or uses `(?`; the message SHALL name the property and the keyword. There SHALL be no sensei-specific field format: the schema the lane sends is the schema `@rokkit/forms` draws.
 
 #### Scenario: A lane asks with a schema
 - **WHEN** a lane posts `POST /api/relay/decisions` with `asked_of: "person"`, no options, and a `response` whose schema has a required string with `enum`, an integer with `minimum` and `maximum`, and a boolean
@@ -14,6 +14,10 @@ A relay decision SHALL carry either a non-empty `options` list (option-pick) or 
 #### Scenario: A layout cannot choose a control
 - **WHEN** a lane asks with a layout element carrying `renderer: "textarea"`, or a schema property carrying `format: "textarea"`
 - **THEN** the daemon answers 422 naming the keyword, and no decision is recorded
+
+#### Scenario: A form no answer can satisfy is refused
+- **WHEN** a lane asks with a layout that leaves a property out (or lists no elements), an `enum` member that fails its own `pattern` or `maxLength`, trips the leak guard or is empty, or integer bounds of 0.2 to 0.8
+- **THEN** the daemon answers 422 naming the property, and no decision or task block is recorded
 
 #### Scenario: Options and response together are refused
 - **WHEN** a lane asks with both `options` and `response`

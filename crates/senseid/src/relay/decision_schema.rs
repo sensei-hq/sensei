@@ -210,10 +210,26 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
                 .ok_or_else(|| format!("{at}.{key} must be a finite number")),
         }
     };
-    if let (Some(min), Some(max)) = (bound("minimum")?, bound("maximum")?)
-        && min > max
-    {
-        return Err(format!("{at}.minimum must not exceed maximum"));
+    if let (Some(min), Some(max)) = (bound("minimum")?, bound("maximum")?) {
+        if min > max {
+            return Err(format!("{at}.minimum must not exceed maximum"));
+        }
+        if ty == "integer" && min.ceil() > max.floor() {
+            return Err(format!("{at}: no whole number lies between minimum and maximum"));
+        }
+    }
+    // Each member must pass the property's own rules, or picking it is refused at answer time.
+    for (i, member) in obj.get("enum").and_then(Value::as_array).into_iter().flatten().enumerate() {
+        let text = member.as_str().unwrap_or_default();
+        if text.is_empty() {
+            return Err(format!(
+                "{at}.enum member {i} is empty, and an empty answer reads as none"
+            ));
+        }
+        crate::relay::guard_markdown(text).map_err(|kinds| {
+            format!("{at}.enum member {i} carries a secret ({})", kinds.join(", "))
+        })?;
+        check_value(&format!("{at}.enum member {text}"), prop, member)?;
     }
     for (key, cap) in [("title", MAX_LABEL_CHARS), ("description", MAX_DESCRIPTION_CHARS)] {
         if let Some(v) = obj.get(key) {
@@ -234,7 +250,7 @@ fn check_text(at: &str, value: &Value, cap: usize) -> Result<(), String> {
     }
 }
 
-/// The optional layout: a vertical list of elements, each naming one property,
+/// The optional layout: a vertical list of elements naming each property once,
 /// carrying only a label, help and a placeholder (nothing that picks a control).
 fn check_layout(layout: &Value, properties: &Map<String, Value>) -> Result<(), String> {
     let obj = layout.as_object().ok_or("response.layout must be an object")?;
@@ -283,6 +299,12 @@ fn check_layout(layout: &Value, properties: &Map<String, Value>) -> Result<(), S
                 check_text(&format!("{at}.props.placeholder"), v, MAX_LABEL_CHARS)?;
             }
         }
+    }
+    // rokkit draws only the layout's elements, so a property left out gets no control.
+    if let Some(name) = properties.keys().find(|n| !seen.contains(&n.as_str())) {
+        return Err(format!(
+            "response.layout.elements must name every property; {name} is missing"
+        ));
     }
     Ok(())
 }
