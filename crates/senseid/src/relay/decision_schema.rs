@@ -528,6 +528,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn refuses_a_layout_that_leaves_a_property_undrawn() {
+        // rokkit draws only the layout's elements: a property it omits gets no control.
+        let lay = |elements: Value| json!({"schema": schema(), "layout": {"type": "vertical", "elements": elements}});
+        refused(&lay(json!([])), &["layout", "target"]);
+        // The required property is missing.
+        refused(&lay(json!([{"scope": "#/count"}, {"scope": "#/ship"}])), &["layout", "target"]);
+        // An optional property is missing: still one control per property.
+        refused(&lay(json!([{"scope": "#/target"}, {"scope": "#/count"}])), &["layout", "ship"]);
+    }
+
+    #[test]
+    fn refuses_a_property_no_answer_can_satisfy() {
+        // An enum member off its own pattern or over its own maxLength.
+        refused(
+            &with_prop("b", json!({"type": "string", "enum": ["main"], "pattern": "^x"})),
+            &["b", "enum", "main"],
+        );
+        refused(
+            &with_prop("b", json!({"type": "string", "enum": ["develop"], "maxLength": 3})),
+            &["b", "enum", "develop"],
+        );
+        // An enum member that trips the leak guard, named by kind, never echoed.
+        let secret = format!("ghp_{}", "b".repeat(38));
+        let err = validate_response(&with_prop("b", json!({"type": "string", "enum": [secret]})))
+            .expect_err("a secret member is refused");
+        assert!(err.contains("properties.b.enum"), "{err}");
+        assert!(!err.contains(&secret), "the member never echoes: {err}");
+        // An empty member reads as missing, so a person could never pick it.
+        refused(&with_prop("b", json!({"type": "string", "enum": ["", "x"]})), &["b", "enum"]);
+        // Integer bounds with no whole number between them.
+        refused(
+            &with_prop("n", json!({"type": "integer", "minimum": 0.2, "maximum": 0.8})),
+            &["n", "whole number"],
+        );
+        // Fractional bounds that still hold a whole number stay accepted.
+        let r = with_prop("n", json!({"type": "integer", "minimum": 0.5, "maximum": 1.5}));
+        assert_eq!(validate_response(&r), Ok(()));
+    }
+
     // ── validate_values ──
 
     fn values_err(values: Value) -> String {
