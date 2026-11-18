@@ -17,6 +17,9 @@
   (`the safety check flagged it as <category>`), never the model's text (D10). The raise-and-wait
   leg moved to `GateRecord::put_to_phone`; handler tests drive it against a mock dōjō
   (approve, decline, garbled reply unattended/interactive, timeout). Mutations caught.
+- PR #494 review fix 2: gate records no longer reset the watchdog's stall clock.
+  `last_progress_at` skips `detail.via = GATE_EVENT_VIA`, so a step looping on a denied call
+  still stalls (`tick_stalls_a_run_whose_only_recent_events_are_gate_records`, red then green).
 
 **Remaining:** tasks §5 is the user's production runbook (release, a live unattended run hitting a
 hard-block, then close #312). Other open relay items: #398, #414, #389, #455, #393, #444, #427, #314.
