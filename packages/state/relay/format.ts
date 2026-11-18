@@ -17,11 +17,12 @@ import type {
 } from './types.js';
 
 /** What a decision was answered with, in one line (#389): a button answer is its option; a
- *  form answer is its values, `key: value` in the order given, objects as JSON. An answer
- *  with neither says so rather than printing "null". */
+ *  form answer is its values, `key: value` sorted by key (the store's jsonb keeps its own
+ *  key order, so the order given does not survive), objects as JSON. An answer with neither
+ *  says so rather than printing "null". */
 export function answerGist(props: { option: string | null; values?: Record<string, unknown> | null }): string {
   if (props.option !== null && props.option !== undefined) return props.option;
-  const entries = Object.entries(props.values ?? {});
+  const entries = Object.entries(props.values ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   if (entries.length === 0) return 'no answer recorded';
   return entries
     .map(([key, value]) => `${key}: ${typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}`)
