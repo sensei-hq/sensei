@@ -4,9 +4,10 @@
   // is drawn through the renderer's own `child` snippet so it carries `data-decision-field`.
   // The card owns Answer: it calls `collect()`, which checks the form inline (validateAll),
   // shows each field's message, and hands back the values only when nothing failed.
-  import { untrack } from 'svelte';
+  import { untrack, type Component } from 'svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
   import { toAnswerValues, toDecisionForm, type RelayDecisionResponse } from '@sensei/state';
+  import DecisionCheckbox from './DecisionCheckbox.svelte';
 
   let { response, disabled = false }: { response: RelayDecisionResponse; disabled?: boolean } = $props();
 
@@ -22,6 +23,11 @@
     builder.validation = messages;
     return Object.keys(messages).length > 0 ? null : toAnswerValues(form.schema, builder.data);
   }
+
+  /** The yes/no drawn native, for assistive tech (DecisionCheckbox); every other control is rokkit's. */
+  const renderers: Record<string, Component<Record<string, unknown>>> = {
+    checkbox: DecisionCheckbox as Component<Record<string, unknown>>,
+  };
 
   type Element = { scope?: string; type?: string; value?: unknown; props?: Record<string, unknown> };
 
@@ -41,6 +47,7 @@
       value={element.value}
       {...element.props}
       {disabled}
+      {renderers}
       onchange={(value: unknown) => change(path, value)}
     />
   </div>
