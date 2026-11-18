@@ -11,10 +11,10 @@ ScreenShell / StatCard"; tasks 2.1, 2.2 done, 5.1 open). This change only re-pro
 behaviour on current develop and closes #420.
 
 ## What Changes
-Two slices. Slice 1 is the verification already being built; slice 2 is a follow-up the user chose on
+Two slices. Slice 1 is the verification (done; it closed #420); slice 2 is a follow-up the user chose on
 2026-11-18 and is built after slice 1 closes.
 
-### Slice 1 — verify and close (in progress)
+### Slice 1 — verify and close (done)
 - No production code. Re-run the existing proofs on current develop: the shell unit specs and the
   Tauri e2e `app/e2e/tests/relay-conformance.spec.ts` (error and loaded in both windows; no crew in the
   workspace window only).

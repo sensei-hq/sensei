@@ -1,19 +1,19 @@
-# Slice 1 — verify and close (in progress)
+# Slice 1 — verify and close (done)
 
 ## 1. Re-prove on current develop
-- [ ] 1.1 `cd app && bunx vitest run src/lib/relay/relay-shell.spec.ts src/lib/relay/relay-shell-input.spec.ts src/lib/components/ShellScreen.spec.svelte.ts` — green
-- [ ] 1.2 Check `pgrep -f "instance e2e"` is empty, then run the Tauri e2e: `make test-app-e2e` (or, with the bundle built, `cd app && bunx playwright test --config e2e/playwright.config.ts --project=tauri e2e/tests/relay-conformance.spec.ts`) — 3 of 3 green
-- [ ] 1.3 Also run `relay.spec.ts`, `relay-run.spec.ts`, `relay-timeline.spec.ts`, `zz-a11y.spec.ts` — green (no serious axe finding on the shell sidebar)
-- [ ] 1.4 Confirm `brew services start sensei` restored the real daemon on :7744
+- [x] 1.1 `cd app && bunx vitest run src/lib/relay/relay-shell.spec.ts src/lib/relay/relay-shell-input.spec.ts src/lib/components/ShellScreen.spec.svelte.ts` — green
+- [x] 1.2 Check `pgrep -f "instance e2e"` is empty, then run the Tauri e2e: `make test-app-e2e` (or, with the bundle built, `cd app && bunx playwright test --config e2e/playwright.config.ts --project=tauri e2e/tests/relay-conformance.spec.ts`) — 3 of 3 green
+- [x] 1.3 Also run `relay.spec.ts`, `relay-run.spec.ts`, `relay-timeline.spec.ts`, `zz-a11y.spec.ts` — green (no serious axe finding on the shell sidebar)
+- [x] 1.4 Confirm `brew services start sensei` restored the real daemon on :7744
 
 ## 2. Only if 1.x fails
-- [ ] 2.1 Commit a failing test that isolates the regression (red)
-- [ ] 2.2 Fix it in a separate commit (green); re-run 1.1–1.3
+- [x] 2.1 (not needed: every 1.x proof passed on develop `f880251b8`) Commit a failing test that isolates the regression (red)
+- [x] 2.2 (not needed) Fix it in a separate commit (green); re-run 1.1–1.3
 
 ## 3. Close
-- [ ] 3.1 Comment on #420 with the run results and evidence path `app/test-results/relay-conformance/`; name `update-phone-layout` as owner of the phone header height and stat label wrap
-- [ ] 3.2 Close #420
-- [ ] 3.3 `openspec validate verify-relay-d87-shell --strict`
+- [x] 3.1 Comment on #420 with the run results and evidence path `app/test-results/relay-conformance/`; name `update-phone-layout` as owner of the phone header height and stat label wrap
+- [x] 3.2 Close #420
+- [x] 3.3 `openspec validate verify-relay-d87-shell --strict`
 
 # Slice 2 — compact phone header (follow-up; starts after slice 1 closes)
 
@@ -64,4 +64,5 @@ Red commit first for each numbered group; green in the next commit.
 ## 7. Close slice 2
 - [ ] 7.1 Gates: `bun run check`, `bun run test` and lint in `app/`; `openspec validate verify-relay-d87-shell
   --strict`
-- [ ] 7.2 Comment on #420's follow-up with the phone e2e evidence; close it on merge to develop
+- [ ] 7.2 Slice 1 closed #420: open a follow-up issue for slice 2 first (it references #420), post the phone e2e
+  evidence there, and close it on merge to develop
