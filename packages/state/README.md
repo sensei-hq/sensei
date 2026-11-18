@@ -1,0 +1,64 @@
+# @sensei/state
+
+Domain state shared by the desktop app (`app/`) and the dōjō (`dojo/`). Source only: no build and no
+dependencies of its own. Each host aliases it (`svelte.config.js`, `vitest.config.ts`) and compiles it as its
+own code.
+
+## What it holds
+
+| Part | Files | What it is |
+|------|-------|------------|
+| Entity state | `stage.svelte.ts` | `ReactiveStageContext<T>`: rows keyed by `id`, changed by `apply(event)` |
+| Event shape | `events.ts` | `StateEvent`: `{action: add\|update\|remove\|set, entity, data}` |
+| Stream contract | `source.ts` | `StateStream<E>`, `sseEvents`, `realtimeEvents` |
+| SSE socket | `event-manager.ts` | `EventManager`: one socket, parse failures reported to `onError` |
+| Results | `result.ts` | `ApiResult`, `ApiError`, `failureReason` |
+| Relay | `relay/` | `RelayState`, `RelayTaskState`, six entity states, selectors, sources |
+
+## The source contract
+
+A state never fetches. It is built with a source, and the page builds the source.
+
+- A source has the reads and writes the state needs, and `events`, a `StateStream<E>`.
+- `StateStream<E>` is `(on, onOpen) => teardown`. `on` gets every event. `onOpen` runs on every open: the first,
+  and each reconnect. A broadcast has no replay, so the state re-reads on each open.
+- The desktop builds sources over the daemon: `relaySseSource`, `relayTaskSseSource`.
+- The dōjō builds them over Supabase realtime: `relayRealtimeSource`, `relayRealtimeTaskSource`, on a transport
+  whose `subscribe` is `realtimeChannel(client, {topic, schema, tables})`. `fromPostgresChange` maps a
+  `postgres_changes` payload to the daemon's event, so the state cannot tell the two apart. The client is any
+  object with the supabase-js `channel` / `on` / `subscribe` / `removeChannel` shape.
+
+```mermaid
+flowchart LR
+  RS[RelayState] --> SRC{{source}}
+  TS[RelayTaskState] --> SRC
+  SRC --> SSE[relaySseSource / relayTaskSseSource]
+  SRC --> RT[relayRealtimeSource / relayRealtimeTaskSource]
+  SSE --> D[(senseid)]
+  RT --> CH[realtimeChannel + fromPostgresChange] --> SB[(Supabase)]
+```
+
+## Migration order
+
+Domains move into the package in this order. A domain moves when it has a stream and a second plane needs it.
+
+1. **Relay** — done (#421, #484, #414).
+2. **Scan** — already on `ReactiveStageContext` and `EventManager`. Move `ScanState` and its source here.
+3. **Health** — `app/src/lib/health-state.svelte.ts` has a `HealthTransport` seam. Adopt `StateStream`.
+4. **Wizard** — depends on health and scan (`app/src/lib/wizard-state.svelte.ts`).
+5. **Dōjō domain states** (library, rule packs, delivery, you) — only when a desktop screen shares them.
+
+## Per-screen checklist
+
+- [ ] Each entity is a `ReactiveStageContext<T>`; a composite state owns UI state and `apply(event)`.
+- [ ] The state is built with a source injected at construction; the page never fetches.
+- [ ] The stream is a `StateStream<E>`; each open re-reads (no replay on a broadcast).
+- [ ] Selectors are pure functions in the package with unit specs.
+- [ ] State specs drive `apply` with canned events and assert on data, no DOM.
+- [ ] A Tauri e2e pins a no-refresh update on the screen.
+
+## Tests
+
+The package has no vitest config. `app/vitest.config.ts` runs its specs (`cd app && bun run test:unit`); the
+dōjō's `src/lib/relay/shared-state.spec.svelte.ts` runs the relay state over the realtime sources
+(`cd dojo && bun run test`).
