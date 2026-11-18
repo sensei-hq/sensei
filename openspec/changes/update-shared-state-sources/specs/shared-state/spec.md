@@ -52,13 +52,23 @@ dropped silently.
 
 The package SHALL provide `realtimeChannel(client, spec)` that opens one channel per subscription, under its own
 topic, with a `postgres_changes` listener per relay table, forwards mapped events and channel statuses, and removes
-the channel on teardown. A channel that fails, times out or closes SHALL be logged with the supabase-js error and
+the channel on teardown. Its default table map SHALL name only tables the relay DDL declares, and SHALL include
+`relay.actions` (decisions, messages) and `relay.leases` (lane presence). A spec that names a crew SHALL ask the
+server for that crew's rows on each crew-scoped table and SHALL drop any row that names another crew. A channel that fails, times out or closes SHALL be logged with the supabase-js error and
 reported to the state as a fault. It SHALL accept any client with the supabase-js `channel` / `on` / `subscribe` /
 `removeChannel` shape and SHALL add no package dependency.
 
 #### Scenario: Two subscribers share a client and a crew
 - **WHEN** two subscribers on one real supabase-js client subscribe to the same crew topic
 - **THEN** both open, each on its own channel, and neither throws
+
+#### Scenario: The default listens only on tables that exist
+- **WHEN** `realtimeChannel` subscribes with the default table map
+- **THEN** every table it listens on has a file in `database/ddl/table/relay/`, and an answer written to `relay.actions` re-reads Now and the task view
+
+#### Scenario: A crew's channel carries only its crew
+- **WHEN** a channel built with `crewId` receives a decision row from another crew
+- **THEN** the row reaches no state, and each crew-scoped listener carries the filter `crew_id=eq.<crewId>`
 
 #### Scenario: A dropped channel is a fault
 - **WHEN** the channel reports `CHANNEL_ERROR` with an error

@@ -50,31 +50,33 @@ needs three calls; giving it the whole `RelaySource` would make every task-page 
 ### D3. The realtime mapper is pure and shaped like the daemon's event
 
 `fromPostgresChange(payload, tables)` where `payload = {schema, table, eventType: 'INSERT'|'UPDATE'|'DELETE', new, old}`
-and `tables` maps a table name to an entry (`lanes→lane, tasks→task, runs→run, items→item, decisions→decision,
-messages→message`). INSERT is add, UPDATE update, DELETE remove (the id from `old`).
+and `tables` maps a table name to an entry (`lanes→lane, leases→lane by lane_id, tasks→task, actions→task by
+task_id, runs→run, items→item`). The default names only tables the DDL has: realtime-js joins every binding at once,
+and one missing table fails the whole channel (#499 review). Decisions and messages are `relay.actions` kinds, so an
+action names its task, and one with no task re-reads Now; a lease is the lane's presence. INSERT is add, UPDATE update, DELETE remove (the id from `old`).
 
 A table row is not the screen's row. `relay.items` has `state`, not `stage`, and no `item_id`; `relay.runs` has no
 task counts; `relay.lanes` carries `token_hash` and no presence. So an entry that is a bare entity name (the default,
 `RELAY_TABLES`, today's `relay` schema) maps to `{op, <entity>_id}` with no `id`: the id key the daemon names that
-entity by (`task_id`, `lane_id`, `run_id`, `item_id`, `decision_id`, `message_id`). `RelayState.apply` reads an event
+entity by (`task_id`, `lane_id`, `run_id`, `item_id`), read from the entry's `key` column (default `id`). `RelayState.apply` reads an event
 with no `id` as "this changed": it re-reads Now (lane, task, run, decision, message) or the queue (item, run), and
 `RelayTaskState.apply` re-reads on its task's `task_id`. An entry `{entity, screenRow: true}` declares a table a
 publisher writes in the screen's shape; its row is carried whole, plus the daemon's id key, and applied with no
 re-read. A table not in the map returns `null` and is logged by the caller, never dropped silently. `tables` is a
-parameter: today's `relay` schema (`database/ddl/table/relay/`) has `lanes`, `tasks`, `runs` and `items` but no
-`decisions` or `messages` table (both are `relay.actions` kinds), so the dōjō's table names and shapes are #427's
-publisher's to fix, and it passes its own map.
+parameter: #427's publisher may name its own tables and shapes, and passes its own map.
 
 The specs drive rows with the DDL's columns for the default map. The parity specs ("the state cannot tell the two
 apart") apply only to a screen-shaped map, and say so.
 
 ### D4. The package takes a structural client, not supabase-js
 
-`realtimeChannel(client, {topic, schema, tables})` uses only `client.channel(topic).on('postgres_changes', filter,
+`realtimeChannel(client, {topic, schema, crewId, tables})` uses only `client.channel(topic).on('postgres_changes', filter,
 cb).subscribe(statusCb)` and `client.removeChannel(channel)`. Each subscription opens `<topic>:<n>`: supabase-js
 (realtime-js 2.110.3, `RealtimeClient.channel`) hands back the channel it holds for a topic, and a listener added after
 `subscribe()` throws, so the crew view and the task view on one client, or a re-subscribe while a removal is in flight,
-would break on a shared topic. A `CHANNEL_ERROR`, `TIMED_OUT` or `CLOSED` is logged with the topic and the supabase-js
+would break on a shared topic. The topic scopes nothing: `crewId` (required, `null` for every crew) adds
+`crew_id=eq.<crewId>` to each `crewScoped` table's binding and drops any row that names another crew; a draft run
+and a queue item name no crew and pass. A `CHANNEL_ERROR`, `TIMED_OUT` or `CLOSED` is logged with the topic and the supabase-js
 error, and reaches the state through `StateStream`'s optional `onFault` as `streamFault` (D83: stale data is a fault). It is typed by a local interface. The package stays
 dependency-free (`packages/tsconfig.json` header: "source only: no build, no dependencies of its own"); the dōjō hands
 in its supabase-js client. Status strings map to `RelayChannelStatus` (`realtime.ts:25`), so `realtimeEvents` keeps

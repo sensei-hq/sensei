@@ -26,12 +26,16 @@ A state never fetches. It is built with a source, and the page builds the source
   states hold it as `streamFault` until the next open; a screen shows it, since stale data is a fault (D83).
 - The desktop builds sources over the daemon: `relaySseSource`, `relayTaskSseSource`.
 - The dōjō builds them over Supabase realtime: `relayRealtimeSource`, `relayRealtimeTaskSource`, on a transport
-  whose `subscribe` is `realtimeChannel(client, {topic, schema, tables})`. Each subscription opens its own
+  whose `subscribe` is `realtimeChannel(client, {topic, schema, crewId, tables})`. Each subscription opens its own
   channel (`<topic>:<n>`): supabase-js reuses the channel it holds for a topic, and a listener added after
-  `subscribe()` throws. `fromPostgresChange` maps a
-  `postgres_changes` payload to the daemon's event. A table row (`RELAY_TABLES`, today's `relay` schema) is not the
-  screen's row, so it maps to the entity's id key alone and the state re-reads; a table declared
-  `{entity, screenRow: true}` carries its row and applies with no re-read. The client is any
+  `subscribe()` throws. The topic scopes nothing; `crewId` does. With a crew, each crew-scoped table asks the
+  server for `crew_id=eq.<crewId>`, and any row that names another crew is dropped. `null` means every crew the
+  person can see. `fromPostgresChange` maps a `postgres_changes` payload to the daemon's event.
+- `RELAY_TABLES` lists only tables the relay DDL has: `lanes`, `leases`, `tasks`, `actions`, `runs`, `items`. Realtime
+  joins every listener at once, and one missing table fails the whole channel. Decisions and messages are
+  `relay.actions` rows, so an action names its task (none: Now re-reads). A lease is a lane's presence, so it names
+  its lane. A table row is not the screen's row: it maps to the entity's id key alone and the state re-reads. A table
+  declared `{entity, screenRow: true}` carries its row and applies with no re-read. The client is any
   object with the supabase-js `channel` / `on` / `subscribe` / `removeChannel` shape.
 
 ```mermaid

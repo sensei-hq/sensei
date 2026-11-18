@@ -15,26 +15,37 @@ export interface PostgresChangePayload {
 }
 
 /** One table's entry: the entity it holds, and whether its rows are the screen's rows.
- *  A bare entity name is a table row (today's `relay` schema): its columns are not what
- *  the screen holds (`relay.items` has `state`, not `stage`; `relay.runs` has no task
- *  counts; `relay.lanes` carries `token_hash`), so the change names the row's id and the
- *  state re-reads it. `{entity, screenRow: true}` is a table a publisher writes in the
- *  screen's shape: its row is applied as it is. */
-export type RelayTableEntry = string | { entity: string; screenRow: true };
+ *  A table row (a bare entity name, or `{entity, key?, crewScoped?}`) is today's `relay`
+ *  schema: its columns are not what the screen holds (`relay.items` has `state`, not
+ *  `stage`; `relay.runs` has no task counts; `relay.lanes` carries `token_hash`), so the
+ *  change names the entity's id and the state re-reads it. `key` is the column that holds
+ *  that id (default `id`: a lease names its lane by `lane_id`). `{entity, screenRow: true}`
+ *  is a table a publisher writes in the screen's shape: its row is applied as it is.
+ *  `crewScoped` says every row names its crew in `crew_id`, so a crew's channel asks the
+ *  server for that crew's rows only. */
+export type RelayTableEntry =
+  | string
+  | { entity: string; key?: string; crewScoped?: boolean; screenRow?: never }
+  | { entity: string; screenRow: true; crewScoped?: boolean };
 
 /** Table → entry. */
 export type RelayTableMap = Readonly<Record<string, RelayTableEntry>>;
 
-/** Table → the entity the daemon's stream names, for today's `relay` schema: table rows,
- *  so each change re-reads. The default for `fromPostgresChange`; the dōjō passes its own
- *  map where its table names or row shapes differ. */
-export const RELAY_TABLES: Readonly<Record<string, string>> = {
-  lanes: 'lane',
-  tasks: 'task',
+/** Table → entry for today's `relay` schema (`database/ddl/table/relay/`): table rows, so
+ *  each change re-reads. Only tables the DDL has: realtime joins every binding at once and
+ *  the server refuses the join when one names a missing table. Decisions and messages are
+ *  `relay.actions` kinds, so an action names its task (none: a crew-level message, which
+ *  re-reads Now); a lease is a lane's presence, so it names its lane. A draft run has no
+ *  crew yet and the queue is the person's across crews: neither is crew-scoped. The
+ *  default for `fromPostgresChange` and `realtimeChannel`; the dōjō passes its own map
+ *  where its table names or row shapes differ. */
+export const RELAY_TABLES: RelayTableMap = {
+  lanes: { entity: 'lane', crewScoped: true },
+  leases: { entity: 'lane', key: 'lane_id', crewScoped: true },
+  tasks: { entity: 'task', crewScoped: true },
+  actions: { entity: 'task', key: 'task_id', crewScoped: true },
   runs: 'run',
   items: 'item',
-  decisions: 'decision',
-  messages: 'message',
 };
 
 /** The id key the daemon names an entity by, beside the row's `id`. */
@@ -51,13 +62,19 @@ export function fromPostgresChange(payload: PostgresChangePayload, tables: Relay
   const entity = typeof entry === 'string' ? entry : entry.entity;
   const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
   const action = ACTIONS[payload.eventType];
-  if (typeof entry === 'string') {
+  if (typeof entry === 'string' || !entry.screenRow) {
     const data: Record<string, unknown> = { op: payload.eventType.toLowerCase() };
-    if (typeof row.id === 'string') data[ID_KEYS[entity] ?? `${entity}_id`] = row.id;
+    const id = row[(typeof entry === 'string' ? undefined : entry.key) ?? 'id'];
+    if (typeof id === 'string') data[ID_KEYS[entity] ?? `${entity}_id`] = id;
     return { action, entity, data: data as RelayStreamEvent['data'] };
   }
   const data: Record<string, unknown> = { ...row };
   const key = ID_KEYS[entity];
   if (key && typeof row.id === 'string') data[key] = row.id;
   return { action, entity, data: data as RelayStreamEvent['data'] };
+}
+
+/** True when the table's rows all name their crew in `crew_id`. */
+export function isCrewScoped(entry: RelayTableEntry | undefined): boolean {
+  return typeof entry === 'object' && entry.crewScoped === true;
 }
