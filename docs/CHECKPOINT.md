@@ -11,7 +11,10 @@
   (`emit_released`, shared with the person close), then `run.completed`; answer gains `released`.
 - MCP `relay_close_crew` text and `lanes.md` §12 updated.
 - e2e `app/e2e/tests/relay-crew-close.spec.ts`: red on the pre-fix daemon (409), green on this branch.
-- Gate: fmt, clippy (senseid, sensei-mcp), relay DB tests (451, serial), test-fast, app check,
+- Review fix (PR #502): heartbeat now takes the crew row, then the lane `for share`, then its lease —
+  the order close uses — so close and heartbeat no longer deadlock (40P01); a heartbeat queued behind
+  close answers 410. Red `480fe1a3f`, green `875c3a080`; design.md decision 4 amended.
+- Gate: fmt, clippy (senseid, sensei-mcp), relay DB tests (452), test-fast, app check,
   openspec validate --strict.
 
 ## Remaining
