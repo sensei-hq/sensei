@@ -83,7 +83,8 @@ select a.user_id, 'open_asked', a.crew_id, a.id,
   jsonb_build_object(
     'task_id', a.task_id, 'task_title', t.title, 'question', a.body_md,
     'context', a.props->'context', 'options', a.props->'options',
-    'recommended', a.props->'recommended', 'asked_at', a.created_at)
+    'recommended', a.props->'recommended', 'response', a.props->'response',
+    'asked_at', a.created_at)
 from relay.actions a
 left join relay.tasks t on t.user_id = a.user_id and t.id = a.task_id
 where a.kind = 'asked' and a.props->>'asked_of' = 'person'

@@ -16,6 +16,7 @@ use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use super::PgStore;
+use crate::relay::decision_schema::validate_values;
 use crate::relay::envelope::{
     EnvelopeAnswer, EnvelopeAssignment, EnvelopeBrief, EnvelopeMessage, EnvelopeReview,
     EnvelopeTicket, LaneEnvelope, ReviewDirection,
@@ -1245,25 +1246,20 @@ fn history_props(kind: &str, props: &serde_json::Value) -> serde_json::Value {
             serde_json::Value::Object(out)
         }
         "asked" => {
-            let options = arr("options")
-                .iter()
-                .map(|o| {
-                    serde_json::json!({
-                        "id": o.get("id"),
-                        "label": o.get("label"),
-                        "detail": o.get("detail").cloned().unwrap_or(null.clone()),
-                    })
-                })
-                .collect::<Vec<_>>();
             serde_json::json!({
                 "context": get("context"),
-                "options": options,
+                "options": decision_options_json(props),
                 "recommended": get("recommended"),
+                "response": get("response"),
                 "blocks": arr("blocks"),
                 "asked_of": get("asked_of"),
             })
         }
-        "answered" => serde_json::json!({ "option": get("option"), "surface": get("surface") }),
+        "answered" => serde_json::json!({
+            "option": get("option"),
+            "values": get("values"),
+            "surface": get("surface"),
+        }),
         "message" => {
             let mut out = serde_json::json!({ "to": get("to"), "surface": get("surface") });
             // A nudge shows as one in the history ("Nudge · to … · from you").
@@ -1339,26 +1335,28 @@ fn next_code(codes: &[String]) -> Option<String> {
 
 // ─── The store ───
 
+/// A decision's option buttons, shaped (`detail` null when absent). A form
+/// decision carries no `options` key and reads an empty list (#389 D2).
+fn decision_options_json(props: &serde_json::Value) -> Vec<serde_json::Value> {
+    props
+        .get("options")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|o| {
+            serde_json::json!({
+                "id": o.get("id"),
+                "label": o.get("label"),
+                "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect()
+}
+
 /// One open person decision as Needs you shows it: the `relay.now`
 /// `open_asked` payload, shaped. `relay_now` lists them;
 /// `relay_decision_row` reads one for the stream (#418).
 fn now_decision_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serde_json::Value {
-    let options = payload
-        .get("options")
-        .and_then(|v| v.as_array())
-        .map(|options| {
-            options
-                .iter()
-                .map(|o| {
-                    serde_json::json!({
-                        "id": o.get("id"),
-                        "label": o.get("label"),
-                        "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
     serde_json::json!({
         "id": id.to_string(),
         "crew_id": crew_id.to_string(),
@@ -1366,8 +1364,9 @@ fn now_decision_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> 
         "task_title": payload.get("task_title"),
         "question": payload.get("question"),
         "context": payload.get("context"),
-        "options": options,
+        "options": decision_options_json(payload),
         "recommended": payload.get("recommended"),
+        "response": payload.get("response").cloned().unwrap_or(serde_json::Value::Null),
         "asked_at": payload.get("asked_at"),
     })
 }
@@ -5132,7 +5131,6 @@ impl PgStore {
             })
             .collect();
         let mut props = serde_json::Map::from_iter([
-            ("options".to_owned(), serde_json::Value::Array(options)),
             (
                 "blocks".to_owned(),
                 serde_json::Value::Array(
@@ -5151,6 +5149,14 @@ impl PgStore {
                 }),
             ),
         ]);
+        // Buttons or a form (#389 D2): `validate_props` refuses both, neither,
+        // and a response outside the subset, before any write.
+        if !options.is_empty() {
+            props.insert("options".into(), serde_json::Value::Array(options));
+        }
+        if let Some(response) = &input.response {
+            props.insert("response".into(), response.clone());
+        }
         if let Some(context) = &input.context {
             props.insert("context".into(), serde_json::Value::String(context.clone()));
         }
@@ -5268,18 +5274,46 @@ impl PgStore {
                 return Err(RelayError::Forbidden("only the asked-of party answers".into()));
             }
         };
-        let options = props
-            .get("options")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| RelayError::Internal("ask has no options".into()))?;
-        let option = input.option.clone().unwrap_or_default();
-        if !options.iter().any(|o| o.get("id").and_then(|v| v.as_str()) == Some(option.as_str())) {
-            return Err(RelayError::Validation(format!("unknown option {option}")));
-        }
+        // An options decision takes a pick; a form takes values, checked
+        // against the stored schema before anything is written (#389 D3).
+        let chosen = match props.get("response").filter(|v| !v.is_null()) {
+            Some(response) => {
+                if input.option.is_some() {
+                    return Err(RelayError::Validation(
+                        "this decision is a form: answer with values, not option".into(),
+                    ));
+                }
+                let values = input.values.as_ref().ok_or_else(|| {
+                    RelayError::Validation("values is required to answer a form".into())
+                })?;
+                validate_values(response, values).map_err(RelayError::Validation)?;
+                ("values", values.clone())
+            }
+            None => {
+                if input.values.is_some() {
+                    return Err(RelayError::Validation(
+                        "this decision takes an option, not values".into(),
+                    ));
+                }
+                let option = input
+                    .option
+                    .as_deref()
+                    .ok_or_else(|| RelayError::Validation("option is required".into()))?;
+                let options = props
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| RelayError::Internal("ask has no options".into()))?;
+                if !options.iter().any(|o| o.get("id").and_then(|v| v.as_str()) == Some(option)) {
+                    return Err(RelayError::Validation(format!("unknown option {option}")));
+                }
+                ("option", serde_json::Value::String(option.to_owned()))
+            }
+        };
         if let Some(note) = &input.note {
             check_summary(note, "note")?;
         }
-        let answer_props = serde_json::json!({"option": option, "surface": word(surface)});
+        let mut answer_props = serde_json::json!({"surface": word(surface)});
+        answer_props[chosen.0] = chosen.1;
         validate_props(RelayActionKind::Answered, &answer_props)
             .map_err(|e| RelayError::Validation(e.message))?;
         let ask_blocks: Vec<Uuid> = props
@@ -6268,11 +6302,12 @@ impl PgStore {
             Option<Uuid>,
             Option<Uuid>,
             Option<String>,
+            Option<serde_json::Value>,
             Option<String>,
             DateTime<Utc>,
         )> = sqlx_core::query_as::query_as(
             "select a.id, a.reply_to, a.task_id, a.lane_id, a.props->>'option',
-                        a.body_md, a.created_at
+                        a.props->'values', a.body_md, a.created_at
                  from relay.actions a join relay.actions ask on ask.id = a.reply_to
                  where a.user_id = $1 and a.kind = 'answered' and ask.lane_id = $2
                  order by a.created_at desc, a.id desc",
@@ -6283,7 +6318,7 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         let mut answers = Vec::with_capacity(rows.len());
-        for (id, decision_id, task_id, sender, option, note, created_at) in rows {
+        for (id, decision_id, task_id, sender, option, values, note, created_at) in rows {
             let from_lane_code = match sender {
                 Some(sender) => {
                     let code: Option<String> = sqlx_core::query_scalar::query_scalar(
@@ -6303,7 +6338,7 @@ impl PgStore {
                 decision_id: decision_id.to_string(),
                 task_id: task_id.map(|id| id.to_string()),
                 option,
-                values: None,
+                values,
                 note,
                 from_lane_code,
                 created_at: iso(created_at),
@@ -7918,22 +7953,6 @@ impl PgStore {
         .map_err(db_err)?;
         let decision_json = match decision {
             Some((id, ask_task, body, props, asked_at)) => {
-                let options = props
-                    .get("options")
-                    .and_then(|v| v.as_array())
-                    .map(|options| {
-                        options
-                            .iter()
-                            .map(|o| {
-                                serde_json::json!({
-                                    "id": o.get("id"),
-                                    "label": o.get("label"),
-                                    "detail": o.get("detail").cloned().unwrap_or(serde_json::Value::Null),
-                                })
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
                 serde_json::json!({
                     "id": id.to_string(),
                     "crew_id": crew_id.to_string(),
@@ -7941,8 +7960,9 @@ impl PgStore {
                     "task_title": title,
                     "question": body,
                     "context": props.get("context"),
-                    "options": options,
+                    "options": decision_options_json(&props),
                     "recommended": props.get("recommended"),
+                    "response": props.get("response").cloned().unwrap_or(serde_json::Value::Null),
                     "asked_at": iso(asked_at),
                 })
             }
