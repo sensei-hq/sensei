@@ -124,7 +124,8 @@ describe('EventManager', () => {
     expect(MockEventSource.instances[0].readyState).toBe(2);
   });
 
-  it('ignores parse errors without crashing', () => {
+  it('skips a payload that fails to parse and still dispatches the next one', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const mgr = new EventManager<object>('http://test/sse', (d) => JSON.parse(d));
     const received: object[] = [];
 
@@ -132,8 +133,55 @@ describe('EventManager', () => {
     MockEventSource.instances[0].simulateMessage('not valid json');
     MockEventSource.instances[0].simulateMessage('{"ok":true}');
 
-    // Should skip the bad event and deliver the good one
     expect(received).toEqual([{ ok: true }]);
+    warn.mockRestore();
+  });
+
+  it('reports a parse failure to the injected onError with the raw payload', () => {
+    const errors: { error: unknown; data: string }[] = [];
+    const mgr = new EventManager<object>(
+      'http://test/sse',
+      (d) => JSON.parse(d),
+      3000,
+      (error, data) => errors.push({ error, data }),
+    );
+    const received: object[] = [];
+
+    mgr.subscribe((e) => received.push(e));
+    MockEventSource.instances[0].simulateMessage('not valid json');
+    MockEventSource.instances[0].simulateMessage('{"ok":true}');
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].data).toBe('not valid json');
+    expect(errors[0].error).toBeInstanceOf(SyntaxError);
+    expect(received).toEqual([{ ok: true }]);
+  });
+
+  it('by default logs a parse failure with console.warn naming the URL', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mgr = new EventManager<object>('http://test/sse', (d) => JSON.parse(d));
+
+    mgr.subscribe(() => {});
+    MockEventSource.instances[0].simulateMessage('not valid json');
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('http://test/sse');
+    warn.mockRestore();
+  });
+
+  it('a throwing handler is not reported as a parse failure', () => {
+    // onError covers the parse step only; a handler bug must not be mislabelled.
+    const errors: unknown[] = [];
+    const mgr = new EventManager<object>(
+      'http://test/sse',
+      (d) => JSON.parse(d),
+      3000,
+      (error) => errors.push(error),
+    );
+    mgr.subscribe(() => { throw new Error('handler bug'); });
+
+    expect(() => MockEventSource.instances[0].simulateMessage('{"ok":true}')).toThrow('handler bug');
+    expect(errors).toEqual([]);
   });
 
   it('reconnects on error when handlers exist', async () => {
