@@ -356,6 +356,66 @@ pub(crate) async fn ingest_hook_event(
 
 // ── Hook gate (relay-engine feature B) ───────────────────────────────────────
 
+/// What `/hook/gate` needs to record a gate's outcome in a run's activity
+/// (#312): the run the plugin named, and the call's tool and hard-block.
+struct GateRecord<'a> {
+    state: &'a AppState,
+    run_id: Option<&'a str>,
+    session_id: &'a str,
+    tool: &'a str,
+    hard_block: Option<&'a crate::dojo::gate::HardBlock>,
+    unattended: bool,
+}
+
+impl GateRecord<'_> {
+    /// Append the outcome to the named run's `activity.run_events`. A run id
+    /// that is not a uuid or names no run is a failed record: logged, and it
+    /// never changes the gate's answer.
+    async fn record(
+        &self,
+        outcome: crate::dojo::gate::GateOutcome,
+        why: Option<&str>,
+        reason: &str,
+    ) {
+        let Some(run_id) = self.run_id else { return };
+        let (kind, detail) =
+            crate::dojo::gate::gate_event(outcome, self.tool, self.hard_block, why, reason);
+        let row =
+            crate::db::pg_store::RunEventRow { kind, phase: None, feature: None, detail: &detail };
+        let appended = match uuid::Uuid::parse_str(run_id) {
+            Ok(id) => self.state.pg.append_run_event(&id, &row).await.map(|_| ()),
+            Err(e) => Err(format!("run_id is not a uuid: {e}")),
+        };
+        if let Err(e) = appended {
+            tracing::warn!(
+                run_id,
+                session_id = self.session_id,
+                tool_name = self.tool,
+                error = %e,
+                "hook_gate: could not record the gate outcome in the run — answer unchanged"
+            );
+        }
+    }
+
+    /// A gate with no clear answer — no reply, a failed raise, or an unclear
+    /// reply (`why` names which). Fails open, except a hard-block in an
+    /// unattended run, which is denied with its reason (#312, D28). Recorded.
+    async fn unanswered(&self, why: &str) -> Json<serde_json::Value> {
+        let (decision, reason) =
+            crate::dojo::gate::unanswered_decision(self.unattended, self.hard_block, why);
+        if decision == "deny" {
+            tracing::warn!(
+                session_id = self.session_id,
+                tool_name = self.tool,
+                why,
+                "hook_gate: unanswered hard-block in an unattended run — denied (fail-closed)"
+            );
+        }
+        self.record(crate::dojo::gate::GateOutcome::unanswered(decision), Some(why), &reason).await;
+        gate_decision(decision, &reason)
+    }
+}
+
 /// Build a Claude Code `PreToolUse` hook decision body. `decision` is `"allow"`
 /// or `"deny"`; `reason` is the human-facing explanation the hook surfaces.
 fn gate_decision(decision: &str, reason: &str) -> Json<serde_json::Value> {
@@ -374,24 +434,30 @@ fn gate_decision(decision: &str, reason: &str) -> Json<serde_json::Value> {
 /// decides whether the tool may proceed. When the tool is in the
 /// `SENSEI_RELAY_GATE_TOOLS` allow-list AND a Dōjō is enrolled, it raises a
 /// blocking relay gate to the phone, waits (bounded ~50s) for the human's
-/// answer, and returns allow/deny. Everything else — gating off, non-uuid
-/// session, no dojo, any raise/poll error, timeout — is **fail-open → allow**,
-/// with one exception (#312, D28): a hard-block in an **unattended** run (the
-/// body's `unattended: true`) that gets no human answer is **denied**, with its
-/// reason.
+/// answer, and returns allow/deny. A reply is read as approved, declined or
+/// unclear (`read_reply`). Everything else — gating off, non-uuid session, no
+/// dojo, any raise/poll error, timeout, an unclear reply — is **fail-open →
+/// allow**, with one exception (#312, D28): a hard-block in an **unattended**
+/// run (the body's `unattended: true`) without a clear human answer is
+/// **denied**, with its reason.
+///
+/// When the body names a run (`run_id`), every gated outcome is appended to that
+/// run's `activity.run_events` (`gate_raised`, `gate_passed`, `flagged`); a
+/// failed append is logged and never changes the answer. An ungated call is not
+/// recorded.
 ///
 /// ALWAYS returns 200 with an allow/deny body; NEVER a 5xx. Fail-open error
 /// paths `tracing::warn!` (never swallowed). Otherwise only an explicit human
-/// `deny` reply blocks. The payload raised to the phone carries only the tool NAME —
+/// decline, or no clear answer to an unattended hard-block, blocks. The payload raised to the phone carries only the tool NAME —
 /// no tool args, code, or diffs (zero-knowledge, D10).
 pub(crate) async fn hook_gate(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     use crate::dojo::gate::{
-        classify_hard_block, decision_from_reply, gated_tools_from_env, needs_semantic_review,
-        parse_semantic_verdict, semantic_system_prompt, semantic_user_message, should_gate,
-        unanswered_decision,
+        GateOutcome, Reply, UNCLEAR_REPLY, answered_decision, classify_hard_block,
+        gated_tools_from_env, needs_semantic_review, parse_semantic_verdict, read_reply,
+        semantic_system_prompt, semantic_user_message, should_gate,
     };
 
     let session_id = payload["session_id"].as_str().unwrap_or("");
@@ -401,6 +467,8 @@ pub(crate) async fn hook_gate(
     // daemon spawned (SENSEI_RUN_ID) or a session its run drive steers. Absent
     // means interactive (#312, D28).
     let unattended = payload["unattended"].as_bool() == Some(true);
+    // The run the plugin named (#312): its activity records the gate's outcome.
+    let run_id = payload["run_id"].as_str();
     // The PreToolUse event carries the tool's input alongside its name. Parse
     // defensively — a missing/malformed `tool_input` defaults to `{}`, which the
     // classifier treats as progress (no danger inferable ⇒ don't over-block).
@@ -508,26 +576,22 @@ pub(crate) async fn hook_gate(
         );
     }
 
-    // No human answer from here on: fail open, except a hard-block in an
-    // unattended run, which is denied with its reason (#312, D28).
-    let unanswered = |why: &str| {
-        let (decision, reason) = unanswered_decision(unattended, hard_block.as_ref(), why);
-        if decision == "deny" {
-            tracing::warn!(
-                session_id,
-                tool_name,
-                why,
-                "hook_gate: unanswered hard-block in an unattended run — denied (fail-closed)"
-            );
-        }
-        gate_decision(decision, &reason)
+    // Every outcome from here on is recorded in the named run. No human answer
+    // fails open, except a hard-block in an unattended run (#312, D28).
+    let gate = GateRecord {
+        state: &state,
+        run_id,
+        session_id,
+        tool: tool_name,
+        hard_block: hard_block.as_ref(),
+        unattended,
     };
 
     // Fail-open: a non-uuid session (non-Claude harness) would 500 the Worker
     // (relay run_id is uuid NOT NULL), so never gate it.
     if uuid::Uuid::parse_str(session_id).is_err() {
         tracing::warn!(session_id, tool_name, "hook_gate: non-uuid session — no gate to raise");
-        return unanswered("gate unavailable");
+        return gate.unanswered("gate unavailable").await;
     }
 
     // Fail-open: no enrolled Dōjō ⇒ nowhere to raise the gate ⇒ allow.
@@ -535,7 +599,7 @@ pub(crate) async fn hook_gate(
         Ok(ms) => ms.into_iter().filter(|m| m.enabled).collect::<Vec<_>>(),
         Err(e) => {
             tracing::warn!(error = %e, "hook_gate: list_dojo_memberships failed — no gate to raise");
-            return unanswered("gate unavailable");
+            return gate.unanswered("gate unavailable").await;
         }
     };
     // Personal beta = one dōjō. Multi-dōjō gating (which phone answers, quorum,
@@ -551,7 +615,7 @@ pub(crate) async fn hook_gate(
         );
     }
     let Some(membership) = memberships.into_iter().next() else {
-        return unanswered("no dōjō enrolled");
+        return gate.unanswered("no dōjō enrolled").await;
     };
     let client = crate::dojo::client::DojoClient::for_membership(&membership);
 
@@ -564,7 +628,7 @@ pub(crate) async fn hook_gate(
     );
     if let Err(e) = client.publish_session_update(&update).await {
         tracing::warn!(session_id, error = %e, "hook_gate: session update failed — no gate raised");
-        return unanswered("gate unavailable");
+        return gate.unanswered("gate unavailable").await;
     }
 
     // Raise the gate. Zero-knowledge: the payload names the tool and — for a
@@ -598,9 +662,10 @@ pub(crate) async fn hook_gate(
         Ok(ack) => ack,
         Err(e) => {
             tracing::warn!(session_id, tool_name, error = %e, "hook_gate: raise failed — no gate raised");
-            return unanswered("gate unavailable");
+            return gate.unanswered("gate unavailable").await;
         }
     };
+    gate.record(GateOutcome::Raised, None, "put to your phone").await;
 
     // Block (bounded < Claude's 60s hook cap) for the human's answer.
     //
@@ -610,14 +675,23 @@ pub(crate) async fn hook_gate(
     // mechanism compensating for asking the wrong question. The daemon RAISED
     // this gate and holds its id; "has it been answered" is a lookup.
     match client.await_reply(&ack.id, std::time::Duration::from_secs(50)).await {
-        Ok(None) => unanswered("gate timed out"),
-        Ok(Some(reply)) => match decision_from_reply(Some(&reply)) {
-            "deny" => gate_decision("deny", "declined from your phone"),
-            _ => gate_decision("allow", "approved from your phone"),
+        Ok(None) => gate.unanswered("gate timed out").await,
+        Ok(Some(reply)) => match read_reply(&reply) {
+            Reply::Unclear => gate.unanswered(UNCLEAR_REPLY).await,
+            answered => {
+                let (decision, reason) = answered_decision(answered, unattended, gate.hard_block);
+                let outcome = if answered == Reply::Approved {
+                    GateOutcome::Approved
+                } else {
+                    GateOutcome::Declined
+                };
+                gate.record(outcome, None, &reason).await;
+                gate_decision(decision, &reason)
+            }
         },
         Err(e) => {
             tracing::warn!(session_id, tool_name, error = %e, "hook_gate: await_reply failed — no answer");
-            unanswered("gate unavailable")
+            gate.unanswered("gate unavailable").await
         }
     }
 }
@@ -1013,7 +1087,9 @@ mod hook_gate_tests {
     #[tokio::test]
     async fn an_unattended_deploy_with_a_run_id_is_denied_and_recorded() {
         let (ctx, run_id) = run().await;
-        let out = gate_on(&ctx.app_state, with_run(deploy(Some(true)), &run_id.to_string())).await;
+        let mut body = with_run(deploy(Some(true)), &run_id.to_string());
+        body["tool_input"]["command"] = json!("make deploy TARGET=arg-marker-312");
+        let out = gate_on(&ctx.app_state, body).await;
         assert_eq!(out["permissionDecision"], "deny", "{out}");
 
         let events = gate_events(&ctx.app_state, &run_id).await;
@@ -1024,7 +1100,8 @@ mod hook_gate_tests {
         assert_eq!(e.detail["category"], "deploy", "{}", e.detail);
         assert_eq!(e.detail["tool"], "Bash", "{}", e.detail);
         assert_eq!(e.detail["reason"], out["permissionDecisionReason"], "{}", e.detail);
-        assert!(!e.detail.to_string().contains("make deploy"), "no command text: {}", e.detail);
+        assert!(!e.detail.to_string().contains("arg-marker-312"), "no command text: {}", e.detail);
+        assert!(e.detail.get("tool_input").is_none(), "{}", e.detail);
     }
 
     #[tokio::test]

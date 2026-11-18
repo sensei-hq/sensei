@@ -4,15 +4,18 @@
 //! A Claude Code `PreToolUse` hook asks the daemon whether a tool call may
 //! proceed; the daemon raises a relay gate to the phone and blocks for the
 //! human's answer. This module holds only the pure logic: which tools are gated
-//! (from an env allow-list), whether a given tool is in that set, and how an
-//! answered reply maps to allow/deny. The impure part (raise + await + publish)
-//! lives in the `/hook/gate` handler.
+//! (from an env allow-list), whether a given tool is in that set, how a reply
+//! reads ([`read_reply`]), the decision for an answered or unanswered gate, and
+//! the run event that records the outcome ([`gate_event`]). The impure part
+//! (raise + await + publish + record) lives in the `/hook/gate` handler.
 //!
-//! **Fail-open is the whole contract.** Gating is OFF unless a tool is named in
-//! `SENSEI_RELAY_GATE_TOOLS`, and only an explicit human `deny` reply yields
-//! `"deny"`. Every other outcome — no allow-list, tool not listed, no reply,
-//! timeout, malformed reply — resolves to `"allow"`. A gate must NEVER block a
-//! tool call because of infrastructure; only a person can.
+//! **Fail-open, except unattended hard-blocks.** Gating is OFF unless a tool is
+//! named in `SENSEI_RELAY_GATE_TOOLS` or the call is a hard-block. A reply is
+//! approved, declined or unclear: an explicit decline denies, an explicit
+//! approval allows. No reply, a failed raise and an unclear reply are decided
+//! alike by [`unanswered_decision`]: in an unattended run a hard-block is denied
+//! (#312, D28); everything else is allowed. Infrastructure never blocks an
+//! interactive session; only a person can.
 
 /// Parse the comma-separated gated-tool allow-list from the raw
 /// `SENSEI_RELAY_GATE_TOOLS` env value. Trims each entry and drops empties.
@@ -31,28 +34,6 @@ pub fn should_gate(tool_name: &str, gated: &[String]) -> bool {
     gated.iter().any(|t| t == tool_name)
 }
 
-/// Map an answered gate reply to the Claude `permissionDecision` string —
-/// `"allow"` or `"deny"`. **Fail-open:** only an explicit human decline yields
-/// `"deny"` — that is, `reply.verdict == "deny"` (case-insensitive) OR
-/// `reply.approve == false`. Everything else — `None` (timeout / no reply), an
-/// approve verdict, a missing or malformed shape — yields `"allow"`. A gate can
-/// only ever block on a deliberate human deny.
-pub fn decision_from_reply(reply: Option<&serde_json::Value>) -> &'static str {
-    let Some(reply) = reply else {
-        return "allow"; // no reply (timeout) → allow
-    };
-
-    let verdict_deny = reply
-        .get("verdict")
-        .and_then(|v| v.as_str())
-        .is_some_and(|s| s.eq_ignore_ascii_case("deny"));
-
-    // `approve: false` is an explicit decline; `approve: true`/absent is not.
-    let approve_false = reply.get("approve").and_then(|v| v.as_bool()) == Some(false);
-
-    if verdict_deny || approve_false { "deny" } else { "allow" }
-}
-
 /// How a person's reply to a gate reads (#312).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reply {
@@ -61,39 +42,105 @@ pub enum Reply {
     Unclear,
 }
 
-/// Read a gate reply. Red stub (#312).
-pub fn read_reply(_reply: &serde_json::Value) -> Reply {
-    todo!("#312: read_reply")
+/// The no-answer cause for a reply that is neither a clear approval nor a
+/// clear decline.
+pub const UNCLEAR_REPLY: &str = "the reply was not a clear approve or deny";
+
+/// Read a gate reply. Approved: `verdict` is `approve` (any case) or
+/// `approve: true`. Declined: `verdict` is `deny` (any case) or
+/// `approve: false`; a decline wins over an approval in the same reply.
+/// Anything else — free text, an empty object, a non-object — is unclear.
+pub fn read_reply(reply: &serde_json::Value) -> Reply {
+    let verdict = reply.get("verdict").and_then(|v| v.as_str());
+    let approve = reply.get("approve").and_then(|v| v.as_bool());
+    let says = |word: &str| verdict.is_some_and(|v| v.eq_ignore_ascii_case(word));
+    if says("deny") || approve == Some(false) {
+        Reply::Declined
+    } else if says("approve") || approve == Some(true) {
+        Reply::Approved
+    } else {
+        Reply::Unclear
+    }
 }
 
-/// The decision for an answered gate. Red stub (#312).
+/// The decision for an answered gate. An approval allows, a decline denies, and
+/// an unclear reply is decided like no reply ([`unanswered_decision`]), so an
+/// unattended hard-block fails closed.
 pub fn answered_decision(
-    _reply: Reply,
-    _unattended: bool,
-    _hard_block: Option<&HardBlock>,
+    reply: Reply,
+    unattended: bool,
+    hard_block: Option<&HardBlock>,
 ) -> (&'static str, String) {
-    todo!("#312: answered_decision")
+    match reply {
+        Reply::Approved => ("allow", "approved from your phone".to_string()),
+        Reply::Declined => ("deny", "declined from your phone".to_string()),
+        Reply::Unclear => unanswered_decision(unattended, hard_block, UNCLEAR_REPLY),
+    }
 }
 
 /// Which way a gate went, as the run's activity records it (#312).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateOutcome {
+    /// The gate was put to a phone.
     Raised,
+    /// A person approved.
     Approved,
+    /// A person declined.
     Declined,
+    /// No clear answer, and the call was denied (an unattended hard-block).
     Denied,
+    /// No clear answer, and the call was let through.
     Allowed,
 }
 
-/// The run event for a gate outcome. Red stub (#312).
+impl GateOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            GateOutcome::Raised => "raised",
+            GateOutcome::Approved => "approved",
+            GateOutcome::Declined => "declined",
+            GateOutcome::Denied => "denied",
+            GateOutcome::Allowed => "allowed",
+        }
+    }
+
+    /// The outcome of a gate with no clear answer, from its decision.
+    pub fn unanswered(decision: &str) -> Self {
+        if decision == "deny" { GateOutcome::Denied } else { GateOutcome::Allowed }
+    }
+}
+
+/// The run event that records a gate outcome: `gate_raised` when the gate goes
+/// to a phone, `gate_passed` on approval, `flagged` otherwise (nobody approved
+/// an `allowed` outcome, so it is flagged, not passed). `detail` names the tool,
+/// the hard-block category, the outcome, the no-answer cause and the reason;
+/// never the tool input or command text (D10).
 pub fn gate_event(
-    _outcome: GateOutcome,
-    _tool: &str,
-    _hard_block: Option<&HardBlock>,
-    _why: Option<&str>,
-    _reason: &str,
+    outcome: GateOutcome,
+    tool: &str,
+    hard_block: Option<&HardBlock>,
+    why: Option<&str>,
+    reason: &str,
 ) -> (crate::runs::RunEventKind, serde_json::Value) {
-    todo!("#312: gate_event")
+    use crate::runs::RunEventKind;
+    let kind = match outcome {
+        GateOutcome::Raised => RunEventKind::GateRaised,
+        GateOutcome::Approved => RunEventKind::GatePassed,
+        GateOutcome::Declined | GateOutcome::Denied | GateOutcome::Allowed => RunEventKind::Flagged,
+    };
+    let mut detail = serde_json::json!({
+        "via": "hook_gate",
+        "tool": tool,
+        "outcome": outcome.as_str(),
+        "reason": reason,
+    });
+    if let Some(hb) = hard_block {
+        detail["category"] = serde_json::json!(hb.category);
+    }
+    if let Some(why) = why {
+        detail["why"] = serde_json::json!(why);
+    }
+    (kind, detail)
 }
 
 /// The decision when a raised gate got no human answer — no dōjō to ask, a

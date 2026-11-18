@@ -64,7 +64,7 @@ test.describe('relay gate: outcomes in the run activity (#312)', () => {
   });
 
   test('an unattended deploy is denied and recorded as denied', async () => {
-    const answer = await gate('make deploy', runId, true);
+    const answer = await gate('make deploy TARGET=arg-marker-312', runId, true);
     expect(answer.permissionDecision).toBe('deny');
     expect(answer.permissionDecisionReason).toContain('unattended');
 
@@ -74,7 +74,9 @@ test.describe('relay gate: outcomes in the run activity (#312)', () => {
     expect(denied[0].kind).toBe('flagged');
     expect(denied[0].detail.category).toBe('deploy');
     expect(denied[0].detail.reason).toBe(answer.permissionDecisionReason);
-    expect(JSON.stringify(denied[0].detail)).not.toContain('make deploy');
+    // The reason is the classifier's own phrase; the command's text never reaches the record.
+    expect(JSON.stringify(denied[0].detail)).not.toContain('arg-marker-312');
+    expect(denied[0].detail).not.toHaveProperty('tool_input');
   });
 
   test('an interactive deploy is allowed and recorded as allowed', async () => {
