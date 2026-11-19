@@ -251,13 +251,12 @@ describe('DecisionRow · a form decision', () => {
     const c2 = mount(F.formDecision({ id: 'ask-2' }));
     const ids = [...document.querySelectorAll('[data-decision-form] [id]')].map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
-    // Every label that names a control names the one in its own card (the number and the yes/no;
-    // rokkit's Select does not carry the id to its trigger, so the select's label names none).
+    // Every label names the control in its own card: the select's trigger, the number and the yes/no.
     for (const c of [c1, c2]) {
       const named = [...c.querySelectorAll<HTMLLabelElement>('[data-decision-form] label[for]')]
         .map((label) => document.getElementById(label.htmlFor))
         .filter((control) => control !== null);
-      expect(named.length).toBe(2);
+      expect(named.length).toBe(3);
       expect(named.every((control) => c.contains(control))).toBe(true);
     }
   });
