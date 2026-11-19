@@ -11,12 +11,14 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"test": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide && vitest run --config vitest.config.ts",
-		"test:watch": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide && vitest --config vitest.config.ts"
+		"test:watch": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide && vitest --config vitest.config.ts",
+		"test:e2e": "playwright test --config e2e/playwright.config.ts"
 	},
 	"devDependencies": {
 		"@iconify-json/simple-icons": "^1.2.91",
 		"@iconify-json/solar": "^1.2.5",
 		"@inlang/paraglide-js": "^2.23.0",
+		"@playwright/test": "^1.59.1",
 		"@rokkit/cli": "^1.15.7",
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/adapter-cloudflare": "^7.2.8",
