@@ -15,7 +15,7 @@
   import { Loading, Notice } from '@sensei/ui';
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
-  import type { RelayState } from '@sensei/state';
+  import type { RelayDecisionChoice, RelayState } from '@sensei/state';
   import {
     toAddMember,
     toCompletedRows,
@@ -161,9 +161,9 @@
   }
 
   /** Answer a decision by its id (Needs you calls back with it). */
-  function answer(id: string, option: string): Promise<string | null> {
+  function answer(id: string, choice: RelayDecisionChoice): Promise<string | null> {
     const decision = state.now?.decisions.find((d) => d.id === id);
-    return decision ? state.answer(decision, { option }) : Promise.resolve('This decision is no longer open.');
+    return decision ? state.answer(decision, choice) : Promise.resolve('This decision is no longer open.');
   }
   const completedRows = $derived(toCompletedRows(state.now, rowOptions));
 
@@ -269,7 +269,7 @@
         <NeedsYou
           view={needsYou}
           href={(crewId, taskId) => taskHref(base, crewId, taskId)}
-          onanswer={(id, option) => answer(id, option)}
+          onanswer={(id, choice) => answer(id, choice)}
           onopenqueue={() => state.openQueue()}
           onnudge={(row) => state.nudge(row)}
           nudging={state.nudging}

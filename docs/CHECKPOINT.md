@@ -1,32 +1,40 @@
-# Checkpoint — 2026-11-19 (#455 slice 1 — catalogue, session host, AddMember picker)
+# Checkpoint — 2026-11-19 (relay open items — #389 slice 2, the form on the Relay screen)
 
-**Slice:** `add-relay-assistant-catalogue` slice 1 (#455). Branch `lane/relay-455-s1`
-(worktree `lanes/relay-open`).
+**Slice:** `add-relay-decision-response-form` slice B + C1 (#389): a form decision on Needs you and the
+task view, live with no refresh. Branch `lane/relay-389-s2` (worktree `lanes/relay-open`), from develop
+after PR #500 (slice A) merged.
 
-**Done (slice 1 complete: tasks 1.1–1.6, 2.1–2.6, 3.1–3.3, 4.1–4.4):**
-- Seeded `sensei.assistant_catalogue` (13 tools) + `assistant_installs` + `activity.sessions.host`.
-- `sync_installs` stores this machine's installs; `GET /api/assistants/installs`; boot sync when empty.
-- Every transcript adapter declares `host()`; ingest writes it; model attribution by model, not host.
-- `GET /relay/catalogue`; relay reads serve `family_name` / `kind` from one `CatalogueNames` helper.
-- AddMember picks from the catalogue (pressed lists, error Notice + Retry); preview fixtures captured.
-- 1.5: the wizard's assistants stage stores installs on entry; Settings → Assistants shows "detected <when>".
-- Review fix 1 (PR #506): only configure / a re-pushing upgrade stamps `configured_at`/`_version`. `16326351`.
-- Review fix 2: a failed re-detect after remove/upgrade is a warning; family cards name installed members;
-  CLI `assistants_removed` + upgrade warnings; TS `RemoveResult`. Red `02fdde62`, green `5a0c5c66`.
-- Review fix 3: every opening of the Crew view reads the catalogue (was once per page). Red `ead334a4`, green
-  `5078cf98`, e2e leave-and-return `e1c2784d`. Runs list re-reads on run events; no other one-shot read.
-- Review fix 4: install (`/api/install`, `/api/marketplace/install`), `/api/remove`, `/api/assistants/resolve`
-  and the watchdog's repair re-detect installs; failures are warnings (RemoveResult.warnings), printed by
-  `remove all` / `doctor --fix`. Red `79c57d41`/`1240d5dd`, green `7d326825`/`49f29fd8`.
-- e2e green: relay-catalogue + assistants-configure after fix 4; relay* 15/15 (one earlier run had a transient webview `eval` hang; passed alone and on rerun),
-  assistants-configure, configure-assistants, settings, observatory-daily.
-- Gates: fmt, clippy -D warnings, senseid DB tests serial, `make test-db` 102/102.
+**Done (B1–B3, C1; red then green):**
+- `@sensei/state` `relay/decision-form.ts`: `toDecisionForm` (schema through, lane layout else one built
+  from the schema, data from `default`) and `toAnswerValues` (empty optional fields dropped, D83).
+- `DecisionForm.svelte` (FormRenderer, `data-decision-field`); `DecisionRow` sends `{values}` once and
+  keeps them on a refusal; NeedsYou, RelayScreen and RelayTaskScreen pass a `RelayDecisionChoice`.
+- e2e `relay-decision-form.spec.ts` 6/6 plus relay-run, conformance, zz-a11y, timeline, sprint, gate green.
+- Review r1 (green `65b9b64d6`): task view keyed by decision; required yes/no seeds `false`; field ids
+  carry the decision id. e2e 7/7 with relay-run.
+- Review r2 fix (red `20bfe00c2`, green `e07d85712`): a pattern means the same to daemon and form. The
+  daemon refuses at ask time what the browser reads differently (`check_pattern_dialect`: `\w \d \s \b`,
+  `\A \z`, hex, POSIX/nested classes, set ops); the form checks patterns itself with a `u` RegExp
+  (since r4, `toPatternMatcher`), not rokkit's plain one. e2e `relay-decision-form` 6/6 again.
+- Review r3 (bump `cb5128d4d`, refactor `4e9cfc681`, red `c04eb76a9`, green `76329d33a`): `@rokkit/*` ^1.16.0 in
+  app/ and dojo/ (packages/ has no rokkit dep); DecisionCheckbox (rokkit#190) and the NaN handling
+  (rokkit#193) removed; Select labels now name their trigger (rokkit#194). maxLength counted in characters
+  as the daemon does (`textMisses`/`withoutTextRules`; no native UTF-16 `maxlength`). The daemon refuses
+  every keyword 1.16 draws a control from (`x-multiline`, `renderer`, `options`, `min`, `max`, arrays).
+  e2e `relay-decision-form` 6/6 on 1.16 (axe passes with rokkit's own checkbox); app 3842+, dojo 2411 unit green.
+- Review r4 (red `34f3197b8`, green `51bb94543`): the inline pattern check no longer runs a lane's
+  pattern on the browser's backtracking RegExp (`^(a+)+$` on 29 chars took 7s). `toPatternMatcher` parses
+  the daemon's dialect and runs a Thompson NFA, linear like Rust `regex`; outside the dialect or past
+  10,000 states it leaves the check to the daemon. 56k-case fuzz: 0 diffs. e2e 6/6.
+- Review r5 (merge `c34ef7181`): develop merged in; e2e wizard+relay 25/25.
+- Review r6 (red `5e3f730c4`, green `8f999f1ba`): a form without a layout keeps the lane's field order.
+  The MCP forwards `properties` unsorted (`preserve_order`); the daemon stores a scope-only layout in that
+  order before the jsonb write (`with_lane_order`); the form labels elements from the schema. e2e
+  relay-decision-form 6/6 + relay-run green; senseid relay 457, mcp 109. r6 broke `bun run check`.
+- Review r7 (red `c190feda1`, green `e0affe4ec` `a3f7d6d1d`): an empty body's count returns the
+  empty fragment (`(){4000000000}x` took 36s); the layout fallback is typed, so app/ and dojo/ check 0 errors.
+  Unit 3898 green; e2e relay-decision-form 6/6.
+**Remaining:** CI green on 501; C2 (close #389 on merge). Slice R (R1 rokkit issue, R2 widen) needs its
+own issue once #389 closes. Design review of the card (iris-deneb) is a user follow-up.
 
-**Remaining:** PR re-review + merge to develop. Slice 2 (tasks 5.x) and close-out 6.x are separate.
-
-**Next command:** slice 2 — `openspec/changes/add-relay-assistant-catalogue/tasks.md` §5.1.
-
-**Open questions:** none.
-
-**Known broken:** none from this branch. sensei_e2e needs `dbd reconcile` (x2) + `dbd import` after this DDL.
-Preview rig phone captures draw sticky nav chips over every fixture (pre-existing, rig-wide).
+**Next command:** `gh pr checks 501`. **Open questions:** none blocking. **Known broken:** none from this branch. relay-run on a fresh sensei_e2e needs setup-wizard first.

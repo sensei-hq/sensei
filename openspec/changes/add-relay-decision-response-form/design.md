@@ -23,7 +23,7 @@ What exists on develop (`c25d1a930`; ask/answer bodies and `validate_props` re-c
 | e2e | `app/e2e/tests/relay-run.spec.ts:250-265` | option-pick ask → answer → card leaves |
 | Regex | `crates/senseid/Cargo.toml:62` (`regex = "1"`) | already a senseid dependency |
 | JSON Schema crate | `Cargo.lock:4655-4670` | only `schemars` (a schema *generator*, pulled in transitively); no validator crate |
-| rokkit forms | `app/package.json:33` (`@rokkit/forms` `^1.15.7`); the filters band already draws a `FilterSchema` through it (`app/src/lib/relay/relay-shell.ts:282-292`) | see "rokkit facts" below |
+| rokkit forms | `app/package.json:33` (`@rokkit/forms` `^1.16.0`); the filters band already draws a `FilterSchema` through it (`app/src/lib/relay/relay-shell.ts:282-292`) | see "rokkit facts" below |
 
 rokkit facts (`@rokkit/forms` 1.15.7, `dist/lib/`), which fix the subset's edges:
 - `resolveInputType` picks `props.renderer` first, then any `format` other than `text`/`number`
@@ -113,9 +113,14 @@ closed subset is a few dozen lines over `serde_json::Value` plus the `regex` cra
 ### D6. Client mapping and validation
 
 `toDecisionForm(response)` in `packages/state/relay/decision-form.ts` returns `{schema, layout, data}`: the
-schema unchanged; the lane's layout when sent, else a vertical layout with one element per property in
-`properties` order, labelled from `title` (else the property name in words) with `description` as help; and
-`data` seeded from each `default`. Inline validation uses rokkit `validateAll` (`required` honoured from the
+schema unchanged; the layout on the wire, each element without a `label` or `description` taking the property's
+`title` (else its name in words) and `description`; and `data` seeded from each `default`, with a required boolean
+that has no default seeded `false` (its unchecked box reads as no, so an untouched box answers no rather than failing
+`required`). A lane that sends no layout still gets its fields in the order it wrote them: `relay.actions.props` is
+jsonb, which stores object keys shorter-first, so at ask time the daemon (whose `serde_json` keeps key order,
+`preserve_order`, as does the MCP that forwards the ask) adds a vertical layout of `scope`-only elements in
+`properties` order before the write (`decision_schema::with_lane_order`); an array keeps its order. Without any
+layout (a row from before this), the form falls back to the key order it receives. Inline validation uses rokkit `validateAll` (`required` honoured from the
 object's list, per the rokkit README). `toAnswerValues(schema, data)` drops empty optional properties so absent
 stays absent. The daemon re-validates (D3).
 
@@ -166,8 +171,14 @@ override in the meantime.
 1. **Annotations allowed:** `title`, `description` and `default` ride the schema (D1); they label and seed the
    form and never change validation.
 2. **The checker is hand-written** (D5) rather than a JSON Schema crate.
-3. **`pattern` dialect:** must compile with Rust `regex` and contain no `(?`, so the daemon and the browser's
-   `RegExp` agree on what it means.
+3. **`pattern` dialect:** must compile with Rust `regex`, contain no `(?`, and use only constructs both engines
+   read alike (`check_pattern_dialect`): escaped syntax characters, `\n \t \r \f \v`, `\p{X}` with X a general
+   category, plain classes and `{m}`/`{m,}`/`{m,n}`. `\w \d \s \b`, `\A`/`\z`, hex escapes, POSIX or nested
+   classes and class set operations are refused at ask time. The form checks a pattern itself, not
+   through rokkit's plain `new RegExp`: `toPatternMatcher` parses that dialect and runs the text through a
+   Thompson NFA, by code point with each bare `.` matching anything but `\n`, so it never refuses a value
+   the daemon would take, and in linear time as Rust `regex` does. A backtracking `RegExp` takes
+   exponential time on a pattern the daemon accepts, such as `^(a+)+$`, and would freeze the webview.
 4. **No `note` field in the form UI.** The wire keeps `note` (unchanged); the form does not add a free-text
    note box, since free text is out of scope.
 5. **Limits:** 12 properties, 50 enum members, 600 chars per text value (the summary cap, `relay/mod.rs:364`).
@@ -183,9 +194,16 @@ override in the meantime.
   empty `options` list (`relay/mod.rs:586-587` only requires the array; nothing else checks it is non-empty). The MCP and daemon ship together in
   one release, so installed pairs agree; this change also makes an empty `options` without `response` a 422
   (D2), closing the empty-card case.
-- The daemon's `regex` and the browser's `RegExp` are different engines. Refusing `(?` covers the syntax that
-  differs in practice; a pattern both accept but read differently is possible in theory, and the daemon's
-  answer is the one that counts.
+- The daemon's `regex` and the browser's `RegExp` are different engines. The ask-time dialect check (Decision
+  3) refuses what they read differently; a pattern the form cannot parse, or one past 10,000 NFA states,
+  skips the inline check and the daemon's answer counts. Unicode version drift in `\p{..}` remains possible.
+- The daemon counts `maxLength` in characters (code points); rokkit's check (`.length`) and a native
+  `maxlength` attribute count UTF-16 units, so an emoji counts twice. The form takes `maxLength` (and
+  `pattern`) out of the schema rokkit checks, which also leaves the input without a native `maxlength`, and
+  checks both itself as the daemon does.
+- `@rokkit/forms` 1.16.0 (re-read for R2): an array of `items.enum` draws a multiselect and `x-multiline` a
+  textarea. The subset refuses `type: "array"`, `items` and every unknown keyword (`x-multiline`, `renderer`,
+  `options`, `min`, `max`), so no newly mapped keyword reaches the form; widening it is a separate change.
 
 ## Migration Plan
 

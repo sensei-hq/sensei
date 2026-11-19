@@ -49,6 +49,30 @@ pub fn validate_response(response: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// At ask time, before the write: a response sent without a layout gets one that
+/// lists its properties in the order the lane wrote them. `relay.actions.props` is
+/// jsonb, which stores object keys shorter-first, so `properties` alone loses that
+/// order; layout elements are an array and keep it. Labels and help stay with the
+/// schema (the form reads `title` and `description`). Anything not shaped as a
+/// response passes through for `validate_response` to refuse.
+pub fn with_lane_order(mut response: Value) -> Value {
+    let Some(obj) = response.as_object_mut() else {
+        return response;
+    };
+    if obj.get("layout").is_some_and(|layout| !layout.is_null()) {
+        return response;
+    }
+    let Some(properties) =
+        obj.get("schema").and_then(|s| s.get("properties")).and_then(Value::as_object)
+    else {
+        return response;
+    };
+    let elements: Vec<Value> =
+        properties.keys().map(|name| serde_json::json!({"scope": format!("#/{name}")})).collect();
+    obj.insert("layout".into(), serde_json::json!({"type": "vertical", "elements": elements}));
+    response
+}
+
 /// At answer time: `values` satisfy the stored `response.schema`, or the first
 /// property and rule that fails. An absent optional property stays absent: a
 /// `default` seeds the form only, and is never filled in here (D83).
@@ -199,6 +223,7 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
             return Err(format!("{at}.pattern may not use (? groups or flags"));
         }
         regex::Regex::new(pattern).map_err(|_| format!("{at}.pattern does not compile"))?;
+        check_pattern_dialect(pattern).map_err(|why| format!("{at}.pattern {why}"))?;
     }
     let bound = |key: &str| -> Result<Option<f64>, String> {
         match obj.get(key) {
@@ -238,6 +263,102 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
     }
     if let Some(default) = obj.get("default") {
         check_value(&format!("{at}.default"), prop, default)?;
+    }
+    Ok(())
+}
+
+/// The Unicode general categories `\p{..}` may name: both engines read these alike.
+const PATTERN_CATEGORIES: &[&str] = &[
+    "L", "Lu", "Ll", "Lt", "Lm", "Lo", "M", "Mn", "Mc", "Me", "N", "Nd", "Nl", "No", "P", "Pc",
+    "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "S", "Sm", "Sc", "Sk", "So", "Z", "Zs", "Zl", "Zp",
+];
+
+/// A pattern means the same to Rust `regex` (here) and to the browser's `RegExp` with the
+/// `u` flag (the inline check, `toPatternMatcher`), or the first construct that does not.
+/// An allow-list: escapes of syntax characters, `\n \t \r \f \v`, `\p{..}` of a general
+/// category, plain classes and `{m}` / `{m,}` / `{m,n}` counts. Refused: the Perl classes
+/// (`\w \d \s \b`: Unicode here, ASCII there), `\A`/`\z`, hex and other escapes, POSIX and
+/// nested classes, class set operations, a leading `]` in a class, and a stray `]`, `{` or `}`.
+fn check_pattern_dialect(pattern: &str) -> Result<(), String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    let mut in_class = false;
+    let mut class_start = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' {
+            let Some(&next) = chars.get(i + 1) else {
+                return Err("ends in a lone \\".into());
+            };
+            i += 2;
+            match next {
+                '^' | '$' | '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}'
+                | '|' | '/' | 'n' | 't' | 'r' | 'f' | 'v' => {}
+                '-' if in_class => {}
+                'p' | 'P' => {
+                    let name: String = chars[i..].iter().take_while(|&&c| c != '}').collect();
+                    let closed = chars.get(i + name.len()) == Some(&'}');
+                    let name = name.strip_prefix('{').filter(|_| closed);
+                    match name {
+                        Some(n) if PATTERN_CATEGORIES.contains(&n) => i += n.len() + 2,
+                        _ => {
+                            return Err(format!(
+                                "may use \\{next} only as \\{next}{{X}} with X a Unicode general category such as L or Lu"
+                            ));
+                        }
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "may not use \\{other}: the browser reads it differently (spell the characters out, e.g. [0-9] or \\p{{L}})"
+                    ));
+                }
+            }
+            class_start = false;
+            continue;
+        }
+        if in_class {
+            match c {
+                ']' if class_start => {
+                    return Err("may not open a class with ] (escape it as \\])".into());
+                }
+                ']' => in_class = false,
+                '[' => return Err("may not nest a class or use [:name:] (escape [ as \\[)".into()),
+                '&' | '-' | '~' if chars.get(i + 1) == Some(&c) => {
+                    return Err(format!("may not use {c}{c} in a class"));
+                }
+                '^' if class_start && chars.get(i - 1) == Some(&'[') => {
+                    // `[^` negates; the class body starts after it.
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+            class_start = false;
+            i += 1;
+            continue;
+        }
+        match c {
+            '[' => {
+                in_class = true;
+                class_start = true;
+            }
+            ']' | '}' => return Err(format!("may not use a bare {c} (escape it as \\{c})")),
+            '{' => {
+                let body: String = chars[i + 1..].iter().take_while(|&&c| c != '}').collect();
+                let closed = chars.get(i + 1 + body.len()) == Some(&'}');
+                let (low, high) = body.split_once(',').unwrap_or((&body, ""));
+                let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
+                if !closed || low.is_empty() || !digits(low) || !digits(high) {
+                    return Err(
+                        "may count only as {m}, {m,} or {m,n} (escape a literal { as \\{)".into()
+                    );
+                }
+                i += body.len() + 1;
+            }
+            _ => {}
+        }
+        i += 1;
     }
     Ok(())
 }
@@ -471,6 +592,25 @@ mod tests {
     }
 
     #[test]
+    fn refuses_the_keywords_rokkit_draws_a_control_from() {
+        // @rokkit/forms 1.16 picks a control from these (a textarea, a multiselect, a renderer,
+        // a range from min/max); the subset stays closed, so none reaches the form (#389).
+        for (key, value) in [
+            ("x-multiline", json!(true)),
+            ("renderer", json!("textarea")),
+            ("options", json!(["a"])),
+            ("min", json!(1)),
+            ("max", json!(2)),
+            ("readonly", json!(true)),
+            ("uniqueItems", json!(true)),
+        ] {
+            let mut prop = json!({"type": "string"});
+            prop[key] = value;
+            refused(&with_prop("s", prop), &["s", key]);
+        }
+    }
+
+    #[test]
     fn refuses_bad_enums() {
         refused(&with_prop("n", json!({"type": "integer", "enum": [1, 2]})), &["n", "enum"]);
         refused(&with_prop("s", json!({"type": "string", "enum": ["a", "a"]})), &["s", "enum"]);
@@ -506,6 +646,57 @@ mod tests {
             &with_prop("s", json!({"type": "string", "pattern": "a".repeat(201)})),
             &["pattern"],
         );
+    }
+
+    #[test]
+    fn refuses_patterns_the_browser_reads_differently() {
+        // Each compiles in Rust `regex` but means something else (or nothing) to the
+        // browser's RegExp, so the inline check would refuse a value the daemon takes.
+        for pattern in [
+            r"^\w+$",       // Unicode \w here, ASCII there
+            r"\d",          // Unicode digits here
+            r"\s",          // a different whitespace set
+            r"\bx",         // a Unicode word boundary here
+            r"\Asrc/",      // \A is no anchor there
+            r"src\z",       // nor \z
+            r"\pL",         // Rust's one-letter class shorthand
+            r"\p{Greek}",   // a script name the browser does not take bare
+            r"[[:digit:]]", // POSIX class
+            r"[a-z&&[^x]]", // class intersection
+            r"[a-z--x]",    // class difference
+            r"[]a]",        // a leading ] is literal here, an empty class there
+            r"a{,3}",       // an open lower bound
+            r"\x41",        // hex escapes
+            r"\#",          // an escape the browser refuses
+            r"a]",          // a stray ]
+            r"\-",          // \- outside a class
+            r"\1",          // a back-reference
+        ] {
+            refused(
+                &with_prop("s", json!({"type": "string", "pattern": pattern})),
+                &["s", "pattern"],
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_patterns_both_engines_read_alike() {
+        for pattern in [
+            r"^src/",
+            r"^[0-9a-f]{7,40}$",
+            r"^\p{L}+$",
+            r"^[\p{Lu}][\p{Ll} ]*$",
+            r"^v\.[0-9]+(\.[0-9]+)?$",
+            r"^\/x|^\(y\)$",
+            r"^[a\-z]+$",
+            r"^[^/]+$",
+            r"^.{1,3}$",
+            r"\t|\n",
+            r"^a{2}b{1,}c*?$",
+        ] {
+            let r = with_prop("s", json!({"type": "string", "pattern": pattern}));
+            assert_eq!(validate_response(&r), Ok(()), "{pattern}");
+        }
     }
 
     #[test]
@@ -648,6 +839,10 @@ mod tests {
             "free": {"type": "string"}
         }}});
         assert_eq!(validate_values(&r, &json!({"path": "a/src/b"})), Ok(()), "unanchored");
+        // maxLength counts characters, not UTF-16 units: two emoji fit a maxLength of 2.
+        let short = json!({"schema": {"type": "object", "properties": {"t": {"type": "string", "maxLength": 2}}}});
+        assert_eq!(validate_values(&short, &json!({"t": "😀😀"})), Ok(()));
+        assert!(validate_values(&short, &json!({"t": "😀😀😀"})).is_err());
         let err = validate_values(&r, &json!({"path": "src/".repeat(3)})).unwrap_err();
         assert!(err.contains("values.path") && err.contains("maxLength"), "{err}");
         let err = validate_values(&r, &json!({"path": "lib/x"})).unwrap_err();

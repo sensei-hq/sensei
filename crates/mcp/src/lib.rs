@@ -1654,7 +1654,7 @@ pub fn handle_list_tools() -> Value {
                     ("telemetry", "object", "Review telemetry"),
                 ]),
             tool("relay_ask_decision",
-                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered). Send options (buttons) or response (a form), never both. A response is {schema, layout?}: one object schema of 1-12 string/number/integer/boolean properties with enum (pick one), required, minimum/maximum, maxLength (≤600) and pattern; anything else (arrays, format, nested objects) is refused with 422.",
+                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered). Send options (buttons) or response (a form), never both. A response is {schema, layout?}: one object schema of 1-12 string/number/integer/boolean properties with enum (pick one), required, minimum/maximum, maxLength (≤600) and pattern (Rust regex, no (?, no \\w \\d \\s \\b; use [0-9] or \\p{L}); anything else (arrays, format, nested objects) is refused with 422. Fields show in the order layout lists them; without a layout, in the order properties lists them.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
@@ -4124,6 +4124,28 @@ mod tests {
         assert_eq!(req.path, "/api/relay/decisions/d1/answer");
         assert_eq!(req.body.as_ref().unwrap()["option"], "db");
         assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_ask_forwards_a_forms_fields_in_the_lanes_order_389() {
+        // Without a layout, the order the lane wrote `properties` in is the
+        // order the form shows; a sorted map would reorder it before the daemon.
+        let args: Value = serde_json::from_str(
+            r#"{"question": "Where?", "asked_of": "person", "response": {"schema": {
+                "type": "object", "properties": {
+                    "target": {"type": "string"}, "count": {"type": "integer"},
+                    "ship": {"type": "boolean"}}}}}"#,
+        )
+        .unwrap();
+        let req = daemon_request_for("relay_ask_decision", &lane_args(args), "/cwd", None).unwrap();
+        let body = req.body.unwrap();
+        let names: Vec<&str> = body["response"]["schema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(names, ["target", "count", "ship"]);
     }
 
     #[test]

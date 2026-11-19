@@ -76,39 +76,51 @@ Red commit first for every numbered group; green in the next commit.
 ## Slice B — the form on the Relay screen, live
 
 ### B1. Form mapping (red first)
-- [ ] B1.1 Red: `packages/state/relay/decision-form.spec.ts` — `toDecisionForm` passes the schema through
+- [x] B1.1 Red: `packages/state/relay/decision-form.spec.ts` — `toDecisionForm` passes the schema through
   unchanged; uses the lane's layout when sent; else builds a vertical layout in `properties` order labelled
   from `title` (else the name in words) with `description` as help; seeds `data` from `default`;
   `toAnswerValues` drops empty optional properties and keeps required ones
-- [ ] B1.2 Green: `packages/state/relay/decision-form.ts`, exported from `packages/state/index.ts`
+- [x] B1.2 Green: `packages/state/relay/decision-form.ts`, exported from `packages/state/index.ts`
 
 ### B2. Component (red first)
-- [ ] B2.1 Red: `DecisionRow.spec.svelte.ts` + harness — a form decision draws one control per schema property
+- [x] B2.1 Red: `DecisionRow.spec.svelte.ts` + harness — a form decision draws one control per schema property
   (`data-decision-field="<name>"`; an `enum` string draws a select, a boolean a checkbox, a number a number
   input), Answer is refused inline while a required field is empty or a `pattern` / bound fails (no write), sends
   `{values}` once on Answer, disables while busy (double press = one write), shows the refusal via `Notice`
   (`data-decision-error`) and keeps the values; an option decision renders as today
-- [ ] B2.2 Green: `DecisionRow.svelte` branches on `decision.response`; a `DecisionForm.svelte` beside it uses
+- [x] B2.2 Green: `DecisionRow.svelte` branches on `decision.response`; a `DecisionForm.svelte` beside it uses
   `@rokkit/forms` `FormRenderer` with the selector's schema/layout; `onanswer` takes a `RelayDecisionChoice`
-- [ ] B2.3 Check the rendered rokkit DOM first; key fields by our wrapper if `[data-form-field]` cannot be addressed
-  by scope
-- [ ] B2.4 Wire `NeedsYou.svelte:25,47-53`, `RelayScreen.svelte:163-166,253` (`answer(id, option)`) and
+- [x] B2.3 Check the rendered rokkit DOM first; key fields by our wrapper if `[data-form-field]` cannot be addressed
+  by scope. (Done: `[data-form-field][data-scope]` is addressable, but B2.1 keys on `data-decision-field`, so each
+  field draws through FormRenderer's `child` snippet inside that wrapper. The yes/no draws native through the
+  `renderers` registry: rokkit's custom checkbox fails axe `aria-hidden-focus` (sensei-hq/rokkit#190). jsonb keeps its own key order, so for a
+  form without a lane layout the daemon stores a layout in the lane's order (B3.8).)
+- [x] B2.4 Wire `NeedsYou.svelte:25,47-53`, `RelayScreen.svelte:163-166,253` (`answer(id, option)`) and
   `RelayTaskScreen.svelte:89-95` to the new `onanswer` taking a `RelayDecisionChoice`
-- [ ] B2.5 `catalogue.ts` entry `DecisionRow/form` (string, string+enum, number with bounds, integer, boolean;
+- [x] B2.5 `catalogue.ts` entry `DecisionRow/form` (string, string+enum, number with bounds, integer, boolean;
   one with a lane layout, one without); phone width stacks fields (`md:` for wider)
 
 ### B3. Live e2e (Tauri Playwright)
-- [ ] B3.1 `relay-decision-form.spec.ts` test "a form decision arrives with no refresh": a lane asks with a
+- [x] B3.1 `relay-decision-form.spec.ts` test "a form decision arrives with no refresh": a lane asks with a
   three-field schema while the screen is open; the card and its fields appear in Needs you without navigation
-- [ ] B3.2 Same spec "required fields refuse inline": Answer with the required field empty shows the field message
+- [x] B3.2 Same spec "required fields refuse inline": Answer with the required field empty shows the field message
   and the card stays (no write: the lane envelope has no answer)
-- [ ] B3.3 Same spec "answering resolves with no refresh": fill, Answer; the card leaves Needs you without navigation;
+- [x] B3.3 Same spec "answering resolves with no refresh": fill, Answer; the card leaves Needs you without navigation;
   the lane envelope reads the exact `values`
-- [ ] B3.4 Same spec "the task view answers too": a task-bound form decision answered from
+- [x] B3.4 Same spec "the task view answers too": a task-bound form decision answered from
   `/workspace/<id>/relay/<crew>/<task>` leaves with no refresh
-- [ ] B3.5 `relay-run.spec.ts` (option-pick) and `relay-conformance.spec.ts` unregressed; `zz-a11y.spec.ts` stays at
+- [x] B3.5 `relay-run.spec.ts` (option-pick) and `relay-conformance.spec.ts` unregressed; `zz-a11y.spec.ts` stays at
   0 serious on the Relay screen with a form decision showing
-- [ ] B3.6 Gates: `bun run check`, `bun run test` in `app/`, `make test-app-e2e` relay specs green; evidence DOM dumps
+- [x] B3.7 Review r1 on PR #501 (red then green): the task view keys the card by decision id, so a new open
+  decision draws its own form; a cleared number is unset, not NaN (sensei-hq/rokkit#193); a required yes/no with no
+  default starts as no; each field's id carries the decision id, so two cards never share ids (the Select's label
+  names no control upstream: sensei-hq/rokkit#194); the arrival e2e closes its crew and the inline refusal counts
+  posted answers; D6, the spec delta and the ask tool said a form without a layout is in jsonb's order (superseded by B3.8)
+- [x] B3.8 Review r6 on PR #501 (red then green): a form sent without a layout keeps the order the lane wrote its
+  fields in. The MCP forwards `properties` unsorted (`serde_json` `preserve_order`), the daemon adds a `scope`-only
+  layout in that order before the jsonb write (`with_lane_order`), and the form takes each element's label and help
+  from the schema when the element has none.
+- [x] B3.6 Gates: `bun run check`, `bun run test` in `app/`, `make test-app-e2e` relay specs green; evidence DOM dumps
   under `test-results/relay-decision-form/`
 
 ## Slice R — widen the subset when rokkit draws pick-several and long text
@@ -125,6 +137,6 @@ Red commit first for every numbered group; green in the next commit.
   if #389 has closed by then.
 
 ## Close
-- [ ] C1 `openspec validate add-relay-decision-response-form --strict`
+- [x] C1 `openspec validate add-relay-decision-response-form --strict`
 - [ ] C2 Close #389 with the e2e evidence (merged to develop). Design review of the card (iris-deneb) is listed in the
   closing comment as a follow-up the user runs

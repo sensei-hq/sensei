@@ -4716,7 +4716,12 @@ mod tests {
             .find(|d| d["id"] == decision_id)
             .cloned()
             .unwrap_or_else(|| panic!("decision not on Now: {now}"));
-        assert_eq!(row["response"], form_response());
+        // The schema as sent; no layout was sent, so the stored one lists the
+        // fields in the order the lane wrote them (jsonb reorders `properties`).
+        let mut stored = form_response();
+        stored["layout"] = json!({"type": "vertical", "elements": [
+            {"scope": "#/path"}, {"scope": "#/count"}, {"scope": "#/ship"}]});
+        assert_eq!(row["response"], stored);
         assert_eq!(row["options"], json!([]));
         row["op"] = json!("asked");
         assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));

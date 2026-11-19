@@ -3,7 +3,7 @@
   // decisions, the waits at the threshold as one card, the lanes' messages, the
   // triage line (it opens the Queue), and the tasks no lane has taken (read-only:
   // placing them is the coordinator's). It draws toNeedsYou's data; writes call back.
-  import type { RelayNeedsYouView, RelayWaitRowView } from '@sensei/state';
+  import type { RelayDecisionChoice, RelayNeedsYouView, RelayWaitRowView } from '@sensei/state';
   import { KANJI_ICONS } from '$lib/glyph-vocabulary';
   import { useGlyphMode } from '$lib/glyphs';
   import DecisionRow from './DecisionRow.svelte';
@@ -22,7 +22,7 @@
   }: {
     view: RelayNeedsYouView;
     href: (crewId: string, taskId: string) => string;
-    onanswer: (decisionId: string, option: string) => Promise<string | null>;
+    onanswer: (decisionId: string, choice: RelayDecisionChoice) => Promise<string | null>;
     onopenqueue: () => void;
     onnudge?: (row: RelayWaitRowView) => void;
     nudging?: string[];
@@ -48,7 +48,7 @@
     <DecisionRow
       {decision}
       href={decision.task_id ? href(decision.crew_id, decision.task_id) : null}
-      onanswer={(option) => onanswer(decision.id, option)}
+      onanswer={(choice) => onanswer(decision.id, choice)}
     />
   {/each}
   {#if view.stale}
