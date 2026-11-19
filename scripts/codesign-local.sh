@@ -21,6 +21,13 @@
 # identity the release signs it with).
 set -euo pipefail
 
+# Signing is a macOS concept (keychain + TCC grants); elsewhere there is nothing
+# to sign, so a Linux `make install*` goes on without it.
+if [[ "$(uname -s)" != Darwin ]]; then
+  echo "codesign-local: not macOS — signing skipped for $# binary(ies)"
+  exit 0
+fi
+
 keep_identifier=0
 if [[ "${1:-}" == "--keep-identifier" ]]; then
   keep_identifier=1
