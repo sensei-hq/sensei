@@ -272,6 +272,7 @@ async fn confinement_fixture(
 }
 
 /// The `file` the pending read offers for a rework pattern named `rework: <name>`.
+#[cfg(unix)]
 async fn offered_file(
     s: &PgStore,
     ws: &uuid::Uuid,
