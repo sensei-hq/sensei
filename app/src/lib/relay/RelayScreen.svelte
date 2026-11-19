@@ -11,6 +11,7 @@
   // Notice with a Retry — never an empty crew, never "No crew yet" (§1f).
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { untrack } from 'svelte';
   import { Loading, Notice } from '@sensei/ui';
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
@@ -175,10 +176,15 @@
   $effect(() => {
     if (shell.view === 'crew' && state.now && !state.runList) void state.readRuns();
   });
-  // What this machine has seen, for AddMember's picker (#455): read when the Crew view
-  // opens, like the runs; Retry reads it again.
+  // What this machine has seen, for AddMember's picker (#455): read each time the Crew
+  // view opens, since no event says a tool was seen or configured; Retry reads it again.
+  // `crewOpen` is not reactive: it marks the opening, so a crew read that lands while
+  // Crew stays open does not read the catalogue again.
+  let crewOpen = false;
   $effect(() => {
-    if (shell.view === 'crew' && state.now && !state.catalogue && !state.catalogueError) void state.readCatalogue();
+    const open = shell.view === 'crew' && state.now != null;
+    if (open && !crewOpen) untrack(() => void state.readCatalogue());
+    crewOpen = open;
   });
   const memberGroups = $derived(toMemberGroups(state.now, Date.now()));
   const addMember = $derived(
