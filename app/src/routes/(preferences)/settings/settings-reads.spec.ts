@@ -50,7 +50,7 @@ describe('readAssistants', () => {
   // #455: Settings reads the installs detection stored, joined to the catalogue — not a
   // live probe on every load — and says when they were detected.
   const row = {
-    id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, version: '2.1', path: null,
+    id: 'claude', name: 'Claude Code', kind: 'assistant' as const, installed: true, version: '2.1', path: null,
     config_path: '/x', configured: true, configured_at: null, configured_version: null,
     detected_at: '2026-11-19T09:00:00Z',
   };

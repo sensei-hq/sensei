@@ -4,6 +4,7 @@
  * Config table uses jsonb — values are native JSON objects, not strings.
  */
 
+import { failureNotice } from '@sensei/ui';
 import { senseiApi, failureReason, dataOrThrow } from '$lib/api.js';
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import { glyphMode } from '$lib/glyphs';
@@ -146,4 +147,10 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
 export async function storeAssistantInstalls(port: number): Promise<string | null> {
   const answer = await senseiApi(port).tryDetectAssistantInstalls();
   return answer.ok ? null : failureReason(answer.error);
+}
+
+/** Notice props for a detection that could not be stored (#455), or null. Shared by
+ *  the wizard's assistants stage and Settings → Assistants' Detect again. */
+export function detectFailedNotice(error: string | null) {
+  return failureNotice("Couldn't store what was detected on this machine", error);
 }

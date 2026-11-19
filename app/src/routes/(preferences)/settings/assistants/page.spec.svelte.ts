@@ -25,15 +25,15 @@ describe('Settings · Assistants — the stored installs', () => {
   });
 
   it('"Detect again" posts the detection', async () => {
-    const fetchSpy = vi.fn(async () => new Response('[]', { status: 200 }));
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => new Response('[]', { status: 200 }));
     vi.stubGlobal('fetch', fetchSpy);
     const m = mountComponent(Page, { data: { assistants: [row], error: null } } as never);
     cleanup.push(m.destroy);
     (m.container.querySelector('[data-action="detect-again"]') as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
-    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
-    expect(new URL(url).pathname).toBe('/api/assistants/detect');
-    expect(init.method).toBe('POST');
+    // The consent card beside the list makes its own read; count only the detection.
+    const detectPosts = () => fetchSpy.mock.calls.filter(([url, init]) =>
+      new URL(String(url)).pathname === '/api/assistants/detect' && (init as RequestInit | undefined)?.method === 'POST');
+    await vi.waitFor(() => expect(detectPosts()).toHaveLength(1));
   });
 
   it('a refused "Detect again" says why', async () => {

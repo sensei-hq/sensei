@@ -7,6 +7,7 @@ import { failureReason, readOutcome, type ApiResult } from '$lib/api.js';
 import type { AssistantInstall, InstalledItem } from '$lib/types.js';
 import type { PreferencesData } from '$lib/setup/contracts.js';
 import { toPreferencesForm } from './preferences-form';
+import { relativeWhen } from '$lib/sessions-digest.js';
 
 export type AssistantRow = {
   family: string;
@@ -58,6 +59,12 @@ export async function readAssistants(api: {
     detectedAt: a.detected_at,
   }));
   return { assistants, error };
+}
+
+/** "detected today" / "detected 3 days ago" for a stored install (#455). */
+export function detectedLabel(iso: string, now: Date = new Date()): string {
+  const when = relativeWhen(iso, now);
+  return when ? `detected ${when}` : 'detected';
 }
 
 /** "Detect again": probe and store. Null when stored, else why not. */
