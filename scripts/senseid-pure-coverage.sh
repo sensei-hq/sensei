@@ -60,6 +60,48 @@ FILTERS=()
 for m in "${PURE_MODULES[@]}"; do FILTERS+=("${m}::"); done
 for r in "${SKIP_ROOTS[@]}"; do FILTERS+=(--skip "${r}::"); done
 
+# GUARD (static): a pure module's own source must not open a test database. The
+# post-run guard below only checks a test's ROOT module, so a Postgres test
+# written inside a pure module (e.g. `assistants::tests::…`) passes it and then
+# fails the run with "Connection refused". Such tests belong in
+# `src/db/pg_store/tests/`. An `#[ignore]`d test is exempt: the filters never
+# run it.
+python3 - "crates/senseid/src" "${PURE_MODULES[@]}" <<'PY'
+import os, re, sys
+src, mods = sys.argv[1], sys.argv[2:]
+opens_db = re.compile(r'\b(?:test_store|connect_test)\s*\(')
+fn_re = re.compile(r'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)')
+files = []
+for m in mods:
+    if os.path.isfile(f"{src}/{m}.rs"):
+        files.append(f"{src}/{m}.rs")
+    for root, _, names in os.walk(f"{src}/{m}"):
+        files += [os.path.join(root, n) for n in names if n.endswith('.rs')]
+bad = []
+for path in sorted(files):
+    lines = open(path, errors='replace').read().splitlines()
+    for i, line in enumerate(lines):
+        if not opens_db.search(line):
+            continue
+        j = i
+        while j >= 0 and not fn_re.match(lines[j]):
+            j -= 1
+        attrs = []
+        k = j - 1
+        while k >= 0 and lines[k].strip().startswith(('#[', '///', '//')):
+            attrs.append(lines[k]); k -= 1
+        if any('#[ignore' in a for a in attrs):
+            continue
+        name = fn_re.match(lines[j]).group(1) if j >= 0 else '?'
+        bad.append(f"{path}:{i + 1} ({name})")
+if bad:
+    print(f"\nsenseid-pure-coverage: {len(bad)} test(s) in a PURE module open a "
+          f"database — move them to src/db/pg_store/tests/:", file=sys.stderr)
+    for b in bad:
+        print(f"    {b}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 echo "senseid-pure-coverage: running DB-free module tests (${#PURE_MODULES[@]} modules)…"
 RUN_LOG="$(mktemp)"
 cargo llvm-cov -p senseid --no-fail-fast --lcov --output-path "$RAW" \
