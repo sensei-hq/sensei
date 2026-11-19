@@ -11307,9 +11307,57 @@ mod tests {
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(props["response"], form_response());
+        assert_eq!(props["response"]["schema"], form_response()["schema"]);
         assert!(props.get("options").is_none(), "a form carries no options: {props}");
         assert_eq!(task_state(&pg, w).await, "blocked");
+    }
+
+    #[tokio::test]
+    async fn ask_without_a_layout_keeps_the_lanes_field_order() {
+        // jsonb stores object keys shorter-first, so `properties` comes back as
+        // ship, count, target; the order the lane wrote survives only as an array.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let w = v7(0x9c);
+        fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
+        let mut ask = form_ask(vec![w]);
+        ask.response = Some(
+            serde_json::from_str(
+                r#"{"schema": {"type": "object", "properties": {
+                    "target": {"type": "string", "enum": ["develop", "main"]},
+                    "count": {"type": "integer"},
+                    "ship": {"type": "boolean"}}}}"#,
+            )
+            .unwrap(),
+        );
+        let out = pg.relay_ask_decision(u1(), a1, ask).await.unwrap();
+        let props: serde_json::Value =
+            sqlx_core::query_scalar::query_scalar("select props from relay.actions where id = $1")
+                .bind(out.decision_id)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            props["response"]["layout"],
+            json!({"type": "vertical", "elements": [
+                {"scope": "#/target"}, {"scope": "#/count"}, {"scope": "#/ship"}]}),
+            "{props}"
+        );
+        // A lane's own layout is stored as sent.
+        let mut ask = form_ask(vec![]);
+        let layout = json!({"type": "vertical", "elements": [
+            {"scope": "#/count", "label": "How many"}, {"scope": "#/path"}]});
+        ask.response.as_mut().unwrap()["layout"] = layout.clone();
+        let out = pg.relay_ask_decision(u1(), a1, ask).await.unwrap();
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        let d = now["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == json!(out.decision_id))
+            .unwrap()
+            .clone();
+        assert_eq!(d["response"]["layout"], layout);
     }
 
     #[tokio::test]

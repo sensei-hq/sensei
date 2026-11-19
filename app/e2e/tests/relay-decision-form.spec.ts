@@ -58,6 +58,11 @@ const RESPONSE = {
     required: ['target'],
   },
 };
+/** The layout the daemon stores for RESPONSE: its properties in the order the lane wrote them. */
+const LANE_ORDER = {
+  type: 'vertical',
+  elements: [{ scope: '#/target' }, { scope: '#/count' }, { scope: '#/ship' }],
+};
 
 test.describe('relay decision form (#389)', () => {
   let lane: RelayLane | null = null;
@@ -81,7 +86,8 @@ test.describe('relay decision form (#389)', () => {
     expect(now.status).toBe(200);
     const row = now.body.decisions.find((d) => d.id === decisionId);
     expect(row, 'the form decision is on Now').toBeTruthy();
-    expect(row?.response).toEqual(RESPONSE);
+    // The schema as sent; with no layout sent, the daemon stores one in the lane's order.
+    expect(row?.response).toEqual({ ...RESPONSE, layout: LANE_ORDER });
     expect(row?.options).toEqual([]);
 
     // Values that break the schema are refused by name, and nothing is recorded.
@@ -233,16 +239,13 @@ test.describe('relay decision form (#389)', () => {
     await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
     expect(await textsOf(tauriPage, `${card} [data-decision-question]`)).toEqual([question]);
     expect(await textsOf(tauriPage, `${card} [data-decision-field]`).then((t) => t.length)).toBe(3);
-    // The fields come in the order the wire's schema lists them (jsonb keeps its own key order).
-    const row = (await person('GET', '/relay/now')).body.decisions.find((d) => d.id === decisionId);
-    const wireOrder = Object.keys((row?.response as { schema: { properties: Record<string, unknown> } }).schema.properties);
-    expect([...wireOrder].sort()).toEqual(['count', 'ship', 'target']);
+    // The fields come in the order the lane wrote them, though jsonb stores the keys shorter-first.
     const names = JSON.parse(
       (await tauriPage.evaluate(
         `JSON.stringify([...document.querySelectorAll(${JSON.stringify(`${card} [data-decision-field]`)})].map((e) => e.getAttribute('data-decision-field')))`,
       )) as string,
     );
-    expect(names).toEqual(wireOrder);
+    expect(names).toEqual(['target', 'count', 'ship']);
     expect(await countOf(tauriPage, `${card} [data-decision-field="target"] [data-select]`)).toBe(1);
     expect(await countOf(tauriPage, `${card} [data-decision-field="count"] input[type="number"]`)).toBe(1);
     expect(await countOf(tauriPage, `${card} [data-decision-field="ship"] input[type="checkbox"]`)).toBe(1);

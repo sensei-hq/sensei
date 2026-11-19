@@ -1,5 +1,6 @@
 // A form decision's form (#389 D6): the schema the lane sent passes through to
-// `@rokkit/forms` unchanged; the layout is the lane's, else one built from the schema;
+// `@rokkit/forms` unchanged; the layout is the lane's (or the daemon's, in the lane's order), else
+// one built from the schema; an element without a label or help takes them from the schema;
 // the data starts from each `default`. The answer keeps what was filled and drops the
 // optional fields left empty, so absent stays absent (D83).
 import { describe, it, expect } from 'vitest';
@@ -24,7 +25,32 @@ describe('toDecisionForm', () => {
         { scope: '#/max_retries' },
       ],
     };
-    expect(toDecisionForm({ ...response(), layout }).layout).toEqual(layout);
+    expect(toDecisionForm({ ...response(), layout }).layout).toEqual({
+      type: 'vertical',
+      elements: [
+        { scope: '#/ship', label: 'Ship now', description: 'Ship it now?', props: { placeholder: 'no' } },
+        { scope: '#/target', label: 'Branch' },
+        { scope: '#/max_retries', label: 'Max retries' },
+      ],
+    });
+  });
+
+  it("keeps the layout's order, the daemon's record of the order the lane wrote (jsonb reorders properties)", () => {
+    // What the daemon stores for a form sent without a layout: the scopes in the lane's order.
+    const layout = {
+      type: 'vertical' as const,
+      elements: [{ scope: '#/target' }, { scope: '#/max_retries' }, { scope: '#/ship' }],
+    };
+    const r = response();
+    r.schema.properties = { ship: r.schema.properties.ship, max_retries: r.schema.properties.max_retries, target: r.schema.properties.target };
+    expect(toDecisionForm({ ...r, layout }).layout).toEqual({
+      type: 'vertical',
+      elements: [
+        { scope: '#/target', label: 'Target branch' },
+        { scope: '#/max_retries', label: 'Max retries' },
+        { scope: '#/ship', label: 'Ship', description: 'Ship it now?' },
+      ],
+    });
   });
 
   it('else builds a vertical layout in properties order: label from title, else the name in words; description as help', () => {

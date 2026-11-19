@@ -4127,6 +4127,28 @@ mod tests {
     }
 
     #[test]
+    fn relay_ask_forwards_a_forms_fields_in_the_lanes_order_389() {
+        // Without a layout, the order the lane wrote `properties` in is the
+        // order the form shows; a sorted map would reorder it before the daemon.
+        let args: Value = serde_json::from_str(
+            r#"{"question": "Where?", "asked_of": "person", "response": {"schema": {
+                "type": "object", "properties": {
+                    "target": {"type": "string"}, "count": {"type": "integer"},
+                    "ship": {"type": "boolean"}}}}}"#,
+        )
+        .unwrap();
+        let req = daemon_request_for("relay_ask_decision", &lane_args(args), "/cwd", None).unwrap();
+        let body = req.body.unwrap();
+        let names: Vec<&str> = body["response"]["schema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(names, ["target", "count", "ship"]);
+    }
+
+    #[test]
     fn relay_ask_and_answer_forward_a_form_389() {
         let response = json!({"schema": {"type": "object",
             "properties": {"path": {"type": "string"}}, "required": ["path"]}});
