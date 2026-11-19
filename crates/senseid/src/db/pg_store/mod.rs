@@ -544,6 +544,7 @@ pub struct MetricMeaning {
     pub how_to_read: String,
 }
 
+mod assistant_catalogue;
 mod command_catalogue;
 mod commands;
 mod config;
@@ -1750,6 +1751,30 @@ pub struct LibraryRow<'a> {
     /// A `sensei.library_source_type` label.
     pub source_type: Option<&'a str>,
     pub base_url: Option<&'a str>,
+}
+
+// Written by `assistant_catalogue.rs`.
+/// One spelling of a supported tool, as `sensei.assistant_catalogue_words`
+/// serves it (#455): the word, the tool it names, its display name and kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogueWordRow {
+    pub word: String,
+    pub id: String,
+    pub name: String,
+    /// A `sensei.tool_kind` label: `assistant` or `editor`.
+    pub kind: String,
+    pub joins_crew: bool,
+}
+
+// Written by `assistant_catalogue.rs`.
+/// One probed tool, as [`PgStore::upsert_assistant_installs`] stores it (#455).
+/// `registry_id` is the detection registry's id; the store resolves it through
+/// the catalogue's words, and a tool with no catalogue row is not stored.
+pub struct AssistantInstallRow<'a> {
+    pub registry_id: &'a str,
+    pub installed: bool,
+    pub config_path: Option<&'a str>,
+    pub configured: bool,
 }
 
 // Written by `sessions.rs`.

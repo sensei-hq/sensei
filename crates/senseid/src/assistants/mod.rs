@@ -1,9 +1,11 @@
+mod catalogue;
 mod claude_code;
 mod health;
 mod helpers;
 mod mcp_file;
 mod trait_def;
 mod watchdog;
+pub use catalogue::{CatalogueNames, UNKNOWN_KIND, readable};
 pub use health::{
     AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus, business_elapsed_hours,
     capture_freshness,
@@ -177,6 +179,27 @@ pub struct ConfigureResult {
 
 pub fn detect() -> Vec<AssistantStatus> {
     all_assistants().iter().map(|a| a.status()).collect()
+}
+
+/// Probe this machine and store what it found, one row per catalogue tool
+/// (#455). Runs on first run, after configure/remove/upgrade, and on "Detect
+/// again". Returns the stored rows joined to the catalogue.
+pub async fn sync_installs(
+    pg: &crate::db::pg_store::PgStore,
+) -> Result<Vec<serde_json::Value>, String> {
+    let statuses = tokio::task::spawn_blocking(detect)
+        .await
+        .map_err(|e| format!("assistant probe panicked: {e}"))?;
+    sync_installs_with(pg, &statuses).await
+}
+
+/// [`sync_installs`] with the probe's result given — the seam tests inject.
+pub async fn sync_installs_with(
+    pg: &crate::db::pg_store::PgStore,
+    statuses: &[AssistantStatus],
+) -> Result<Vec<serde_json::Value>, String> {
+    let _ = (pg, statuses);
+    todo!("#455 red")
 }
 
 /// config_health for a single adapter id, or None if not registered.
@@ -818,6 +841,102 @@ mod tests {
         assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["enabled"], true);
         let cmd = content["mcp"][MCP_REGISTRY_KEY]["command"].as_array().unwrap();
         assert_eq!(cmd[0], "sensei-mcp");
+    }
+
+    // ── The catalogue owns the supported tools (#455) ─────────────────
+
+    /// Every registry id has a catalogue seed row (as its id or an alias), so a
+    /// detected tool is never dropped for want of one.
+    #[test]
+    fn every_registry_id_resolves_through_the_catalogue_seed() {
+        let seed = include_str!("../../../../database/import/staging/assistant_catalogue.jsonl");
+        let mut words = std::collections::HashSet::new();
+        for line in seed.lines().filter(|l| !l.trim().is_empty()) {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            words.insert(v["id"].as_str().unwrap().to_string());
+            for a in v["aliases"].as_array().unwrap() {
+                words.insert(a.as_str().unwrap().to_string());
+            }
+        }
+        for a in all_assistants() {
+            assert!(words.contains(a.id()), "registry id {} has no catalogue seed row", a.id());
+        }
+    }
+
+    /// A probe result, as `detect()` gives it: ids and state, no names (the
+    /// catalogue owns those).
+    fn status(id: &str, installed: bool, configured: bool) -> AssistantStatus {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "family": id, "installed": installed, "configured": configured,
+            "config_path": format!("/home/x/{id}.json"),
+        }))
+        .expect("a probe result carries no name")
+    }
+
+    async fn install_row(
+        pg: &crate::db::pg_store::PgStore,
+        id: &str,
+    ) -> Option<(bool, bool, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> {
+        sqlx_core::query_as::query_as(
+            "select installed, configured, config_path, configured_version, detected_at
+               from sensei.assistant_installs where catalogue_id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sync_installs_stores_one_row_per_catalogue_tool_and_updates_in_place() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        sqlx_core::query::query("delete from sensei.assistant_installs")
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let probe = vec![
+            status("claude-code", true, true),
+            status("cursor", true, false),
+            status("muse", true, false),
+        ];
+        let rows = sync_installs_with(&pg, &probe).await.unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["claude", "cursor"], "{rows:?}");
+        assert_eq!(rows[0]["name"], "Claude Code", "the catalogue names the row");
+        assert_eq!(rows[1]["kind"], "editor");
+        let n: i64 =
+            sqlx_core::query_scalar::query_scalar("select count(*) from sensei.assistant_installs")
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(n, 2, "muse has no catalogue row and is not stored");
+        let (installed, configured, path, version, first) =
+            install_row(&pg, "claude").await.unwrap();
+        assert!(installed && configured);
+        assert_eq!(path.as_deref(), Some("/home/x/claude-code.json"));
+        assert_eq!(
+            version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION")),
+            "configured with this version"
+        );
+        let (_, configured, _, version, _) = install_row(&pg, "cursor").await.unwrap();
+        assert!(!configured);
+        assert_eq!(version, None, "never configured, no version");
+
+        // A second run updates in place.
+        let probe = vec![status("claude-code", true, true), status("cursor", true, true)];
+        sync_installs_with(&pg, &probe).await.unwrap();
+        let n: i64 =
+            sqlx_core::query_scalar::query_scalar("select count(*) from sensei.assistant_installs")
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(n, 2);
+        let (_, configured, _, version, _) = install_row(&pg, "cursor").await.unwrap();
+        assert!(configured, "configure is followed");
+        assert_eq!(version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        let (_, _, _, _, second) = install_row(&pg, "claude").await.unwrap();
+        assert!(second >= first, "detected_at moves with each run");
     }
 
     // ── Registry consistency ───────────────────────────────────────────

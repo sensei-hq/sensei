@@ -390,3 +390,108 @@ mod tests {
         assert!(config_value_is_valid("theme", "anything"));
     }
 }
+
+/// The assistant routes' catalogue names and stored installs (#455).
+#[cfg(test)]
+mod assistant_route_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::Value;
+    use tower::ServiceExt;
+
+    async fn call(app: &axum::Router, method: &str, uri: &str) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("host", "127.0.0.1:7744")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    async fn app() -> (axum::Router, crate::api::state::AppState) {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let state = ctx.app_state.clone();
+        (crate::api::routes::create_router(state.clone()), state)
+    }
+
+    #[tokio::test]
+    async fn detection_names_come_from_the_catalogue() {
+        let (app, _) = app().await;
+        let (status, body) = call(&app, "GET", "/api/assistants/families").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let claude = body.as_array().unwrap().iter().find(|f| f["family"] == "claude").unwrap();
+        assert_eq!(claude["name"], "Claude Code", "{claude}");
+        let (status, body) = call(&app, "GET", "/api/assistants/detect").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let vscode = body.as_array().unwrap().iter().find(|s| s["id"] == "vscode").unwrap();
+        assert_eq!(vscode["name"], "VS Code");
+        let desktop =
+            body.as_array().unwrap().iter().find(|s| s["id"] == "claude-desktop").unwrap();
+        assert_eq!(desktop["name"], "Claude Desktop");
+    }
+
+    #[tokio::test]
+    async fn installs_read_the_stored_rows_joined_to_the_catalogue() {
+        let (app, state) = app().await;
+        sqlx_core::query::query("delete from sensei.assistant_installs")
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs (catalogue_id, installed, config_path, configured, detected_at)
+             values ('cursor', true, '/home/x/.cursor/mcp.json', true, now())",
+        )
+        .execute(state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = call(&app, "GET", "/api/assistants/installs").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let rows = body.as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{body}");
+        assert_eq!(rows[0]["id"], "cursor");
+        assert_eq!(rows[0]["name"], "Cursor");
+        assert_eq!(rows[0]["kind"], "editor");
+        assert_eq!(rows[0]["installed"], true);
+        assert_eq!(rows[0]["configured"], true);
+        assert_eq!(rows[0]["config_path"], "/home/x/.cursor/mcp.json");
+        assert!(rows[0]["detected_at"].is_string(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn detect_stores_what_it_found_and_returns_the_stored_rows() {
+        let (app, state) = app().await;
+        sqlx_core::query::query("delete from sensei.assistant_installs")
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        let (status, body) = call(&app, "POST", "/api/assistants/detect").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let stored: i64 =
+            sqlx_core::query_scalar::query_scalar("select count(*) from sensei.assistant_installs")
+                .fetch_one(state.pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(body.as_array().map(|a| a.len() as i64), Some(stored), "{body}");
+        // One row per registry tool, each a catalogue row.
+        assert_eq!(stored, 8, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_installs_read_is_a_500_not_an_empty_list() {
+        let (app, state) = app().await;
+        sqlx_core::query::query(
+            "alter table sensei.assistant_installs rename to assistant_installs_gone",
+        )
+        .execute(state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = call(&app, "GET", "/api/assistants/installs").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert!(!body.is_array(), "{body}");
+    }
+}
