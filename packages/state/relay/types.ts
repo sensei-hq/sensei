@@ -146,6 +146,10 @@ export interface RelayLane {
   title: string | null;
   role: RelayRole;
   family: string;
+  /** The family's name from the daemon's catalogue (#455); absent where no catalogue names it. */
+  family_name?: string | null;
+  /** What the catalogue says the family is; `unknown` when it does not list it. */
+  family_kind?: RelayToolKind | null;
   version: string | null;
   model: string | null;
   lease_state: RelayLeaseState;
@@ -161,6 +165,9 @@ export interface RelayLane {
   suggested_name: string | null;
   /** The editor the session runs in, as it said at register (#396); null for none. */
   host: string | null;
+  /** The host's name from the catalogue (#455); null with no host. */
+  host_name?: string | null;
+  host_kind?: RelayToolKind | null;
   /** The review this lane holds (`review_claimed_by`), beside its own task; null when none. */
   reviewing: RelayLaneReview | null;
   /** The session's presence, the daemon's call on its lease and what it holds (#419; CONTRACT §1h). */
@@ -328,6 +335,8 @@ export interface RelayNowRunTaskLane {
   code: string;
   suggested_name: string | null;
   family: string;
+  /** The family's name from the daemon's catalogue (#455); absent where no catalogue names it. */
+  family_name?: string | null;
   version: string | null;
   /** Null when the lane reported none: "model not reported", never a default (D83). */
   model: string | null;
@@ -421,6 +430,8 @@ export interface RelayTaskLane {
   code: string;
   title: string | null;
   family: string;
+  /** The family's name from the daemon's catalogue (#455); absent where no catalogue names it. */
+  family_name?: string | null;
   version: string | null;
   model: string | null;
   /** Set exactly when the lane reported quota exhaustion. */
@@ -776,6 +787,8 @@ export interface RelayRunMember {
   title: string | null;
   suggested_name: string | null;
   family: string;
+  /** The family's name from the daemon's catalogue (#455); absent where no catalogue names it. */
+  family_name?: string | null;
   model: string | null;
 }
 
@@ -828,4 +841,49 @@ export function parseRelayStreamEvent(raw: string): RelayStreamEvent {
     throw new Error('relay stream event names no action');
   }
   return { action, entity, data: data as RelayStreamEvent['data'] };
+}
+
+// ─── The catalogue (#455) ───────────────────────────────────────────────────
+
+/** What the daemon's catalogue says a tool is; `unknown` when it does not list it. */
+export type RelayToolKind = 'assistant' | 'editor' | 'unknown';
+
+/** An assistant this machine has seen (`GET /relay/catalogue`). Nulls are not reported (D83). */
+export interface RelayCatalogueAssistant {
+  id: string;
+  name: string;
+  kind: 'assistant';
+  /** From this machine's install row; null when never detected. */
+  installed: boolean | null;
+  last_used_at: string | null;
+  /** Sessions started in the last 7 days. */
+  sessions_week: number;
+}
+
+/** An editor this machine has seen. */
+export interface RelayCatalogueEditor {
+  id: string;
+  name: string;
+  kind: 'editor';
+  installed: boolean | null;
+  last_used_at: string | null;
+  /** The models its sessions ran, newest first. */
+  models: string[];
+  /** Where sensei's tools are set up in it; null when not configured. */
+  mcp_config: string | null;
+}
+
+/** A word a session named that the catalogue does not list: never offered. */
+export interface RelayCatalogueUnknown {
+  id: string;
+  name: string;
+  kind: 'unknown';
+  last_used_at: string | null;
+}
+
+/** `GET /relay/catalogue`: what this machine has seen, for AddMember's picker. */
+export interface RelayCatalogue {
+  assistants: RelayCatalogueAssistant[];
+  editors: RelayCatalogueEditor[];
+  unknown: RelayCatalogueUnknown[];
 }
