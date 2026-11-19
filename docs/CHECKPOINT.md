@@ -23,6 +23,13 @@
   CLI read `acps_removed` from `/api/assistants/remove` (daemon sends `assistants_removed`) and dropped upgrade
   warnings; TS `RemoveResult` named the installer's field wrongly. Red `02fdde62`, green `5a0c5c66`;
   configure-assistants nav bound 10s→20s `40d0c0df` (Continue measured 11.4s).
+- Review fix 3 (PR #506): the catalogue was read once per page (gated on `!catalogue && !catalogueError`); now
+  every opening of the Crew view reads it (`RelayScreen.svelte`, a non-reactive `crewOpen` marks the opening, so
+  a crew read while Crew stays open does not re-read). Red `ead334a4`, green `5078cf98`; relay-catalogue e2e
+  leaves Crew for Queue, seeds a later Claude session, and sees the new count on return `e1c2784d`. Same class
+  checked: the runs list re-reads on run events (`relay-state.svelte.ts:309`); no other one-shot read in the slice.
+  All 8 relay* e2e specs 15/15 green on the fix (one earlier run had a transient webview `eval` hang from test 6
+  on; the failing specs passed alone, in order, and on the full rerun).
 - e2e green: relay-catalogue, assistants-configure (switch names the installed members), configure-assistants,
   every relay*/settings spec; observatory-daily now gates on the rows Today draws.
 - Gates: fmt, clippy -D warnings (senseid, sensei-mcp), senseid DB tests serial, `make test-db` 102/102.
