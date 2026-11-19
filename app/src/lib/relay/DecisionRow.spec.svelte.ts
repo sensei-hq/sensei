@@ -309,6 +309,8 @@ describe('DecisionRow · a form decision', () => {
     await settle();
     expect(field(c, 'target')!.querySelector('[role="listbox"]')).not.toBeNull();
     expect(await seriousA11y(c)).toEqual([]);
+    field(c, 'target')!.querySelector<HTMLButtonElement>('[data-select-trigger]')!.click();
+    await settle();
     await pick(c, 'target', 'main');
     expect(await seriousA11y(c)).toEqual([]);
   });

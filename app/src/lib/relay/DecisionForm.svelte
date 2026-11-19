@@ -5,6 +5,8 @@
   // The card owns Answer: it calls `collect()`, which checks the form inline (validateAll),
   // shows each field's message, and hands back the values only when nothing failed.
   import { untrack } from 'svelte';
+  import type { Attachment } from 'svelte/attachments';
+  import DecisionPickSeveral from './DecisionPickSeveral.svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
   import {
     textCap,
@@ -71,6 +73,25 @@
     return Object.keys(messages).length > 0 ? null : toAnswerValues(form.schema, builder.data);
   }
 
+  // A pick-several draws through DecisionPickSeveral: no control nested in the MultiSelect's trigger.
+  const renderers = { multiselect: DecisionPickSeveral as never };
+
+  /** Name each listbox rokkit opens in a field after the field's label: rokkit's Select and
+   *  MultiSelect open a `role="listbox"` with no name (axe aria-input-field-name; sensei-hq/rokkit#206). */
+  function nameListboxes(label: string): Attachment<HTMLElement> {
+    return (node) => {
+      const name = () => {
+        for (const box of node.querySelectorAll<HTMLElement>('[role="listbox"]')) {
+          if (!box.hasAttribute('aria-label') && !box.hasAttribute('aria-labelledby')) box.setAttribute('aria-label', label);
+        }
+      };
+      name();
+      const observer = new MutationObserver(name);
+      observer.observe(node, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    };
+  }
+
   type Element = { scope?: string; type?: string; value?: unknown; props?: Record<string, unknown> };
 
   function change(path: string, value: unknown): void {
@@ -84,13 +105,14 @@
 
 {#snippet field(element: Element)}
   {@const path = (element.scope ?? '').replace(/^#\//, '')}
-  <div data-decision-field={path}>
+  <div data-decision-field={path} {@attach nameListboxes(labels[path] ?? path)}>
     <InputField
       name={`${idPrefix}-${path}`}
       type={element.type}
       value={element.value}
       {...element.props}
       {disabled}
+      {renderers}
       onchange={(value: unknown) => change(path, value)}
     />
   </div>

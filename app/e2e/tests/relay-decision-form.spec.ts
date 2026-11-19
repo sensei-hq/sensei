@@ -238,7 +238,12 @@ test.describe('relay decision form (#389)', () => {
         });
         return JSON.stringify((r.violations || [])
           .filter(function (v) { return v.impact === 'serious' || v.impact === 'critical'; })
-          .map(function (v) { return v.id + ': ' + v.nodes.map(function (n) { return n.target.join(' '); }).join(', '); }));
+          .map(function (v) {
+            return v.id + ': ' + v.nodes.map(function (n) {
+              var why = (n.any || []).concat(n.all || []).map(function (c) { return c.message; }).join('; ');
+              return n.target.join(' ') + (why ? ' (' + why + ')' : '');
+            }).join(', ');
+          }));
       })()`)) as string,
     );
   }
@@ -279,10 +284,22 @@ test.describe('relay decision form (#389)', () => {
     expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the form card').toEqual([]);
     // Open, the Select's listbox is named for its field (axe aria-input-field-name).
     const target = `${card} [data-decision-field="target"] [data-select-trigger]`;
-    await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' }), true)`);
-    await tauriPage.locator(target).click();
-    await expect.poll(() => countOf(tauriPage, `${card} [data-decision-field="target"] [role="listbox"]`)).toBe(1);
-    expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations with the Select open').toEqual([]);
+    const listbox = `${card} [data-decision-field="target"] [role="listbox"]`;
+    // A press that lands while the fresh card still settles can miss: press again until it opens.
+    await expect
+      .poll(async () => {
+        if ((await countOf(tauriPage, listbox)) === 1) return true;
+        await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' }), true)`);
+        await tauriPage.locator(target).click();
+        return false;
+      }, { intervals: [500] })
+      .toBe(true);
+    // Scoped to the field: the open listbox is fixed over the field below it, and axe then reads
+    // that field's empty text against the listbox's paper, which no one sees.
+    expect(
+      await seriousA11y(tauriPage, `${card} [data-decision-field="target"]`),
+      'serious/critical a11y violations with the Select open',
+    ).toEqual([]);
     await tauriPage.locator(target).click();
     if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
   });
