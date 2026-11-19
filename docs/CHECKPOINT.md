@@ -25,16 +25,17 @@ after PR #500 (slice A) merged.
 - Review r4 (red `34f3197b8`, green `51bb94543`): the inline pattern check no longer runs a lane's
   pattern on the browser's backtracking RegExp (`^(a+)+$` on 29 chars took 7s). `toPatternMatcher` parses
   the daemon's dialect and runs a Thompson NFA, linear like Rust `regex`; outside the dialect or past
-  10,000 states it leaves the check to the daemon. 56k-case fuzz vs `u` RegExp: 0 diffs. e2e 6/6.
-- Review r5 (merge `c34ef7181`): develop merged in; all PR CI green; e2e wizard+relay 25/25.
-
+  10,000 states it leaves the check to the daemon. 56k-case fuzz: 0 diffs. e2e 6/6.
+- Review r5 (merge `c34ef7181`): develop merged in; e2e wizard+relay 25/25.
 - Review r6 (red `5e3f730c4`, green `8f999f1ba`): a form without a layout keeps the lane's field order.
   The MCP forwards `properties` unsorted (`preserve_order`); the daemon stores a scope-only layout in that
   order before the jsonb write (`with_lane_order`); the form labels elements from the schema. e2e
-  relay-decision-form 6/6 + relay-run green; senseid relay 457, mcp 109.
+  relay-decision-form 6/6 + relay-run green; senseid relay 457, mcp 109. r6 broke `bun run check`.
+- Review r7 (red `c190feda1`, green `e0affe4ec` `a3f7d6d1d`): an empty body's count returns the
+  empty fragment (`(){4000000000}x` took 36s); the layout fallback is typed, so app/ and dojo/ check 0 errors.
+  Unit 3898 green; e2e relay-decision-form 6/6.
 **Remaining:** CI green on 501; C2 (close #389 on merge). Slice R (R1 rokkit issue, R2 widen) needs its
 own issue once #389 closes. Design review of the card (iris-deneb) is a user follow-up.
 
 **Next command:** `gh pr checks 501`.
-**Open questions:** none blocking.
-**Known broken:** none from this branch. relay-run on a fresh sensei_e2e needs setup-wizard first.
+**Open questions:** none blocking. **Known broken:** none from this branch. relay-run on a fresh sensei_e2e needs setup-wizard first.
