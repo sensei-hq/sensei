@@ -987,6 +987,30 @@ describe('Relay — AddMember picks from what this machine has seen (#455)', () 
     expect(text(one(c, '[data-paste-text]'))).toBe(line);
   });
 
+  it('each opening of Crew reads the catalogue again: a tool seen since shows without a reload', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-catalogue-item="claude"]')).not.toBeNull());
+    expect(one(c, '[data-catalogue-item="codex"]')).toBeNull();
+    expect(api.tryGetCatalogue).toHaveBeenCalledTimes(1);
+    // Away to Now; meanwhile a Codex session starts on this machine.
+    need(tab(c, 'Now'), 'the Now button').click();
+    await tick();
+    api.tryGetCatalogue.mockResolvedValue(
+      F.ok(
+        F.catalogue({
+          assistants: [
+            { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: null, sessions_week: 1 },
+            { id: 'codex', name: 'Codex', kind: 'assistant', installed: true, last_used_at: null, sessions_week: 1 },
+          ],
+        }),
+      ),
+    );
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-catalogue-item="codex"]')).not.toBeNull());
+    expect(api.tryGetCatalogue).toHaveBeenCalledTimes(2);
+  });
+
   it('a failed read: the error Notice with Retry, which reads it again', async () => {
     const { c, api } = await open({ now: crewNoRun() });
     api.tryGetCatalogue.mockResolvedValue(F.fail(500, 'internal error'));
