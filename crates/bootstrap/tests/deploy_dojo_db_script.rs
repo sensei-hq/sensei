@@ -4,6 +4,8 @@
 //!
 //! Driven with a fake `dbd` that logs each call and can be told to report a
 //! parse error or a remaining difference.
+//! Unix only: the script and its fakes are shell scripts.
+#![cfg(unix)]
 
 use std::path::PathBuf;
 use std::process::Command;

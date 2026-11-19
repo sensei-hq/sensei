@@ -56,10 +56,8 @@ fn user_local_bin_dirs() -> Vec<String> {
     {
         dirs.push(format!("{qlty_install}/bin"));
     }
-    if let Ok(home) = std::env::var("HOME")
-        && !home.is_empty()
-    {
-        dirs.push(format!("{home}/.qlty/bin"));
+    if let Some(home) = crate::config::try_home_dir() {
+        dirs.push(home.join(".qlty").join("bin").to_string_lossy().into_owned());
     }
     dirs
 }
@@ -245,12 +243,11 @@ mod tests {
         // The `qlty` install dir (`~/.qlty/bin`) must be a resolution candidate — this
         // is the dir the daemon's launchd PATH omits, which made every qlty scan miss.
         // HOME is always set in the test environment; assert without mutating env.
-        if let Ok(home) = std::env::var("HOME")
-            && !home.is_empty()
-        {
+        if let Some(home) = crate::config::try_home_dir() {
+            let want = home.join(".qlty").join("bin").to_string_lossy().into_owned();
             let dirs = user_local_bin_dirs();
             assert!(
-                dirs.iter().any(|d| d == &format!("{home}/.qlty/bin")),
+                dirs.iter().any(|d| d == &want),
                 "user_local_bin_dirs must include ~/.qlty/bin (got {dirs:?})",
             );
         }

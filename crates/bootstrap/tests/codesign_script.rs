@@ -4,6 +4,8 @@
 //! to the program's code signature. Local installs were ad-hoc signed, whose
 //! identity — and default identifier, `senseid-<hash>` — changes every build, so
 //! every rebuild looked like a new program and the keychain asked again.
+//! Unix only: the script and its fakes are shell scripts.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

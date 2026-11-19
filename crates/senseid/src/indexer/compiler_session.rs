@@ -441,19 +441,19 @@ fn find_on_path(name: &str, path_var: Option<&std::ffi::OsStr>) -> Option<PathBu
 }
 
 fn is_executable(p: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(p) else { return false };
-    if !meta.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    std::fs::metadata(p).is_ok_and(|meta| meta.is_file() && has_exec_bit(&meta))
+}
+
+/// Any execute bit. Windows has none: a file found as `<name>.exe` runs.
+#[cfg(unix)]
+fn has_exec_bit(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn has_exec_bit(_: &std::fs::Metadata) -> bool {
+    true
 }
 
 /// The compiler's binary: the engine's locator first; if that cannot answer, the
