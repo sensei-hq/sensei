@@ -1,11 +1,14 @@
 ## 1. Windows builds in CI (slice 1)
-- [ ] 1.1 Add a `windows-latest` job to the develop CI: `cargo check --workspace --target x86_64-pc-windows-msvc`
+- [x] 1.1 Add a `windows-latest` job to the develop CI: `cargo check --workspace --target x86_64-pc-windows-msvc`
   (and clippy); record the failures it reports as the compile-fix list
-- [ ] 1.2 `home_dir()` resolves the profile directory on Windows; still errors when no home is set (test both)
-- [ ] 1.3 `shutdown_signal()` completes on Windows console control events (Windows test alongside the SIGTERM test)
-- [ ] 1.4 Free disk via `sysinfo`, replacing `libc::statvfs` in `db/pg_store/relay.rs` (existing tests green)
-- [ ] 1.5 Bootstrap log path from `std::env::temp_dir()` in `app/src-tauri` (`lib.rs`, `flog.rs`)
-- [ ] 1.6 Remaining items from 1.1 until the Windows check is green; make the job required
+- [x] 1.2 `home_dir()` resolves the profile directory on Windows; still errors when no home is set (test both)
+- [x] 1.3 `shutdown_signal()` completes on Windows console control events (Windows test alongside the SIGTERM test)
+- [x] 1.4 Free disk via `sysinfo`, replacing `libc::statvfs` in `db/pg_store/relay.rs` (existing tests green)
+- [x] 1.5 Bootstrap log path from `std::env::temp_dir()` in `app/src-tauri` (`lib.rs`, `flog.rs`)
+- [x] 1.6 Remaining items from 1.1 until the Windows check is green (4 rounds: Unix-only script/symlink tests
+  gated, exec-bit check split; green on PR #507)
+- [ ] 1.7 Make the `windows` job a required check on develop/main (branch protection — the user's call)
+- [ ] 1.8 Extend the Windows job to `app/src-tauri` (its own workspace; not covered by 1.1)
 
 ## 2. Runtime on Windows (slice 2, depends on 1)
 - [ ] 2.1 POSIX shell lookup in `bootstrap::util` (Git `sh.exe` on Windows; a miss names Git for Windows)
