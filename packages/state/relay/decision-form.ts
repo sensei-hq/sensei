@@ -281,12 +281,23 @@ function toNfa(root: PatternNode): { states: NfaState[]; start: number } {
       case 'alt':
         return node.items.map(build).reduceRight((rest, item) => either(item, rest));
       case 'rep': {
+        // A body that adds no state matches only empty, and so does any count of it: return
+        // before the loops, which the state cap cannot bound when no copy adds a state.
+        if (node.max === 0) return EMPTY;
+        let spare: Frag | null = build(node.node);
+        if (spare.start === null) return EMPTY;
+        // Each copy after the first is built afresh; the first is the one built above.
+        const copy = (): Frag => {
+          const f = spare ?? build(node.node);
+          spare = null;
+          return f;
+        };
         let frag = EMPTY;
-        for (let k = 0; k < node.min; k++) frag = join(frag, build(node.node));
-        if (node.max === Infinity) return join(frag, star(build(node.node)));
+        for (let k = 0; k < node.min; k++) frag = join(frag, copy());
+        if (node.max === Infinity) return join(frag, star(copy()));
         // x{m,n}: n - m optional copies, each nested in the one before.
         let tail = EMPTY;
-        for (let k = node.min; k < node.max; k++) tail = either(join(build(node.node), tail), EMPTY);
+        for (let k = node.min; k < node.max; k++) tail = either(join(copy(), tail), EMPTY);
         return join(frag, tail);
       }
     }
