@@ -7,14 +7,16 @@
  *   - Editors lists Cursor with the model and the config path;
  *   - picking Cursor words the note for Cursor's agent chat and names the config;
  *   - picking Claude Code words it for a Claude Code session;
- *   - the paste line never changes.
+ *   - the paste line never changes;
+ *   - away on Queue, a later Claude Code session starts; back on Crew, its count shows it
+ *     (the catalogue is read on every opening of Crew, not once per page).
  * Only what the spec seeded is asserted; nothing is asserted absent (the probe sees
  * /Applications, which the isolated home does not hide).
  */
 import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateToScreen, seedSetupComplete, DAEMON_URL } from '../helpers';
 import { E2E_HOME, seedSenseiMcp } from '../isolated-home';
-import { CATALOGUE_MODEL, seedCatalogue } from '../lib/seed-catalogue';
+import { CATALOGUE_MODEL, seedCatalogue, seedLaterClaude } from '../lib/seed-catalogue';
 
 const STREAM = 20_000;
 let tauri: TauriPageLike;
@@ -70,4 +72,13 @@ test('AddMember lists the assistants and editors this machine has seen, and pick
   await expect.poll(() => attrOf(claude, 'aria-pressed'), { timeout: STREAM }).toBe('true');
   await expect.poll(() => textOf('[data-command-note]'), { timeout: STREAM }).toContain('Paste it into a Claude Code session');
   expect(await textOf('[data-paste-text]')).toBe(line);
+
+  // Away to Queue (with no crew, Now draws Crew); a later Claude Code session starts.
+  // Back on Crew, with no reload, the count is the new one.
+  await tauriPage.locator('[data-screen-tools] [aria-label^="Queue"]').click();
+  await expect(tauriPage.locator('[data-add-member]')).toHaveCount(0, { timeout: STREAM });
+  const later = await seedLaterClaude(DAEMON_URL, `e2e-catalogue-later-${Date.now()}`);
+  expect(later).toBe(claudeSessions + 1);
+  await tauriPage.locator('[data-screen-tools] [aria-label^="Crew"]').click();
+  await expect.poll(() => textOf(claude), { timeout: STREAM }).toContain(`${later} sessions this week`);
 });

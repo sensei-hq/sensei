@@ -11,6 +11,10 @@ import { E2E_DB } from './seed-ticket';
 
 export const CATALOGUE_MODEL = 'claude-sonnet-4-5';
 
+/** How many Claude Code sessions started this week: the number Assistants shows. */
+const CLAUDE_WEEK_SQL = `select count(*) from activity.sessions
+ where acp_id in ('claude', 'claude-code') and started_at > now() - interval '7 days';`;
+
 /** The SQL, apart so a spec can pin it. `:'config'` is the Cursor config path. */
 export const SEED_CATALOGUE_SQL = `
 insert into activity.sessions (client_session_id, acp_id, started_at)
@@ -25,24 +29,41 @@ insert into sensei.assistant_installs (catalogue_id, installed, config_path, con
 values ('cursor', true, :'config', true, now())
 on conflict (catalogue_id) do update
    set installed = true, config_path = excluded.config_path, configured = true, detected_at = now();
-select count(*) from activity.sessions
- where acp_id in ('claude', 'claude-code') and started_at > now() - interval '7 days';`;
+${CLAUDE_WEEK_SQL}`;
+
+/** A later Claude Code session, seeded while the Crew view is away: a re-opened Crew
+ *  must count it (the catalogue is read on every opening). `:'id'` is its session id. */
+export const SEED_LATER_CLAUDE_SQL = `
+insert into activity.sessions (client_session_id, acp_id, started_at)
+values (:'id', 'claude', now())
+on conflict (client_session_id) where client_session_id is not null do update set started_at = now();
+${CLAUDE_WEEK_SQL}`;
 
 async function refuseUnlessE2e(daemonUrl: string): Promise<void> {
   const health = (await fetch(`${daemonUrl}/health`).then((r) => r.json())) as { dbName?: string };
   if (health.dbName !== E2E_DB) throw new Error(`refusing to seed the catalogue into "${health.dbName}"`);
 }
 
-/** Seed the sessions and Cursor's install row; returns how many Claude Code sessions
- *  started this week (the number Assistants shows), whatever earlier specs left. */
-export async function seedCatalogue(daemonUrl: string, home: string): Promise<number> {
+/** Run `sql` on the e2e database with `vars`; returns the Claude Code week count it ends on. */
+async function runCounting(daemonUrl: string, sql: string, vars: Record<string, string>): Promise<number> {
   await refuseUnlessE2e(daemonUrl);
-  const out = execFileSync(
-    psqlBin(),
-    ['-d', E2E_DB, '-v', 'ON_ERROR_STOP=1', '-v', `config=${join(home, '.cursor', 'mcp.json')}`, '-qAt'],
-    { input: SEED_CATALOGUE_SQL, stdio: ['pipe', 'pipe', 'pipe'] },
-  ).toString();
+  const args = Object.entries(vars).flatMap(([k, v]) => ['-v', `${k}=${v}`]);
+  const out = execFileSync(psqlBin(), ['-d', E2E_DB, '-v', 'ON_ERROR_STOP=1', ...args, '-qAt'], {
+    input: sql,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }).toString();
   const n = Number(out.trim().split('\n').pop());
   if (!Number.isInteger(n) || n < 1) throw new Error(`catalogue not seeded (psql said "${out.trim()}")`);
   return n;
+}
+
+/** Seed the sessions and Cursor's install row; returns how many Claude Code sessions
+ *  started this week (the number Assistants shows), whatever earlier specs left. */
+export function seedCatalogue(daemonUrl: string, home: string): Promise<number> {
+  return runCounting(daemonUrl, SEED_CATALOGUE_SQL, { config: join(home, '.cursor', 'mcp.json') });
+}
+
+/** Seed one more Claude Code session (`id`, unique per run); returns the new week count. */
+export function seedLaterClaude(daemonUrl: string, id: string): Promise<number> {
+  return runCounting(daemonUrl, SEED_LATER_CLAUDE_SQL, { id });
 }
