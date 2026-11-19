@@ -172,6 +172,21 @@ describe('toPatternMatcher', () => {
     expect(performance.now() - start).toBeLessThan(250);
   });
 
+  // A counted repeat of a body that matches empty adds no state, so the state cap never fires:
+  // the daemon accepts `(){4000000000}x` (Rust `regex` compiles it in microseconds), and a loop
+  // over the count would freeze the webview on Answer and on every edit while a message shows.
+  it.each([
+    ['(){4000000000}x', 'x', true],
+    ['(){4000000000,}x', 'ax', true],
+    ['(){0,4000000000}x', 'y', false],
+    ['((){60000}){60000}x', 'x', true],
+    ['(()*){4000000000}^$', '', true],
+  ])('builds %s without walking its count', (pattern, text, matches) => {
+    const start = performance.now();
+    expect(m(pattern)(text)).toBe(matches);
+    expect(performance.now() - start).toBeLessThan(250);
+  });
+
   // A lane's pattern may nest quantifiers or repeat overlapping ones: Rust `regex` runs it in
   // linear time and the daemon accepts it, but a backtracking RegExp takes exponential time and
   // would freeze the webview on Answer and on every edit while a message shows.
