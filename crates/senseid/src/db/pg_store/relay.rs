@@ -1081,22 +1081,26 @@ async fn grant_next_waiter(
     }
 }
 
-/// Free disk on `/`, in GiB (`df -g` units). Null when unreadable — the
-/// screen degrades, the read never fails for it.
+/// Free disk on the volume holding the user's home, in GiB (`df -g` units) —
+/// `/` on a single-volume Unix, the system drive on Windows. Null when
+/// unreadable — the screen degrades, the read never fails for it.
 fn disk_free_gb() -> Option<u64> {
-    // statvfs widths differ per platform (macOS u32/u64, Linux u64/u64):
-    // the fallible conversions keep one body compiling everywhere.
-    #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
-    fn blocks_to_bytes(blocks: impl TryInto<u64>, size: impl TryInto<u64>) -> Option<u64> {
-        blocks.try_into().ok()?.checked_mul(size.try_into().ok()?)
-    }
-    let mut vfs = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    if unsafe { libc::statvfs(c"/".as_ptr(), vfs.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    let vfs = unsafe { vfs.assume_init() };
-    let free = blocks_to_bytes(vfs.f_bavail, vfs.f_frsize)?;
-    Some(free / 1024 / 1024 / 1024)
+    let home = sensei_bootstrap::config::try_home_dir()?;
+    let disks: Vec<(std::path::PathBuf, u64)> = sysinfo::Disks::new_with_refreshed_list()
+        .iter()
+        .map(|d| (d.mount_point().to_path_buf(), d.available_space()))
+        .collect();
+    free_on(&home, &disks)
+}
+
+/// Free GiB on the deepest mount point that holds `path`, from
+/// `(mount point, available bytes)` pairs.
+fn free_on(path: &std::path::Path, disks: &[(std::path::PathBuf, u64)]) -> Option<u64> {
+    disks
+        .iter()
+        .filter(|(mount, _)| path.starts_with(mount))
+        .max_by_key(|(mount, _)| mount.components().count())
+        .map(|(_, free)| free / 1024 / 1024 / 1024)
 }
 
 /// Free swap, in GiB. macOS reads `vm.swapusage`; anywhere else (or on any
@@ -8444,6 +8448,32 @@ fn item_kind_of_issue_type(issue_type: Option<&str>) -> RelayItemKind {
             RelayItemKind::Feature
         }
         _ => RelayItemKind::Issue,
+    }
+}
+
+#[cfg(test)]
+mod disk_free_tests {
+    use super::free_on;
+    use std::path::{Path, PathBuf};
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn picks_the_deepest_mount_holding_the_path() {
+        let disks = [(PathBuf::from("/"), 10 * GIB), (PathBuf::from("/home"), 50 * GIB)];
+        assert_eq!(free_on(Path::new("/home/ana"), &disks), Some(50));
+    }
+
+    #[test]
+    fn falls_back_to_the_root_mount() {
+        let disks = [(PathBuf::from("/"), 10 * GIB), (PathBuf::from("/home"), 50 * GIB)];
+        assert_eq!(free_on(Path::new("/var/lib"), &disks), Some(10));
+    }
+
+    #[test]
+    fn no_mount_holding_the_path_is_null() {
+        let disks = [(PathBuf::from("/mnt/x"), 10 * GIB)];
+        assert_eq!(free_on(Path::new("/home/ana"), &disks), None);
     }
 }
 
