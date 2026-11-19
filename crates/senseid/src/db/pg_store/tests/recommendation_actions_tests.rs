@@ -247,6 +247,8 @@ async fn a_snoozed_rec_is_never_the_focal_pick() {
 /// A repository folder on disk (`<repo>/inside.rs`), a directory outside it
 /// (`<elsewhere>/outside.rs`), and `<repo>/link → <elsewhere>`: the fixture the
 /// confinement tests share. The tempdirs live while the returned guards do.
+/// Unix only, with its tests: a symlink on Windows needs a privilege.
+#[cfg(unix)]
 async fn confinement_fixture(
     s: &PgStore,
     tag: &str,
@@ -288,6 +290,7 @@ async fn offered_file(
 /// session edited `~/.zshrc`, or another repository's file) is not offered, even
 /// though it exists; one inside the repository by its absolute path is, as
 /// written (not its canonical `/private/var/…` form on macOS).
+#[cfg(unix)]
 #[tokio::test]
 async fn a_rework_file_outside_its_repository_is_not_offered() {
     let s = pg_store().await;
@@ -307,6 +310,7 @@ async fn a_rework_file_outside_its_repository_is_not_offered() {
 /// target inside (lanes review r1 LOW-1, L0: canonicalise BOTH the file and the
 /// root; on macOS the tempdirs live under `/var` → `/private/var`, so
 /// canonicalising one side only would also fail the inside case above).
+#[cfg(unix)]
 #[tokio::test]
 async fn an_absolute_path_through_an_in_repository_symlink_out_is_not_offered() {
     let s = pg_store().await;
@@ -323,6 +327,7 @@ async fn an_absolute_path_through_an_in_repository_symlink_out_is_not_offered() 
 /// The same escape written relative to the repository (lanes review r2 F1, L0:
 /// required) — the common shape, and lexically inside, so a confinement check
 /// made only on absolute paths would offer it.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_relative_path_through_an_in_repository_symlink_out_is_not_offered() {
     let s = pg_store().await;
