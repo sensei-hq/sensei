@@ -1420,7 +1420,8 @@ impl PgStore {
         client_session_id: &str,
         patch: &SessionMetadataPatch<'_>,
     ) -> Result<(), String> {
-        let &SessionMetadataPatch { provider, model, tokens_in, tokens_out, split } = patch;
+        let &SessionMetadataPatch { provider, model, tokens_in, tokens_out, split, host: _ } =
+            patch;
         // COALESCE throughout: a source that reports no split must not erase what
         // another pass captured, and `tokens_in` keeps its "all input" meaning.
         sqlx_core::query::query(

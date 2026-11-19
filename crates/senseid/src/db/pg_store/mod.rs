@@ -1788,6 +1788,8 @@ pub struct SessionMetadataPatch<'a> {
     pub tokens_in: Option<i64>,
     pub tokens_out: Option<i64>,
     pub split: Option<&'a crate::transcript::SessionTokens>,
+    /// The editor the session ran in (#455); `None` keeps the stored host.
+    pub host: Option<&'a str>,
 }
 
 // Written by `sessions.rs`.

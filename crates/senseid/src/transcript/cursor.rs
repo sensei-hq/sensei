@@ -244,6 +244,9 @@ impl TranscriptAdapter for CursorAdapter {
     fn source(&self) -> &'static str {
         "cursor"
     }
+    fn host(&self) -> Option<&'static str> {
+        None
+    }
 
     fn family(&self) -> &'static str {
         "cursor"
