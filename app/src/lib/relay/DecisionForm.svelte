@@ -73,6 +73,10 @@
     return Object.keys(messages).length > 0 ? null : toAnswerValues(form.schema, builder.data);
   }
 
+  // `disabled` goes to InputField only when true: rokkit writes `data-field-disabled={disabled}`, so an
+  // enabled field carries `"false"`, and zen-sumi fades any `[data-field-disabled]` field to 40%
+  // (axe color-contrast; sensei-hq/rokkit#207).
+
   // A pick-several draws through DecisionPickSeveral: no control nested in the MultiSelect's trigger.
   const renderers = { multiselect: DecisionPickSeveral as never };
 
@@ -111,7 +115,7 @@
       type={element.type}
       value={element.value}
       {...element.props}
-      {disabled}
+      disabled={disabled || undefined}
       {renderers}
       onchange={(value: unknown) => change(path, value)}
     />
