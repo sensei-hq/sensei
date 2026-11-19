@@ -244,11 +244,8 @@ fn print_capture_section(fix: bool) -> i32 {
                 .and_then(|r| r.json::<serde_json::Value>())
             {
                 Ok(rep) => {
-                    let ok = rep["ok"].as_bool().unwrap_or(false);
-                    if ok {
-                        println!("    {} resolved", green("✓"));
-                    } else {
-                        println!("    {} failed: {}", red("✗"), dim(&rep["errors"].to_string()));
+                    for line in resolve_report_lines(&rep) {
+                        println!("{line}");
                     }
                 }
                 Err(e) => println!("    {} request failed: {}", red("✗"), dim(&e.to_string())),
@@ -266,6 +263,15 @@ fn print_capture_section(fix: bool) -> i32 {
     }
 
     worst_fail
+}
+
+/// What `sensei doctor --fix` prints for one `/api/assistants/resolve` report.
+fn resolve_report_lines(rep: &serde_json::Value) -> Vec<String> {
+    if rep["ok"].as_bool().unwrap_or(false) {
+        vec![format!("    {} resolved", green("✓"))]
+    } else {
+        vec![format!("    {} failed: {}", red("✗"), dim(&rep["errors"].to_string()))]
+    }
 }
 
 // ── Watchdog section ────────────────────────────────────────────────────────
@@ -463,6 +469,23 @@ fn print_terminal(t: &HealthPayload) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The resolve re-detects the installs (#455 review); a failed re-detect
+    // rides on the report as a warning and is printed under the verdict.
+    #[test]
+    fn a_resolve_prints_its_warnings() {
+        let lines = resolve_report_lines(&serde_json::json!({
+            "adapter_id": "cursor", "ok": true, "actions": [], "errors": [],
+            "warnings": ["re-detect installs: boom"],
+        }));
+        assert_eq!(
+            lines,
+            vec![
+                format!("    {} resolved", green("✓")),
+                "    ! re-detect installs: boom".to_string()
+            ]
+        );
+    }
     use sensei_bootstrap::engines::{Cause, Engine, EngineStatus};
 
     fn status(engine: Engine, missing: Vec<Cause>) -> EngineStatus {

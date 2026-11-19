@@ -924,41 +924,7 @@ fn remove_all(purge: bool) {
     {
         Ok(r) if r.status().is_success() => {
             let result: serde_json::Value = r.json().unwrap_or_default();
-
-            println!("\n--- removed ---");
-
-            for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
-                println!("  ✓ ACP removed: {}", id.as_str().unwrap_or("?"));
-            }
-            let skills = result["skills_removed"].as_u64().unwrap_or(0);
-            let cmds = result["commands_removed"].as_u64().unwrap_or(0);
-            let agents = result["agents_removed"].as_u64().unwrap_or(0);
-            if skills > 0 {
-                println!("  ✓ {} skills removed", skills);
-            }
-            if cmds > 0 {
-                println!("  ✓ {} commands removed", cmds);
-            }
-            if agents > 0 {
-                println!("  ✓ {} agents removed", agents);
-            }
-            if result["hooks_removed"].as_bool() == Some(true) {
-                println!("  ✓ Hooks removed");
-            }
-            if result["plugin_removed"].as_bool() == Some(true) {
-                println!("  ✓ Plugin removed");
-            }
-            if result["cache_cleared"].as_bool() == Some(true) {
-                println!("  ✓ Cache cleared");
-            }
-
-            for p in result["workspaces_cleaned"].as_array().unwrap_or(&vec![]) {
-                println!("  ✓ Workspace cleaned: {}", p.as_str().unwrap_or("?"));
-            }
-
-            for e in result["errors"].as_array().unwrap_or(&vec![]) {
-                eprintln!("  ✗ {}", e.as_str().unwrap_or("?"));
-            }
+            print_report_lines(remove_all_report_lines(&result));
         }
         Ok(r) => eprintln!("Remove failed: HTTP {}", r.status()),
         Err(e) => eprintln!("Remove failed: {}", e),
@@ -1048,6 +1014,41 @@ fn remove_report_lines(result: &serde_json::Value) -> ReportLines {
         err.push(format!("  ✗ {}", e.as_str().unwrap_or("?")));
     }
     push_warnings(&mut err, std::slice::from_ref(result));
+    (out, err)
+}
+
+/// What `sensei remove all` prints for the daemon's `/api/remove` response.
+fn remove_all_report_lines(result: &serde_json::Value) -> ReportLines {
+    let mut out = vec!["\n--- removed ---".to_string()];
+    let mut err = Vec::new();
+    for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
+        out.push(format!("  ✓ ACP removed: {}", id.as_str().unwrap_or("?")));
+    }
+    for (field, what) in [
+        ("skills_removed", "skills"),
+        ("commands_removed", "commands"),
+        ("agents_removed", "agents"),
+    ] {
+        let n = result[field].as_u64().unwrap_or(0);
+        if n > 0 {
+            out.push(format!("  ✓ {n} {what} removed"));
+        }
+    }
+    for (field, line) in [
+        ("hooks_removed", "  ✓ Hooks removed"),
+        ("plugin_removed", "  ✓ Plugin removed"),
+        ("cache_cleared", "  ✓ Cache cleared"),
+    ] {
+        if result[field].as_bool() == Some(true) {
+            out.push(line.to_string());
+        }
+    }
+    for p in result["workspaces_cleaned"].as_array().unwrap_or(&vec![]) {
+        out.push(format!("  ✓ Workspace cleaned: {}", p.as_str().unwrap_or("?")));
+    }
+    for e in result["errors"].as_array().unwrap_or(&vec![]) {
+        err.push(format!("  ✗ {}", e.as_str().unwrap_or("?")));
+    }
     (out, err)
 }
 
@@ -2059,6 +2060,34 @@ mod tests {
         }));
         assert_eq!(out, vec!["  ✓ Removed claude-code".to_string()]);
         assert_eq!(err, vec!["  ! re-detect installs: boom".to_string()]);
+    }
+
+    #[test]
+    fn remove_all_prints_what_went_and_its_warnings() {
+        // `sensei remove all` re-detects the installs after the removal
+        // (#455 review); a failed re-detect is a warning and is printed.
+        let (out, err) = remove_all_report_lines(&serde_json::json!({
+            "acps_removed": ["cursor"],
+            "skills_removed": 2, "commands_removed": 0, "agents_removed": 0,
+            "hooks_removed": true, "plugin_removed": false, "cache_cleared": true,
+            "workspaces_cleaned": [],
+            "errors": ["plugin dir: busy"],
+            "warnings": ["re-detect installs: boom"],
+        }));
+        assert_eq!(
+            out,
+            vec![
+                "\n--- removed ---".to_string(),
+                "  ✓ ACP removed: cursor".to_string(),
+                "  ✓ 2 skills removed".to_string(),
+                "  ✓ Hooks removed".to_string(),
+                "  ✓ Cache cleared".to_string(),
+            ]
+        );
+        assert_eq!(
+            err,
+            vec!["  ✗ plugin dir: busy".to_string(), "  ! re-detect installs: boom".to_string()]
+        );
     }
 
     #[test]
