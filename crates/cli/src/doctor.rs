@@ -267,11 +267,15 @@ fn print_capture_section(fix: bool) -> i32 {
 
 /// What `sensei doctor --fix` prints for one `/api/assistants/resolve` report.
 fn resolve_report_lines(rep: &serde_json::Value) -> Vec<String> {
-    if rep["ok"].as_bool().unwrap_or(false) {
+    let mut lines = if rep["ok"].as_bool().unwrap_or(false) {
         vec![format!("    {} resolved", green("✓"))]
     } else {
         vec![format!("    {} failed: {}", red("✗"), dim(&rep["errors"].to_string()))]
+    };
+    for w in rep["warnings"].as_array().into_iter().flatten().filter_map(|w| w.as_str()) {
+        lines.push(format!("    ! {w}"));
     }
+    lines
 }
 
 // ── Watchdog section ────────────────────────────────────────────────────────

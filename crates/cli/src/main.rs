@@ -1049,6 +1049,7 @@ fn remove_all_report_lines(result: &serde_json::Value) -> ReportLines {
     for e in result["errors"].as_array().unwrap_or(&vec![]) {
         err.push(format!("  ✗ {}", e.as_str().unwrap_or("?")));
     }
+    push_warnings(&mut err, std::slice::from_ref(result));
     (out, err)
 }
 
