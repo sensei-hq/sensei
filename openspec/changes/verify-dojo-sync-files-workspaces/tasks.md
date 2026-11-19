@@ -39,6 +39,14 @@ the org Workspaces read's `lead` floor (task 2.3).
       appears for it.
 - [x] 2.7 Post the results (counts and workspace names only, no transcript text, no emails) as a comment on
       #299.
+- [x] 2.8 Commit the walkthrough as a browser spec: `cd dojo && bun run test:e2e`
+      (`dojo/e2e/workspace-filing.e2e.ts`, local Supabase only). Each cycle is the daemon's
+      `POST /v1/you/repositories` body with the person's session as bearer. It covers 2.2–2.6 with a non-admin
+      contributor as the positive reader and a lead with no repository role as the negative one. With the route
+      floor put back to `lead`, the contributor test fails on the load-error notice.
+- [x] 2.9 Re-run the real daemon cycle (2.2, 2.4, 2.6) after the member-floor fix: a scratch `senseid --instance`
+      with `DOJO_URL` at the local dōjō, then the Workspaces screen checked in a browser as the contributor and
+      as the lead.
 
 ## 3. Production runbook (user only; not run by the workflow)
 

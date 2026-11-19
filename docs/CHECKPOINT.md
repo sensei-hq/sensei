@@ -3,16 +3,15 @@
 **Slice:** `verify-dojo-sync-files-workspaces` slice 1/1 (#299). Branch `lane/relay-299-s1`
 (worktree `lanes/relay-open`), PR #503.
 
-**Done (tasks 1.1–1.4, 2.1–2.7) + #503 review fix:**
+**Done (tasks 1.1–1.4, 2.1–2.9) + #503 review fixes:**
 - SQL `make test-db` 101/101; dōjō vitest 237 files / 2411 tests; senseid filing tests pass.
-- Walkthrough: one workspace filed by the sync, one link, same id after cycle 2; unconnected org files nothing.
-- Review fix: step 2.3 re-run as a NON-admin contributor with a role on the filed repository. It got 403
-  "lead role required": `GET /v1/t/{origin}/{org}/workspaces` gated at `lead`. Red `110729d0e`, fix
-  `87d9a1693` (floor = member; the RLS policy decides rows). Re-walked: the contributor sees 1 row, the filed
-  workspace; the lead with no role on it still does not.
-- `repository_workspace_filing.sql` now asserts a non-admin with a repository role reads the filed workspace
-  and a lead without one does not (`b34ec28a3`; fails under a mutant `can_read_workspace` with no repository
-  branch, where the old file passed).
+- Member floor on `GET /v1/t/{origin}/{org}/workspaces` (red `110729d0e`, fix `87d9a1693`).
+- Committed browser spec `dojo/e2e/workspace-filing.e2e.ts` (`cd dojo && bun run test:e2e`, local Supabase
+  only): two sync cycles, contributor sees the filed workspace once, lead with no repository role sees none,
+  unconnected org files nothing. 5/5 green; red with the floor put back to `lead`.
+- Live re-run after the fix: scratch `senseid --instance` against the local dōjō, 7 cycles `mapped=1
+  unmapped=1`, no "could not file" warning, 1 workspace (same id) and 1 link throughout; browser: contributor
+  1 row, lead 0 rows.
 
 **Remaining:** tasks 3.1–3.5, the production runbook (user only). The member floor reaches production with
 the next release.
@@ -21,5 +20,5 @@ the next release.
 
 **Open questions:** none.
 
-**Known broken:** none from this branch. A lane test DB created before a DDL merge goes stale; drop
-`sensei_test_<lane>` and `make test-db` recreates it.
+**Known broken:** none from this branch. `bun run test:e2e` is not in CI (needs a local Supabase). A scratch
+daemon reads a `security`-written keychain item only with `SENSEI_CREDENTIAL_BACKEND=security`.
