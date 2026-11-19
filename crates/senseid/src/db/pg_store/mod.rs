@@ -1762,6 +1762,9 @@ pub struct AssistantInstallRow<'a> {
     pub installed: bool,
     pub config_path: Option<&'a str>,
     pub configured: bool,
+    /// Whether this sensei configured the tool in the action that triggered
+    /// the run; only then do `configured_at` / `configured_version` move.
+    pub configured_now: bool,
 }
 
 // Written by `sessions.rs`.

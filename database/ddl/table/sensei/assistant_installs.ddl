@@ -31,9 +31,10 @@ comment on column assistant_installs.config_path
 comment on column assistant_installs.configured
      is 'Whether sensei is wired into the tool (plugin installed or MCP entry present).';
 comment on column assistant_installs.configured_at
-     is 'When sensei was last configured into it from this machine. Null if never seen configured.';
+     is 'When sensei last configured itself into it from this machine (configure, or an upgrade
+that re-pushed it). Detection never sets it: null when sensei has not configured it here.';
 comment on column assistant_installs.configured_version
-     is 'The sensei version at that configuration.';
+     is 'The sensei version that made that configuration; null with configured_at.';
 comment on column assistant_installs.detected_at
      is 'When the probe last ran for this tool.';
 comment on column assistant_installs.modified_at

@@ -170,20 +170,25 @@ pub fn detect() -> Vec<AssistantStatus> {
 
 /// Probe this machine and store what it found, one row per catalogue tool
 /// (#455). Runs on first run, after configure/remove/upgrade, and on "Detect
-/// again". Returns the stored rows joined to the catalogue.
+/// again". `just_configured` names the registry ids this sensei configured in
+/// the action that triggered the run (empty for detection alone); only those,
+/// when the probe confirms them, get this time and version as their
+/// configuration. Returns the stored rows joined to the catalogue.
 pub async fn sync_installs(
     pg: &crate::db::pg_store::PgStore,
+    just_configured: &[String],
 ) -> Result<Vec<serde_json::Value>, String> {
     let statuses = tokio::task::spawn_blocking(detect)
         .await
         .map_err(|e| format!("assistant probe panicked: {e}"))?;
-    sync_installs_with(pg, &statuses).await
+    sync_installs_with(pg, &statuses, just_configured).await
 }
 
 /// [`sync_installs`] with the probe's result given — the seam tests inject.
 pub async fn sync_installs_with(
     pg: &crate::db::pg_store::PgStore,
     statuses: &[AssistantStatus],
+    just_configured: &[String],
 ) -> Result<Vec<serde_json::Value>, String> {
     let rows: Vec<crate::db::pg_store::AssistantInstallRow<'_>> = statuses
         .iter()
@@ -192,6 +197,7 @@ pub async fn sync_installs_with(
             installed: s.installed,
             config_path: Some(s.config_path.as_str()),
             configured: s.configured,
+            configured_now: s.configured && just_configured.contains(&s.id),
         })
         .collect();
     let unknown = pg.upsert_assistant_installs(&rows, env!("CARGO_PKG_VERSION")).await?;
@@ -397,6 +403,13 @@ pub fn configure(
 /// file-based MCP assistant reports a no-op action (its config re-reads on the
 /// assistant's own restart).
 pub fn upgrade(assistant_ids: &[String]) -> Vec<AdapterResolveReport> {
+    upgrade_refreshing(assistant_ids).0
+}
+
+/// [`upgrade`], also naming the ids whose upgrade re-pushed sensei into the
+/// tool (a plugin update). A no-op upgrade refreshes nothing, so it does not
+/// count as configured by this sensei version.
+pub fn upgrade_refreshing(assistant_ids: &[String]) -> (Vec<AdapterResolveReport>, Vec<String>) {
     let assistants = all_assistants();
     let targets: Vec<&Box<dyn Assistant>> = if assistant_ids.is_empty() {
         assistants.iter().filter(|a| a.detect()).collect()
@@ -404,12 +417,14 @@ pub fn upgrade(assistant_ids: &[String]) -> Vec<AdapterResolveReport> {
         assistants.iter().filter(|a| assistant_ids.contains(&a.id().to_string())).collect()
     };
 
-    targets
+    let mut refreshed = Vec::new();
+    let reports = targets
         .iter()
         .map(|asst| match asst.upgrade() {
             Ok(ok) => {
                 let mut actions = Vec::new();
                 if ok.plugin {
+                    refreshed.push(asst.id().to_string());
                     actions.push(format!("upgraded {} plugin", asst.id()));
                 }
                 // A no-op assistant carries its explanatory note in warnings;
@@ -430,7 +445,8 @@ pub fn upgrade(assistant_ids: &[String]) -> Vec<AdapterResolveReport> {
                 errors: vec![e],
             },
         })
-        .collect()
+        .collect();
+    (reports, refreshed)
 }
 
 /// Broadcast one StateEvent per part. No-op when `tx` is `None` (CLI path)

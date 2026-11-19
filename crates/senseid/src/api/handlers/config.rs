@@ -161,7 +161,7 @@ pub(crate) async fn assistant_detect_families(
 pub(crate) async fn assistant_sync_installs(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    crate::assistants::sync_installs(&state.pg).await.map(Json).map_err(|e| {
+    crate::assistants::sync_installs(&state.pg, &[]).await.map(Json).map_err(|e| {
         tracing::warn!(error = %e, "assistants: install sync failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })
@@ -178,11 +178,12 @@ pub(crate) async fn assistant_installs(
     })
 }
 
-/// Re-detect after configure/remove/upgrade so the install rows follow. The
-/// action already happened; a failed sync is logged and returned for the
-/// caller to report, never swallowed.
-async fn resync_installs(state: &AppState) -> Option<String> {
-    match crate::assistants::sync_installs(&state.pg).await {
+/// Re-detect after configure/remove/upgrade so the install rows follow;
+/// `just_configured` are the ids the action configured into (see
+/// [`crate::assistants::sync_installs`]). The action already happened; a failed
+/// sync is logged and returned for the caller to report, never swallowed.
+async fn resync_installs(state: &AppState, just_configured: &[String]) -> Option<String> {
+    match crate::assistants::sync_installs(&state.pg, just_configured).await {
         Ok(_) => None,
         Err(e) => {
             tracing::warn!(error = %e, "assistants: install sync after an action failed");
@@ -207,7 +208,7 @@ pub(crate) async fn assistant_configure(
     let acps = body.acps;
     let tx = state.event_tx.clone();
     let mut result = crate::assistants::configure(&acps, Some(&tx));
-    if let Some(w) = resync_installs(&state).await {
+    if let Some(w) = resync_installs(&state, &result.configured).await {
         result.warnings.push(w);
     }
     Json(result)
@@ -229,8 +230,8 @@ pub(crate) async fn assistant_upgrade(
     State(state): State<AppState>,
     Json(body): Json<AssistantUpgradeBody>,
 ) -> Json<Vec<crate::assistants::AdapterResolveReport>> {
-    let mut reports = crate::assistants::upgrade(&body.acps);
-    if let Some(w) = resync_installs(&state).await {
+    let (mut reports, refreshed) = crate::assistants::upgrade_refreshing(&body.acps);
+    if let Some(w) = resync_installs(&state, &refreshed).await {
         for r in &mut reports {
             r.errors.push(w.clone());
         }
@@ -249,7 +250,7 @@ pub(crate) async fn assistant_remove(
     Json(body): Json<AssistantRemoveBody>,
 ) -> Json<serde_json::Value> {
     let removed = crate::assistants::remove_selected(&body.acps, Some(&state.event_tx));
-    let errors: Vec<String> = resync_installs(&state).await.into_iter().collect();
+    let errors: Vec<String> = resync_installs(&state, &[]).await.into_iter().collect();
     serde_json::json!({"assistants_removed": removed, "errors": errors}).into()
 }
 

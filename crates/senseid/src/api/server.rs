@@ -431,7 +431,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         let pg = state.pg.clone();
         tokio::spawn(async move {
             match pg.assistant_installs_empty().await {
-                Ok(true) => match crate::assistants::sync_installs(&pg).await {
+                Ok(true) => match crate::assistants::sync_installs(&pg, &[]).await {
                     Ok(rows) => {
                         tracing::info!(stored = rows.len(), "startup: detected assistant installs")
                     }

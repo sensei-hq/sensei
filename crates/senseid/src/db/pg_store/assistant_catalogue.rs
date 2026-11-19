@@ -30,8 +30,9 @@ impl PgStore {
     }
 
     /// Upsert one install row per probed tool, resolving each registry id through
-    /// the catalogue's words. `configured_at` / `configured_version` move when a
-    /// tool is first seen configured, or configured by another sensei version.
+    /// the catalogue's words. `configured_at` / `configured_version` move only for
+    /// a row with `configured_now` (this sensei just configured it); detection
+    /// alone observes `configured` and keeps any earlier configuration's stamp.
     /// Returns the registry ids the catalogue does not know; those are not stored.
     pub async fn upsert_assistant_installs(
         &self,
@@ -41,25 +42,27 @@ impl PgStore {
         let mut unknown = Vec::new();
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         for r in rows {
-            let &AssistantInstallRow { registry_id, installed, config_path, configured } = r;
+            let &AssistantInstallRow {
+                registry_id,
+                installed,
+                config_path,
+                configured,
+                configured_now,
+            } = r;
             let stored: Option<String> = sqlx_core::query_scalar::query_scalar(
                 "insert into sensei.assistant_installs as i
                         (catalogue_id, installed, config_path, configured,
                          configured_at, configured_version, detected_at, modified_at)
                  select w.id, $2, $3, $4,
-                        case when $4 then now() end, case when $4 then $5 end, now(), now()
+                        case when $6 then now() end, case when $6 then $5 end, now(), now()
                    from sensei.assistant_catalogue_words w
                   where w.word = $1
                  on conflict (catalogue_id) do update set
                         installed   = excluded.installed,
                         config_path = excluded.config_path,
                         configured  = excluded.configured,
-                        configured_at = case
-                            when excluded.configured
-                             and (not i.configured or i.configured_version is distinct from $5)
-                            then now() else i.configured_at end,
-                        configured_version = case
-                            when excluded.configured then $5 else i.configured_version end,
+                        configured_at = case when $6 then now() else i.configured_at end,
+                        configured_version = case when $6 then $5 else i.configured_version end,
                         detected_at = now(),
                         modified_at = now()
                  returning catalogue_id",
@@ -69,6 +72,7 @@ impl PgStore {
             .bind(config_path)
             .bind(configured)
             .bind(sensei_version)
+            .bind(configured_now)
             .fetch_optional(&mut *tx)
             .await
             .map_err(|e| format!("store the install of {registry_id}: {e}"))?;
