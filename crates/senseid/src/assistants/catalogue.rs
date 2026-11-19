@@ -6,8 +6,19 @@
 //! request, and answers "what is this word called, and what is it" for every surface
 //! that names a tool. A word with no row is unknown: it is named from its own words
 //! and never classified as an assistant or an editor.
-use crate::db::pg_store::CatalogueWordRow;
 use std::collections::HashMap;
+
+/// One spelling of a supported tool, as `sensei.assistant_catalogue_words`
+/// serves it: the word, the tool it names, its display name and kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogueWordRow {
+    pub word: String,
+    pub id: String,
+    pub name: String,
+    /// A `sensei.tool_kind` label: `assistant` or `editor`.
+    pub kind: String,
+    pub joins_crew: bool,
+}
 
 /// The kind a word with no catalogue row reads as.
 pub const UNKNOWN_KIND: &str = "unknown";

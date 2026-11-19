@@ -1,5 +1,6 @@
 //! The seeded catalogue of supported tools and this machine's installs (#455).
-use super::{AssistantInstallRow, CatalogueWordRow, PgStore};
+use super::{AssistantInstallRow, PgStore};
+use crate::assistants::CatalogueWordRow;
 
 impl PgStore {
     /// Every spelling of every supported tool (`sensei.assistant_catalogue_words`),
@@ -40,6 +41,7 @@ impl PgStore {
         let mut unknown = Vec::new();
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         for r in rows {
+            let &AssistantInstallRow { registry_id, installed, config_path, configured } = r;
             let stored: Option<String> = sqlx_core::query_scalar::query_scalar(
                 "insert into sensei.assistant_installs as i
                         (catalogue_id, installed, config_path, configured,
@@ -62,16 +64,16 @@ impl PgStore {
                         modified_at = now()
                  returning catalogue_id",
             )
-            .bind(r.registry_id)
-            .bind(r.installed)
-            .bind(r.config_path)
-            .bind(r.configured)
+            .bind(registry_id)
+            .bind(installed)
+            .bind(config_path)
+            .bind(configured)
             .bind(sensei_version)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| format!("store the install of {}: {e}", r.registry_id))?;
+            .map_err(|e| format!("store the install of {registry_id}: {e}"))?;
             if stored.is_none() {
-                unknown.push(r.registry_id.to_string());
+                unknown.push(registry_id.to_string());
             }
         }
         tx.commit().await.map_err(|e| e.to_string())?;

@@ -5,7 +5,7 @@ mod helpers;
 mod mcp_file;
 mod trait_def;
 mod watchdog;
-pub use catalogue::{CatalogueNames, UNKNOWN_KIND, readable};
+pub use catalogue::{CatalogueNames, CatalogueWordRow, UNKNOWN_KIND, readable};
 pub use health::{
     AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus, business_elapsed_hours,
     capture_freshness,
