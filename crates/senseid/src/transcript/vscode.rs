@@ -703,7 +703,7 @@ impl TranscriptAdapter for VscodeAdapter {
         "vscode"
     }
     fn host(&self) -> Option<&'static str> {
-        None
+        Some("vscode")
     }
 
     fn family(&self) -> &'static str {

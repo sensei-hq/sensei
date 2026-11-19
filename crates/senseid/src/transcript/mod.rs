@@ -702,7 +702,7 @@ async fn ingest_one(
     //    transcript whether the session was just synthesized or already existed, so
     //    a re-run backfills columns added after the session was first captured.
     //    Idempotent; a miss leaves the column untouched (never a fabricated value).
-    set_session_metadata(pg, &session_id, &parsed).await;
+    set_session_metadata(pg, &session_id, &parsed, adapter.host()).await;
     let session_id = (turns > 0).then(|| session_id.clone());
     Ok(IngestOutcome { skipped: false, turns, analyze_workspace, session_id })
 }
@@ -716,6 +716,7 @@ async fn set_session_metadata(
     pg: &crate::db::pg_store::PgStore,
     session_id: &str,
     parsed: &ParsedTranscript,
+    host: Option<&str>,
 ) {
     let (provider, model_name) = match &parsed.model {
         Some((p, m)) => (Some(p.as_str()), Some(m.as_str())),
@@ -741,7 +742,7 @@ async fn set_session_metadata(
                 tokens_in,
                 tokens_out,
                 split: t.as_ref(),
-                host: None,
+                host,
             },
         )
         .await

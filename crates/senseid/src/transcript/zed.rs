@@ -70,7 +70,7 @@ impl TranscriptAdapter for ZedAdapter {
         "zed"
     }
     fn host(&self) -> Option<&'static str> {
-        None
+        Some("zed")
     }
     fn family(&self) -> &'static str {
         // `family` is the harness/agent (the `sensei.assistant_family` enum:
