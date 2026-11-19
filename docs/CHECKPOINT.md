@@ -17,7 +17,13 @@
 - Review fix (PR #506): detection no longer stamps `configured_at`/`configured_version`; only configure
   (its successes) and an upgrade that re-pushes the plugin do (`sync_installs(pg, just_configured)`,
   `upgrade_refreshing`). Red `4d10703d`/`74308194`, green `16326351`.
-- e2e green: relay-catalogue, assistants-configure (switch now "Enable Claude Code"), configure-assistants,
+- Review fix 2 (PR #506): a failed install re-detect after remove/upgrade is a warning (remove answers
+  `warnings`; upgrade reports gain `warnings`, `ok`/`errors` untouched), so the wizard no longer reverts a landed
+  removal; a family card names its installed members ("Claude Code and Claude Desktop"). Same class fixed: the
+  CLI read `acps_removed` from `/api/assistants/remove` (daemon sends `assistants_removed`) and dropped upgrade
+  warnings; TS `RemoveResult` named the installer's field wrongly. Red `02fdde62`, green `5a0c5c66`;
+  configure-assistants nav bound 10s→20s `40d0c0df` (Continue measured 11.4s).
+- e2e green: relay-catalogue, assistants-configure (switch names the installed members), configure-assistants,
   every relay*/settings spec; observatory-daily now gates on the rows Today draws.
 - Gates: fmt, clippy -D warnings (senseid, sensei-mcp), senseid DB tests serial, `make test-db` 102/102.
 

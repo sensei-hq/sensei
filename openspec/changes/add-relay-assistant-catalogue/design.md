@@ -113,6 +113,9 @@ Where things stand on develop (`c25d1a930`):
   (`crates/senseid/src/assistants/mod.rs:33-115`, plus `ClaudeCodeAssistant::name` in
   `assistants/claude_code.rs:435`), and nowhere for kind. After this change the seeded catalogue owns them. The
   registry keeps its ids and probes only; the names it serves come from the catalogue through the install rows.
+  A setup family card (the `claude` family groups Claude Code and Claude Desktop) is named after the members its
+  switch acts on — the installed ones, or all when none is — joined from their catalogue names ("Claude Code and
+  Claude Desktop"), never the family id's own row (review of PR #506).
   `assistantLabel` is fed from four relay reads, not one, and each must carry the served name before
   `FAMILY_NAMES` can go:
   - the Now lane (`now_lane_json`, `crates/senseid/src/db/pg_store/relay.rs:1497-1531`): `family_name` and
