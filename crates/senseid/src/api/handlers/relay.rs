@@ -1790,6 +1790,15 @@ pub(crate) async fn now(
     ok(now)
 }
 
+/// `GET /relay/catalogue` (#455): the assistants and editors this machine has
+/// seen, for AddMember's picker. `workspace_id` is accepted for launch templates
+/// (deferred) and unused. A failed read is a 500, never empty lists.
+pub(crate) async fn catalogue(State(state): State<AppState>) -> RelayResult {
+    person_user(&state).await.map_err(err)?;
+    let catalogue = state.pg.relay_catalogue().await.map_err(|e| err(RelayError::Internal(e)))?;
+    ok(catalogue)
+}
+
 pub(crate) async fn queue(
     State(state): State<AppState>,
     Query(query): Query<ReadQuery>,
@@ -7161,6 +7170,6 @@ mod tests {
         let (status, view) =
             call(&h, "GET", &format!("/relay/tasks/{crew}/{task0}"), None, None).await;
         assert_eq!(status, StatusCode::OK, "{view}");
-        assert_eq!(view["lane"]["family_name"], "Muse", "{view}");
+        assert_eq!(view["task"]["lane"]["family_name"], "Muse", "{view}");
     }
 }

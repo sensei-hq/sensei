@@ -108,4 +108,63 @@ impl PgStore {
         .await
         .map_err(|e| format!("read the assistant installs: {e}"))
     }
+
+    /// `GET /relay/catalogue` (#455): the catalogue, this machine's installs and
+    /// what sessions named, shaped by [`crate::assistants::assemble_catalogue`].
+    /// Reads only the database, never the filesystem; any failed read is an error.
+    pub async fn relay_catalogue(&self) -> Result<serde_json::Value, String> {
+        let names = self.catalogue_names().await?;
+        let installs: Vec<(String, bool, bool, Option<String>)> = sqlx_core::query_as::query_as(
+            "select catalogue_id, installed, configured, config_path from sensei.assistant_installs",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("read the assistant installs: {e}"))?;
+        let installs: Vec<crate::assistants::ToolInstall> = installs
+            .into_iter()
+            .map(|(id, installed, configured, config_path)| crate::assistants::ToolInstall {
+                id,
+                installed,
+                configured,
+                config_path,
+            })
+            .collect();
+        // A session names its assistant (acp_id) and, when it ran in one, its
+        // editor (host); a host equal to the acp_id is the same tool, counted once.
+        let usage: Vec<(String, Option<chrono::DateTime<chrono::Utc>>, i64)> =
+            sqlx_core::query_as::query_as(
+                "select word, max(started_at),
+                        count(*) filter (where started_at > now() - interval '7 days')
+                   from (select acp_id as word, started_at from activity.sessions where acp_id is not null
+                         union all
+                         select host, started_at from activity.sessions
+                          where host is not null and host is distinct from acp_id) named
+                  group by word",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("read session usage: {e}"))?;
+        let usage: Vec<crate::assistants::WordUsage> = usage
+            .into_iter()
+            .map(|(word, last_used_at, sessions_week)| crate::assistants::WordUsage {
+                word,
+                last_used_at,
+                sessions_week,
+            })
+            .collect();
+        let models: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "select word, model
+               from (select acp_id as word, model, started_at from activity.sessions
+                      where acp_id is not null and model is not null
+                     union all
+                     select host, model, started_at from activity.sessions
+                      where host is not null and host is distinct from acp_id and model is not null) named
+              group by word, model
+              order by max(started_at) desc, word, model",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("read session models: {e}"))?;
+        Ok(crate::assistants::assemble_catalogue(&names, &installs, &usage, &models))
+    }
 }

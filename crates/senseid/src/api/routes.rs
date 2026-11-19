@@ -131,6 +131,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/relay/resources/request", post(relay::request_resource))
         .route("/api/relay/resources/release", post(relay::release_resource))
         .route("/relay/now", get(relay::now))
+        .route("/relay/catalogue", get(relay::catalogue))
         .route("/relay/queue", get(relay::queue))
         .route("/relay/tasks/{crew_id}/{task_id}", get(relay::task_view))
         .route("/relay/messages", post(relay::person_message))
