@@ -16,7 +16,7 @@ use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use super::PgStore;
-use crate::relay::decision_schema::validate_values;
+use crate::relay::decision_schema::{validate_values, with_lane_order};
 use crate::relay::envelope::{
     EnvelopeAnswer, EnvelopeAssignment, EnvelopeBrief, EnvelopeMessage, EnvelopeReview,
     EnvelopeTicket, LaneEnvelope, ReviewDirection,
@@ -5191,7 +5191,8 @@ impl PgStore {
             props.insert("options".into(), serde_json::Value::Array(options));
         }
         if let Some(response) = &input.response {
-            props.insert("response".into(), response.clone());
+            // jsonb reorders `properties`; the layout keeps the lane's order.
+            props.insert("response".into(), with_lane_order(response.clone()));
         }
         if let Some(context) = &input.context {
             props.insert("context".into(), serde_json::Value::String(context.clone()));
@@ -11272,6 +11273,14 @@ mod tests {
         }, "required": ["path"]}})
     }
 
+    /// `form_response` as the daemon stores it: with the layout it adds, in the lane's order.
+    fn stored_form_response() -> serde_json::Value {
+        let mut stored = form_response();
+        stored["layout"] =
+            json!({"type": "vertical", "elements": [{"scope": "#/path"}, {"scope": "#/count"}]});
+        stored
+    }
+
     fn form_ask(blocks: Vec<Uuid>) -> RelayAskInput {
         RelayAskInput {
             options: vec![],
@@ -11307,7 +11316,7 @@ mod tests {
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(props["response"]["schema"], form_response()["schema"]);
+        assert_eq!(props["response"], stored_form_response());
         assert!(props.get("options").is_none(), "a form carries no options: {props}");
         assert_eq!(task_state(&pg, w).await, "blocked");
     }
@@ -11469,12 +11478,12 @@ mod tests {
             .find(|d| d["id"] == decision.decision_id.to_string())
             .cloned()
             .unwrap_or_else(|| panic!("not on Now: {now}"));
-        assert_eq!(d["response"], form_response());
+        assert_eq!(d["response"], stored_form_response());
         assert_eq!(d["options"], json!([]));
         let row = pg.relay_decision_row(decision.decision_id).await.unwrap().unwrap();
-        assert_eq!(row["response"], form_response());
+        assert_eq!(row["response"], stored_form_response());
         let view = pg.relay_task_view(u1(), c1, w).await.unwrap();
-        assert_eq!(view["decision"]["response"], form_response());
+        assert_eq!(view["decision"]["response"], stored_form_response());
         assert_eq!(view["decision"]["options"], json!([]));
         // Answered: the asking lane's envelope reads the values, option null.
         let values = json!({"path": "src/x"});

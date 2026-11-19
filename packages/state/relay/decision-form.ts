@@ -1,8 +1,10 @@
 // A form decision's form (#389 D6): what `@rokkit/forms` draws for a decision's `response`.
-// The schema passes through unchanged (no sensei field format); the layout is the lane's,
-// else one element per property in the order the wire lists `properties` (jsonb's order, not
-// the lane's: a lane that needs an order sends a layout); the data starts from each `default`,
-// and a required yes/no with none starts as no, as its unchecked box shows.
+// The schema passes through unchanged (no sensei field format). The layout is the one on the
+// wire: the lane's, or, for a lane that sent none, the daemon's list of the properties in the
+// order the lane wrote them (jsonb stores `properties` shorter-first, so their key order is not
+// the lane's). Each element without a label or help takes them from its property's `title`
+// (else its name in words) and `description`. The data starts from each `default`, and a
+// required yes/no with none starts as no, as its unchecked box shows.
 // `toAnswerValues` keeps what was filled and drops optional fields left empty, so absent stays
 // absent (D83). The daemon re-validates every answer (D3); this is the person's convenience.
 import type { RelayDecisionLayout, RelayDecisionResponse } from './types.js';
@@ -22,14 +24,21 @@ function inWords(name: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-function defaultLayout(schema: DecisionSchema): RelayDecisionLayout {
+/** The wire's layout, else one element per property in key order; labels and help from the schema. */
+function formLayout(response: RelayDecisionResponse): RelayDecisionLayout {
+  const { properties } = response.schema;
+  const elements = response.layout?.elements ?? Object.keys(properties).map((name) => ({ scope: `#/${name}` }));
   return {
     type: 'vertical',
-    elements: Object.entries(schema.properties).map(([name, property]) => ({
-      scope: `#/${name}`,
-      label: property.title ?? inWords(name),
-      ...(property.description ? { description: property.description } : {}),
-    })),
+    elements: elements.map((element) => {
+      const property = properties[element.scope.slice(2)];
+      const description = element.description ?? property?.description;
+      return {
+        ...element,
+        label: element.label ?? property?.title ?? inWords(element.scope.slice(2)),
+        ...(description ? { description } : {}),
+      };
+    }),
   };
 }
 
@@ -40,7 +49,7 @@ export function toDecisionForm(response: RelayDecisionResponse): DecisionFormVie
     if (property.default !== undefined) data[name] = property.default;
     else if (property.type === 'boolean' && required.has(name)) data[name] = false;
   }
-  return { schema: response.schema, layout: response.layout ?? defaultLayout(response.schema), data };
+  return { schema: response.schema, layout: formLayout(response), data };
 }
 
 /** Empty as a form leaves it: never set, or cleared. */

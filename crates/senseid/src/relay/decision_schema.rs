@@ -49,6 +49,30 @@ pub fn validate_response(response: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// At ask time, before the write: a response sent without a layout gets one that
+/// lists its properties in the order the lane wrote them. `relay.actions.props` is
+/// jsonb, which stores object keys shorter-first, so `properties` alone loses that
+/// order; layout elements are an array and keep it. Labels and help stay with the
+/// schema (the form reads `title` and `description`). Anything not shaped as a
+/// response passes through for `validate_response` to refuse.
+pub fn with_lane_order(mut response: Value) -> Value {
+    let Some(obj) = response.as_object_mut() else {
+        return response;
+    };
+    if obj.get("layout").is_some_and(|layout| !layout.is_null()) {
+        return response;
+    }
+    let Some(properties) =
+        obj.get("schema").and_then(|s| s.get("properties")).and_then(Value::as_object)
+    else {
+        return response;
+    };
+    let elements: Vec<Value> =
+        properties.keys().map(|name| serde_json::json!({"scope": format!("#/{name}")})).collect();
+    obj.insert("layout".into(), serde_json::json!({"type": "vertical", "elements": elements}));
+    response
+}
+
 /// At answer time: `values` satisfy the stored `response.schema`, or the first
 /// property and rule that fails. An absent optional property stays absent: a
 /// `default` seeds the form only, and is never filled in here (D83).

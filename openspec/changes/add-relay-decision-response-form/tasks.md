@@ -93,8 +93,8 @@ Red commit first for every numbered group; green in the next commit.
 - [x] B2.3 Check the rendered rokkit DOM first; key fields by our wrapper if `[data-form-field]` cannot be addressed
   by scope. (Done: `[data-form-field][data-scope]` is addressable, but B2.1 keys on `data-decision-field`, so each
   field draws through FormRenderer's `child` snippet inside that wrapper. The yes/no draws native through the
-  `renderers` registry: rokkit's custom checkbox fails axe `aria-hidden-focus` (sensei-hq/rokkit#190). jsonb keeps its own key order, so a
-  form without a lane layout lists fields in the wire's order; a lane that needs an order sends a layout.)
+  `renderers` registry: rokkit's custom checkbox fails axe `aria-hidden-focus` (sensei-hq/rokkit#190). jsonb keeps its own key order, so for a
+  form without a lane layout the daemon stores a layout in the lane's order (B3.8).)
 - [x] B2.4 Wire `NeedsYou.svelte:25,47-53`, `RelayScreen.svelte:163-166,253` (`answer(id, option)`) and
   `RelayTaskScreen.svelte:89-95` to the new `onanswer` taking a `RelayDecisionChoice`
 - [x] B2.5 `catalogue.ts` entry `DecisionRow/form` (string, string+enum, number with bounds, integer, boolean;
@@ -115,7 +115,11 @@ Red commit first for every numbered group; green in the next commit.
   decision draws its own form; a cleared number is unset, not NaN (sensei-hq/rokkit#193); a required yes/no with no
   default starts as no; each field's id carries the decision id, so two cards never share ids (the Select's label
   names no control upstream: sensei-hq/rokkit#194); the arrival e2e closes its crew and the inline refusal counts
-  posted answers; D6, the spec delta and the ask tool say a form without a layout is in jsonb's order
+  posted answers; D6, the spec delta and the ask tool said a form without a layout is in jsonb's order (superseded by B3.8)
+- [x] B3.8 Review r6 on PR #501 (red then green): a form sent without a layout keeps the order the lane wrote its
+  fields in. The MCP forwards `properties` unsorted (`serde_json` `preserve_order`), the daemon adds a `scope`-only
+  layout in that order before the jsonb write (`with_lane_order`), and the form takes each element's label and help
+  from the schema when the element has none.
 - [x] B3.6 Gates: `bun run check`, `bun run test` in `app/`, `make test-app-e2e` relay specs green; evidence DOM dumps
   under `test-results/relay-decision-form/`
 
