@@ -985,6 +985,55 @@ mod tests {
         assert!(second >= first, "detected_at moves with each run");
     }
 
+    /// `configured_at` / `configured_version` say when, and under which sensei
+    /// version, sensei configured the tool. Detection only observes, so it
+    /// never stamps them: a tool found configured on first run has no time or
+    /// version, and one configured under an older sensei keeps its own.
+    #[tokio::test]
+    async fn detection_alone_never_stamps_the_configuration() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        sqlx_core::query::query("delete from sensei.assistant_installs")
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs
+                    (catalogue_id, installed, configured, configured_at, configured_version, detected_at)
+             values ('cursor', true, true, '2026-01-02T03:04:05Z', '0.0.1', '2026-01-02T03:04:05Z')",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let probe = vec![status("claude-code", true, true), status("cursor", true, true)];
+        sync_installs_with(&pg, &probe).await.unwrap();
+
+        let stamp = |id: &'static str| {
+            let pg = &pg;
+            async move {
+                sqlx_core::query_as::query_as::<
+                    _,
+                    (Option<chrono::DateTime<chrono::Utc>>, Option<String>),
+                >(
+                    "select configured_at, configured_version
+                       from sensei.assistant_installs where catalogue_id = $1",
+                )
+                .bind(id)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap()
+            }
+        };
+        let (at, version) = stamp("claude").await;
+        assert_eq!((at, version.as_deref()), (None, None), "first seen configured: no stamp");
+        let (at, version) = stamp("cursor").await;
+        assert_eq!(
+            at.map(|t| t.to_rfc3339()).as_deref(),
+            Some("2026-01-02T03:04:05+00:00"),
+            "an older configuration keeps its time"
+        );
+        assert_eq!(version.as_deref(), Some("0.0.1"), "and its sensei version");
+    }
+
     // ── Registry consistency ───────────────────────────────────────────
 
     #[test]
