@@ -27,15 +27,14 @@ after PR #500 (slice A) merged.
 - Review r4 (red `34f3197b8`, green `51bb94543`): the inline pattern check no longer runs a lane's
   pattern on the browser's backtracking RegExp (`^(a+)+$` on 29 chars took 7s). `toPatternMatcher` parses
   the daemon's dialect and runs a Thompson NFA, linear like Rust `regex`; outside the dialect or past
-  10,000 states it leaves the check to the daemon. 56k-case differential fuzz vs `u` RegExp: 0 diffs.
-  e2e `relay-decision-form` 6/6.
-- Gates: app `bun run check` 0 errors; `bun run test:unit` all green; `openspec validate --strict` valid.
+  10,000 states it leaves the check to the daemon. 56k-case fuzz vs `u` RegExp: 0 diffs. e2e 6/6.
+- Review r5 (merge `c34ef7181`): develop merged in, PR MERGEABLE so CI runs again. Gates on the merge:
+  fmt, clippy, decision_schema 21/21, app unit 3892, dojo unit 2411, all PR CI green; e2e wizard+relay 25/25.
 
-**Remaining:** C2 (close #389 on merge, with the e2e evidence; design review of the card by iris-deneb
-is a follow-up the user runs). Slice R (R1 rokkit issue for pick-several + long text, R2 widen) is not
-built and needs its own issue once #389 closes.
+**Remaining:** CI green on 501; C2 (close #389 on merge). Slice R (R1 rokkit issue, R2 widen) needs its
+own issue once #389 closes. Design review of the card (iris-deneb) is a user follow-up.
 
 **Next command:** `gh pr checks 501`.
-
 **Open questions:** none blocking. No-layout field order is jsonb's (D6 amended).
-**Known broken:** none from this branch.
+**Known broken:** none from this branch. relay-run on a fresh sensei_e2e needs setup-wizard first. One
+145-test e2e run had webview `eval` hangs and one decision-form pick timeout; not reproduced in 3 reruns.
