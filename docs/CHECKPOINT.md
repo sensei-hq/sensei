@@ -10,14 +10,10 @@ after PR #500 (slice A) merged.
 - `DecisionForm.svelte`: `@rokkit/forms` FormRenderer, each field in `data-decision-field` via the
   `child` snippet; `collect()` checks inline with `validateAll`. `DecisionRow` sends `{values}` once and
   keeps them on a refusal; NeedsYou, RelayScreen and RelayTaskScreen pass a `RelayDecisionChoice`.
-- Catalogue: `DecisionRow/form`, `DecisionRow/form-layout`. Fields stack at phone width (`md:` 2 cols).
 - e2e `relay-decision-form.spec.ts` 6/6 (arrives, refuses inline, resolves, task view, + slice A's two);
   relay-run, relay-conformance, zz-a11y, relay, relay-timeline, relay-sprint, relay-gate all green.
-  Evidence DOM dumps under `app/test-results/relay-decision-form/`. Real brew daemon restored on :7744.
-- Review r1 fixes (PR #501, red `f0608f0e7`, green `65b9b64d6`, e2e `fd0e98b74`, docs `0ddd36400`):
-  task view `{#key decision.id}`; cleared number → unset (rokkit#193); required yes/no seeds `false`;
-  field ids prefixed by decision id (Select label gap: rokkit#194); arrival e2e closes its crew; inline
-  refusal proven by a fetch counter; D6/spec/ask tool say no-layout order is jsonb's. e2e 7/7 with relay-run.
+- Review r1 (green `65b9b64d6`): task view keyed by decision; required yes/no seeds `false`; field ids
+  carry the decision id; no-layout order is jsonb's (D6). e2e 7/7 with relay-run.
 - Review r2 fix (red `20bfe00c2`, green `e07d85712`): a pattern means the same to daemon and form. The
   daemon refuses at ask time what the browser reads differently (`check_pattern_dialect`: `\w \d \s \b`,
   `\A \z`, hex, POSIX/nested classes, set ops); the form checks patterns itself with a `u` RegExp
