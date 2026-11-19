@@ -442,4 +442,24 @@ describe('DecisionRow · pick-several and long text', () => {
     expect(picked?.textContent).toContain('db');
     expect(field(c, 'areas')!.querySelector('[data-select-trigger] [data-decision-picked]')).toBeNull();
   });
+
+  // zen-sumi fades a field under `[data-field-disabled]` to 40% opacity whatever the attribute's
+  // value, and rokkit writes `data-field-disabled="false"` on an enabled field (sensei-hq/rokkit#207):
+  // the filled pick-several read 2.49:1 in dark mode (axe color-contrast). Contrast is a browser
+  // check, so this pins the cause: an enabled card's fields carry no disabled mark; a sending one's do.
+  it('an enabled card marks no field disabled; while it sends, every field is', async () => {
+    let release: (v: string | null) => void = () => {};
+    const onanswer = vi.fn(() => new Promise<string | null>((r) => (release = r)));
+    const c = mount(several(), onanswer);
+    await pickSeveral(c, 'areas', ['db', 'api']);
+    typeNotes(c, 'first line');
+    await settle();
+    expect(c.querySelectorAll('[data-field-root]').length).toBe(2);
+    expect(c.querySelectorAll('[data-field-disabled]').length).toBe(0);
+    answerButton(c).click();
+    await settle();
+    expect(c.querySelectorAll('[data-field-root][data-field-disabled="true"]').length).toBe(2);
+    release(null);
+    await settle();
+  });
 });
