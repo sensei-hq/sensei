@@ -175,8 +175,15 @@
   $effect(() => {
     if (shell.view === 'crew' && state.now && !state.runList) void state.readRuns();
   });
+  // What this machine has seen, for AddMember's picker (#455): read when the Crew view
+  // opens, like the runs; Retry reads it again.
+  $effect(() => {
+    if (shell.view === 'crew' && state.now && !state.catalogue && !state.catalogueError) void state.readCatalogue();
+  });
   const memberGroups = $derived(toMemberGroups(state.now, Date.now()));
-  const addMember = $derived(toAddMember(state.now, state.addRole));
+  const addMember = $derived(
+    toAddMember(state.now, state.addRole, { data: state.catalogue, error: state.catalogueError, picked: state.pickedTool }),
+  );
   async function copy(text: string): Promise<void> {
     await navigator.clipboard?.writeText(text);
   }
@@ -228,7 +235,13 @@
           error={state.runActionError}
         />
       {/if}
-      <AddMember view={addMember} oncopy={(text) => void copy(text)} onrole={(role) => (state.addRole = role)} />
+      <AddMember
+        view={addMember}
+        oncopy={(text) => void copy(text)}
+        onrole={(role) => (state.addRole = role)}
+        onpick={(id) => state.pickTool(id)}
+        onretrycatalogue={() => void state.readCatalogue()}
+      />
       {#if state.runsError}
         <Notice
           data-runs-error

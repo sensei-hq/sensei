@@ -971,6 +971,36 @@ describe('Relay — a draft run starts from the Crew view; past runs below (#424
   });
 });
 
+describe('Relay — AddMember picks from what this machine has seen (#455)', () => {
+  const crewNoRun = () => F.ok(F.now({ runs: [], lanes: [F.coordinatorLane({ presence: 'idle' }), F.lane({ presence: 'idle' })] }));
+
+  it('opening Crew reads the catalogue; picking Cursor words the note, the line stays', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    expect(api.tryGetCatalogue).not.toHaveBeenCalled();
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-catalogue-item="cursor"]')).not.toBeNull());
+    expect(api.tryGetCatalogue).toHaveBeenCalledTimes(1);
+    const line = text(one(c, '[data-paste-text]'));
+    need(one(c, '[data-catalogue-item="cursor"]') as HTMLButtonElement | null, 'Cursor').click();
+    await vi.waitFor(() => expect(one(c, '[data-catalogue-item="cursor"]')!.getAttribute('aria-pressed')).toBe('true'));
+    expect(text(one(c, '[data-command-note]'))).toBe("Paste it into Cursor's agent chat. sensei's tools are set up in ~/.cursor/mcp.json.");
+    expect(text(one(c, '[data-paste-text]'))).toBe(line);
+  });
+
+  it('a failed read: the error Notice with Retry, which reads it again', async () => {
+    const { c, api } = await open({ now: crewNoRun() });
+    api.tryGetCatalogue.mockResolvedValue(F.fail(500, 'internal error'));
+    need(tab(c, 'Crew'), 'the Crew button').click();
+    await vi.waitFor(() => expect(one(c, '[data-catalogue-error]')).not.toBeNull());
+    expect(text(one(c, '[data-catalogue-error]'))).toContain("Couldn't read the assistants");
+    expect(one(c, '[data-catalogue-group]')).toBeNull();
+    api.tryGetCatalogue.mockResolvedValue(F.ok(F.catalogue()));
+    need(one(c, '[data-catalogue-error] [data-action="retry-catalogue"]'), 'Retry').click();
+    await vi.waitFor(() => expect(one(c, '[data-catalogue-item="claude"]')).not.toBeNull());
+    expect(one(c, '[data-catalogue-error]')).toBeNull();
+  });
+});
+
 describe('Relay — no crew yet', () => {
   it('the info band frames it ("No crew yet", what to do); the Crew view is the landing: set up the crew, step 1 of 2 (#424)', async () => {
     // No run drafted either: the landing is the set-up alone.

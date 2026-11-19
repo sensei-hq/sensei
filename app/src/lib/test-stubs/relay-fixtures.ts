@@ -3,7 +3,7 @@
 // with the spy client below (a package file cannot import vitest).
 import { vi } from 'vitest';
 import type { RelayApi } from '$lib/relay-api.js';
-import { CREW_ID, DRAFT_RUN_ID, RUN_ID, now, ok, queue, runDetail, runList, taskView } from '../../../../packages/state/relay/fixtures.js';
+import { CREW_ID, DRAFT_RUN_ID, RUN_ID, catalogue, now, ok, queue, runDetail, runList, taskView } from '../../../../packages/state/relay/fixtures.js';
 
 export * from '../../../../packages/state/relay/fixtures.js';
 
@@ -28,5 +28,6 @@ export function fakeRelayApi(): FakeRelayApi {
       ok({ run_id: DRAFT_RUN_ID, planning_task_id: 't-plan', crew_id: CREW_ID, status: 'planning' as const }),
     ),
     tryCancelRun: vi.fn(async () => ok({ run_id: DRAFT_RUN_ID, status: 'cancelled' as const })),
+    tryGetCatalogue: vi.fn(async () => ok(catalogue())),
   } as FakeRelayApi;
 }
