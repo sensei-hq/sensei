@@ -37,5 +37,4 @@ after PR #500 (slice A) merged.
 **Remaining:** CI green on 501; C2 (close #389 on merge). Slice R (R1 rokkit issue, R2 widen) needs its
 own issue once #389 closes. Design review of the card (iris-deneb) is a user follow-up.
 
-**Next command:** `gh pr checks 501`.
-**Open questions:** none blocking. **Known broken:** none from this branch. relay-run on a fresh sensei_e2e needs setup-wizard first.
+**Next command:** `gh pr checks 501`. **Open questions:** none blocking. **Known broken:** none from this branch. relay-run on a fresh sensei_e2e needs setup-wizard first.
