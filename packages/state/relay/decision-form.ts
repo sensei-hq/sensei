@@ -43,9 +43,9 @@ export function toDecisionForm(response: RelayDecisionResponse): DecisionFormVie
   return { schema: response.schema, layout: response.layout ?? defaultLayout(response.schema), data };
 }
 
-/** Empty as a form leaves it: never set, cleared, or a number input emptied (NaN). */
-export function isEmptyValue(value: unknown): boolean {
-  return value === undefined || value === null || value === '' || (typeof value === 'number' && Number.isNaN(value));
+/** Empty as a form leaves it: never set, or cleared. */
+function isEmptyValue(value: unknown): boolean {
+  return value === undefined || value === null || value === '';
 }
 
 /**

@@ -66,9 +66,9 @@ describe('toAnswerValues', () => {
     });
   });
 
-  it('drops optional properties left empty (undefined, null, "", a number input cleared to NaN)', () => {
+  it('drops optional properties left empty (undefined, null, "")', () => {
     const r = response();
-    expect(toAnswerValues(r.schema, { target: 'main', max_retries: Number.NaN, ship: null })).toEqual({ target: 'main' });
+    expect(toAnswerValues(r.schema, { target: 'main', max_retries: undefined, ship: null })).toEqual({ target: 'main' });
     expect(toAnswerValues(r.schema, { target: 'main', max_retries: '' })).toEqual({ target: 'main' });
   });
 

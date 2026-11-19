@@ -68,7 +68,6 @@ export {
 export {
   toDecisionForm,
   toAnswerValues,
-  isEmptyValue,
   patternMisses,
   toPatternRegExp,
   withoutPatterns,

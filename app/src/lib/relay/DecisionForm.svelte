@@ -4,17 +4,15 @@
   // is drawn through the renderer's own `child` snippet so it carries `data-decision-field`.
   // The card owns Answer: it calls `collect()`, which checks the form inline (validateAll),
   // shows each field's message, and hands back the values only when nothing failed.
-  import { untrack, type Component } from 'svelte';
+  import { untrack } from 'svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
   import {
-    isEmptyValue,
     patternMisses,
     toAnswerValues,
     toDecisionForm,
     withoutPatterns,
     type RelayDecisionResponse,
   } from '@sensei/state';
-  import DecisionCheckbox from './DecisionCheckbox.svelte';
 
   let {
     response,
@@ -60,17 +58,10 @@
     return Object.keys(messages).length > 0 ? null : toAnswerValues(form.schema, builder.data);
   }
 
-  /** The yes/no drawn native, for assistive tech (DecisionCheckbox); every other control is rokkit's. */
-  const renderers: Record<string, Component<Record<string, unknown>>> = {
-    checkbox: DecisionCheckbox as Component<Record<string, unknown>>,
-  };
-
   type Element = { scope?: string; type?: string; value?: unknown; props?: Record<string, unknown> };
 
   function change(path: string, value: unknown): void {
-    // A control emptied is unset: rokkit's number input reports a cleared box as NaN, which
-    // its own checks read as a bad number rather than as empty.
-    builder.updateField(path, isEmptyValue(value) ? undefined : value);
+    builder.updateField(path, value);
     // A field already showing a message re-checks as it is fixed.
     if ((builder.validation as Record<string, unknown>)[path]) {
       builder.setFieldValidation(path, (messagesFor([path])[path] as never) ?? null);
@@ -87,7 +78,6 @@
       value={element.value}
       {...element.props}
       {disabled}
-      {renderers}
       onchange={(value: unknown) => change(path, value)}
     />
   </div>
