@@ -568,6 +568,25 @@ mod tests {
     }
 
     #[test]
+    fn refuses_the_keywords_rokkit_draws_a_control_from() {
+        // @rokkit/forms 1.16 picks a control from these (a textarea, a multiselect, a renderer,
+        // a range from min/max); the subset stays closed, so none reaches the form (#389).
+        for (key, value) in [
+            ("x-multiline", json!(true)),
+            ("renderer", json!("textarea")),
+            ("options", json!(["a"])),
+            ("min", json!(1)),
+            ("max", json!(2)),
+            ("readonly", json!(true)),
+            ("uniqueItems", json!(true)),
+        ] {
+            let mut prop = json!({"type": "string"});
+            prop[key] = value;
+            refused(&with_prop("s", prop), &["s", key]);
+        }
+    }
+
+    #[test]
     fn refuses_bad_enums() {
         refused(&with_prop("n", json!({"type": "integer", "enum": [1, 2]})), &["n", "enum"]);
         refused(&with_prop("s", json!({"type": "string", "enum": ["a", "a"]})), &["s", "enum"]);
@@ -796,6 +815,10 @@ mod tests {
             "free": {"type": "string"}
         }}});
         assert_eq!(validate_values(&r, &json!({"path": "a/src/b"})), Ok(()), "unanchored");
+        // maxLength counts characters, not UTF-16 units: two emoji fit a maxLength of 2.
+        let short = json!({"schema": {"type": "object", "properties": {"t": {"type": "string", "maxLength": 2}}}});
+        assert_eq!(validate_values(&short, &json!({"t": "😀😀"})), Ok(()));
+        assert!(validate_values(&short, &json!({"t": "😀😀😀"})).is_err());
         let err = validate_values(&r, &json!({"path": "src/".repeat(3)})).unwrap_err();
         assert!(err.contains("values.path") && err.contains("maxLength"), "{err}");
         let err = validate_values(&r, &json!({"path": "lib/x"})).unwrap_err();

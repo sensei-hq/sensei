@@ -159,6 +159,43 @@ describe('DecisionRow · a form decision', () => {
     expect(onanswer).toHaveBeenCalledWith({ values: { name: text } });
   });
 
+  // The daemon counts maxLength in characters; the browser's `.length` and a native `maxlength`
+  // count UTF-16 units, so an emoji counts twice and a value the daemon takes would be refused.
+  it('a value within maxLength in characters is sent, emoji included; no native maxlength cuts it short', async () => {
+    const onanswer = vi.fn(async () => null);
+    const decision = F.formDecision({
+      response: { schema: { type: 'object', properties: { tag: { type: 'string', maxLength: 2 } }, required: ['tag'] } },
+    });
+    const c = mount(decision, onanswer);
+    const input = field(c, 'tag')!.querySelector<HTMLInputElement>('input')!;
+    expect(input.getAttribute('maxlength')).toBeNull();
+    input.value = '😀😀';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(field(c, 'tag')!.querySelector('[data-message]')).toBeNull();
+    expect(onanswer).toHaveBeenCalledWith({ values: { tag: '😀😀' } });
+  });
+
+  it('a value over maxLength in characters is refused inline', async () => {
+    const onanswer = vi.fn(async () => null);
+    const decision = F.formDecision({
+      response: { schema: { type: 'object', properties: { tag: { type: 'string', maxLength: 2 } }, required: ['tag'] } },
+    });
+    const c = mount(decision, onanswer);
+    const input = field(c, 'tag')!.querySelector<HTMLInputElement>('input')!;
+    input.value = '😀😀😀';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).not.toHaveBeenCalled();
+    expect(field(c, 'tag')!.querySelector('[data-message]')?.textContent).toContain('no more than 2 characters');
+  });
+
   it('a pattern miss shown inline clears once the value is fixed', async () => {
     const onanswer = vi.fn(async () => null);
     const decision = F.formDecision({

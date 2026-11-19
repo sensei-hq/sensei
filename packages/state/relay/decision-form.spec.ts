@@ -3,7 +3,7 @@
 // the data starts from each `default`. The answer keeps what was filled and drops the
 // optional fields left empty, so absent stays absent (D83).
 import { describe, it, expect } from 'vitest';
-import { patternMisses, toAnswerValues, toDecisionForm, toPatternRegExp, withoutPatterns } from './decision-form.js';
+import { textMisses, toAnswerValues, toDecisionForm, toPatternRegExp, withoutTextRules } from './decision-form.js';
 import type { RelayDecisionResponse } from './types.js';
 import * as F from './fixtures.js';
 
@@ -111,26 +111,42 @@ describe('toPatternRegExp', () => {
   });
 });
 
-describe('patternMisses / withoutPatterns', () => {
+describe('textMisses / withoutTextRules', () => {
   const schema = {
     type: 'object' as const,
     properties: {
       path: { type: 'string' as const, pattern: '^/' },
       name: { type: 'string' as const, pattern: '^\\p{L}+$' },
       odd: { type: 'string' as const, pattern: '\\#' },
+      short: { type: 'string' as const, maxLength: 2 },
       free: { type: 'string' as const },
     },
   };
 
   it('names each filled field whose text misses its pattern; empty fields and uncompiled patterns are left to others', () => {
-    expect(patternMisses(schema, { path: 'rel', name: 'José', odd: 'x', free: 'y' })).toEqual(['path']);
-    expect(patternMisses(schema, { path: '', name: 'a1' })).toEqual(['name']);
+    expect(textMisses(schema, { path: 'rel', name: 'José', odd: 'x', free: 'y' })).toEqual({ path: 'pattern' });
+    expect(textMisses(schema, { path: '', name: 'a1' })).toEqual({ name: 'pattern' });
   });
 
-  it('drops every pattern and nothing else', () => {
-    const stripped = withoutPatterns(schema);
+  // The daemon counts a maxLength in characters (code points), not UTF-16 units as `.length` does.
+  it('counts maxLength in characters, as the daemon does', () => {
+    expect(textMisses(schema, { short: '😀😀' })).toEqual({});
+    expect(textMisses(schema, { short: 'é😀' })).toEqual({});
+    expect(textMisses(schema, { short: '😀😀😀' })).toEqual({ short: 'maxLength' });
+    expect(textMisses(schema, { short: 'abc' })).toEqual({ short: 'maxLength' });
+  });
+
+  it('reads maxLength before the pattern, as the daemon does', () => {
+    const both = { type: 'object' as const, properties: { p: { type: 'string' as const, maxLength: 1, pattern: '^/' } } };
+    expect(textMisses(both, { p: 'ab' })).toEqual({ p: 'maxLength' });
+  });
+
+  it('drops every pattern and maxLength and nothing else', () => {
+    const stripped = withoutTextRules(schema);
     expect(stripped.properties.path).toEqual({ type: 'string' });
+    expect(stripped.properties.short).toEqual({ type: 'string' });
     expect(stripped.properties.free).toEqual({ type: 'string' });
     expect(schema.properties.path.pattern).toBe('^/');
+    expect(schema.properties.short.maxLength).toBe(2);
   });
 });
