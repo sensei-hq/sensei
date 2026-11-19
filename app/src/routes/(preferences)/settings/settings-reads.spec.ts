@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { readAssistants, readExtensions, readPreferences } from './settings-reads';
+import { describe, it, expect, vi } from 'vitest';
+import { detectAgain, readAssistants, readExtensions, readPreferences } from './settings-reads';
 import { DEFAULT_PREFERENCES } from './preferences-form';
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
@@ -47,12 +47,31 @@ describe('readPreferences', () => {
 });
 
 describe('readAssistants', () => {
-  it('reads each detected assistant', async () => {
-    const d = await readAssistants({ tryDetectAssistants: async () => ok([{ id: 'cc', family: 'claude', name: 'Claude Code', version: '2.1', installed: true, configured: true, config_path: '/x' }]) });
-    expect(d).toEqual({ assistants: [{ family: 'claude', name: 'Claude Code', version: '2.1', configured: true }], error: null });
+  // #455: Settings reads the installs detection stored, joined to the catalogue — not a
+  // live probe on every load — and says when they were detected.
+  const row = {
+    id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, version: '2.1', path: null,
+    config_path: '/x', configured: true, configured_at: null, configured_version: null,
+    detected_at: '2026-11-19T09:00:00Z',
+  };
+  it('reads each stored install, with when it was detected', async () => {
+    const d = await readAssistants({ tryGetAssistantInstalls: async () => ok([row]) });
+    expect(d).toEqual({
+      assistants: [{ family: 'claude', name: 'Claude Code', kind: 'assistant', version: '2.1', installed: true, configured: true, detectedAt: '2026-11-19T09:00:00Z' }],
+      error: null,
+    });
   });
   it('a failed read is an error, not "none detected"', async () => {
-    expect(await readAssistants({ tryDetectAssistants: async () => down })).toEqual({ assistants: [], error: 'Service Unavailable' });
+    expect(await readAssistants({ tryGetAssistantInstalls: async () => down })).toEqual({ assistants: [], error: 'Service Unavailable' });
+  });
+});
+
+describe('detectAgain', () => {
+  it('stores what detection finds; a failure says why', async () => {
+    const detect = vi.fn(async () => ok([]));
+    expect(await detectAgain({ tryDetectAssistantInstalls: detect })).toBeNull();
+    expect(detect).toHaveBeenCalledTimes(1);
+    expect(await detectAgain({ tryDetectAssistantInstalls: async () => down })).toBe('Service Unavailable');
   });
 });
 
