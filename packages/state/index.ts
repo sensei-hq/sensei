@@ -68,10 +68,11 @@ export {
 export {
   toDecisionForm,
   toAnswerValues,
-  patternMisses,
+  textMisses,
   toPatternRegExp,
-  withoutPatterns,
+  withoutTextRules,
   type DecisionFormView,
+  type TextMiss,
 } from './relay/decision-form.js';
 export {
   RelayTaskState,

@@ -82,27 +82,38 @@ export function toPatternRegExp(pattern: string): RegExp | null {
   }
 }
 
-/** The schema without its `pattern`s: rokkit compiles them without `u`, so the form checks them itself. */
-export function withoutPatterns(schema: DecisionSchema): DecisionSchema {
+/**
+ * The schema without the text rules the browser reads otherwise than the daemon: rokkit compiles
+ * a `pattern` without `u` and counts `maxLength` in UTF-16 units (as a native `maxlength` does),
+ * where the daemon counts characters. The form checks both itself (`textMisses`).
+ */
+export function withoutTextRules(schema: DecisionSchema): DecisionSchema {
   const properties = Object.fromEntries(
     Object.entries(schema.properties).map(([name, property]) => {
-      const { pattern: _pattern, ...rest } = property;
+      const { pattern: _pattern, maxLength: _maxLength, ...rest } = property;
       return [name, rest];
     }),
   ) as DecisionSchema['properties'];
   return { ...schema, properties };
 }
 
-/** Each filled text field whose value misses its pattern, read as the daemon reads it. */
-export function patternMisses(schema: DecisionSchema, data: Record<string, unknown>): string[] {
-  return Object.entries(schema.properties)
-    .filter(([name, property]) => {
-      const value = data[name];
-      if (!property.pattern || typeof value !== 'string' || value === '') return false;
-      const re = toPatternRegExp(property.pattern);
-      return re !== null && !re.test(value);
-    })
-    .map(([name]) => name);
+/** The text rule a filled field breaks, read as the daemon reads it: maxLength first, then pattern. */
+export type TextMiss = 'maxLength' | 'pattern';
+
+/** Each filled text field that breaks its maxLength (in characters) or its pattern. */
+export function textMisses(schema: DecisionSchema, data: Record<string, unknown>): Record<string, TextMiss> {
+  const misses: Record<string, TextMiss> = {};
+  for (const [name, property] of Object.entries(schema.properties)) {
+    const value = data[name];
+    if (typeof value !== 'string' || value === '') continue;
+    if (property.maxLength !== undefined && [...value].length > property.maxLength) {
+      misses[name] = 'maxLength';
+      continue;
+    }
+    const re = property.pattern ? toPatternRegExp(property.pattern) : null;
+    if (re !== null && !re.test(value)) misses[name] = 'pattern';
+  }
+  return misses;
 }
 
 /** The answer's `values`: the schema's properties only; an empty optional one is left out. */

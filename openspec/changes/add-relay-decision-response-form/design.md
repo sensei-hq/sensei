@@ -23,7 +23,7 @@ What exists on develop (`c25d1a930`; ask/answer bodies and `validate_props` re-c
 | e2e | `app/e2e/tests/relay-run.spec.ts:250-265` | option-pick ask → answer → card leaves |
 | Regex | `crates/senseid/Cargo.toml:62` (`regex = "1"`) | already a senseid dependency |
 | JSON Schema crate | `Cargo.lock:4655-4670` | only `schemars` (a schema *generator*, pulled in transitively); no validator crate |
-| rokkit forms | `app/package.json:33` (`@rokkit/forms` `^1.15.7`); the filters band already draws a `FilterSchema` through it (`app/src/lib/relay/relay-shell.ts:282-292`) | see "rokkit facts" below |
+| rokkit forms | `app/package.json:33` (`@rokkit/forms` `^1.16.0`); the filters band already draws a `FilterSchema` through it (`app/src/lib/relay/relay-shell.ts:282-292`) | see "rokkit facts" below |
 
 rokkit facts (`@rokkit/forms` 1.15.7, `dist/lib/`), which fix the subset's edges:
 - `resolveInputType` picks `props.renderer` first, then any `format` other than `text`/`number`
@@ -194,6 +194,13 @@ override in the meantime.
 - The daemon's `regex` and the browser's `RegExp` are different engines. The ask-time dialect check (Decision
   3) refuses what they read differently; if the browser still cannot compile a pattern, the form skips its
   inline check and the daemon's answer counts. Unicode version drift in `\p{..}` remains possible.
+- The daemon counts `maxLength` in characters (code points); rokkit's check (`.length`) and a native
+  `maxlength` attribute count UTF-16 units, so an emoji counts twice. The form takes `maxLength` (and
+  `pattern`) out of the schema rokkit checks, which also leaves the input without a native `maxlength`, and
+  checks both itself as the daemon does.
+- `@rokkit/forms` 1.16.0 (re-read for R2): an array of `items.enum` draws a multiselect and `x-multiline` a
+  textarea. The subset refuses `type: "array"`, `items` and every unknown keyword (`x-multiline`, `renderer`,
+  `options`, `min`, `max`), so no newly mapped keyword reaches the form; widening it is a separate change.
 
 ## Migration Plan
 

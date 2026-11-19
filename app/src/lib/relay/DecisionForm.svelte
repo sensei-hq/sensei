@@ -7,11 +7,12 @@
   import { untrack } from 'svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
   import {
-    patternMisses,
+    textMisses,
     toAnswerValues,
     toDecisionForm,
-    withoutPatterns,
+    withoutTextRules,
     type RelayDecisionResponse,
+    type TextMiss,
   } from '@sensei/state';
 
   let {
@@ -30,9 +31,10 @@
   const form = untrack(() => toDecisionForm(response));
   // `override` routes every field through the snippet below; it picks no control (the schema does).
   const layout = { ...form.layout, elements: form.layout.elements.map((element) => ({ ...element, override: true })) };
-  // rokkit checks `pattern` with a plain `new RegExp`, which reads some patterns otherwise than
-  // the daemon does; it checks the rest, and the form checks patterns as the daemon reads them.
-  const checked = withoutPatterns(form.schema);
+  // rokkit reads `pattern` with a plain `new RegExp` and counts `maxLength` (and draws a native
+  // `maxlength`) in UTF-16 units, where the daemon reads Unicode and counts characters; rokkit
+  // checks the rest, and the form checks those two as the daemon does.
+  const checked = withoutTextRules(form.schema);
   const builder = new FormBuilder({ ...form.data }, checked, layout);
   const labels: Record<string, string> = Object.fromEntries(
     form.layout.elements.map((e) => {
@@ -40,13 +42,20 @@
       return [path, e.label ?? path];
     }),
   );
-  const patternMessage = (path: string) => ({ state: 'error', text: `${labels[path] ?? path} format is invalid` });
+  function textMessage(path: string, miss: TextMiss) {
+    const label = labels[path] ?? path;
+    const text =
+      miss === 'maxLength'
+        ? `${label} must be no more than ${form.schema.properties[path].maxLength} characters`
+        : `${label} format is invalid`;
+    return { state: 'error', text };
+  }
 
-  /** The messages for `paths`: rokkit's, else a pattern miss. */
+  /** The messages for `paths`: rokkit's, else a text rule missed. */
   function messagesFor(paths: string[]): Record<string, unknown> {
     const messages = { ...validateAll(builder.data, checked, layout) } as Record<string, unknown>;
-    for (const path of patternMisses(form.schema, builder.data)) {
-      if (paths.includes(path) && !messages[path]) messages[path] = patternMessage(path);
+    for (const [path, miss] of Object.entries(textMisses(form.schema, builder.data))) {
+      if (paths.includes(path) && !messages[path]) messages[path] = textMessage(path, miss);
     }
     return messages;
   }
