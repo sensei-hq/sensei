@@ -141,6 +141,12 @@ Red commit first for every numbered group; green in the next commit.
   `enum`, with a 4000-character cap. The form checks the 600/4000 cap itself (`textCap`), in characters. rokkit drops an
   array element's layout keys, so `withArrayLayout` folds them in (sensei-hq/rokkit#205). e2e: "a pick-several and
   long-text decision is answered live".)
+- [x] R3 Review r1 on PR #508 (red then green): rokkit 1.16's MultiSelect nests a focusable `role="button"` tag
+  remove inside its trigger (axe `nested-interactive`), and an open Select or MultiSelect listbox has no name
+  (`aria-input-field-name`); both raised as sensei-hq/rokkit#206. The pick-several draws through the forms
+  `renderers` registry (`DecisionPickSeveral`: the MultiSelect with `maxDisplay={0}`, the picked members beside the
+  trigger), and an open listbox takes its field's label. Unit and e2e run axe on every state the card reaches
+  (empty, messages showing, Select open, filled). Drop both once rokkit#206 ships.
 
 ## Close
 - [x] C1 `openspec validate add-relay-decision-response-form --strict`
