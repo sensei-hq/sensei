@@ -27,7 +27,8 @@ function inWords(name: string): string {
 /** The wire's layout, else one element per property in key order; labels and help from the schema. */
 function formLayout(response: RelayDecisionResponse): RelayDecisionLayout {
   const { properties } = response.schema;
-  const elements = response.layout?.elements ?? Object.keys(properties).map((name) => ({ scope: `#/${name}` }));
+  const elements: RelayDecisionLayout['elements'] =
+    response.layout?.elements ?? Object.keys(properties).map((name) => ({ scope: `#/${name}` }));
   return {
     type: 'vertical',
     elements: elements.map((element) => {
