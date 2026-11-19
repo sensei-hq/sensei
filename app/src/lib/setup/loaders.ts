@@ -139,3 +139,11 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     routersError: routers.ok ? null : failureReason(routers.error),
   };
 }
+
+/** First run (#455): store this machine's installs — the assistants stage posts the
+ *  detection on entry. Null when stored, else why not (the cards' live probe is
+ *  unaffected; the failure is the page's to show). */
+export async function storeAssistantInstalls(port: number): Promise<string | null> {
+  const answer = await senseiApi(port).tryDetectAssistantInstalls();
+  return answer.ok ? null : failureReason(answer.error);
+}

@@ -65,6 +65,22 @@ export interface ActivityEvent {
 
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
 
+/** One stored install (#455): the catalogue tool, and what detection found on this
+ *  machine at `detected_at`. Nulls are not reported (D83). */
+export interface AssistantInstall {
+  id: string;
+  name: string;
+  kind: 'assistant' | 'editor';
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+  config_path: string | null;
+  configured: boolean;
+  configured_at: string | null;
+  configured_version: string | null;
+  detected_at: string;
+}
+
 export interface AssistantStatus {
   id: string;
   name: string;

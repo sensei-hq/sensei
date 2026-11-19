@@ -3,12 +3,21 @@
 // installed") and never a form of defaults: the General page auto-saves, so a
 // form filled from a failed config read would be written back over the user's
 // real settings.
-import { readOutcome, type ApiResult } from '$lib/api.js';
-import type { AssistantStatus, InstalledItem } from '$lib/types.js';
+import { failureReason, readOutcome, type ApiResult } from '$lib/api.js';
+import type { AssistantInstall, InstalledItem } from '$lib/types.js';
 import type { PreferencesData } from '$lib/setup/contracts.js';
 import { toPreferencesForm } from './preferences-form';
 
-export type AssistantRow = { family: string; name: string; version?: string; configured: boolean };
+export type AssistantRow = {
+  family: string;
+  name: string;
+  kind: AssistantInstall['kind'];
+  version: string | null;
+  installed: boolean;
+  configured: boolean;
+  /** When detection last ran for it (#455). */
+  detectedAt: string;
+};
 export type ExtensionRow = { name: string; kind: string; enabled: boolean | null };
 /** A row the daemon sent that cannot be listed: an item needs a name and a
  *  kind to be drawn and toggled, and neither is invented (D83). */
@@ -34,17 +43,29 @@ export async function readPreferences(
   return name ? { prefs: { ...prefs, displayName: name }, error, prefilled: true } : { prefs, error, prefilled: false };
 }
 
+/** This machine's installs, as detection stored them (#455), or why they could not be read. */
 export async function readAssistants(api: {
-  tryDetectAssistants: () => Promise<ApiResult<Array<AssistantStatus & { version?: string }>>>;
+  tryGetAssistantInstalls: () => Promise<ApiResult<AssistantInstall[]>>;
 }): Promise<{ assistants: AssistantRow[]; error: string | null }> {
-  const { data, error } = readOutcome(await api.tryDetectAssistants());
+  const { data, error } = readOutcome(await api.tryGetAssistantInstalls());
   const assistants = (data ?? []).map((a) => ({
-    family: a.family,
+    family: a.id,
     name: a.name,
+    kind: a.kind,
     version: a.version,
+    installed: a.installed,
     configured: a.configured,
+    detectedAt: a.detected_at,
   }));
   return { assistants, error };
+}
+
+/** "Detect again": probe and store. Null when stored, else why not. */
+export async function detectAgain(api: {
+  tryDetectAssistantInstalls: () => Promise<ApiResult<AssistantInstall[]>>;
+}): Promise<string | null> {
+  const answer = await api.tryDetectAssistantInstalls();
+  return answer.ok ? null : failureReason(answer.error);
 }
 
 /** The installed items, each as the daemon described it. Three fields stay
