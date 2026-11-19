@@ -232,6 +232,7 @@ mod tests {
             cache_cleared: true,
             workspaces_cleaned: vec!["/tmp/proj".into()],
             errors: vec!["some error".into()],
+            warnings: vec!["re-detect installs: boom".into()],
         };
         let json: serde_json::Value = serde_json::to_value(&result).unwrap();
         assert_eq!(json["hooks_removed"], true);
@@ -242,6 +243,7 @@ mod tests {
         assert_eq!(json["cache_cleared"], true);
         assert_eq!(json["workspaces_cleaned"][0], "/tmp/proj");
         assert_eq!(json["errors"][0], "some error");
+        assert_eq!(json["warnings"][0], "re-detect installs: boom");
     }
 
     // ── remove_md_files_in edge cases ─────────────────────────────────

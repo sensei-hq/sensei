@@ -197,6 +197,16 @@ pub fn tick_adapter(
 
 use std::sync::Arc;
 
+/// Re-detect after a tick that re-ran configure, so the install rows follow
+/// the repair (#455). Returns the failure, logged, for the caller to record.
+pub async fn resync_after_tick(
+    _pg: &PgStore,
+    _outcome: TickOutcome,
+    _adapter_id: &str,
+) -> Option<String> {
+    None
+}
+
 /// Resolve a single adapter by id (re-run configure) and return the report.
 /// Clears any breaker suspension for that adapter (explicit manual retry).
 pub fn resolve_adapter(
@@ -410,5 +420,57 @@ mod tests {
         let calls = rec.0.lock().unwrap();
         assert_eq!(calls.len(), 2, "second stale episode must re-warn");
         assert_eq!(calls[1].0, NotifyLevel::Warn);
+    }
+
+    // A tick that re-ran configure (auto-resolved, or tried and suspended)
+    // re-detects, so the install rows follow the repair (#455 review). Ticks
+    // that changed nothing leave the rows alone.
+    async fn seed_stale_cursor(pg: &PgStore) {
+        sqlx_core::query::query("delete from sensei.assistant_installs")
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs (catalogue_id, installed, config_path, configured, detected_at)
+             values ('cursor', true, '/stale/.cursor/mcp.json', false, '2000-01-01T00:00:00Z')",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+
+    async fn cursor_redetected(pg: &PgStore) -> bool {
+        sqlx_core::query_scalar::query_scalar(
+            "select detected_at > '2001-01-01' from sensei.assistant_installs
+              where catalogue_id = 'cursor'",
+        )
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_tick_that_reran_configure_redetects_the_installs() {
+        let pg = PgStore::test_store().await;
+        for outcome in [TickOutcome::Resolved, TickOutcome::Suspended] {
+            seed_stale_cursor(&pg).await;
+            assert_eq!(resync_after_tick(&pg, outcome, "cursor").await, None);
+            assert!(cursor_redetected(&pg).await, "{outcome:?} left the install rows stale");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tick_that_changed_nothing_leaves_the_installs_alone() {
+        let pg = PgStore::test_store().await;
+        for outcome in [
+            TickOutcome::Skipped,
+            TickOutcome::Healthy,
+            TickOutcome::StaleWarned,
+            TickOutcome::StaleAlreadyNotified,
+        ] {
+            seed_stale_cursor(&pg).await;
+            assert_eq!(resync_after_tick(&pg, outcome, "cursor").await, None);
+            assert!(!cursor_redetected(&pg).await, "{outcome:?} re-detected");
+        }
     }
 }

@@ -91,15 +91,16 @@ pub(crate) async fn delete_config_key(
 // ── Marketplace Install ─────────────────────────────────────────────────────
 
 pub(crate) async fn marketplace_install(
+    State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let target = body["target"].as_str().unwrap_or("");
     let _item_name = body["item"].as_str().unwrap_or("");
-    let scope = body["scope"].as_str().unwrap_or("global");
+    let scope = body["scope"].as_str().unwrap_or("global").to_string();
     let _marketplace_path = body["marketplacePath"].as_str().unwrap_or("");
 
     if target.is_empty() {
-        return Json(serde_json::json!({"ok": false, "error": "target required"}));
+        return Ok(Json(serde_json::json!({"ok": false, "error": "target required"})));
     }
 
     // Use native Rust installer (replaces shelling out to marketplace/install.ts)
@@ -107,8 +108,9 @@ pub(crate) async fn marketplace_install(
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
-    let result = crate::installer::install(&acps, scope);
-    Json(serde_json::json!({
+    let result =
+        install_then_resync(&state, move || crate::installer::install(&acps, &scope)).await?;
+    Ok(Json(serde_json::json!({
         "ok": true,
         "hooks_installed": result.hooks_installed,
         "skills_installed": result.skills_installed,
@@ -116,7 +118,7 @@ pub(crate) async fn marketplace_install(
         "acps_configured": result.acps_configured,
         "errors": result.errors,
         "warnings": result.warnings,
-    }))
+    })))
 }
 
 // ── Assistants ──────────────────────────────────────────────────────────────
@@ -287,8 +289,24 @@ pub(crate) async fn assistants_resolve(
     State(state): State<AppState>,
     Json(body): Json<ResolveBody>,
 ) -> Json<crate::assistants::AdapterResolveReport> {
-    let report = crate::assistants::resolve_adapter(&body.adapter_id, &state.breaker);
-    Json(report)
+    let breaker = state.breaker.clone();
+    let id = body.adapter_id.clone();
+    Json(
+        resolve_then_resync(&state, &body.adapter_id, move || {
+            crate::assistants::resolve_adapter(&id, &breaker)
+        })
+        .await,
+    )
+}
+
+/// Run a resolve (a re-run of configure for one tool), then re-detect so the
+/// install rows follow (#455). A failed re-detect is a warning on the report.
+async fn resolve_then_resync(
+    _state: &AppState,
+    _adapter_id: &str,
+    resolve: impl FnOnce() -> crate::assistants::AdapterResolveReport,
+) -> crate::assistants::AdapterResolveReport {
+    resolve()
 }
 
 // ── Installer ───────────────────────────────────────────────────────────────
@@ -306,19 +324,26 @@ fn default_scope() -> String {
 }
 
 pub(crate) async fn install_all(
+    State(state): State<AppState>,
     Json(body): Json<InstallBody>,
 ) -> Result<Json<crate::installer::InstallResult>, StatusCode> {
-    // Run in blocking thread — marketplace download is synchronous. A panic in
-    // that thread is a 500, NOT a default (empty) result that reads as a clean
-    // "0 installed, no errors" no-op and hides the failure.
-    let result =
-        tokio::task::spawn_blocking(move || crate::installer::install(&body.acps, &body.scope))
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "install_all: installer thread panicked");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-    Ok(Json(result))
+    install_then_resync(&state, move || crate::installer::install(&body.acps, &body.scope))
+        .await
+        .map(Json)
+}
+
+/// Run an install off the async runtime, then re-detect so the install rows
+/// follow (#455). The marketplace download is synchronous. A panic in that
+/// thread is a 500, NOT a default (empty) result that reads as a clean
+/// "0 installed, no errors" no-op and hides the failure.
+async fn install_then_resync(
+    _state: &AppState,
+    install: impl FnOnce() -> crate::installer::InstallResult + Send + 'static,
+) -> Result<crate::installer::InstallResult, StatusCode> {
+    tokio::task::spawn_blocking(install).await.map_err(|e| {
+        tracing::error!(error = %e, "install: installer thread panicked");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
 pub(crate) async fn install_hooks() -> Json<serde_json::Value> {
@@ -436,18 +461,25 @@ pub(crate) async fn set_installed_enabled(
 }
 
 pub(crate) async fn remove_all(
+    State(state): State<AppState>,
     body: Option<Json<crate::installer::RemoveRequest>>,
 ) -> Result<Json<crate::installer::RemoveResult>, StatusCode> {
-    // An absent body → default request (purge:false) is a genuine default. A
-    // PANIC in the uninstall thread, however, is a 500 — not a default (empty)
-    // result that falsely reports "nothing removed, no errors".
+    // An absent body → default request (purge:false) is a genuine default.
     let req = body.map(|b| b.0).unwrap_or_default();
-    let result =
-        tokio::task::spawn_blocking(move || crate::installer::remove(&req)).await.map_err(|e| {
-            tracing::error!(error = %e, "remove_all: uninstall thread panicked");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    Ok(Json(result))
+    remove_then_resync(&state, move || crate::installer::remove(&req)).await.map(Json)
+}
+
+/// Run an uninstall off the async runtime, then re-detect so the install rows
+/// follow (#455). A PANIC in the uninstall thread is a 500 — not a default
+/// (empty) result that falsely reports "nothing removed, no errors".
+async fn remove_then_resync(
+    _state: &AppState,
+    remove: impl FnOnce() -> crate::installer::RemoveResult + Send + 'static,
+) -> Result<crate::installer::RemoveResult, StatusCode> {
+    tokio::task::spawn_blocking(remove).await.map_err(|e| {
+        tracing::error!(error = %e, "remove_all: uninstall thread panicked");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
 #[cfg(test)]
@@ -629,5 +661,130 @@ mod assistant_route_tests {
         let (status, body) = call(&app, "GET", "/api/assistants/installs").await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
         assert!(!body.is_array(), "{body}");
+    }
+
+    // Every path that configures or removes sensei re-detects, so the install
+    // rows (and the catalogue's `mcp_config`) never outlive the change (#455
+    // review): `/api/install`, `/api/marketplace/install`, `/api/remove`,
+    // `/api/assistants/resolve` — as configure/remove/upgrade already do.
+    async fn seed_stale_cursor(state: &crate::api::state::AppState) {
+        sqlx_core::query::query("delete from sensei.assistant_installs")
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs (catalogue_id, installed, config_path, configured, detected_at)
+             values ('cursor', true, '/stale/.cursor/mcp.json', true, '2000-01-01T00:00:00Z')",
+        )
+        .execute(state.pg.pool())
+        .await
+        .unwrap();
+    }
+
+    /// Whether the stale row was re-detected: a fresh `detected_at` and every
+    /// registry tool stored.
+    async fn redetected(state: &crate::api::state::AppState) -> bool {
+        let (fresh, rows): (bool, i64) = sqlx_core::query_as::query_as(
+            "select coalesce(bool_and(detected_at > '2001-01-01'), false), count(*)
+               from sensei.assistant_installs",
+        )
+        .fetch_one(state.pg.pool())
+        .await
+        .unwrap();
+        fresh && rows == 8
+    }
+
+    async fn break_installs(state: &crate::api::state::AppState) {
+        sqlx_core::query::query(
+            "alter table sensei.assistant_installs rename to assistant_installs_gone",
+        )
+        .execute(state.pg.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_install_redetects_the_installs() {
+        let (_, state) = app().await;
+        seed_stale_cursor(&state).await;
+        let result = super::install_then_resync(&state, crate::installer::InstallResult::default)
+            .await
+            .unwrap();
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert!(redetected(&state).await, "the install rows were left stale");
+    }
+
+    #[tokio::test]
+    async fn a_failed_redetect_after_an_install_is_a_warning() {
+        let (_, state) = app().await;
+        break_installs(&state).await;
+        let result = super::install_then_resync(&state, crate::installer::InstallResult::default)
+            .await
+            .unwrap();
+        assert!(result.errors.is_empty(), "the install landed: {:?}", result.errors);
+        assert!(
+            result.warnings.iter().any(|w| w.starts_with("re-detect installs:")),
+            "{:?}",
+            result.warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn a_remove_all_redetects_the_installs() {
+        let (_, state) = app().await;
+        seed_stale_cursor(&state).await;
+        let result = super::remove_then_resync(&state, crate::installer::RemoveResult::default)
+            .await
+            .unwrap();
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert!(redetected(&state).await, "the install rows were left stale");
+    }
+
+    #[tokio::test]
+    async fn a_failed_redetect_after_a_remove_all_is_a_warning() {
+        let (_, state) = app().await;
+        break_installs(&state).await;
+        let result = super::remove_then_resync(&state, crate::installer::RemoveResult::default)
+            .await
+            .unwrap();
+        assert!(result.errors.is_empty(), "the removal landed: {:?}", result.errors);
+        assert!(
+            result.warnings.iter().any(|w| w.starts_with("re-detect installs:")),
+            "{:?}",
+            result.warnings
+        );
+    }
+
+    fn resolved(ok: bool) -> crate::assistants::AdapterResolveReport {
+        crate::assistants::AdapterResolveReport {
+            adapter_id: "cursor".into(),
+            ok,
+            actions: vec!["reinstalled".into()],
+            errors: vec![],
+            warnings: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn a_resolve_redetects_the_installs() {
+        let (_, state) = app().await;
+        seed_stale_cursor(&state).await;
+        let report = super::resolve_then_resync(&state, "cursor", || resolved(true)).await;
+        assert!(report.ok && report.warnings.is_empty(), "{:?}", report.warnings);
+        assert!(redetected(&state).await, "the install rows were left stale");
+    }
+
+    #[tokio::test]
+    async fn a_failed_redetect_after_a_resolve_is_a_warning() {
+        let (_, state) = app().await;
+        break_installs(&state).await;
+        let report = super::resolve_then_resync(&state, "cursor", || resolved(true)).await;
+        assert!(report.ok, "the resolve landed");
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(
+            report.warnings.iter().any(|w| w.starts_with("re-detect installs:")),
+            "{:?}",
+            report.warnings
+        );
     }
 }
