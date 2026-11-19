@@ -1,6 +1,7 @@
 # Tasks: verify-dojo-sync-files-workspaces
 
-No production code changes. The fix is on `develop` (see proposal.md). These tasks gather the evidence.
+The fix is on `develop` (see proposal.md). These tasks gather the evidence. One defect they found is fixed here:
+the org Workspaces read's `lead` floor (task 2.3).
 
 ## 1. Re-run the existing tests on develop
 
@@ -25,8 +26,13 @@ No production code changes. The fix is on `develop` (see proposal.md). These tas
       not parse or log the returned `workspace_id`; it logs only a failure (warn "the dōjō could not file this
       repository under its workspace"). So check the log has no such warning for the repository, and query the
       local dōjō DB: the repository has one `dojo.repositories_in_workspaces` row, under the expected slug.
-- [x] 2.3 Playwright: open `/org/<slug>/workspaces`. Assert the workspace for that repository is listed
-      (the `ScrWorkspaces` list, `dojo/src/routes/(app)/org/[slug]/[section]/+page.svelte:138-146`).
+- [x] 2.3 Playwright: open `/org/<tenant id>/workspaces` as a NON-admin member (`contributor`) who holds a role
+      on the filed repository. Assert the workspace for that repository is listed (the `ScrWorkspaces` list,
+      `dojo/src/routes/(app)/org/[slug]/[section]/+page.svelte:138-146`). An admin does not count: it reads
+      every workspace of its dōjō through `administers_workspace`, whatever its repository access. Run as the
+      contributor, this first failed (403 "lead role required"); fixed by the member floor on
+      `GET /v1/t/{origin}/{org}/workspaces`. Backed by `repository_workspace_filing.sql` (a non-admin with a
+      role on the filed repository reads it; a lead without one does not).
 - [x] 2.4 Run a second sync cycle. Assert the list is unchanged (same row count, same workspace id).
 - [x] 2.5 Sign in as a second local user with no role on that repository. Assert the workspace is not listed.
 - [x] 2.6 Register a repository whose org has no connection. Assert it is reported `unmapped` and no workspace
