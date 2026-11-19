@@ -70,9 +70,26 @@ async function waitForPath(tauriPage: TauriPageLike, expected: string, timeoutMs
   throw new Error(`Timed out (${timeoutMs}ms) waiting for path ${expected}. Current: ${final}`);
 }
 
-// The card's switch is named by the catalogue (#455): the `claude` family reads
-// "Claude Code", the seeded catalogue name, not a name the registry kept.
-const CLAUDE_SWITCH = 'button[aria-label="Enable Claude Code"]';
+// The Claude card's switch. Its label names the tools it acts on, which depends
+// on what this machine has installed, so the label is checked on its own below.
+const CLAUDE_SWITCH = 'button[role="switch"]';
+
+type FamilyWire = {
+  family: string;
+  name: string;
+  members: Array<{ id: string; name: string; installed: boolean; configured: boolean }>;
+};
+
+/** The label the Claude switch must carry: every installed member's catalogue
+ *  name (every member when none is installed), as the daemon serves them —
+ *  the switch configures and removes all of them (#455 review). */
+async function expectedClaudeLabel(): Promise<string> {
+  const families = await fetch(`${DAEMON_URL}/api/assistants/families`).then(r => r.json()) as FamilyWire[];
+  const claude = families.find(f => f.family === 'claude')!;
+  const installed = claude.members.filter(m => m.installed);
+  const named = (installed.length > 0 ? installed : claude.members).map(m => m.name);
+  return `Enable ${named.join(' and ')}`;
+}
 
 async function resetSetupKeys(): Promise<void> {
   // Strip setup completion so the wizard starts fresh.
@@ -117,6 +134,9 @@ test.describe('Assistants — per-family configure', () => {
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
     await expect(card).toBeVisible({ timeout: 10_000 });
     await expect(card.locator(CLAUDE_SWITCH)).toBeVisible();
+    // The switch names every Claude tool it will configure — not "Claude Code"
+    // alone while it also rewrites Claude Desktop's config.
+    await expect(card.locator(CLAUDE_SWITCH)).toHaveAttribute('aria-label', await expectedClaudeLabel());
     // Claude has five capability parts: plugins, skills, commands, agents, mcp.
     // Lock the count so a future trim/expansion of the daemon's parts list
     // surfaces here instead of going unnoticed.

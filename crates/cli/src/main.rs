@@ -891,19 +891,7 @@ fn remove_acp(name: &str) {
     {
         Ok(r) if r.status().is_success() => {
             let result: serde_json::Value = r.json().unwrap_or_default();
-            let removed = result["acps_removed"].as_array().cloned().unwrap_or_default();
-
-            if removed.is_empty() {
-                println!("  No ACPs to remove.");
-            } else {
-                for id in &removed {
-                    println!("  ✓ Removed {}", id.as_str().unwrap_or("?"));
-                }
-            }
-
-            for e in result["errors"].as_array().unwrap_or(&vec![]) {
-                eprintln!("  ✗ {}", e.as_str().unwrap_or("?"));
-            }
+            print_report_lines(remove_report_lines(&result));
         }
         Ok(r) => eprintln!("Remove failed: HTTP {}", r.status()),
         Err(e) => eprintln!("Remove failed: {}", e),
@@ -1025,29 +1013,66 @@ fn upgrade_cmd(acp: Option<&str>) {
     {
         Ok(r) if r.status().is_success() => {
             let reports: Vec<serde_json::Value> = r.json().unwrap_or_default();
-            if reports.is_empty() {
-                println!("  No assistants to upgrade.");
-                return;
-            }
-            for rep in &reports {
-                let id = rep["adapter_id"].as_str().unwrap_or("?");
-                let ok = rep["ok"].as_bool() == Some(true);
-                if ok {
-                    let msg = join_strs(&rep["actions"]);
-                    println!("  ✓ {} — {}", id, if msg.is_empty() { "ok".into() } else { msg });
-                } else {
-                    let msg = join_strs(&rep["errors"]);
-                    eprintln!(
-                        "  ✗ {} — {}",
-                        id,
-                        if msg.is_empty() { "failed".into() } else { msg }
-                    );
-                }
-            }
+            print_report_lines(upgrade_report_lines(&reports));
         }
         Ok(r) => eprintln!("Upgrade failed: HTTP {}", r.status()),
         Err(e) => eprintln!("Upgrade failed: {}", e),
     }
+}
+
+/// Lines for the terminal: `(stdout, stderr)`.
+type ReportLines = (Vec<String>, Vec<String>);
+
+fn print_report_lines((out, err): ReportLines) {
+    for l in out {
+        println!("{l}");
+    }
+    for l in err {
+        eprintln!("{l}");
+    }
+}
+
+/// What `sensei remove acp` prints for the daemon's remove response.
+fn remove_report_lines(result: &serde_json::Value) -> ReportLines {
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let removed = result["acps_removed"].as_array().cloned().unwrap_or_default();
+    if removed.is_empty() {
+        out.push("  No ACPs to remove.".to_string());
+    } else {
+        for id in &removed {
+            out.push(format!("  ✓ Removed {}", id.as_str().unwrap_or("?")));
+        }
+    }
+    for e in result["errors"].as_array().unwrap_or(&vec![]) {
+        err.push(format!("  ✗ {}", e.as_str().unwrap_or("?")));
+    }
+    (out, err)
+}
+
+/// What `sensei upgrade` prints for the daemon's per-assistant reports.
+fn upgrade_report_lines(reports: &[serde_json::Value]) -> ReportLines {
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    if reports.is_empty() {
+        out.push("  No assistants to upgrade.".to_string());
+        return (out, err);
+    }
+    for rep in reports {
+        let id = rep["adapter_id"].as_str().unwrap_or("?");
+        if rep["ok"].as_bool() == Some(true) {
+            let msg = join_strs(&rep["actions"]);
+            out.push(format!("  ✓ {} — {}", id, if msg.is_empty() { "ok".into() } else { msg }));
+        } else {
+            let msg = join_strs(&rep["errors"]);
+            err.push(format!(
+                "  ✗ {} — {}",
+                id,
+                if msg.is_empty() { "failed".into() } else { msg }
+            ));
+        }
+    }
+    (out, err)
 }
 
 /// Join a JSON array of strings into a `; `-separated line (empty when the
@@ -2006,6 +2031,40 @@ mod tests {
             "duplicate_name_workspaces": 0,
             "samples": { "orphan_files": ["/a/b.rs", "/a/c.rs"], "ghost_folders": ["/a/gone"] }
         }));
+    }
+
+    #[test]
+    fn remove_reads_the_daemons_field_and_prints_its_warnings() {
+        // The daemon answers `assistants_removed` (config.rs remove_response);
+        // the CLI read `acps_removed` and always said nothing was removed. A
+        // re-detect failure after the removal is a warning and is printed.
+        let (out, err) = remove_report_lines(&serde_json::json!({
+            "assistants_removed": ["claude-code"],
+            "errors": [],
+            "warnings": ["re-detect installs: boom"],
+        }));
+        assert_eq!(out, vec!["  ✓ Removed claude-code".to_string()]);
+        assert_eq!(err, vec!["  ! re-detect installs: boom".to_string()]);
+    }
+
+    #[test]
+    fn upgrade_prints_a_landed_reports_warnings_once() {
+        // The re-detect warning rides on every report; it is printed once.
+        let (out, err) = upgrade_report_lines(&[
+            serde_json::json!({"adapter_id": "claude-code", "ok": true,
+                "actions": ["upgraded claude-code plugin"], "errors": [],
+                "warnings": ["re-detect installs: boom"]}),
+            serde_json::json!({"adapter_id": "cursor", "ok": true,
+                "actions": [], "errors": [], "warnings": ["re-detect installs: boom"]}),
+        ]);
+        assert_eq!(
+            out,
+            vec![
+                "  ✓ claude-code — upgraded claude-code plugin".to_string(),
+                "  ✓ cursor — ok".to_string(),
+            ]
+        );
+        assert_eq!(err, vec!["  ! re-detect installs: boom".to_string()]);
     }
 
     #[test]

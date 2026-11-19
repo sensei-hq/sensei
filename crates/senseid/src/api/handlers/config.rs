@@ -232,11 +232,22 @@ pub(crate) async fn assistant_upgrade(
 ) -> Json<Vec<crate::assistants::AdapterResolveReport>> {
     let (mut reports, refreshed) = crate::assistants::upgrade_refreshing(&body.acps);
     if let Some(w) = resync_installs(&state, &refreshed).await {
-        for r in &mut reports {
-            r.errors.push(w.clone());
-        }
+        note_resync_failure(&mut reports, &w);
     }
     Json(reports)
+}
+
+/// Record a failed post-upgrade re-detect on each report.
+fn note_resync_failure(reports: &mut [crate::assistants::AdapterResolveReport], warning: &str) {
+    for r in reports {
+        r.errors.push(warning.to_string());
+    }
+}
+
+/// The remove response: what was removed, and what went wrong.
+fn remove_response(removed: Vec<String>, resync_failure: Option<String>) -> serde_json::Value {
+    let errors: Vec<String> = resync_failure.into_iter().collect();
+    serde_json::json!({"assistants_removed": removed, "errors": errors})
 }
 
 #[derive(Deserialize)]
@@ -250,8 +261,7 @@ pub(crate) async fn assistant_remove(
     Json(body): Json<AssistantRemoveBody>,
 ) -> Json<serde_json::Value> {
     let removed = crate::assistants::remove_selected(&body.acps, Some(&state.event_tx));
-    let errors: Vec<String> = resync_installs(&state, &[]).await.into_iter().collect();
-    serde_json::json!({"assistants_removed": removed, "errors": errors}).into()
+    remove_response(removed, resync_installs(&state, &[]).await).into()
 }
 
 /// GET /api/assistants/health — current per-adapter health (config + freshness).
@@ -462,6 +472,44 @@ mod tests {
     #[test]
     fn other_keys_are_not_validated_here() {
         assert!(config_value_is_valid("theme", "anything"));
+    }
+
+    // A failed re-detect after a remove that landed is a warning, as configure
+    // reports it: the wizard reads any `errors` as a failed remove and turns the
+    // switch back on while the tool's config no longer holds sensei (#455 review).
+    #[test]
+    fn a_failed_redetect_after_remove_is_a_warning_not_an_error() {
+        let body = remove_response(
+            vec!["claude-code".into()],
+            Some("re-detect installs: connection refused".into()),
+        );
+        assert_eq!(body["assistants_removed"], serde_json::json!(["claude-code"]));
+        assert_eq!(body["errors"], serde_json::json!([]), "the removal landed: no errors");
+        assert_eq!(body["warnings"], serde_json::json!(["re-detect installs: connection refused"]));
+    }
+
+    #[test]
+    fn a_clean_remove_has_neither_errors_nor_warnings() {
+        let body = remove_response(vec!["cursor".into()], None);
+        assert_eq!(body["errors"], serde_json::json!([]));
+        assert_eq!(body["warnings"], serde_json::json!([]));
+    }
+
+    // Same class on upgrade: the report stayed `ok: true` with the re-detect
+    // failure in `errors`, a contradiction the CLI resolved by never printing it.
+    #[test]
+    fn a_failed_redetect_after_upgrade_is_a_warning_on_each_report() {
+        let mut reports = vec![crate::assistants::AdapterResolveReport {
+            adapter_id: "claude-code".into(),
+            ok: true,
+            actions: vec!["upgraded claude-code plugin".into()],
+            errors: vec![],
+            warnings: vec![],
+        }];
+        note_resync_failure(&mut reports, "re-detect installs: boom");
+        assert!(reports[0].ok);
+        assert!(reports[0].errors.is_empty(), "the upgrade landed: no errors");
+        assert_eq!(reports[0].warnings, vec!["re-detect installs: boom".to_string()]);
     }
 }
 

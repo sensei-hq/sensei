@@ -436,6 +436,7 @@ pub fn upgrade_refreshing(assistant_ids: &[String]) -> (Vec<AdapterResolveReport
                     ok: true,
                     actions,
                     errors: vec![],
+                    warnings: vec![],
                 }
             }
             Err(e) => AdapterResolveReport {
@@ -443,6 +444,7 @@ pub fn upgrade_refreshing(assistant_ids: &[String]) -> (Vec<AdapterResolveReport
                 ok: false,
                 actions: vec![],
                 errors: vec![e],
+                warnings: vec![],
             },
         })
         .collect();
@@ -1373,6 +1375,65 @@ mod tests {
         std::fs::write(&path, r#"{"otherKey": {}}"#).unwrap();
 
         assert!(!remove_sensei_from_json(&path, "mcpServers"));
+    }
+
+    // ── name_families: a family reads as the tools its switch acts on ──────
+
+    fn claude_family(code_installed: bool, desktop_installed: bool) -> AssistantFamily {
+        let member = |id: &str, installed: bool| AssistantStatus {
+            id: id.into(),
+            family: "claude".into(),
+            installed,
+            configured: false,
+            config_path: String::new(),
+        };
+        AssistantFamily {
+            family: "claude".into(),
+            members: vec![
+                member("claude-code", code_installed),
+                member("claude-desktop", desktop_installed),
+            ],
+            installed: code_installed || desktop_installed,
+            config_path: String::new(),
+            parts: vec![],
+        }
+    }
+
+    fn claude_names() -> CatalogueNames {
+        let row = |word: &str, id: &str, name: &str| CatalogueWordRow {
+            word: word.into(),
+            id: id.into(),
+            name: name.into(),
+            kind: "assistant".into(),
+            joins_crew: id != "claude-desktop",
+        };
+        CatalogueNames::from_rows(vec![
+            row("claude", "claude", "Claude Code"),
+            row("claude-code", "claude", "Claude Code"),
+            row("claude-desktop", "claude-desktop", "Claude Desktop"),
+        ])
+    }
+
+    // The wizard's switch configures and removes every installed member, so the
+    // card names every installed member: "Enable Claude Code" must not rewrite
+    // Claude Desktop's config too (#455 review).
+    #[test]
+    fn a_family_with_two_installed_members_names_both() {
+        let named = name_families(vec![claude_family(true, true)], &claude_names());
+        assert_eq!(named[0].name, "Claude Code and Claude Desktop");
+    }
+
+    #[test]
+    fn a_family_names_only_its_installed_members() {
+        let n = claude_names();
+        assert_eq!(name_families(vec![claude_family(true, false)], &n)[0].name, "Claude Code");
+        assert_eq!(name_families(vec![claude_family(false, true)], &n)[0].name, "Claude Desktop");
+    }
+
+    #[test]
+    fn a_family_with_nothing_installed_names_every_member() {
+        let named = name_families(vec![claude_family(false, false)], &claude_names());
+        assert_eq!(named[0].name, "Claude Code and Claude Desktop");
     }
 
     // Note: ClaudeCodeAssistant::configure/remove call `claude` CLI which

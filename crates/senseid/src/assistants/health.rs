@@ -81,6 +81,11 @@ pub struct AdapterResolveReport {
     pub ok: bool,
     pub actions: Vec<String>,
     pub errors: Vec<String>,
+    /// Soft failures after the action landed (e.g. the post-action re-detect
+    /// failed). `ok` stays true; kept apart from `errors` so callers do not read
+    /// a landed action as a failed one.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 /// Hours elapsed between two epoch-millis instants. When `exclude_weekends`,

@@ -214,6 +214,7 @@ pub fn resolve_adapter(
             ok: false,
             actions: vec![],
             errors: vec![format!("unknown adapter {adapter_id}")],
+            warnings: vec![],
         }
     })
 }

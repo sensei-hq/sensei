@@ -61,12 +61,14 @@ pub(crate) trait Assistant {
                     a
                 },
                 errors: vec![],
+                warnings: vec![],
             },
             Err(e) => AdapterResolveReport {
                 adapter_id: self.id().to_string(),
                 ok: false,
                 actions: vec![],
                 errors: vec![e],
+                warnings: vec![],
             },
         }
     }
