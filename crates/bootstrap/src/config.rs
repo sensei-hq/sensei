@@ -275,13 +275,26 @@ pub fn engines_dir() -> PathBuf {
 
 /// User's home directory.
 ///
-/// Panics if the `HOME` environment variable is not set — we cannot safely
-/// fall back to `/tmp` because that would silently write config/data files in
+/// Panics if no home is set (see [`try_home_dir`]) — we cannot safely fall
+/// back to a temp dir because that would silently write config/data files in
 /// the wrong location.
 pub fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .expect("HOME environment variable is not set — cannot determine user home directory")
+    try_home_dir().expect("no home directory: neither HOME nor (on Windows) USERPROFILE is set")
+}
+
+/// User's home directory, or `None` when none is set: `HOME` first on every
+/// platform (tests sandbox through it, and Git Bash sets it), then the profile
+/// directory (`USERPROFILE`) on Windows, where `HOME` is normally unset.
+pub fn try_home_dir() -> Option<PathBuf> {
+    home_from(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
+}
+
+fn home_from(
+    home: Option<std::ffi::OsString>,
+    userprofile: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let set = |v: Option<std::ffi::OsString>| v.filter(|s| !s.is_empty()).map(PathBuf::from);
+    set(home).or_else(|| if cfg!(windows) { set(userprofile) } else { None })
 }
 
 // ── Local config file ─────────────────────────────────────────────────────────
@@ -590,6 +603,27 @@ mod tests {
     fn db_url_is_well_formed() {
         let cfg = SenseiConfig::from_env();
         assert!(cfg.db_url.starts_with("postgresql://"));
+    }
+
+    #[test]
+    fn home_from_prefers_home() {
+        let h = home_from(Some("/home/ana".into()), Some(r"C:\Users\ana".into()));
+        assert_eq!(h, Some(PathBuf::from("/home/ana")));
+    }
+
+    #[test]
+    fn home_from_falls_back_to_the_profile_dir_on_windows_only() {
+        let h = home_from(None, Some(r"C:\Users\ana".into()));
+        if cfg!(windows) {
+            assert_eq!(h, Some(PathBuf::from(r"C:\Users\ana")));
+        } else {
+            assert_eq!(h, None);
+        }
+    }
+
+    #[test]
+    fn home_from_treats_empty_as_unset() {
+        assert_eq!(home_from(Some("".into()), Some("".into())), None);
     }
 
     #[test]
