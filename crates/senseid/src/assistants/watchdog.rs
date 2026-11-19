@@ -200,11 +200,20 @@ use std::sync::Arc;
 /// Re-detect after a tick that re-ran configure, so the install rows follow
 /// the repair (#455). Returns the failure, logged, for the caller to record.
 pub async fn resync_after_tick(
-    _pg: &PgStore,
-    _outcome: TickOutcome,
-    _adapter_id: &str,
+    pg: &PgStore,
+    outcome: TickOutcome,
+    adapter_id: &str,
 ) -> Option<String> {
-    None
+    match outcome {
+        TickOutcome::Resolved => {
+            crate::assistants::resync_installs(pg, &[adapter_id.to_string()]).await
+        }
+        TickOutcome::Suspended => crate::assistants::resync_installs(pg, &[]).await,
+        TickOutcome::Skipped
+        | TickOutcome::Healthy
+        | TickOutcome::StaleWarned
+        | TickOutcome::StaleAlreadyNotified => None,
+    }
 }
 
 /// Resolve a single adapter by id (re-run configure) and return the report.
@@ -283,6 +292,11 @@ pub async fn run_sweep(
             &|| AdapterHealth::new(&id, &fam, config_health_for(&id), true),
         );
         breaker.lock().unwrap().insert(h.adapter_id.clone(), watch);
+
+        // A repair re-ran configure: re-detect so the install rows follow it.
+        if let Some(w) = resync_after_tick(pg, outcome, &h.adapter_id).await {
+            logger.warn(&format!("watchdog {}: {w}", h.adapter_id), None).await;
+        }
 
         // Refresh the keep-alive marker so Claude Code's plugin in-use sweep
         // doesn't prune the daemon-installed plugin (anthropics/claude-code#69626).

@@ -180,18 +180,8 @@ pub(crate) async fn assistant_installs(
     })
 }
 
-/// Re-detect after configure/remove/upgrade so the install rows follow;
-/// `just_configured` are the ids the action configured into (see
-/// [`crate::assistants::sync_installs`]). The action already happened; a failed
-/// sync is logged and returned for the caller to report, never swallowed.
 async fn resync_installs(state: &AppState, just_configured: &[String]) -> Option<String> {
-    match crate::assistants::sync_installs(&state.pg, just_configured).await {
-        Ok(_) => None,
-        Err(e) => {
-            tracing::warn!(error = %e, "assistants: install sync after an action failed");
-            Some(format!("re-detect installs: {e}"))
-        }
-    }
+    crate::assistants::resync_installs(&state.pg, just_configured).await
 }
 
 #[derive(Deserialize)]
@@ -302,11 +292,16 @@ pub(crate) async fn assistants_resolve(
 /// Run a resolve (a re-run of configure for one tool), then re-detect so the
 /// install rows follow (#455). A failed re-detect is a warning on the report.
 async fn resolve_then_resync(
-    _state: &AppState,
-    _adapter_id: &str,
+    state: &AppState,
+    adapter_id: &str,
     resolve: impl FnOnce() -> crate::assistants::AdapterResolveReport,
 ) -> crate::assistants::AdapterResolveReport {
-    resolve()
+    let mut report = resolve();
+    let configured = if report.ok { vec![adapter_id.to_string()] } else { vec![] };
+    if let Some(w) = resync_installs(state, &configured).await {
+        report.warnings.push(w);
+    }
+    report
 }
 
 // ── Installer ───────────────────────────────────────────────────────────────
@@ -337,13 +332,17 @@ pub(crate) async fn install_all(
 /// thread is a 500, NOT a default (empty) result that reads as a clean
 /// "0 installed, no errors" no-op and hides the failure.
 async fn install_then_resync(
-    _state: &AppState,
+    state: &AppState,
     install: impl FnOnce() -> crate::installer::InstallResult + Send + 'static,
 ) -> Result<crate::installer::InstallResult, StatusCode> {
-    tokio::task::spawn_blocking(install).await.map_err(|e| {
+    let mut result = tokio::task::spawn_blocking(install).await.map_err(|e| {
         tracing::error!(error = %e, "install: installer thread panicked");
         StatusCode::INTERNAL_SERVER_ERROR
-    })
+    })?;
+    if let Some(w) = resync_installs(state, &result.acps_configured).await {
+        result.warnings.push(w);
+    }
+    Ok(result)
 }
 
 pub(crate) async fn install_hooks() -> Json<serde_json::Value> {
@@ -473,13 +472,17 @@ pub(crate) async fn remove_all(
 /// follow (#455). A PANIC in the uninstall thread is a 500 — not a default
 /// (empty) result that falsely reports "nothing removed, no errors".
 async fn remove_then_resync(
-    _state: &AppState,
+    state: &AppState,
     remove: impl FnOnce() -> crate::installer::RemoveResult + Send + 'static,
 ) -> Result<crate::installer::RemoveResult, StatusCode> {
-    tokio::task::spawn_blocking(remove).await.map_err(|e| {
+    let mut result = tokio::task::spawn_blocking(remove).await.map_err(|e| {
         tracing::error!(error = %e, "remove_all: uninstall thread panicked");
         StatusCode::INTERNAL_SERVER_ERROR
-    })
+    })?;
+    if let Some(w) = resync_installs(state, &[]).await {
+        result.warnings.push(w);
+    }
+    Ok(result)
 }
 
 #[cfg(test)]

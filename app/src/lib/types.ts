@@ -143,8 +143,11 @@ export interface InstallResult {
   commands_installed: number;
   stale_commands_removed: number;
   stale_skills_removed: number;
-  assistants_configured: string[];
+  /** `POST /api/install` (installer::InstallResult) names this `acps_configured`. */
+  acps_configured: string[];
   errors: string[];
+  /** The install landed but a follow-up (e.g. the install re-detect) failed. */
+  warnings: string[];
   marketplace_version: string;
 }
 
@@ -158,7 +161,10 @@ export interface RemoveResult {
   hooks_removed: boolean;
   cache_cleared: boolean;
   workspaces_cleaned: string[];
+  /** The removal failed for these. */
   errors: string[];
+  /** The removal landed but a follow-up (the install re-detect) failed. */
+  warnings: string[];
 }
 
 export interface AssistantRemoveResult {

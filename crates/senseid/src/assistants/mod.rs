@@ -169,8 +169,8 @@ pub fn detect() -> Vec<AssistantStatus> {
 }
 
 /// Probe this machine and store what it found, one row per catalogue tool
-/// (#455). Runs on first run, after configure/remove/upgrade, and on "Detect
-/// again". `just_configured` names the registry ids this sensei configured in
+/// (#455). Runs on first run, after every configure/remove/upgrade/install/
+/// resolve (the watchdog's repair included), and on "Detect again". `just_configured` names the registry ids this sensei configured in
 /// the action that triggered the run (empty for detection alone); only those,
 /// when the probe confirms them, get this time and version as their
 /// configuration. Returns the stored rows joined to the catalogue.
@@ -182,6 +182,23 @@ pub async fn sync_installs(
         .await
         .map_err(|e| format!("assistant probe panicked: {e}"))?;
     sync_installs_with(pg, &statuses, just_configured).await
+}
+
+/// Re-detect after an action that configured or removed sensei, so the install
+/// rows follow (#455); `just_configured` as in [`sync_installs`]. The action
+/// already happened: a failed sync is logged and returned for the caller to
+/// report as a warning, never swallowed.
+pub async fn resync_installs(
+    pg: &crate::db::pg_store::PgStore,
+    just_configured: &[String],
+) -> Option<String> {
+    match sync_installs(pg, just_configured).await {
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "assistants: install sync after an action failed");
+            Some(format!("re-detect installs: {e}"))
+        }
+    }
 }
 
 /// [`sync_installs`] with the probe's result given — the seam tests inject.
