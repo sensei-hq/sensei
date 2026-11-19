@@ -15,7 +15,10 @@
   CLI `assistants_removed` + upgrade warnings; TS `RemoveResult`. Red `02fdde62`, green `5a0c5c66`.
 - Review fix 3: every opening of the Crew view reads the catalogue (was once per page). Red `ead334a4`, green
   `5078cf98`, e2e leave-and-return `e1c2784d`. Runs list re-reads on run events; no other one-shot read.
-- e2e green: relay* 15/15 (one earlier run had a transient webview `eval` hang; passed alone and on rerun),
+- Review fix 4: install (`/api/install`, `/api/marketplace/install`), `/api/remove`, `/api/assistants/resolve`
+  and the watchdog's repair re-detect installs; failures are warnings (RemoveResult.warnings), printed by
+  `remove all` / `doctor --fix`. Red `79c57d41`/`1240d5dd`, green `7d326825`/`49f29fd8`.
+- e2e green: relay-catalogue + assistants-configure after fix 4; relay* 15/15 (one earlier run had a transient webview `eval` hang; passed alone and on rerun),
   assistants-configure, configure-assistants, settings, observatory-daily.
 - Gates: fmt, clippy -D warnings, senseid DB tests serial, `make test-db` 102/102.
 
