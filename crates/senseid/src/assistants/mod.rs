@@ -933,6 +933,20 @@ mod tests {
         .unwrap()
     }
 
+    async fn configuration_stamp(
+        pg: &crate::db::pg_store::PgStore,
+        id: &str,
+    ) -> (Option<chrono::DateTime<chrono::Utc>>, Option<String>) {
+        sqlx_core::query_as::query_as(
+            "select configured_at, configured_version
+               from sensei.assistant_installs where catalogue_id = $1",
+        )
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn sync_installs_stores_one_row_per_catalogue_tool_and_updates_in_place() {
         let pg = crate::db::pg_store::PgStore::test_store().await;
@@ -945,7 +959,7 @@ mod tests {
             status("cursor", true, false),
             status("muse", true, false),
         ];
-        let rows = sync_installs_with(&pg, &probe).await.unwrap();
+        let rows = sync_installs_with(&pg, &probe, &[]).await.unwrap();
         let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["claude", "cursor"], "{rows:?}");
         assert_eq!(rows[0]["name"], "Claude Code", "the catalogue names the row");
@@ -960,18 +974,14 @@ mod tests {
             install_row(&pg, "claude").await.unwrap();
         assert!(installed && configured);
         assert_eq!(path.as_deref(), Some("/home/x/claude-code.json"));
-        assert_eq!(
-            version.as_deref(),
-            Some(env!("CARGO_PKG_VERSION")),
-            "configured with this version"
-        );
+        assert_eq!(version, None, "detection does not stamp a configuration");
         let (_, configured, _, version, _) = install_row(&pg, "cursor").await.unwrap();
         assert!(!configured);
         assert_eq!(version, None, "never configured, no version");
 
         // A second run updates in place.
         let probe = vec![status("claude-code", true, true), status("cursor", true, true)];
-        sync_installs_with(&pg, &probe).await.unwrap();
+        sync_installs_with(&pg, &probe, &[]).await.unwrap();
         let n: i64 =
             sqlx_core::query_scalar::query_scalar("select count(*) from sensei.assistant_installs")
                 .fetch_one(pg.pool())
@@ -980,7 +990,7 @@ mod tests {
         assert_eq!(n, 2);
         let (_, configured, _, version, _) = install_row(&pg, "cursor").await.unwrap();
         assert!(configured, "configure is followed");
-        assert_eq!(version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(version, None, "seen configured, not configured by this run");
         let (_, _, _, _, second) = install_row(&pg, "claude").await.unwrap();
         assert!(second >= first, "detected_at moves with each run");
     }
@@ -1005,33 +1015,63 @@ mod tests {
         .await
         .unwrap();
         let probe = vec![status("claude-code", true, true), status("cursor", true, true)];
-        sync_installs_with(&pg, &probe).await.unwrap();
+        sync_installs_with(&pg, &probe, &[]).await.unwrap();
 
-        let stamp = |id: &'static str| {
-            let pg = &pg;
-            async move {
-                sqlx_core::query_as::query_as::<
-                    _,
-                    (Option<chrono::DateTime<chrono::Utc>>, Option<String>),
-                >(
-                    "select configured_at, configured_version
-                       from sensei.assistant_installs where catalogue_id = $1",
-                )
-                .bind(id)
-                .fetch_one(pg.pool())
-                .await
-                .unwrap()
-            }
-        };
-        let (at, version) = stamp("claude").await;
+        let (at, version) = configuration_stamp(&pg, "claude").await;
         assert_eq!((at, version.as_deref()), (None, None), "first seen configured: no stamp");
-        let (at, version) = stamp("cursor").await;
+        let (at, version) = configuration_stamp(&pg, "cursor").await;
         assert_eq!(
             at.map(|t| t.to_rfc3339()).as_deref(),
             Some("2026-01-02T03:04:05+00:00"),
             "an older configuration keeps its time"
         );
         assert_eq!(version.as_deref(), Some("0.0.1"), "and its sensei version");
+    }
+
+    /// Configure (#455 "Configure keeps the row current"): the tools this
+    /// sensei just configured, and the probe confirms, read configured with the
+    /// time and this sensei version; the rest of the run only observes.
+    #[tokio::test]
+    async fn configuring_stamps_the_time_and_this_sensei_version() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        sqlx_core::query::query("delete from sensei.assistant_installs")
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs
+                    (catalogue_id, installed, configured, configured_at, configured_version, detected_at)
+             values ('cursor', true, true, '2026-01-02T03:04:05Z', '0.0.1', '2026-01-02T03:04:05Z')",
+        )
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let before = chrono::Utc::now();
+        let probe = vec![
+            status("claude-code", true, true),
+            status("cursor", true, true),
+            status("windsurf", true, false),
+        ];
+        let just_configured = ["cursor".to_string(), "windsurf".to_string()];
+        sync_installs_with(&pg, &probe, &just_configured).await.unwrap();
+
+        let (at, version) = configuration_stamp(&pg, "cursor").await;
+        assert!(at.is_some_and(|t| t >= before), "configured now: {at:?}");
+        assert_eq!(version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        let (at, version) = configuration_stamp(&pg, "claude").await;
+        assert_eq!((at, version), (None, None), "not configured by this run");
+        let (at, version) = configuration_stamp(&pg, "windsurf").await;
+        assert_eq!((at, version), (None, None), "the probe does not see it configured");
+    }
+
+    /// An upgrade refreshes only what it re-pushed: a file-based MCP tool's
+    /// upgrade is a no-op, so it does not count as configured by this version.
+    #[test]
+    fn a_noop_upgrade_refreshes_nothing() {
+        let (reports, refreshed) = upgrade_refreshing(&["cursor".to_string()]);
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].ok);
+        assert!(refreshed.is_empty(), "{refreshed:?}");
     }
 
     // ── Registry consistency ───────────────────────────────────────────
