@@ -12,7 +12,6 @@ pub(crate) struct AssistantConfigureOk {
 /// Each Assistant implements detect, configure, and remove.
 pub(crate) trait Assistant {
     fn id(&self) -> &str;
-    fn name(&self) -> &str;
     fn mcp_key(&self) -> &str;
     fn config_path(&self) -> PathBuf;
     fn detect(&self) -> bool;
@@ -84,11 +83,6 @@ pub(crate) trait Assistant {
         self.id()
     }
 
-    /// Display name for the family (used when grouped).
-    fn family_name(&self) -> &str {
-        self.name()
-    }
-
     /// Capability parts this Assistant configures. Drives the per-part chips
     /// shown on each AssistantCard in the setup wizard. Default = one `mcp`
     /// part, which matches every MCP-file integration. Claude Code overrides
@@ -108,7 +102,6 @@ pub(crate) trait Assistant {
     fn status(&self) -> AssistantStatus {
         AssistantStatus {
             id: self.id().to_string(),
-            name: self.name().to_string(),
             family: self.family().to_string(),
             installed: self.detect(),
             configured: self.is_configured(),
@@ -129,9 +122,6 @@ mod tests {
     impl Assistant for StubAssistant {
         fn id(&self) -> &str {
             "stub"
-        }
-        fn name(&self) -> &str {
-            "Stub"
         }
         fn mcp_key(&self) -> &str {
             "mcpServers"

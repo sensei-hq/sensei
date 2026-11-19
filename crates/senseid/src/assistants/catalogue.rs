@@ -20,34 +20,34 @@ pub struct CatalogueNames {
 
 impl CatalogueNames {
     pub fn from_rows(rows: Vec<CatalogueWordRow>) -> Self {
-        let _ = rows;
-        todo!("#455 red")
+        Self { by_word: rows.into_iter().map(|r| (r.word.clone(), r)).collect() }
     }
 
     /// The catalogue row a word resolves to, if any.
     pub fn entry(&self, word: &str) -> Option<&CatalogueWordRow> {
-        let _ = word;
-        todo!("#455 red")
+        self.by_word.get(word)
     }
 
     /// The name people know the tool by; an unknown word made readable.
     pub fn name(&self, word: &str) -> String {
-        let _ = word;
-        todo!("#455 red")
+        self.entry(word).map_or_else(|| readable(word), |e| e.name.clone())
     }
 
     /// `assistant`, `editor`, or `unknown` when the catalogue has no row.
     pub fn kind(&self, word: &str) -> &str {
-        let _ = word;
-        todo!("#455 red")
+        self.entry(word).map_or(UNKNOWN_KIND, |e| e.kind.as_str())
     }
 }
 
 /// A word made readable: separators to spaces, the first letter capitalised
 /// ("gemini-cli" → "Gemini cli", "muse" → "Muse"). Names without classifying.
 pub fn readable(word: &str) -> String {
-    let _ = word;
-    todo!("#455 red")
+    let words = word.split(['-', '_']).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+    let mut chars = words.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 #[cfg(test)]

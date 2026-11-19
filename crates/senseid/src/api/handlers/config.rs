@@ -121,12 +121,74 @@ pub(crate) async fn marketplace_install(
 
 // ── Assistants ──────────────────────────────────────────────────────────────
 
-pub(crate) async fn assistant_detect() -> Json<Vec<crate::assistants::AssistantStatus>> {
-    Json(crate::assistants::detect())
+/// The catalogue's names, or a 500: a detection list is never served unnamed (#455).
+async fn catalogue_names(
+    state: &AppState,
+) -> Result<crate::assistants::CatalogueNames, StatusCode> {
+    state.pg.catalogue_names().await.map_err(|e| {
+        tracing::warn!(error = %e, "assistants: catalogue read failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
-pub(crate) async fn assistant_detect_families() -> Json<Vec<crate::assistants::AssistantFamily>> {
-    Json(crate::assistants::detect_families())
+/// GET /api/assistants/detect — the live probe, each tool named by the catalogue.
+pub(crate) async fn assistant_detect(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::assistants::Named<crate::assistants::AssistantStatus>>>, StatusCode> {
+    let names = catalogue_names(&state).await?;
+    let statuses = tokio::task::spawn_blocking(crate::assistants::detect).await.map_err(|e| {
+        tracing::warn!(error = %e, "assistants: probe panicked");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(crate::assistants::name_statuses(statuses, &names)))
+}
+
+/// GET /api/assistants/families — the live probe grouped by family, named by the catalogue.
+pub(crate) async fn assistant_detect_families(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::assistants::Named<crate::assistants::NamedFamily>>>, StatusCode> {
+    let names = catalogue_names(&state).await?;
+    let families =
+        tokio::task::spawn_blocking(crate::assistants::detect_families).await.map_err(|e| {
+            tracing::warn!(error = %e, "assistants: probe panicked");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(crate::assistants::name_families(families, &names)))
+}
+
+/// POST /api/assistants/detect — probe this machine, store what it found
+/// (one row per catalogue tool), and return the stored rows (#455).
+pub(crate) async fn assistant_sync_installs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    crate::assistants::sync_installs(&state.pg).await.map(Json).map_err(|e| {
+        tracing::warn!(error = %e, "assistants: install sync failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
+}
+
+/// GET /api/assistants/installs — the stored rows joined to the catalogue.
+/// A failed read is a 500, never `[]`.
+pub(crate) async fn assistant_installs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    state.pg.list_assistant_installs().await.map(Json).map_err(|e| {
+        tracing::warn!(error = %e, "assistants: installs read failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
+}
+
+/// Re-detect after configure/remove/upgrade so the install rows follow. The
+/// action already happened; a failed sync is logged and returned for the
+/// caller to report, never swallowed.
+async fn resync_installs(state: &AppState) -> Option<String> {
+    match crate::assistants::sync_installs(&state.pg).await {
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "assistants: install sync after an action failed");
+            Some(format!("re-detect installs: {e}"))
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -142,7 +204,13 @@ pub(crate) async fn assistant_configure(
     // Hand the state event sender to configure() so it can broadcast
     // per-part configuring/done/error transitions to SSE subscribers
     // (the wizard's AssistantCard) as each variant lands.
-    Json(crate::assistants::configure(&body.acps, Some(&state.event_tx)))
+    let acps = body.acps;
+    let tx = state.event_tx.clone();
+    let mut result = crate::assistants::configure(&acps, Some(&tx));
+    if let Some(w) = resync_installs(&state).await {
+        result.warnings.push(w);
+    }
+    Json(result)
 }
 
 #[derive(Deserialize)]
@@ -158,9 +226,16 @@ pub(crate) struct AssistantUpgradeBody {
 /// Claude Code runs `claude plugin update sensei` (and re-verifies the
 /// manifest); file-based MCP assistants report a no-op action.
 pub(crate) async fn assistant_upgrade(
+    State(state): State<AppState>,
     Json(body): Json<AssistantUpgradeBody>,
 ) -> Json<Vec<crate::assistants::AdapterResolveReport>> {
-    Json(crate::assistants::upgrade(&body.acps))
+    let mut reports = crate::assistants::upgrade(&body.acps);
+    if let Some(w) = resync_installs(&state).await {
+        for r in &mut reports {
+            r.errors.push(w.clone());
+        }
+    }
+    Json(reports)
 }
 
 #[derive(Deserialize)]
@@ -174,7 +249,8 @@ pub(crate) async fn assistant_remove(
     Json(body): Json<AssistantRemoveBody>,
 ) -> Json<serde_json::Value> {
     let removed = crate::assistants::remove_selected(&body.acps, Some(&state.event_tx));
-    serde_json::json!({"assistants_removed": removed, "errors": []}).into()
+    let errors: Vec<String> = resync_installs(&state).await.into_iter().collect();
+    serde_json::json!({"assistants_removed": removed, "errors": errors}).into()
 }
 
 /// GET /api/assistants/health — current per-adapter health (config + freshness).
@@ -317,7 +393,7 @@ pub(crate) struct SetInstalledEnabledBody {
 pub(crate) async fn set_installed_enabled(
     axum::extract::Path(name): axum::extract::Path<String>,
     Json(body): Json<SetInstalledEnabledBody>,
-) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Filesystem work — off the async runtime.
     let name_owned = name.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -326,7 +402,7 @@ pub(crate) async fn set_installed_enabled(
     .await
     .map_err(|e| {
         (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": format!("spawn_blocking failed: {e}") })),
         )
     })?;
@@ -334,17 +410,14 @@ pub(crate) async fn set_installed_enabled(
     match result {
         Ok(changed) => Ok(Json(serde_json::json!({ "ok": true, "changed": changed }))),
         Err(e) if e.contains("unknown kind") => {
-            Err((axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))))
+            Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))))
         }
         Err(e) if e.contains("not found") || e.contains("ambiguous") => {
-            Err((axum::http::StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))))
+            Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))))
         }
         Err(e) => {
             tracing::error!(error = %e, item = %name, "set_installed_enabled failed");
-            Err((
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e })),
-            ))
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))))
         }
     }
 }

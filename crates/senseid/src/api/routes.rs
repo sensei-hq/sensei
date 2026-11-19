@@ -461,7 +461,11 @@ pub fn create_router(state: AppState) -> Router {
         // Marketplace install (legacy — prefer /api/install endpoints)
         .route("/api/marketplace/install", post(config::marketplace_install))
         // Assistants detection & configuration
-        .route("/api/assistants/detect", get(config::assistant_detect))
+        .route(
+            "/api/assistants/detect",
+            get(config::assistant_detect).post(config::assistant_sync_installs),
+        )
+        .route("/api/assistants/installs", get(config::assistant_installs))
         .route("/api/assistants/families", get(config::assistant_detect_families))
         .route("/api/assistants/configure", post(config::assistant_configure))
         .route("/api/assistants/upgrade", post(config::assistant_upgrade))

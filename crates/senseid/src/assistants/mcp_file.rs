@@ -14,9 +14,7 @@ pub(crate) enum McpEntryFormat {
 /// Covers Claude Desktop, Cursor, Windsurf, Zed, Kiro, VS Code, and OpenCode.
 pub(crate) struct McpFileAssistant {
     pub id: &'static str,
-    pub name: &'static str,
     pub family_id: Option<&'static str>,
-    pub family_label: Option<&'static str>,
     pub mcp_key: &'static str,
     pub config_rel: &'static str,
     pub entry_format: McpEntryFormat,
@@ -32,14 +30,8 @@ impl Assistant for McpFileAssistant {
     fn id(&self) -> &str {
         self.id
     }
-    fn name(&self) -> &str {
-        self.name
-    }
     fn family(&self) -> &str {
         self.family_id.unwrap_or(self.id)
-    }
-    fn family_name(&self) -> &str {
-        self.family_label.unwrap_or(self.name)
     }
     fn mcp_key(&self) -> &str {
         self.mcp_key

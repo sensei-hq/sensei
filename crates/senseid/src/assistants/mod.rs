@@ -34,9 +34,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         Box::new(ClaudeCodeAssistant),
         Box::new(McpFileAssistant {
             id: "claude-desktop",
-            name: "Claude Desktop",
             family_id: Some("claude"),
-            family_label: Some("Claude"),
             mcp_key: "mcpServers",
             config_rel: "Library/Application Support/Claude/claude_desktop_config.json",
             entry_format: McpEntryFormat::Standard,
@@ -46,9 +44,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "cursor",
-            name: "Cursor",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".cursor/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -58,9 +54,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "windsurf",
-            name: "Windsurf",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".codeium/windsurf/mcp_config.json",
             entry_format: McpEntryFormat::Standard,
@@ -70,9 +64,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "zed",
-            name: "Zed",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".config/zed/settings.json",
             entry_format: McpEntryFormat::Standard,
@@ -82,9 +74,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "kiro",
-            name: "Kiro",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".kiro/settings/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -94,9 +84,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "opencode",
-            name: "OpenCode",
             family_id: None,
-            family_label: None,
             mcp_key: "mcp",
             config_rel: ".config/opencode/opencode.json",
             entry_format: McpEntryFormat::OpenCode,
@@ -106,9 +94,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "vscode",
-            name: "VS Code",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".vscode/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -124,7 +110,6 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AssistantStatus {
     pub id: String,
-    pub name: String,
     pub family: String,
     pub installed: bool,
     /// True when sensei is integrated with this assistant. The integration
@@ -149,7 +134,6 @@ pub struct AssistantPart {
 #[derive(Debug, Serialize, Clone)]
 pub struct AssistantFamily {
     pub family: String,
-    pub name: String,
     pub members: Vec<AssistantStatus>,
     pub installed: bool,
     pub config_path: String,
@@ -198,8 +182,68 @@ pub async fn sync_installs_with(
     pg: &crate::db::pg_store::PgStore,
     statuses: &[AssistantStatus],
 ) -> Result<Vec<serde_json::Value>, String> {
-    let _ = (pg, statuses);
-    todo!("#455 red")
+    let rows: Vec<crate::db::pg_store::AssistantInstallRow<'_>> = statuses
+        .iter()
+        .map(|s| crate::db::pg_store::AssistantInstallRow {
+            registry_id: &s.id,
+            installed: s.installed,
+            config_path: Some(s.config_path.as_str()),
+            configured: s.configured,
+        })
+        .collect();
+    let unknown = pg.upsert_assistant_installs(&rows, env!("CARGO_PKG_VERSION")).await?;
+    for id in unknown {
+        tracing::warn!(registry_id = %id, "assistants: detected a tool with no catalogue row; not stored");
+    }
+    pg.list_assistant_installs().await
+}
+
+/// A detection result with the name the catalogue gives it (#455): the
+/// registry probes, the catalogue names.
+#[derive(Debug, Serialize, Clone)]
+pub struct Named<T> {
+    pub name: String,
+    #[serde(flatten)]
+    pub item: T,
+}
+
+/// Each probed tool, named by the catalogue.
+pub fn name_statuses(
+    statuses: Vec<AssistantStatus>,
+    names: &CatalogueNames,
+) -> Vec<Named<AssistantStatus>> {
+    statuses.into_iter().map(|s| Named { name: names.name(&s.id), item: s }).collect()
+}
+
+/// Each family, named by the catalogue (the family id is its catalogue word),
+/// its members named too.
+pub fn name_families(
+    families: Vec<AssistantFamily>,
+    names: &CatalogueNames,
+) -> Vec<Named<NamedFamily>> {
+    families
+        .into_iter()
+        .map(|f| Named {
+            name: names.name(&f.family),
+            item: NamedFamily {
+                family: f.family,
+                members: name_statuses(f.members, names),
+                installed: f.installed,
+                config_path: f.config_path,
+                parts: f.parts,
+            },
+        })
+        .collect()
+}
+
+/// [`AssistantFamily`] with its members named.
+#[derive(Debug, Serialize, Clone)]
+pub struct NamedFamily {
+    pub family: String,
+    pub members: Vec<Named<AssistantStatus>>,
+    pub installed: bool,
+    pub config_path: String,
+    pub parts: Vec<AssistantPart>,
 }
 
 /// config_health for a single adapter id, or None if not registered.
@@ -251,7 +295,6 @@ pub fn detect_families() -> Vec<AssistantFamily> {
         } else {
             families.push(AssistantFamily {
                 family: fam_id.to_string(),
-                name: asst.family_name().to_string(),
                 installed: status.installed,
                 config_path: status.config_path.clone(),
                 members: vec![status],
@@ -955,7 +998,6 @@ mod tests {
     fn all_assistants_have_nonempty_fields() {
         for asst in all_assistants() {
             assert!(!asst.id().is_empty(), "empty id");
-            assert!(!asst.name().is_empty(), "empty name for {}", asst.id());
             assert!(!asst.mcp_key().is_empty(), "empty mcp_key for {}", asst.id());
             assert!(
                 !asst.config_path().as_os_str().is_empty(),

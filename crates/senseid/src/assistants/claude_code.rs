@@ -432,14 +432,8 @@ impl Assistant for ClaudeCodeAssistant {
     fn id(&self) -> &str {
         "claude-code"
     }
-    fn name(&self) -> &str {
-        "Claude Code"
-    }
     fn family(&self) -> &str {
         "claude"
-    }
-    fn family_name(&self) -> &str {
-        "Claude"
     }
     fn mcp_key(&self) -> &str {
         "mcpServers"
