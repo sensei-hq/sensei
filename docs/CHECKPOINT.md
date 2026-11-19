@@ -14,11 +14,14 @@
   <when>" per tool and offers Detect again. The parked wip commit `912af748` is completed by the
   red `test(app)` + green `feat(app)` commits after it.
 
+- Review fix (PR #506): detection no longer stamps `configured_at`/`configured_version`; only configure
+  (its successes) and an upgrade that re-pushes the plugin do (`sync_installs(pg, just_configured)`,
+  `upgrade_refreshing`). Red `4d10703d`/`74308194`, green `16326351`.
 - e2e green: relay-catalogue, assistants-configure (switch now "Enable Claude Code"), configure-assistants,
   every relay*/settings spec; observatory-daily now gates on the rows Today draws.
 - Gates: fmt, clippy -D warnings (senseid, sensei-mcp), senseid DB tests serial, `make test-db` 102/102.
 
-**Remaining:** PR review + merge to develop. Slice 2 (tasks 5.x) and close-out 6.x are separate.
+**Remaining:** PR re-review + merge to develop. Slice 2 (tasks 5.x) and close-out 6.x are separate.
 
 **Next command:** slice 2 — `openspec/changes/add-relay-assistant-catalogue/tasks.md` §5.1.
 

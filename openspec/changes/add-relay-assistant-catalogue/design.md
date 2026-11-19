@@ -100,7 +100,10 @@ Where things stand on develop (`c25d1a930`):
     that every registry id has one).
   - It runs on first run (the wizard's assistants stage posts `POST /api/assistants/detect` on entry, and the
     daemon runs it once at startup when `assistant_installs` is empty), after every configure / remove /
-    upgrade (so `configured` follows), and from Settings → Assistants "Detect again".
+    upgrade (so `configured` follows), and from Settings → Assistants "Detect again". Detection only
+    observes: `configured_at` / `configured_version` move only for the tools the triggering configure (or an
+    upgrade that re-pushed the plugin) just configured, so a tool configured under an older sensei keeps its
+    stamp and one first seen configured has none (review of PR #506).
   - Settings → Assistants reads the stored rows joined to the catalogue (`GET /api/assistants/installs`) instead
     of probing on every load, and shows when they were detected. The wizard's family cards keep their live
     probe for the configure flow (unchanged).
