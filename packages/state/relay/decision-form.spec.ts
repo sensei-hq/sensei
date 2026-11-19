@@ -3,7 +3,7 @@
 // the data starts from each `default`. The answer keeps what was filled and drops the
 // optional fields left empty, so absent stays absent (D83).
 import { describe, it, expect } from 'vitest';
-import { textMisses, toAnswerValues, toDecisionForm, toPatternRegExp, withoutTextRules } from './decision-form.js';
+import { textMisses, toAnswerValues, toDecisionForm, toPatternMatcher, withoutTextRules } from './decision-form.js';
 import type { RelayDecisionResponse } from './types.js';
 import * as F from './fixtures.js';
 
@@ -83,31 +83,75 @@ describe('toAnswerValues', () => {
   });
 });
 
-// The daemon checks a pattern with Rust `regex`, which reads text as Unicode; the inline check
-// reads it the same way so it never refuses a value the daemon would take.
-describe('toPatternRegExp', () => {
+// The daemon checks a pattern with Rust `regex`, which reads text as Unicode in linear time; the
+// inline check reads it the same way, so it never refuses a value the daemon would take, and never
+// takes longer than the daemon would on a lane's pattern.
+describe('toPatternMatcher', () => {
+  const m = (pattern: string) => toPatternMatcher(pattern)!;
+
   it('reads text by code point, as the daemon does', () => {
-    expect(toPatternRegExp('^.$')!.test('😀')).toBe(true);
-    expect(toPatternRegExp('^[^/]{2}$')!.test('a😀')).toBe(true);
-    expect(toPatternRegExp('^\\p{Lu}')!.test('Élan')).toBe(true);
-    expect(toPatternRegExp('^\\p{Lu}')!.test('élan')).toBe(false);
+    expect(m('^.$')('😀')).toBe(true);
+    expect(m('^[^/]{2}$')('a😀')).toBe(true);
+    expect(m('^\\p{Lu}')('Élan')).toBe(true);
+    expect(m('^\\p{Lu}')('élan')).toBe(false);
+    expect(m('^\\P{L}+$')('12-')).toBe(true);
+    expect(m('^[\\p{Lu}0-9]+$')('É9')).toBe(true);
   });
 
   it('lets . match a carriage return but not a newline, as Rust does', () => {
-    expect(toPatternRegExp('^a.b$')!.test('a\rb')).toBe(true);
-    expect(toPatternRegExp('^a.b$')!.test('a b')).toBe(true);
-    expect(toPatternRegExp('^a.b$')!.test('a\nb')).toBe(false);
+    expect(m('^a.b$')('a\rb')).toBe(true);
+    expect(m('^a.b$')('a b')).toBe(true);
+    expect(m('^a.b$')('a\nb')).toBe(false);
     // An escaped dot and a dot in a class stay literal.
-    expect(toPatternRegExp('^a\\.b$')!.test('axb')).toBe(false);
-    expect(toPatternRegExp('^[.]$')!.test('x')).toBe(false);
+    expect(m('^a\\.b$')('axb')).toBe(false);
+    expect(m('^[.]$')('x')).toBe(false);
   });
 
   it('is unanchored, as JSON Schema says', () => {
-    expect(toPatternRegExp('src/')!.test('a/src/b')).toBe(true);
+    expect(m('src/')('a/src/b')).toBe(true);
+    expect(m('src/')('a/sr/b')).toBe(false);
   });
 
-  it('is null when the browser cannot compile it, so the daemon decides', () => {
-    expect(toPatternRegExp('\\#')).toBeNull();
+  it('reads the dialect the daemon allows: classes, ranges, alternation, groups and counts', () => {
+    expect(m('^(feat|fix)/[a-z0-9-]+$')('fix/issue-389')).toBe(true);
+    expect(m('^(feat|fix)/[a-z0-9-]+$')('chore/x')).toBe(false);
+    expect(m('^[^a-c]+$')('xyz')).toBe(true);
+    expect(m('^[^a-c]+$')('xbz')).toBe(false);
+    expect(m('^a{2}$')('aa')).toBe(true);
+    expect(m('^a{2}$')('aaa')).toBe(false);
+    expect(m('^a{2,}$')('aaaa')).toBe(true);
+    expect(m('^a{2,3}$')('aaaa')).toBe(false);
+    expect(m('^(ab){1,2}c?$')('ababc')).toBe(true);
+    expect(m('^x*?y+?$')('xxy')).toBe(true);
+    expect(m('^\\(\\)\\[\\]\\{\\}\\*\\+\\?\\|\\^\\$\\\\\\/$')('()[]{}*+?|^$\\/')).toBe(true);
+    expect(m('^a\\tb\\nc$')('a\tb\nc')).toBe(true);
+    expect(m('^[a\\-z]$')('-')).toBe(true);
+    expect(m('^[a\\-z]$')('b')).toBe(false);
+    expect(m('^$')('')).toBe(true);
+    expect(m('a|^$')('')).toBe(true);
+    expect(m('()')('x')).toBe(true);
+  });
+
+  it('is null outside that dialect, so the daemon decides', () => {
+    for (const pattern of ['\\#', '\\d', '(?i)a', '[[:alpha:]]', 'a{', '(a', 'a)', '[a', '\\p{Greek}']) {
+      expect(toPatternMatcher(pattern), pattern).toBeNull();
+    }
+  });
+
+  // A lane's pattern may nest quantifiers or repeat overlapping ones: Rust `regex` runs it in
+  // linear time and the daemon accepts it, but a backtracking RegExp takes exponential time and
+  // would freeze the webview on Answer and on every edit while a message shows.
+  it.each([
+    ['^(a+)+$', 'a'.repeat(40) + '!'],
+    ['^(a|a)+$', 'a'.repeat(40) + '!'],
+    ['^(a|aa)*$', 'a'.repeat(60) + '!'],
+    ['^([a-z]*)*$', 'a'.repeat(40) + '!'],
+    ['(.*a){12}', 'a'.repeat(600)],
+    ['a*a*a*a*a*a*a*a*b', 'a'.repeat(600)],
+  ])('reads %s in linear time, as the daemon does', (pattern, text) => {
+    const start = performance.now();
+    expect(m(pattern)(text)).toBe(pattern === '(.*a){12}');
+    expect(performance.now() - start).toBeLessThan(250);
   });
 });
 
@@ -122,6 +166,13 @@ describe('textMisses / withoutTextRules', () => {
       free: { type: 'string' as const },
     },
   };
+
+  it('checks a catastrophic pattern without freezing', () => {
+    const nested = { type: 'object' as const, properties: { p: { type: 'string' as const, pattern: '^(a+)+$' } } };
+    const start = performance.now();
+    expect(textMisses(nested, { p: 'a'.repeat(28) + '!' })).toEqual({ p: 'pattern' });
+    expect(performance.now() - start).toBeLessThan(250);
+  });
 
   it('names each filled field whose text misses its pattern; empty fields and uncompiled patterns are left to others', () => {
     expect(textMisses(schema, { path: 'rel', name: 'José', odd: 'x', free: 'y' })).toEqual({ path: 'pattern' });
