@@ -14,6 +14,8 @@ pub const MAX_PROPERTIES: usize = 12;
 pub const MAX_ENUM: usize = 50;
 /// The text cap: a `maxLength` may not exceed it, and text without one is held to it.
 pub const MAX_TEXT_CHARS: usize = crate::relay::MAX_SUMMARY_CHARS;
+/// The long-text cap (`x-multiline: true`): its `maxLength` may not exceed it, and long text without one is held to it.
+pub const MAX_LONG_TEXT_CHARS: usize = 4000;
 const MAX_LABEL_CHARS: usize = 120;
 const MAX_DESCRIPTION_CHARS: usize = 300;
 const MAX_PATTERN_CHARS: usize = 200;
@@ -575,9 +577,10 @@ mod tests {
 
     #[test]
     fn refuses_pick_several_nested_objects_and_composition() {
+        // An array is pick-several of enum members only: one without items.enum is refused.
         refused(
-            &with_prop("files", json!({"type": "array", "items": {"enum": ["a", "b"]}})),
-            &["properties.files.type", "array"],
+            &with_prop("files", json!({"type": "array", "items": {"type": "string"}})),
+            &["properties.files.items.enum", "array"],
         );
         refused(&with_prop("files", json!({"type": "string", "items": {}})), &["files", "items"]);
         refused(&with_prop("note", json!({"type": "string", "format": "textarea"})), &["format"]);
@@ -596,7 +599,6 @@ mod tests {
         // @rokkit/forms 1.16 picks a control from these (a textarea, a multiselect, a renderer,
         // a range from min/max); the subset stays closed, so none reaches the form (#389).
         for (key, value) in [
-            ("x-multiline", json!(true)),
             ("renderer", json!("textarea")),
             ("options", json!(["a"])),
             ("min", json!(1)),
@@ -608,6 +610,106 @@ mod tests {
             prop[key] = value;
             refused(&with_prop("s", prop), &["s", key]);
         }
+    }
+
+    // ── pick-several and long text (R2: @rokkit/forms 1.16 draws them, rokkit#197) ──
+
+    fn areas() -> Value {
+        json!({"type": "array", "items": {"type": "string", "enum": ["api", "app", "db"]},
+               "uniqueItems": true, "title": "Areas"})
+    }
+
+    #[test]
+    fn accepts_an_array_of_unique_enum_members() {
+        assert_eq!(validate_response(&with_prop("areas", areas())), Ok(()));
+        // items.type may be left out (the enum says it), and uniqueItems too (members are unique anyway).
+        let r = with_prop("areas", json!({"type": "array", "items": {"enum": ["api", "db"]}}));
+        assert_eq!(validate_response(&r), Ok(()));
+        let mut a = areas();
+        a["default"] = json!(["db", "api"]);
+        assert_eq!(validate_response(&with_prop("areas", a)), Ok(()));
+    }
+
+    #[test]
+    fn refuses_an_array_outside_the_subset() {
+        let arr = |over: Value| {
+            let mut a = areas();
+            for (k, v) in over.as_object().unwrap() {
+                a[k] = v.clone();
+            }
+            with_prop("areas", a)
+        };
+        refused(&with_prop("areas", json!({"type": "array"})), &["areas", "items"]);
+        refused(
+            &arr(json!({"items": {"type": "integer", "enum": [1, 2]}})),
+            &["areas", "items.type"],
+        );
+        refused(&arr(json!({"items": {"type": "string", "enum": []}})), &["areas", "enum"]);
+        refused(&arr(json!({"items": {"type": "string", "enum": ["a", "a"]}})), &["areas", "enum"]);
+        refused(&arr(json!({"items": {"type": "string", "enum": [""]}})), &["areas", "enum"]);
+        refused(
+            &arr(json!({"items": {"type": "string", "enum": ["a"], "pattern": "^a"}})),
+            &["areas", "items.pattern"],
+        );
+        refused(&arr(json!({"items": "string"})), &["areas", "items"]);
+        refused(&arr(json!({"uniqueItems": false})), &["areas", "uniqueItems"]);
+        for key in
+            ["minItems", "maxItems", "maxLength", "pattern", "enum", "minimum", "x-multiline"]
+        {
+            refused(&arr(json!({key: 1})), &["areas", key]);
+        }
+        // A default is an array of unique members of the enum.
+        refused(&arr(json!({"default": ["api", "api"]})), &["areas", "default"]);
+        refused(&arr(json!({"default": ["prod"]})), &["areas", "default"]);
+        refused(&arr(json!({"default": "api"})), &["areas", "default"]);
+        // A secret member is refused by kind, never echoed.
+        let secret = format!("ghp_{}", "b".repeat(38));
+        let err = validate_response(&arr(json!({"items": {"enum": [secret.clone()]}})))
+            .expect_err("a secret member is refused");
+        assert!(err.contains("areas"), "{err}");
+        assert!(!err.contains(&secret), "{err}");
+    }
+
+    #[test]
+    fn accepts_long_text_with_its_own_cap() {
+        let long = |max: Value| {
+            let mut p = json!({"type": "string", "x-multiline": true});
+            if !max.is_null() {
+                p["maxLength"] = max;
+            }
+            with_prop("notes", p)
+        };
+        assert_eq!(validate_response(&long(Value::Null)), Ok(()));
+        assert_eq!(validate_response(&long(json!(MAX_LONG_TEXT_CHARS))), Ok(()));
+        // A long text may set a maxLength past the one-line cap, up to its own.
+        assert_eq!(validate_response(&long(json!(MAX_TEXT_CHARS + 1))), Ok(()));
+        refused(&long(json!(MAX_LONG_TEXT_CHARS + 1)), &["notes", "maxLength"]);
+        // One-line text keeps the one-line cap.
+        refused(
+            &with_prop("s", json!({"type": "string", "maxLength": MAX_TEXT_CHARS + 1})),
+            &["s", "maxLength"],
+        );
+    }
+
+    #[test]
+    fn refuses_the_long_text_hint_where_it_draws_nothing() {
+        // Only `true`, only on a string, and never with an enum (rokkit draws the select then).
+        refused(
+            &with_prop("n", json!({"type": "string", "x-multiline": false})),
+            &["n", "x-multiline"],
+        );
+        refused(
+            &with_prop("n", json!({"type": "string", "x-multiline": "yes"})),
+            &["n", "x-multiline"],
+        );
+        refused(
+            &with_prop("n", json!({"type": "integer", "x-multiline": true})),
+            &["n", "x-multiline"],
+        );
+        refused(
+            &with_prop("n", json!({"type": "string", "x-multiline": true, "enum": ["a"]})),
+            &["n", "x-multiline", "enum"],
+        );
     }
 
     #[test]
@@ -851,6 +953,58 @@ mod tests {
         assert_eq!(validate_values(&r, &json!({"free": "é".repeat(600)})), Ok(()));
         let err = validate_values(&r, &json!({"free": "x".repeat(601)})).unwrap_err();
         assert!(err.contains("values.free") && err.contains("600"), "{err}");
+    }
+
+    fn several() -> Value {
+        json!({"schema": {"type": "object", "properties": {
+            "areas": {"type": "array", "items": {"type": "string", "enum": ["api", "app", "db"]},
+                      "uniqueItems": true},
+            "also": {"type": "array", "items": {"enum": ["x", "y"]}},
+            "notes": {"type": "string", "x-multiline": true},
+            "brief": {"type": "string", "x-multiline": true, "maxLength": 1000}
+        }, "required": ["areas"]}})
+    }
+
+    #[test]
+    fn accepts_unique_enum_members_and_long_text() {
+        let ok =
+            json!({"areas": ["db", "api"], "notes": format!("line one\n{}", "é".repeat(3000))});
+        assert_eq!(validate_values(&several(), &ok), Ok(()));
+        // An optional pick-several may be sent empty: none picked.
+        assert_eq!(validate_values(&several(), &json!({"areas": ["app"], "also": []})), Ok(()));
+        // Long text without a maxLength is held to its own cap, counted in characters.
+        let at_cap = json!({"areas": ["app"], "notes": "😀".repeat(MAX_LONG_TEXT_CHARS)});
+        assert_eq!(validate_values(&several(), &at_cap), Ok(()));
+    }
+
+    #[test]
+    fn refuses_off_list_duplicate_and_wrong_type_members() {
+        let err = |v: Value| validate_values(&several(), &v).expect_err(&format!("accepted {v}"));
+        let e = err(json!({"areas": ["api", "prod"]}));
+        assert!(e.contains("values.areas") && e.contains("enum"), "{e}");
+        let e = err(json!({"areas": ["api", "api"]}));
+        assert!(e.contains("values.areas") && e.contains("twice"), "{e}");
+        let e = err(json!({"areas": "api"}));
+        assert!(e.contains("values.areas") && e.contains("array"), "{e}");
+        let e = err(json!({"areas": [1]}));
+        assert!(e.contains("values.areas"), "{e}");
+        // Required means at least one member, as the form reads an empty pick.
+        for v in [json!({}), json!({"areas": null}), json!({"areas": []})] {
+            let e = err(v);
+            assert!(e.contains("values.areas is required"), "{e}");
+        }
+    }
+
+    #[test]
+    fn refuses_long_text_over_its_cap_or_carrying_a_secret() {
+        let err = |v: Value| validate_values(&several(), &v).expect_err(&format!("accepted {v}"));
+        let e = err(json!({"areas": ["api"], "notes": "x".repeat(MAX_LONG_TEXT_CHARS + 1)}));
+        assert!(e.contains("values.notes") && e.contains(&MAX_LONG_TEXT_CHARS.to_string()), "{e}");
+        let e = err(json!({"areas": ["api"], "brief": "x".repeat(1001)}));
+        assert!(e.contains("values.brief") && e.contains("maxLength"), "{e}");
+        let secret = format!("ghp_{}", "b".repeat(38));
+        let e = err(json!({"areas": ["api"], "notes": format!("see {secret}")}));
+        assert!(e.contains("values.notes") && !e.contains(&secret), "{e}");
     }
 
     #[test]

@@ -298,3 +298,94 @@ describe('DecisionRow · a form decision', () => {
     }
   });
 });
+
+// R2 (@rokkit/forms 1.16, rokkit#197): an array of enum members draws rokkit's MultiSelect and an
+// `x-multiline` string a textarea; both are answered and checked as the daemon checks them.
+describe('DecisionRow · pick-several and long text', () => {
+  const several = () =>
+    F.formDecision({
+      id: 'ask-several',
+      response: {
+        schema: {
+          type: 'object',
+          properties: {
+            areas: { type: 'array', items: { type: 'string', enum: ['api', 'app', 'db'] }, uniqueItems: true, title: 'Areas' },
+            notes: { type: 'string', 'x-multiline': true, title: 'Notes' },
+          },
+          required: ['areas'],
+        },
+      },
+    });
+
+  /** Press members in the MultiSelect: open it, press each option by its text. */
+  async function pickSeveral(c: HTMLElement, name: string, labels: string[]) {
+    field(c, name)!.querySelector<HTMLButtonElement>('[data-select-trigger]')!.click();
+    await settle();
+    for (const label of labels) {
+      const option = [...field(c, name)!.querySelectorAll<HTMLElement>('[data-select-option]')].find(
+        (o) => o.textContent?.trim() === label,
+      );
+      option!.click();
+      await settle();
+    }
+  }
+
+  /** Type into the textarea as the browser reports it. */
+  function typeNotes(c: HTMLElement, value: string) {
+    const area = field(c, 'notes')!.querySelector<HTMLTextAreaElement>('textarea')!;
+    area.value = value;
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+    area.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  it('draws a MultiSelect for the pick-several and a textarea for the long text', () => {
+    const c = mount(several());
+    expect(field(c, 'areas')!.querySelector('[data-multiselect]')).not.toBeNull();
+    expect(field(c, 'areas')!.querySelector('[data-field-type="multiselect"]')).not.toBeNull();
+    const area = field(c, 'notes')!.querySelector<HTMLTextAreaElement>('textarea');
+    expect(area).not.toBeNull();
+    // No native maxlength: the form counts characters as the daemon does.
+    expect(area!.getAttribute('maxlength')).toBeNull();
+    expect(field(c, 'areas')!.textContent).toContain('Areas');
+  });
+
+  it('Answer with no member picked for a required pick-several shows the field message and sends nothing', async () => {
+    const onanswer = vi.fn(async () => null);
+    const c = mount(several(), onanswer);
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).not.toHaveBeenCalled();
+    expect(field(c, 'areas')!.querySelector('[data-message]')?.textContent).toContain('is required');
+  });
+
+  it('sends the picked members and the long text, line breaks kept', async () => {
+    const onanswer = vi.fn(async () => null);
+    const c = mount(several(), onanswer);
+    await pickSeveral(c, 'areas', ['db', 'api']);
+    typeNotes(c, 'first line\nsecond line');
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).toHaveBeenCalledTimes(1);
+    const sent = (onanswer.mock.calls[0] as unknown as [{ values: { areas: string[]; notes: string } }])[0].values;
+    expect([...sent.areas].sort()).toEqual(['api', 'db']);
+    expect(sent.notes).toBe('first line\nsecond line');
+  });
+
+  it("long text over the daemon's 4000-character cap is refused inline; an empty optional one is left out", async () => {
+    const onanswer = vi.fn(async () => null);
+    const c = mount(several(), onanswer);
+    await pickSeveral(c, 'areas', ['app']);
+    typeNotes(c, 'x'.repeat(4001));
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).not.toHaveBeenCalled();
+    expect(field(c, 'notes')!.querySelector('[data-message]')?.textContent).toContain('no more than 4000 characters');
+    typeNotes(c, '');
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).toHaveBeenCalledWith({ values: { areas: ['app'] } });
+  });
+});

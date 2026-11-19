@@ -4754,7 +4754,7 @@ mod tests {
                 json!({
                     "task_id": task_id, "question": "Which files?",
                     "response": {"schema": {"type": "object", "properties": {
-                        "files": {"type": "array", "items": {"enum": ["a", "b"]}}}}},
+                        "files": {"type": "array", "items": {"type": "string"}}}}},
                     "blocks": [], "asked_of": "person",
                 }),
             )),
