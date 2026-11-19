@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,197, headroom {})",
+             (ceiling 1,161, headroom {})",
             elsewhere.len(),
-            1_197_i64 - other as i64
+            1_161_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4684,8 +4684,17 @@ mod tests {
         // tests. The lane had stood at 1,185 against its own 1,153 unnoticed.
         // Same documented class, same backlog cure (follow the alias), not a
         // lower number.
+        // Lowered 1,197 -> 1,161 on 2026-11-19, measured 1,161 over 228
+        // identities (develop base 1,197/234): the #455 assistant catalogue
+        // slice adds 9 `AppState·pg` alias reaches (its catalogue, install and
+        // resolve handlers). Its new call sites name the declaring module
+        // (`assistants::catalogue::`, `assistants::health::`) rather than the
+        // re-export, which would have added 18 more, and the same cure removes
+        // 45 existing reaches: `AdapterCheck`, `CheckStatus` and
+        // `AdapterResolveReport` from `claude_code`, `watchdog`, `mod` and the
+        // config handlers.
         assert!(
-            other <= 1_197,
+            other <= 1_161,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

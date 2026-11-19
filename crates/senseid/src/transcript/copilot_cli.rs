@@ -448,6 +448,9 @@ impl TranscriptAdapter for CopilotCliAdapter {
     fn source(&self) -> &'static str {
         "copilot_cli"
     }
+    fn host(&self) -> Option<&'static str> {
+        None
+    }
 
     fn family(&self) -> &'static str {
         "copilot"

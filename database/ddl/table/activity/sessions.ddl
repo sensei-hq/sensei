@@ -38,6 +38,7 @@ create table if not exists sessions (
 , process_analyzed_at      timestamptz -- when the LLM process-quality analyzer last scored this session (spec 2026-08-20); gates the daily incremental pass so a session is judged at most once until its transcript changes
 , sdd_framework            sensei.sdd_framework
 , sdd_framework_source     text        check (sdd_framework_source in ('behavioural', 'static', 'static_ambiguous', 'probe_failed'))
+, host                     text
 , check ((sdd_framework is null) = (sdd_framework_source is null or sdd_framework_source = 'probe_failed'))
 );
 
@@ -87,7 +88,9 @@ comment on column sessions.workspace_id
 comment on column sessions.task
      is 'Task description passed at get_session_context.';
 comment on column sessions.acp_id
-     is 'Assistant family name (matches sensei.assistants.family): claude, cursor, codex, aider, etc.';
+     is 'The assistant family the capturing adapter reports (claude, cursor, codex, aider …); named and classified through sensei.assistant_catalogue_words.';
+comment on column sessions.host
+     is 'The editor the session ran in (cursor, zed, vscode), as its transcript adapter declares it. Null for a terminal session or one with no evidence of an editor; never guessed, and a later write with no host never clears it (#455).';
 comment on column sessions.client_session_id
      is 'The assistant''s own session id (e.g. Claude session_id from hooks). Correlates all hook events of one session to a single row; NULL for MCP-created sessions.';
 comment on column sessions.outcome

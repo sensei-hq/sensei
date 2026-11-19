@@ -1,24 +1,32 @@
-# Checkpoint — 2026-11-19 (#299 — verify sync-filed dōjō workspaces)
+# Checkpoint — 2026-11-19 (#455 slice 1 — catalogue, session host, AddMember picker)
 
-**Slice:** `verify-dojo-sync-files-workspaces` slice 1/1 (#299). Branch `lane/relay-299-s1`
-(worktree `lanes/relay-open`), PR #503.
+**Slice:** `add-relay-assistant-catalogue` slice 1 (#455). Branch `lane/relay-455-s1`
+(worktree `lanes/relay-open`).
 
-**Done (tasks 1.1–1.4, 2.1–2.9) + #503 review fixes:**
-- SQL `make test-db` 101/101; dōjō vitest 237 files / 2411 tests; senseid filing tests pass.
-- Member floor on `GET /v1/t/{origin}/{org}/workspaces` (red `110729d0e`, fix `87d9a1693`).
-- Committed browser spec `dojo/e2e/workspace-filing.e2e.ts` (`cd dojo && bun run test:e2e`, local Supabase
-  only): two sync cycles, contributor sees the filed workspace once, lead with no repository role sees none,
-  unconnected org files nothing. 5/5 green; red with the floor put back to `lead`.
-- Live re-run after the fix: scratch `senseid --instance` against the local dōjō, 7 cycles `mapped=1
-  unmapped=1`, no "could not file" warning, 1 workspace (same id) and 1 link throughout; browser: contributor
-  1 row, lead 0 rows.
+**Done (slice 1 complete: tasks 1.1–1.6, 2.1–2.6, 3.1–3.3, 4.1–4.4):**
+- Seeded `sensei.assistant_catalogue` (13 tools) + `assistant_installs` + `activity.sessions.host`.
+- `sync_installs` stores this machine's installs; `GET /api/assistants/installs`; boot sync when empty.
+- Every transcript adapter declares `host()`; ingest writes it; model attribution by model, not host.
+- `GET /relay/catalogue`; relay reads serve `family_name` / `kind` from one `CatalogueNames` helper.
+- AddMember picks from the catalogue (pressed lists, error Notice + Retry); preview fixtures captured.
+- 1.5: the wizard's assistants stage stores installs on entry; Settings → Assistants shows "detected <when>".
+- Review fix 1 (PR #506): only configure / a re-pushing upgrade stamps `configured_at`/`_version`. `16326351`.
+- Review fix 2: a failed re-detect after remove/upgrade is a warning; family cards name installed members;
+  CLI `assistants_removed` + upgrade warnings; TS `RemoveResult`. Red `02fdde62`, green `5a0c5c66`.
+- Review fix 3: every opening of the Crew view reads the catalogue (was once per page). Red `ead334a4`, green
+  `5078cf98`, e2e leave-and-return `e1c2784d`. Runs list re-reads on run events; no other one-shot read.
+- Review fix 4: install (`/api/install`, `/api/marketplace/install`), `/api/remove`, `/api/assistants/resolve`
+  and the watchdog's repair re-detect installs; failures are warnings (RemoveResult.warnings), printed by
+  `remove all` / `doctor --fix`. Red `79c57d41`/`1240d5dd`, green `7d326825`/`49f29fd8`.
+- e2e green: relay-catalogue + assistants-configure after fix 4; relay* 15/15 (one earlier run had a transient webview `eval` hang; passed alone and on rerun),
+  assistants-configure, configure-assistants, settings, observatory-daily.
+- Gates: fmt, clippy -D warnings, senseid DB tests serial, `make test-db` 102/102.
 
-**Remaining:** tasks 3.1–3.5, the production runbook (user only). The member floor reaches production with
-the next release.
+**Remaining:** PR re-review + merge to develop. Slice 2 (tasks 5.x) and close-out 6.x are separate.
 
-**Next command:** the user runs `sensei auth approve`, then follows tasks.md section 3.
+**Next command:** slice 2 — `openspec/changes/add-relay-assistant-catalogue/tasks.md` §5.1.
 
 **Open questions:** none.
 
-**Known broken:** none from this branch. `bun run test:e2e` is not in CI (needs a local Supabase). A scratch
-daemon reads a `security`-written keychain item only with `SENSEI_CREDENTIAL_BACKEND=security`.
+**Known broken:** none from this branch. sensei_e2e needs `dbd reconcile` (x2) + `dbd import` after this DDL.
+Preview rig phone captures draw sticky nav chips over every fixture (pre-existing, rig-wide).

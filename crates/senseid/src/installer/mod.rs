@@ -94,7 +94,10 @@ pub struct RemoveResult {
     pub hooks_removed: bool,
     pub cache_cleared: bool,
     pub workspaces_cleaned: Vec<String>,
+    /// The removal failed for these.
     pub errors: Vec<String>,
+    /// The removal landed but a follow-up (the install re-detect) failed.
+    pub warnings: Vec<String>,
 }
 
 // ── Installed item ───────────────────────────────────────────────────────────

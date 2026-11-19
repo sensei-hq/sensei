@@ -36,6 +36,9 @@ impl TranscriptAdapter for ClaudeAdapter {
     fn source(&self) -> &'static str {
         "claude_code"
     }
+    fn host(&self) -> Option<&'static str> {
+        None
+    }
     fn family(&self) -> &'static str {
         "claude"
     }

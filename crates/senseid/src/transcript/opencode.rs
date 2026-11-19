@@ -53,6 +53,9 @@ impl TranscriptAdapter for OpenCodeAdapter {
     fn source(&self) -> &'static str {
         "opencode"
     }
+    fn host(&self) -> Option<&'static str> {
+        None
+    }
     fn family(&self) -> &'static str {
         "opencode"
     }

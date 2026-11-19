@@ -4,7 +4,7 @@ use super::trait_def::{Assistant, AssistantConfigureOk};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-use crate::assistants::{AdapterCheck, CheckStatus};
+use crate::assistants::health::{AdapterCheck, CheckStatus};
 use crate::paths::MARKETPLACE_REPO as SENSEI_MARKETPLACE_REPO;
 
 /// Pure helper: read `installed_plugins.json` and confirm that a plugin
@@ -432,14 +432,8 @@ impl Assistant for ClaudeCodeAssistant {
     fn id(&self) -> &str {
         "claude-code"
     }
-    fn name(&self) -> &str {
-        "Claude Code"
-    }
     fn family(&self) -> &str {
         "claude"
-    }
-    fn family_name(&self) -> &str {
-        "Claude"
     }
     fn mcp_key(&self) -> &str {
         "mcpServers"
