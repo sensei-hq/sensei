@@ -212,6 +212,9 @@ apply:
     # orphaned enum but leaves it, and `dbd diff --exit-code` then fails.
     # No-op once they are gone.
     - apply/after/retired_types.sql
+    # Drops the empty, never-written `sensei.assistants` (#455; replaced by
+    # sensei.assistant_installs). Refuses, never deletes, if it holds rows.
+    - apply/after/sensei_assistants_retired.sql
     # Marks pre-#309 memberships org provisioning made as `provisioned`. Idempotent.
     - apply/after/membership_source_backfill.sql
     # Converts the ladder's `technology` rung into stack packs adopted at each
