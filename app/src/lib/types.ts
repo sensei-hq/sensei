@@ -149,7 +149,8 @@ export interface InstallResult {
 }
 
 export interface RemoveResult {
-  assistants_removed: string[];
+  /** `POST /api/remove` (installer::RemoveResult) names this `acps_removed`. */
+  acps_removed: string[];
   plugin_removed: boolean;
   commands_removed: number;
   skills_removed: number;
@@ -162,7 +163,10 @@ export interface RemoveResult {
 
 export interface AssistantRemoveResult {
   assistants_removed: string[];
+  /** The removal failed for these. */
   errors: string[];
+  /** The removal landed but a follow-up (the install re-detect) failed. */
+  warnings: string[];
 }
 
 export interface InstalledItem {

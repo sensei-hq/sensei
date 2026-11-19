@@ -1036,9 +1036,9 @@ fn print_report_lines((out, err): ReportLines) {
 fn remove_report_lines(result: &serde_json::Value) -> ReportLines {
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let removed = result["acps_removed"].as_array().cloned().unwrap_or_default();
+    let removed = result["assistants_removed"].as_array().cloned().unwrap_or_default();
     if removed.is_empty() {
-        out.push("  No ACPs to remove.".to_string());
+        out.push("  No assistants to remove.".to_string());
     } else {
         for id in &removed {
             out.push(format!("  ✓ Removed {}", id.as_str().unwrap_or("?")));
@@ -1047,7 +1047,20 @@ fn remove_report_lines(result: &serde_json::Value) -> ReportLines {
     for e in result["errors"].as_array().unwrap_or(&vec![]) {
         err.push(format!("  ✗ {}", e.as_str().unwrap_or("?")));
     }
+    push_warnings(&mut err, std::slice::from_ref(result));
     (out, err)
+}
+
+/// Each distinct warning across `results`, once, as a `!` line.
+fn push_warnings(err: &mut Vec<String>, results: &[serde_json::Value]) {
+    for r in results {
+        for w in r["warnings"].as_array().into_iter().flatten().filter_map(|w| w.as_str()) {
+            let line = format!("  ! {w}");
+            if !err.contains(&line) {
+                err.push(line);
+            }
+        }
+    }
 }
 
 /// What `sensei upgrade` prints for the daemon's per-assistant reports.
@@ -1072,6 +1085,7 @@ fn upgrade_report_lines(reports: &[serde_json::Value]) -> ReportLines {
             ));
         }
     }
+    push_warnings(&mut err, reports);
     (out, err)
 }
 

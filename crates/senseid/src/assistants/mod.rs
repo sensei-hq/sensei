@@ -224,8 +224,10 @@ pub fn name_statuses(
     statuses.into_iter().map(|s| Named { name: names.name(&s.id), item: s }).collect()
 }
 
-/// Each family, named by the catalogue (the family id is its catalogue word),
-/// its members named too.
+/// Each family, its members named by the catalogue. A family is named after
+/// the tools its switch acts on — its installed members, or every member when
+/// none is installed — so the `claude` family reads "Claude Code and Claude
+/// Desktop" where both are installed, never "Claude Code" alone (#455 review).
 pub fn name_families(
     families: Vec<AssistantFamily>,
     names: &CatalogueNames,
@@ -233,7 +235,7 @@ pub fn name_families(
     families
         .into_iter()
         .map(|f| Named {
-            name: names.name(&f.family),
+            name: family_name(&f.members, names),
             item: NamedFamily {
                 family: f.family,
                 members: name_statuses(f.members, names),
@@ -243,6 +245,20 @@ pub fn name_families(
             },
         })
         .collect()
+}
+
+/// The catalogue names of the members a family's switch acts on, joined.
+fn family_name(members: &[AssistantStatus], names: &CatalogueNames) -> String {
+    let installed: Vec<&AssistantStatus> = members.iter().filter(|m| m.installed).collect();
+    let acted_on = if installed.is_empty() { members.iter().collect() } else { installed };
+    let mut named: Vec<String> = Vec::new();
+    for m in acted_on {
+        let n = names.name(&m.id);
+        if !named.contains(&n) {
+            named.push(n);
+        }
+    }
+    named.join(" and ")
 }
 
 /// [`AssistantFamily`] with its members named.

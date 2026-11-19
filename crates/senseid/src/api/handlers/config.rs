@@ -237,17 +237,19 @@ pub(crate) async fn assistant_upgrade(
     Json(reports)
 }
 
-/// Record a failed post-upgrade re-detect on each report.
+/// Record a failed post-upgrade re-detect on each report as a warning: the
+/// upgrade landed, so `ok` and `errors` stay as the upgrade left them.
 fn note_resync_failure(reports: &mut [crate::assistants::AdapterResolveReport], warning: &str) {
     for r in reports {
-        r.errors.push(warning.to_string());
+        r.warnings.push(warning.to_string());
     }
 }
 
-/// The remove response: what was removed, and what went wrong.
+/// The remove response. A failed re-detect after the removal landed is a
+/// warning, as configure reports it — `errors` means the removal itself failed.
 fn remove_response(removed: Vec<String>, resync_failure: Option<String>) -> serde_json::Value {
-    let errors: Vec<String> = resync_failure.into_iter().collect();
-    serde_json::json!({"assistants_removed": removed, "errors": errors})
+    let warnings: Vec<String> = resync_failure.into_iter().collect();
+    serde_json::json!({"assistants_removed": removed, "errors": [], "warnings": warnings})
 }
 
 #[derive(Deserialize)]
@@ -547,7 +549,19 @@ mod assistant_route_tests {
         let (status, body) = call(&app, "GET", "/api/assistants/families").await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let claude = body.as_array().unwrap().iter().find(|f| f["family"] == "claude").unwrap();
-        assert_eq!(claude["name"], "Claude Code", "{claude}");
+        // The family reads as the catalogue names of the members its switch
+        // acts on (installed ones; all when none is), whatever this machine has.
+        let members = claude["members"].as_array().unwrap();
+        let installed: Vec<&Value> = members.iter().filter(|m| m["installed"] == true).collect();
+        let acted_on: Vec<&Value> =
+            if installed.is_empty() { members.iter().collect() } else { installed };
+        let expected =
+            acted_on.iter().map(|m| m["name"].as_str().unwrap()).collect::<Vec<_>>().join(" and ");
+        assert_eq!(claude["name"], expected.as_str(), "{claude}");
+        for m in members {
+            let want = if m["id"] == "claude-code" { "Claude Code" } else { "Claude Desktop" };
+            assert_eq!(m["name"], want, "{m}");
+        }
         let (status, body) = call(&app, "GET", "/api/assistants/detect").await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let vscode = body.as_array().unwrap().iter().find(|s| s["id"] == "vscode").unwrap();
