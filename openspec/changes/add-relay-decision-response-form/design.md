@@ -25,7 +25,7 @@ What exists on develop (`c25d1a930`; ask/answer bodies and `validate_props` re-c
 | JSON Schema crate | `Cargo.lock:4655-4670` | only `schemars` (a schema *generator*, pulled in transitively); no validator crate |
 | rokkit forms | `app/package.json:33` (`@rokkit/forms` `^1.16.0`); the filters band already draws a `FilterSchema` through it (`app/src/lib/relay/relay-shell.ts:282-292`) | see "rokkit facts" below |
 
-rokkit facts (`@rokkit/forms` 1.15.7, `dist/lib/`), which fix the subset's edges:
+rokkit facts (`@rokkit/forms` 1.15.7, `dist/lib/`; 1.16.0 for arrays and long text, D9), which fix the subset's edges:
 - `resolveInputType` picks `props.renderer` first, then any `format` other than `text`/`number`
   (`elements.js:63-65`). A schema `format` or a layout `renderer` therefore chooses the control, so the subset
   refuses both: the lane cannot pick a control the daemon does not check.
@@ -34,7 +34,8 @@ rokkit facts (`@rokkit/forms` 1.15.7, `dist/lib/`), which fix the subset's edges
 - `pattern` is compiled with `new RegExp` (`validation.js:35`); `maxLength` is checked at `validation.js:48`.
 - `type: "array"` maps to `ArrayEditor` (`elements.js:37`, `renderers.js:36`), not `MultiSelect` (which exists
   in `@rokkit/ui`, `dist/components/index.js:11`). A `textarea` renderer exists (`renderers.js:52`) but is
-  reachable only through `renderer` / `format`, which the subset refuses. Hence the rokkit issue (R1).
+  reachable only through `renderer` / `format`, which the subset refuses. Hence the rokkit issue (R1). In 1.16.0
+  (rokkit#197) an array of `items.enum` maps to `multiselect` and `x-multiline: true` to `textarea` (D9).
 
 Nothing of #389 is built. The live chain it depends on (#378/#418) is merged.
 
@@ -42,7 +43,7 @@ Nothing of #389 is built. The live chain it depends on (#378/#418) is merged.
 
 - Goals: a decision may carry a flat JSON Schema subset (plus an optional rokkit layout); the person (or an asked lane) answers with structured values in
   one validated write; both surfaces render it from the same state; arrival and resolution are live.
-- Non-goals: pick-several and long-text fields until rokkit draws them (D9); free-text chat; multi-step or conditional forms; the dōjō transport (#427).
+- Non-goals: free-text chat; multi-step or conditional forms; the dōjō transport (#427).
 
 ## Decisions
 
@@ -53,15 +54,19 @@ Nothing of #389 is built. The live chain it depends on (#378/#418) is merged.
 `schema` (all of these, nothing else):
 - `type: "object"`, `properties` (1-12 entries), optional `required` (names from `properties`, no duplicates).
 - Each property name matches `^[a-z][a-z0-9_]{0,39}$`.
-- Each property: `type` ∈ `string | number | integer | boolean`, plus only the keywords its type allows:
+- Each property: `type` ∈ `string | number | integer | boolean | array`, plus only the keywords its type allows:
   - `string`: `enum` (1-50 unique strings, each ≤ 120 chars; pick one), `maxLength` (1-600), `pattern`
     (≤ 200 chars; must compile with the `regex` crate and must not contain `(?`, so inline flags and named
-    groups, which JS spells differently, are refused).
+    groups, which JS spells differently, are refused), and `x-multiline: true` (long text, drawn as a
+    textarea; its `maxLength` may go to 4000; refused with an `enum`, which rokkit draws as a select).
+  - `array` (pick several, drawn as a MultiSelect; R2): `items: {type?: "string", enum}` (the enum held to the
+    string rules above) and an optional `uniqueItems: true`. `minItems` / `maxItems` are refused: rokkit
+    1.16 does not honour them, so the form could not check them.
   - `number` / `integer`: `minimum`, `maximum` (finite; `minimum ≤ maximum`).
   - `boolean`: no constraint keywords.
   - every type: the annotations `title` (≤ 120), `description` (≤ 300) and `default` (must itself pass the
     property's rules). Annotations never change what an answer must be.
-- Anything else is refused by name: `format`, `items`, `type: "array"` or `"object"` inside a property,
+- Anything else is refused by name: `format`, `items` off an array, `type: "object"` inside a property,
   `$ref`, `oneOf`/`anyOf`/`allOf`, `additionalProperties`, `minLength`, `exclusiveMinimum`, and so on. The
   refusal names the keyword and the property: `response.schema.properties.files.type: array is not supported`.
 
@@ -85,8 +90,11 @@ Answer carries `option` for an option decision, `values` for a form decision; th
 against the schema stored on the `asked` action:
 - unknown key → 422; a `required` property absent, null or `""` → 422;
 - `string` not a string, `number` not a finite number, `integer` not a whole number, `boolean` not a bool → 422;
-- `enum` miss, `minimum` / `maximum` out of range, over `maxLength` (or over 600 when the schema sets none),
-  `pattern` not matching (unanchored, as JSON Schema says) → 422;
+- `enum` miss, `minimum` / `maximum` out of range, over `maxLength` (or over 600 when the schema sets none, 4000
+  for `x-multiline` long text), `pattern` not matching (unanchored, as JSON Schema says) → 422;
+- a pick-several not an array, a member off its `items.enum` (or not a string), a member picked twice → 422;
+  a required pick-several sent empty (`[]`) is missing, as rokkit's `isEmpty` reads it; an optional one may be
+  `[]` (none picked), and the form leaves it out;
 - text tripping `guard_markdown` (`relay/mod.rs:349`) → 422 naming kinds only.
 
 Optional properties absent stay absent (D83: null = not reported, never filled with a default). A `default`
@@ -139,14 +147,20 @@ No new event. The ask handler already emits the decision `add` with `now_decisio
 (`relay.rs:1526`); that row gains `response`. The person answer already emits `remove` (`relay.rs:1860`).
 The lane answer path emits a task event only (unchanged; a lane-asked decision is not on Needs you).
 
-### D9. Pick-several and long text wait for rokkit
+### D9. Pick-several and long text: rokkit draws them (R2, shipped)
 
-Refused by D1 today. Task R1 raises a sensei-hq/rokkit issue: FormRenderer maps `type: "array"` with
-`items.enum` to `MultiSelect`, and a schema-level long-text hint maps a string to its textarea. When rokkit
-releases it, task R2 bumps `@rokkit/forms` in `app/` and `packages/`, widens D1 to `array` + `items.enum`
-(answer: an array of unique enum members, with `minItems` / `maxItems` if rokkit honours them) and the
-long-text hint (its own `maxLength` cap, decided with the hint), and adds red tests for both first. No sensei
-override in the meantime.
+R1 raised sensei-hq/rokkit#197; `@rokkit/forms` 1.16.0 shipped it: `resolveInputType` draws `type: "array"`
+with `items.enum` as `multiselect` (`elements.js` `arrayInputType`, folding the enum into `options`) and a
+string with `x-multiline: true` as `textarea` (`stringInputType`; an `enum` still wins and draws a select).
+`validateAll` checks an array's members against `items.enum` and, with `uniqueItems`, refuses duplicates; a
+required array is empty when `[]`. It honours no `minItems` / `maxItems`, so D1 refuses them. R2 widened D1
+and D3 to match, red tests first: the answer is an array of unique enum members; long text has its own cap,
+4000 characters (counted as code points, as all text is; one-line text stays at 600). The form checks the cap
+itself (`textCap`), as it does `maxLength`, so browser and daemon count alike. Re-reading `resolveInputType`
+in 1.16.0: no other subset keyword picks a control (`renderer`, `format`, `options`, `min`/`max` stay
+refused). One gap: rokkit builds an array's element from the schema alone and drops the layout's `label`,
+`description`, `override` and `props` (sensei-hq/rokkit#205), so `withArrayLayout` folds them into the copy
+of the schema the form draws from until rokkit fixes it.
 
 ## Decided by the user (2026-11-18)
 
@@ -181,7 +195,8 @@ override in the meantime.
    exponential time on a pattern the daemon accepts, such as `^(a+)+$`, and would freeze the webview.
 4. **No `note` field in the form UI.** The wire keeps `note` (unchanged); the form does not add a free-text
    note box, since free text is out of scope.
-5. **Limits:** 12 properties, 50 enum members, 600 chars per text value (the summary cap, `relay/mod.rs:364`).
+5. **Limits:** 12 properties, 50 enum members, 600 chars per text value (the summary cap, `relay/mod.rs:364`),
+   4000 for `x-multiline` long text (R2).
 
 ## Risks / Trade-offs
 
@@ -202,8 +217,9 @@ override in the meantime.
   `pattern`) out of the schema rokkit checks, which also leaves the input without a native `maxlength`, and
   checks both itself as the daemon does.
 - `@rokkit/forms` 1.16.0 (re-read for R2): an array of `items.enum` draws a multiselect and `x-multiline` a
-  textarea. The subset refuses `type: "array"`, `items` and every unknown keyword (`x-multiline`, `renderer`,
-  `options`, `min`, `max`), so no newly mapped keyword reaches the form; widening it is a separate change.
+  textarea; both are in the subset now (D9). Every other keyword that picks a control (`renderer`, `format`,
+  `options`, `min`, `max`) is still refused. An array element loses its layout keys in rokkit
+  (sensei-hq/rokkit#205); the form folds them into its own schema copy until that is fixed.
 
 ## Migration Plan
 

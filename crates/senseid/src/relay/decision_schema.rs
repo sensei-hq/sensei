@@ -2,7 +2,8 @@
 //! and the check an answer's values must pass before the daemon stores them.
 //!
 //! `response = {schema, layout?}`. `schema` is a flat JSON Schema subset that
-//! `@rokkit/forms` draws as is; `layout` is an optional rokkit vertical layout.
+//! `@rokkit/forms` draws as is (1.16: an array of enum members as a MultiSelect and an
+//! `x-multiline` string as a textarea, rokkit#197); `layout` is an optional rokkit vertical layout.
 //! Both are refused, by name, outside the subset (design D1). Values are checked
 //! against the stored schema on every answer, whatever the client checked (D3).
 
@@ -24,6 +25,9 @@ const MAX_PATTERN_CHARS: usize = 200;
 const PROPERTY_KEYS: &[&str] = &[
     "type",
     "enum",
+    "items",
+    "uniqueItems",
+    "x-multiline",
     "maxLength",
     "pattern",
     "minimum",
@@ -97,6 +101,10 @@ pub fn validate_values(response: &Value, values: &Value) -> Result<(), String> {
             Some(Value::String(s)) if s.is_empty() => {
                 return Err(format!("values.{name} is required"));
             }
+            // A required pick-several needs at least one member, as the form reads an empty pick.
+            Some(Value::Array(a)) if a.is_empty() => {
+                return Err(format!("values.{name} is required"));
+            }
             _ => {}
         }
     }
@@ -165,7 +173,7 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
     let obj = prop.as_object().ok_or_else(|| format!("{at} must be an object"))?;
     let ty = obj.get("type").and_then(Value::as_str);
     if let Some(ty) = ty
-        && !matches!(ty, "string" | "number" | "integer" | "boolean")
+        && !matches!(ty, "string" | "number" | "integer" | "boolean" | "array")
     {
         return Err(format!("{at}.type: {ty} is not supported"));
     }
@@ -174,43 +182,45 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
             return Err(format!("{at}.{key} is not supported"));
         }
     }
-    let ty = ty.ok_or_else(|| format!("{at}.type must be string, number, integer or boolean"))?;
+    let ty =
+        ty.ok_or_else(|| format!("{at}.type must be string, number, integer, boolean or array"))?;
     let only_on = |key: &str, types: &[&str]| -> Result<(), String> {
         if obj.contains_key(key) && !types.contains(&ty) {
-            return Err(format!("{at}.{key} is not allowed on a {ty}"));
+            let article = if ty == "array" || ty == "integer" { "an" } else { "a" };
+            return Err(format!("{at}.{key} is not allowed on {article} {ty}"));
         }
         Ok(())
     };
     only_on("enum", &["string"])?;
     only_on("maxLength", &["string"])?;
     only_on("pattern", &["string"])?;
+    only_on("x-multiline", &["string"])?;
     only_on("minimum", &["number", "integer"])?;
     only_on("maximum", &["number", "integer"])?;
-    if let Some(members) = obj.get("enum") {
-        let members = members
-            .as_array()
-            .filter(|m| (1..=MAX_ENUM).contains(&m.len()))
-            .ok_or_else(|| format!("{at}.enum needs 1 to {MAX_ENUM} members"))?;
-        let mut seen: Vec<&str> = Vec::with_capacity(members.len());
-        for member in members {
-            let member = member
-                .as_str()
-                .filter(|m| m.chars().count() <= MAX_LABEL_CHARS)
-                .ok_or_else(|| {
-                    format!("{at}.enum members are strings of at most {MAX_LABEL_CHARS} characters")
-                })?;
-            if seen.contains(&member) {
-                return Err(format!("{at}.enum lists {member} twice"));
-            }
-            seen.push(member);
+    only_on("items", &["array"])?;
+    only_on("uniqueItems", &["array"])?;
+    if ty == "array" {
+        check_pick_several(&at, obj)?;
+    }
+    let multiline = is_multiline(prop);
+    if let Some(v) = obj.get("x-multiline") {
+        if v != &Value::Bool(true) {
+            return Err(format!("{at}.x-multiline must be true (long text) or left out"));
+        }
+        if obj.contains_key("enum") {
+            return Err(format!(
+                "{at}.x-multiline is not allowed with an enum: the form draws a pick-one"
+            ));
         }
     }
+    if obj.contains_key("enum") {
+        check_enum_members(&format!("{at}.enum"), &obj["enum"])?;
+    }
     if let Some(max) = obj.get("maxLength") {
-        let ok = max.as_u64().is_some_and(|n| (1..=MAX_TEXT_CHARS as u64).contains(&n));
+        let cap = text_cap(multiline);
+        let ok = max.as_u64().is_some_and(|n| (1..=cap as u64).contains(&n));
         if !ok {
-            return Err(format!(
-                "{at}.maxLength must be a whole number from 1 to {MAX_TEXT_CHARS}"
-            ));
+            return Err(format!("{at}.maxLength must be a whole number from 1 to {cap}"));
         }
     }
     if let Some(pattern) = obj.get("pattern") {
@@ -246,16 +256,8 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
         }
     }
     // Each member must pass the property's own rules, or picking it is refused at answer time.
-    for (i, member) in obj.get("enum").and_then(Value::as_array).into_iter().flatten().enumerate() {
+    for member in obj.get("enum").and_then(Value::as_array).into_iter().flatten() {
         let text = member.as_str().unwrap_or_default();
-        if text.is_empty() {
-            return Err(format!(
-                "{at}.enum member {i} is empty, and an empty answer reads as none"
-            ));
-        }
-        crate::relay::guard_markdown(text).map_err(|kinds| {
-            format!("{at}.enum member {i} carries a secret ({})", kinds.join(", "))
-        })?;
         check_value(&format!("{at}.enum member {text}"), prop, member)?;
     }
     for (key, cap) in [("title", MAX_LABEL_CHARS), ("description", MAX_DESCRIPTION_CHARS)] {
@@ -267,6 +269,74 @@ fn check_property(name: &str, prop: &Value) -> Result<(), String> {
         check_value(&format!("{at}.default"), prop, default)?;
     }
     Ok(())
+}
+
+/// A pick-several (rokkit draws a MultiSelect): `items` is `{type?: "string", enum}` and
+/// `uniqueItems`, when sent, is `true`. Nothing else: rokkit honours no item count.
+fn check_pick_several(at: &str, obj: &Map<String, Value>) -> Result<(), String> {
+    let items = obj
+        .get("items")
+        .ok_or_else(|| {
+            format!("{at}.items is required: an array is a pick-several of enum members")
+        })?
+        .as_object()
+        .ok_or_else(|| format!("{at}.items must be an object {{type?, enum}}"))?;
+    for key in items.keys() {
+        if !matches!(key.as_str(), "type" | "enum") {
+            return Err(format!("{at}.items.{key} is not supported"));
+        }
+    }
+    if let Some(ty) = items.get("type")
+        && ty.as_str() != Some("string")
+    {
+        return Err(format!("{at}.items.type: {ty} is not supported (members are strings)"));
+    }
+    let members = items.get("enum").ok_or_else(|| {
+        format!("{at}.items.enum is required: an array is a pick-several of enum members")
+    })?;
+    check_enum_members(&format!("{at}.items.enum"), members)?;
+    if let Some(unique) = obj.get("uniqueItems")
+        && unique != &Value::Bool(true)
+    {
+        return Err(format!("{at}.uniqueItems must be true (a member is picked at most once)"));
+    }
+    Ok(())
+}
+
+/// An `enum` list (pick one, or the members of a pick-several): 1-50 unique, non-empty
+/// strings of at most 120 characters, none carrying a secret. `at` names the list.
+fn check_enum_members(at: &str, members: &Value) -> Result<(), String> {
+    let members = members
+        .as_array()
+        .filter(|m| (1..=MAX_ENUM).contains(&m.len()))
+        .ok_or_else(|| format!("{at} needs 1 to {MAX_ENUM} members"))?;
+    let mut seen: Vec<&str> = Vec::with_capacity(members.len());
+    for (i, member) in members.iter().enumerate() {
+        let member =
+            member.as_str().filter(|m| m.chars().count() <= MAX_LABEL_CHARS).ok_or_else(|| {
+                format!("{at} members are strings of at most {MAX_LABEL_CHARS} characters")
+            })?;
+        if member.is_empty() {
+            return Err(format!("{at} member {i} is empty, and an empty answer reads as none"));
+        }
+        crate::relay::guard_markdown(member)
+            .map_err(|kinds| format!("{at} member {i} carries a secret ({})", kinds.join(", ")))?;
+        if seen.contains(&member) {
+            return Err(format!("{at} lists {member} twice"));
+        }
+        seen.push(member);
+    }
+    Ok(())
+}
+
+/// A string drawn as long text (`x-multiline: true`, a textarea in rokkit 1.16).
+fn is_multiline(prop: &Value) -> bool {
+    prop.get("x-multiline") == Some(&Value::Bool(true))
+}
+
+/// The most characters a text value may hold: one line 600, long text 4000.
+fn text_cap(multiline: bool) -> usize {
+    if multiline { MAX_LONG_TEXT_CHARS } else { MAX_TEXT_CHARS }
 }
 
 /// The Unicode general categories `\p{..}` may name: both engines read these alike.
@@ -448,8 +518,9 @@ fn check_value(at: &str, prop: &Value, value: &Value) -> Result<(), String> {
             {
                 return Err(format!("{at} is over its maxLength {max}"));
             }
-            if chars > MAX_TEXT_CHARS {
-                return Err(format!("{at} is over {MAX_TEXT_CHARS} characters"));
+            let cap = text_cap(is_multiline(prop));
+            if chars > cap {
+                return Err(format!("{at} is over {cap} characters"));
             }
             if let Some(pattern) = prop["pattern"].as_str() {
                 let re = regex::Regex::new(pattern)
@@ -483,6 +554,22 @@ fn check_value(at: &str, prop: &Value, value: &Value) -> Result<(), String> {
         Some("boolean") => {
             if !value.is_boolean() {
                 return Err(format!("{at} must be true or false"));
+            }
+        }
+        Some("array") => {
+            let picked = value
+                .as_array()
+                .ok_or_else(|| format!("{at} must be an array of its enum members"))?;
+            let members = prop["items"]["enum"].as_array().map(Vec::as_slice).unwrap_or_default();
+            let mut seen: Vec<&Value> = Vec::with_capacity(picked.len());
+            for (i, member) in picked.iter().enumerate() {
+                if !member.is_string() || !members.contains(member) {
+                    return Err(format!("{at} member {i} is not one of its enum members"));
+                }
+                if seen.contains(&member) {
+                    return Err(format!("{at} lists a member twice"));
+                }
+                seen.push(member);
             }
         }
         _ => return Err(format!("{at}: the schema gives it no supported type")),
@@ -596,8 +683,9 @@ mod tests {
 
     #[test]
     fn refuses_the_keywords_rokkit_draws_a_control_from() {
-        // @rokkit/forms 1.16 picks a control from these (a textarea, a multiselect, a renderer,
-        // a range from min/max); the subset stays closed, so none reaches the form (#389).
+        // @rokkit/forms 1.16 picks a control from these (a renderer, a select from options, a
+        // range from min/max); none reaches the form. Its two new controls are in the subset on
+        // their own terms (R2): an array of enum members and `x-multiline` (tests below).
         for (key, value) in [
             ("renderer", json!("textarea")),
             ("options", json!(["a"])),

@@ -7,7 +7,7 @@
 // required yes/no with none starts as no, as its unchecked box shows.
 // `toAnswerValues` keeps what was filled and drops optional fields left empty, so absent stays
 // absent (D83). The daemon re-validates every answer (D3); this is the person's convenience.
-import type { RelayDecisionLayout, RelayDecisionResponse } from './types.js';
+import type { RelayDecisionLayout, RelayDecisionProperty, RelayDecisionResponse } from './types.js';
 
 type DecisionSchema = RelayDecisionResponse['schema'];
 
@@ -53,9 +53,18 @@ export function toDecisionForm(response: RelayDecisionResponse): DecisionFormVie
   return { schema: response.schema, layout: formLayout(response), data };
 }
 
-/** Empty as a form leaves it: never set, or cleared. */
+/** Empty as a form leaves it: never set, cleared, or a pick-several with nothing picked. */
 function isEmptyValue(value: unknown): boolean {
-  return value === undefined || value === null || value === '';
+  return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
+}
+
+/** The daemon's text caps (`decision_schema::MAX_TEXT_CHARS` / `MAX_LONG_TEXT_CHARS`). */
+const MAX_TEXT_CHARS = 600;
+const MAX_LONG_TEXT_CHARS = 4000;
+
+/** The most characters a text field may hold: its `maxLength`, else 600 for one line and 4000 for long text. */
+export function textCap(property: RelayDecisionProperty): number {
+  return property.maxLength ?? (property['x-multiline'] ? MAX_LONG_TEXT_CHARS : MAX_TEXT_CHARS);
 }
 
 /** The Unicode general categories `\p{..}` may name (`PATTERN_CATEGORIES` in the daemon). */
@@ -376,16 +385,37 @@ export function withoutTextRules(schema: DecisionSchema): DecisionSchema {
   return { ...schema, properties };
 }
 
+/**
+ * The schema with each pick-several carrying its layout element's label, help, placeholder and
+ * `override`. @rokkit/forms 1.16 builds an array's element from the schema's props alone and
+ * drops the layout's keys (sensei-hq/rokkit#205), so the field would draw unlabelled and skip
+ * the form's `child` snippet. Other properties keep the layout's keys and are left as they are.
+ */
+export function withArrayLayout(
+  schema: DecisionSchema,
+  layout: { elements: Array<RelayDecisionLayout['elements'][number] & { override?: boolean }> },
+): DecisionSchema {
+  const properties = { ...schema.properties };
+  for (const element of layout.elements) {
+    const name = element.scope.slice(2);
+    const property = properties[name];
+    if (property?.type !== 'array') continue;
+    const { scope: _scope, props, ...keys } = element;
+    properties[name] = { ...property, ...keys, ...props } as RelayDecisionProperty;
+  }
+  return { ...schema, properties };
+}
+
 /** The text rule a filled field breaks, read as the daemon reads it: maxLength first, then pattern. */
 export type TextMiss = 'maxLength' | 'pattern';
 
-/** Each filled text field that breaks its maxLength (in characters) or its pattern. */
+/** Each filled text field that breaks its cap (`textCap`, in characters) or its pattern. */
 export function textMisses(schema: DecisionSchema, data: Record<string, unknown>): Record<string, TextMiss> {
   const misses: Record<string, TextMiss> = {};
   for (const [name, property] of Object.entries(schema.properties)) {
     const value = data[name];
-    if (typeof value !== 'string' || value === '') continue;
-    if (property.maxLength !== undefined && [...value].length > property.maxLength) {
+    if (property.type !== 'string' || typeof value !== 'string' || value === '') continue;
+    if ([...value].length > textCap(property)) {
       misses[name] = 'maxLength';
       continue;
     }

@@ -7,9 +7,11 @@
   import { untrack } from 'svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
   import {
+    textCap,
     textMisses,
     toAnswerValues,
     toDecisionForm,
+    withArrayLayout,
     withoutTextRules,
     type RelayDecisionResponse,
     type TextMiss,
@@ -35,7 +37,9 @@
   // `maxlength`) in UTF-16 units, where the daemon reads Unicode and counts characters; rokkit
   // checks the rest, and the form checks those two as the daemon does.
   const checked = withoutTextRules(form.schema);
-  const builder = new FormBuilder({ ...form.data }, checked, layout);
+  // A pick-several takes its label and `override` from the schema rokkit draws it from
+  // (sensei-hq/rokkit#205: rokkit drops an array element's layout keys).
+  const builder = new FormBuilder({ ...form.data }, withArrayLayout(checked, layout), layout);
   const labels: Record<string, string> = Object.fromEntries(
     form.layout.elements.map((e) => {
       const path = e.scope.replace(/^#\//, '');
@@ -46,7 +50,7 @@
     const label = labels[path] ?? path;
     const text =
       miss === 'maxLength'
-        ? `${label} must be no more than ${form.schema.properties[path].maxLength} characters`
+        ? `${label} must be no more than ${textCap(form.schema.properties[path])} characters`
         : `${label} format is invalid`;
     return { state: 'error', text };
   }

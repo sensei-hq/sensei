@@ -125,16 +125,22 @@ Red commit first for every numbered group; green in the next commit.
 
 ## Slice R — widen the subset when rokkit draws pick-several and long text
 
-- [ ] R1 Raise an issue on sensei-hq/rokkit (with the sensei use case, #389): `FormRenderer` maps
+- [x] R1 Raise an issue on sensei-hq/rokkit (with the sensei use case, #389): `FormRenderer` maps
   `type: "array"` with `items.enum` to `MultiSelect` (today `ArrayEditor`, `@rokkit/forms` `dist/lib/elements.js:37`),
   and honours a schema-level long-text hint that draws its `InputTextArea` (`dist/lib/renderers.js:52`) without a
   layout `renderer`. Link the issue from #389. Done when the issue exists; this change does not wait on it.
-- [ ] R2 When rokkit ships R1: bump `@rokkit/forms` (and `@rokkit/*` peers) in `app/` and `packages/`; red tests
+- [x] R2 When rokkit ships R1: bump `@rokkit/forms` (and `@rokkit/*` peers) in `app/` and `packages/`; red tests
   first in `decision_schema.rs` (array of unique enum members accepted, off-list member / duplicate / wrong type
   refused; the long-text hint accepted with its cap) and in `decision-form.spec.ts` / `DecisionRow.spec.svelte.ts`
   (MultiSelect and textarea drawn); then widen D1/D3 and the `relay-decisions` spec. Re-read
   `resolveInputType` in the new release so no other keyword starts choosing a control. Track as its own issue
   if #389 has closed by then.
+  (Done: R1 is sensei-hq/rokkit#197, shipped in `@rokkit/*` 1.16.0, already pinned at `^1.16.0` in `app/`, `dojo/` and
+  `packages/` via the hosts. The subset takes `type: "array"` with `items: {type?: "string", enum}` and an optional
+  `uniqueItems: true` (no `minItems`/`maxItems`: rokkit honours none), and `x-multiline: true` on a string without an
+  `enum`, with a 4000-character cap. The form checks the 600/4000 cap itself (`textCap`), in characters. rokkit drops an
+  array element's layout keys, so `withArrayLayout` folds them in (sensei-hq/rokkit#205). e2e: "a pick-several and
+  long-text decision is answered live".)
 
 ## Close
 - [x] C1 `openspec validate add-relay-decision-response-form --strict`

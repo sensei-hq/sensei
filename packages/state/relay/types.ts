@@ -228,16 +228,22 @@ export interface RelayDecisionOption {
 
 /** One form property: the flat JSON Schema subset the daemon accepts (#389 D1). */
 export interface RelayDecisionProperty {
-  type: 'string' | 'number' | 'integer' | 'boolean';
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'array';
   title?: string;
   description?: string;
-  default?: string | number | boolean;
+  default?: string | number | boolean | string[];
   /** Pick one, on a string. */
   enum?: string[];
   maxLength?: number;
   pattern?: string;
+  /** Long text, on a string: rokkit 1.16 draws a textarea (rokkit#197). */
+  'x-multiline'?: true;
   minimum?: number;
   maximum?: number;
+  /** Pick several, on an array: its members (rokkit 1.16 draws a MultiSelect, rokkit#197). */
+  items?: { type?: 'string'; enum: string[] };
+  /** On an array: a member is picked at most once (the daemon holds to it either way). */
+  uniqueItems?: true;
 }
 
 /** A rokkit vertical layout: labels, help and placeholders, nothing that picks a control. */
