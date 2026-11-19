@@ -21,13 +21,18 @@ after PR #500 (slice A) merged.
 - Review r2 fix (red `20bfe00c2`, green `e07d85712`): a pattern means the same to daemon and form. The
   daemon refuses at ask time what the browser reads differently (`check_pattern_dialect`: `\w \d \s \b`,
   `\A \z`, hex, POSIX/nested classes, set ops); the form checks patterns itself with a `u` RegExp
-  (`toPatternRegExp`), not rokkit's plain one. e2e `relay-decision-form` 6/6 again.
+  (since r4, `toPatternMatcher`), not rokkit's plain one. e2e `relay-decision-form` 6/6 again.
 - Review r3 (bump `cb5128d4d`, refactor `4e9cfc681`, red `c04eb76a9`, green `76329d33a`): `@rokkit/*` ^1.16.0 in
   app/ and dojo/ (packages/ has no rokkit dep); DecisionCheckbox (rokkit#190) and the NaN handling
   (rokkit#193) removed; Select labels now name their trigger (rokkit#194). maxLength counted in characters
   as the daemon does (`textMisses`/`withoutTextRules`; no native UTF-16 `maxlength`). The daemon refuses
   every keyword 1.16 draws a control from (`x-multiline`, `renderer`, `options`, `min`, `max`, arrays).
   e2e `relay-decision-form` 6/6 on 1.16 (axe passes with rokkit's own checkbox); app 3842+, dojo 2411 unit green.
+- Review r4 (red `34f3197b8`, green `51bb94543`): the inline pattern check no longer runs a lane's
+  pattern on the browser's backtracking RegExp (`^(a+)+$` on 29 chars took 7s). `toPatternMatcher` parses
+  the daemon's dialect and runs a Thompson NFA, linear like Rust `regex`; outside the dialect or past
+  10,000 states it leaves the check to the daemon. 56k-case differential fuzz vs `u` RegExp: 0 diffs.
+  e2e `relay-decision-form` 6/6.
 - Gates: app `bun run check` 0 errors; `bun run test:unit` all green; `openspec validate --strict` valid.
 
 **Remaining:** C2 (close #389 on merge, with the e2e evidence; design review of the card by iris-deneb
