@@ -22,9 +22,13 @@ touch files. Never add new inline `font-size`/`@media`/color literals.
 ## Dev gate (zero-errors before commit)
 
 - `bun run check` — svelte-check (types + a11y). Must be 0 errors / 0 warnings.
-- `bun run test` — vitest + @testing-library. This app has **no Playwright** in-repo;
-  house pattern = unit-test `-data`/`-view` modules + component render specs, then
-  browser-verify visual/responsive work with the local wrangler recipe below.
+- `bun run test` — vitest + @testing-library. House pattern = unit-test `-data`/`-view`
+  modules + component render specs, then browser-verify visual/responsive work with the
+  local wrangler recipe below.
+- `bun run test:e2e` — Playwright specs in `e2e/*.e2e.ts`. They build the Worker, run it under
+  `wrangler dev` on `127.0.0.1:5175`, and seed + sign in against the LOCAL Supabase only
+  (`e2e/local-dojo.ts` reads `.dev.vars` and refuses any other host). Not part of `bun run test`
+  or CI: it needs `supabase start` and a converged dōjō DB (`scripts/deploy-dojo-db.sh`).
 - **Every `.svelte` edit** validated with the Svelte MCP autofixer
   (`mcp__plugin_svelte_svelte__svelte-autofixer`) before commit.
 - Virtual modules aren't generated under vitest — stub them in `vitest.config.ts`

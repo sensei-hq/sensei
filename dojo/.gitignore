@@ -29,3 +29,7 @@ vite.config.ts.timestamp-*
 
 # paraglide/inlang generated messages (source = messages/*.json)
 src/lib/paraglide
+
+# Playwright (bun run test:e2e) output
+/test-results
+/playwright-report

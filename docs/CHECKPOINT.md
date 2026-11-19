@@ -1,43 +1,24 @@
-# Checkpoint — 2026-11-19 (relay open items — #389 slice 1, the wire)
+# Checkpoint — 2026-11-19 (#299 — verify sync-filed dōjō workspaces)
 
-**Slice:** `add-relay-decision-response-form` slice A (#389): ask with a response schema, answer with
-values. Branch `lane/relay-389-s1` (worktree `lanes/relay-open`), PR #500 to develop.
+**Slice:** `verify-dojo-sync-files-workspaces` slice 1/1 (#299). Branch `lane/relay-299-s1`
+(worktree `lanes/relay-open`), PR #503.
 
-**Done (tasks A1–A6, red then green each):**
-- `relay/decision_schema.rs`: `validate_response` (the closed subset, refused by keyword and property)
-  and `validate_values` (unknown keys, required, type, enum, bounds, maxLength/600, pattern, leak guard).
-- `validate_props`: Asked takes `options` (non-empty) or `response`, never both or neither; Answered
-  takes `option` or `values`.
-- Store: `RelayAskInput.response`, `RelayAnswerInput {option?, values?}`; the answer is checked against
-  the stored schema before the write. `relay.now` `open_asked` carries `response`; Now, the stream row,
-  the task view, history and the envelope (`EnvelopeAnswer.option?`, `values?`) read it.
-- Routes and MCP: `AskBody.response`, answer bodies take `values`; MCP forwards both, `options`/`option`
-  are optional tool args.
-- `@sensei/state`: `RelayDecision.response`, `RelayAnswer` union, `answer(decision, {option}|{values})`.
-- Docs: `lanes-data.md` props table, `lanes.md` §7 decisions.
-- e2e: `relay-decision-form.spec.ts` "the broker round-trips a form decision" green, with
-  `diagrams-schema` + `relay-run` (3/3); real brew daemon restored on :7744.
-- Review fix (PR #500): a form answer read "null"/empty in the task timeline and HistoryEntry.
-  `answerGist` (`@sensei/state` format.ts) reads option, else values by sorted key (jsonb reorders
-  keys); both renderers use it. Unit red/green + e2e "the task view reads a form answer as its
-  values" (decision-form 2/2, relay-timeline, relay-run, diagrams-schema: 5/5).
-- Review fix 2 (PR #500): ask time now refuses a form no answer can satisfy. A layout must name every
-  property (rokkit draws only its elements; `elements: []` refused). Each enum member must be
-  non-empty and pass its own maxLength, pattern and leak guard; integer bounds must hold a whole
-  number. Red `d376f98db`, green `a40ad31a2`; spec scenario added. relay tests 446/446; e2e
-  decision-form 2/2.
-- Gates: senseid 5051/5052 on the lane template (the one failure is the keychain test
-  `discarding_the_forge_refresh_token_…`, untouched code, fails on this machine's keychain); sensei-mcp
-  green; clippy `-D warnings` and fmt clean; SQL `run.sh relay` 14/14; app check 0 errors; dōjō check
-  0 errors.
+**Done (tasks 1.1–1.4, 2.1–2.9) + #503 review fixes:**
+- SQL `make test-db` 101/101; dōjō vitest 237 files / 2411 tests; senseid filing tests pass.
+- Member floor on `GET /v1/t/{origin}/{org}/workspaces` (red `110729d0e`, fix `87d9a1693`).
+- Committed browser spec `dojo/e2e/workspace-filing.e2e.ts` (`cd dojo && bun run test:e2e`, local Supabase
+  only): two sync cycles, contributor sees the filed workspace once, lead with no repository role sees none,
+  unconnected org files nothing. 5/5 green; red with the floor put back to `lead`.
+- Live re-run after the fix: scratch `senseid --instance` against the local dōjō, 7 cycles `mapped=1
+  unmapped=1`, no "could not file" warning, 1 workspace (same id) and 1 link throughout; browser: contributor
+  1 row, lead 0 rows.
 
-**Remaining:** slice B (the form on the Relay screen, live) and slice R (rokkit issue + widen).
+**Remaining:** tasks 3.1–3.5, the production runbook (user only). The member floor reaches production with
+the next release.
 
-**Next command:** `gh pr checks 500` (lane/relay-389-s1, head after review fix 2); then slice B from tasks.md B1.1.
+**Next command:** the user runs `sensei auth approve`, then follows tasks.md section 3.
 
-**Open questions:** none blocking.
+**Open questions:** none.
 
-**Known broken:** none from this branch. The lane DB tests run against the lane template
-`sensei_test_relay_389_s1` (`TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test_relay_389_s1`),
-built from this tree's DDL (the `relay.now` view changed). Relay e2e specs alone after
-`make reset-e2e-db` need a workspace first: include `diagrams-schema` in the run.
+**Known broken:** none from this branch. `bun run test:e2e` is not in CI (needs a local Supabase). A scratch
+daemon reads a `security`-written keychain item only with `SENSEI_CREDENTIAL_BACKEND=security`.
