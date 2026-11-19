@@ -138,6 +138,14 @@ describe('toPatternMatcher', () => {
     }
   });
 
+  it('is null past its state cap, so no count can stall the form either', () => {
+    expect(toPatternMatcher('a{20000}')).toBeNull();
+    const wide = toPatternMatcher('(\\p{L}|\\p{N}|[a-z]){1,1600}!')!;
+    const start = performance.now();
+    expect(wide('abcd'.repeat(150))).toBe(false);
+    expect(performance.now() - start).toBeLessThan(250);
+  });
+
   // A lane's pattern may nest quantifiers or repeat overlapping ones: Rust `regex` runs it in
   // linear time and the daemon accepts it, but a backtracking RegExp takes exponential time and
   // would freeze the webview on Answer and on every edit while a message shows.

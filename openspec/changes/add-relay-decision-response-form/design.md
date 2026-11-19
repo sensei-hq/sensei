@@ -173,9 +173,11 @@ override in the meantime.
 3. **`pattern` dialect:** must compile with Rust `regex`, contain no `(?`, and use only constructs both engines
    read alike (`check_pattern_dialect`): escaped syntax characters, `\n \t \r \f \v`, `\p{X}` with X a general
    category, plain classes and `{m}`/`{m,}`/`{m,n}`. `\w \d \s \b`, `\A`/`\z`, hex escapes, POSIX or nested
-   classes and class set operations are refused at ask time. The form checks a pattern itself with
-   `new RegExp(p, 'u')` and each bare `.` read as `[^\n]` (`toPatternRegExp`), not through rokkit's plain
-   `new RegExp`, so it never refuses a value the daemon would take.
+   classes and class set operations are refused at ask time. The form checks a pattern itself, not
+   through rokkit's plain `new RegExp`: `toPatternMatcher` parses that dialect and runs the text through a
+   Thompson NFA, by code point with each bare `.` matching anything but `\n`, so it never refuses a value
+   the daemon would take, and in linear time as Rust `regex` does. A backtracking `RegExp` takes
+   exponential time on a pattern the daemon accepts, such as `^(a+)+$`, and would freeze the webview.
 4. **No `note` field in the form UI.** The wire keeps `note` (unchanged); the form does not add a free-text
    note box, since free text is out of scope.
 5. **Limits:** 12 properties, 50 enum members, 600 chars per text value (the summary cap, `relay/mod.rs:364`).
@@ -192,8 +194,8 @@ override in the meantime.
   one release, so installed pairs agree; this change also makes an empty `options` without `response` a 422
   (D2), closing the empty-card case.
 - The daemon's `regex` and the browser's `RegExp` are different engines. The ask-time dialect check (Decision
-  3) refuses what they read differently; if the browser still cannot compile a pattern, the form skips its
-  inline check and the daemon's answer counts. Unicode version drift in `\p{..}` remains possible.
+  3) refuses what they read differently; a pattern the form cannot parse, or one past 10,000 NFA states,
+  skips the inline check and the daemon's answer counts. Unicode version drift in `\p{..}` remains possible.
 - The daemon counts `maxLength` in characters (code points); rokkit's check (`.length`) and a native
   `maxlength` attribute count UTF-16 units, so an emoji counts twice. The form takes `maxLength` (and
   `pattern`) out of the schema rokkit checks, which also leaves the input without a native `maxlength`, and

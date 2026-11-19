@@ -69,7 +69,7 @@ export {
   toDecisionForm,
   toAnswerValues,
   textMisses,
-  toPatternRegExp,
+  toPatternMatcher,
   withoutTextRules,
   type DecisionFormView,
   type TextMiss,

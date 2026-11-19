@@ -250,7 +250,7 @@ const PATTERN_CATEGORIES: &[&str] = &[
 ];
 
 /// A pattern means the same to Rust `regex` (here) and to the browser's `RegExp` with the
-/// `u` flag (the inline check, `toPatternRegExp`), or the first construct that does not.
+/// `u` flag (the inline check, `toPatternMatcher`), or the first construct that does not.
 /// An allow-list: escapes of syntax characters, `\n \t \r \f \v`, `\p{..}` of a general
 /// category, plain classes and `{m}` / `{m,}` / `{m,n}` counts. Refused: the Perl classes
 /// (`\w \d \s \b`: Unicode here, ASCII there), `\A`/`\z`, hex and other escapes, POSIX and
