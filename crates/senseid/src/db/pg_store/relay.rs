@@ -1504,7 +1504,7 @@ fn now_lane_json(
     id: &Uuid,
     crew_id: &Uuid,
     payload: &serde_json::Value,
-    names: &crate::assistants::CatalogueNames,
+    names: &crate::assistants::catalogue::CatalogueNames,
 ) -> serde_json::Value {
     let family = payload.get("family").and_then(|v| v.as_str());
     let host = payload.get("host").and_then(|v| v.as_str());
@@ -1551,7 +1551,7 @@ fn now_lane_json(
 
 /// Add the catalogue's name for a run-task lane's family (#455), in place; a
 /// null lane stays null.
-fn name_family(lane: &mut serde_json::Value, names: &crate::assistants::CatalogueNames) {
+fn name_family(lane: &mut serde_json::Value, names: &crate::assistants::catalogue::CatalogueNames) {
     let Some(family) = lane.get("family").and_then(|f| f.as_str()).map(str::to_owned) else {
         return;
     };
@@ -1561,7 +1561,9 @@ fn name_family(lane: &mut serde_json::Value, names: &crate::assistants::Catalogu
 impl PgStore {
     /// The catalogue's names for a relay read: one query; a failure fails the
     /// read, never an unnamed lane (#455).
-    async fn relay_catalogue_names(&self) -> Result<crate::assistants::CatalogueNames, RelayError> {
+    async fn relay_catalogue_names(
+        &self,
+    ) -> Result<crate::assistants::catalogue::CatalogueNames, RelayError> {
         self.catalogue_names().await.map_err(RelayError::Internal)
     }
 

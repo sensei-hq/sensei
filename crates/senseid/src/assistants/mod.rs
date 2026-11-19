@@ -1,6 +1,6 @@
-mod catalogue;
+pub(crate) mod catalogue;
 mod claude_code;
-mod health;
+pub(crate) mod health;
 mod helpers;
 mod mcp_file;
 mod trait_def;
@@ -289,13 +289,15 @@ pub struct NamedFamily {
 }
 
 /// config_health for a single adapter id, or None if not registered.
-pub fn config_health_for_id(adapter_id: &str) -> Option<Vec<crate::assistants::AdapterCheck>> {
+pub fn config_health_for_id(
+    adapter_id: &str,
+) -> Option<Vec<crate::assistants::health::AdapterCheck>> {
     all_assistants().iter().find(|a| a.id() == adapter_id).map(|a| a.config_health())
 }
 
 /// Resolve a single adapter by id via its `resolve()` (reinstall). None if the
 /// id isn't registered or the mcp binary can't be found.
-pub fn resolve_by_id(adapter_id: &str) -> Option<crate::assistants::AdapterResolveReport> {
+pub fn resolve_by_id(adapter_id: &str) -> Option<crate::assistants::health::AdapterResolveReport> {
     let mcp_cmd = find_mcp_binary()?.to_string_lossy().to_string();
     all_assistants().iter().find(|a| a.id() == adapter_id).map(|a| a.resolve(&mcp_cmd))
 }

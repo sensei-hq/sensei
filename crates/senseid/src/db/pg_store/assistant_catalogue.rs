@@ -1,6 +1,6 @@
 //! The seeded catalogue of supported tools and this machine's installs (#455).
 use super::{AssistantInstallRow, PgStore};
-use crate::assistants::CatalogueWordRow;
+use crate::assistants::catalogue::CatalogueWordRow;
 
 impl PgStore {
     /// Every spelling of every supported tool (`sensei.assistant_catalogue_words`),
@@ -24,9 +24,11 @@ impl PgStore {
             .collect())
     }
 
-    /// The catalogue's words as [`crate::assistants::CatalogueNames`].
-    pub async fn catalogue_names(&self) -> Result<crate::assistants::CatalogueNames, String> {
-        Ok(crate::assistants::CatalogueNames::from_rows(self.catalogue_words().await?))
+    /// The catalogue's words as [`crate::assistants::catalogue::CatalogueNames`].
+    pub async fn catalogue_names(
+        &self,
+    ) -> Result<crate::assistants::catalogue::CatalogueNames, String> {
+        Ok(crate::assistants::catalogue::CatalogueNames::from_rows(self.catalogue_words().await?))
     }
 
     /// Upsert one install row per probed tool, resolving each registry id through
@@ -114,7 +116,7 @@ impl PgStore {
     }
 
     /// `GET /relay/catalogue` (#455): the catalogue, this machine's installs and
-    /// what sessions named, shaped by [`crate::assistants::assemble_catalogue`].
+    /// what sessions named, shaped by [`crate::assistants::catalogue::assemble_catalogue`].
     /// Reads only the database, never the filesystem; any failed read is an error.
     pub async fn relay_catalogue(&self) -> Result<serde_json::Value, String> {
         let names = self.catalogue_names().await?;
@@ -124,13 +126,10 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("read the assistant installs: {e}"))?;
-        let installs: Vec<crate::assistants::ToolInstall> = installs
+        let installs: Vec<crate::assistants::catalogue::ToolInstall> = installs
             .into_iter()
-            .map(|(id, installed, configured, config_path)| crate::assistants::ToolInstall {
-                id,
-                installed,
-                configured,
-                config_path,
+            .map(|(id, installed, configured, config_path)| {
+                crate::assistants::catalogue::ToolInstall { id, installed, configured, config_path }
             })
             .collect();
         // A session names its assistant (acp_id) and, when it ran in one, its
@@ -148,14 +147,13 @@ impl PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| format!("read session usage: {e}"))?;
-        let usage: Vec<crate::assistants::WordUsage> = usage
-            .into_iter()
-            .map(|(word, last_used_at, sessions_week)| crate::assistants::WordUsage {
-                word,
-                last_used_at,
-                sessions_week,
-            })
-            .collect();
+        let usage: Vec<crate::assistants::catalogue::WordUsage> =
+            usage
+                .into_iter()
+                .map(|(word, last_used_at, sessions_week)| {
+                    crate::assistants::catalogue::WordUsage { word, last_used_at, sessions_week }
+                })
+                .collect();
         let models: Vec<(String, String)> = sqlx_core::query_as::query_as(
             "select word, model
                from (select acp_id as word, model, started_at from activity.sessions
@@ -169,6 +167,6 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("read session models: {e}"))?;
-        Ok(crate::assistants::assemble_catalogue(&names, &installs, &usage, &models))
+        Ok(crate::assistants::catalogue::assemble_catalogue(&names, &installs, &usage, &models))
     }
 }

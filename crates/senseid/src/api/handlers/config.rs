@@ -126,7 +126,7 @@ pub(crate) async fn marketplace_install(
 /// The catalogue's names, or a 500: a detection list is never served unnamed (#455).
 async fn catalogue_names(
     state: &AppState,
-) -> Result<crate::assistants::CatalogueNames, StatusCode> {
+) -> Result<crate::assistants::catalogue::CatalogueNames, StatusCode> {
     state.pg.catalogue_names().await.map_err(|e| {
         tracing::warn!(error = %e, "assistants: catalogue read failed");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -221,7 +221,7 @@ pub(crate) struct AssistantUpgradeBody {
 pub(crate) async fn assistant_upgrade(
     State(state): State<AppState>,
     Json(body): Json<AssistantUpgradeBody>,
-) -> Json<Vec<crate::assistants::AdapterResolveReport>> {
+) -> Json<Vec<crate::assistants::health::AdapterResolveReport>> {
     let (mut reports, refreshed) = crate::assistants::upgrade_refreshing(&body.acps);
     if let Some(w) = resync_installs(&state, &refreshed).await {
         note_resync_failure(&mut reports, &w);
@@ -231,7 +231,10 @@ pub(crate) async fn assistant_upgrade(
 
 /// Record a failed post-upgrade re-detect on each report as a warning: the
 /// upgrade landed, so `ok` and `errors` stay as the upgrade left them.
-fn note_resync_failure(reports: &mut [crate::assistants::AdapterResolveReport], warning: &str) {
+fn note_resync_failure(
+    reports: &mut [crate::assistants::health::AdapterResolveReport],
+    warning: &str,
+) {
     for r in reports {
         r.warnings.push(warning.to_string());
     }
@@ -278,7 +281,7 @@ pub(crate) struct ResolveBody {
 pub(crate) async fn assistants_resolve(
     State(state): State<AppState>,
     Json(body): Json<ResolveBody>,
-) -> Json<crate::assistants::AdapterResolveReport> {
+) -> Json<crate::assistants::health::AdapterResolveReport> {
     let breaker = state.breaker.clone();
     let id = body.adapter_id.clone();
     Json(
@@ -294,8 +297,8 @@ pub(crate) async fn assistants_resolve(
 async fn resolve_then_resync(
     state: &AppState,
     adapter_id: &str,
-    resolve: impl FnOnce() -> crate::assistants::AdapterResolveReport,
-) -> crate::assistants::AdapterResolveReport {
+    resolve: impl FnOnce() -> crate::assistants::health::AdapterResolveReport,
+) -> crate::assistants::health::AdapterResolveReport {
     let mut report = resolve();
     let configured = if report.ok { vec![adapter_id.to_string()] } else { vec![] };
     if let Some(w) = resync_installs(state, &configured).await {
@@ -536,7 +539,7 @@ mod tests {
     // failure in `errors`, a contradiction the CLI resolved by never printing it.
     #[test]
     fn a_failed_redetect_after_upgrade_is_a_warning_on_each_report() {
-        let mut reports = vec![crate::assistants::AdapterResolveReport {
+        let mut reports = vec![crate::assistants::health::AdapterResolveReport {
             adapter_id: "claude-code".into(),
             ok: true,
             actions: vec!["upgraded claude-code plugin".into()],
@@ -758,8 +761,8 @@ mod assistant_route_tests {
         );
     }
 
-    fn resolved(ok: bool) -> crate::assistants::AdapterResolveReport {
-        crate::assistants::AdapterResolveReport {
+    fn resolved(ok: bool) -> crate::assistants::health::AdapterResolveReport {
+        crate::assistants::health::AdapterResolveReport {
             adapter_id: "cursor".into(),
             ok,
             actions: vec!["reinstalled".into()],

@@ -221,14 +221,14 @@ pub async fn resync_after_tick(
 pub fn resolve_adapter(
     adapter_id: &str,
     breaker: &BreakerMap,
-) -> crate::assistants::AdapterResolveReport {
+) -> crate::assistants::health::AdapterResolveReport {
     if let Ok(mut map) = breaker.lock() {
         let e = map.entry(adapter_id.to_string()).or_default();
         e.suspended = None;
         e.stale_notified = false;
     }
     crate::assistants::resolve_by_id(adapter_id).unwrap_or_else(|| {
-        crate::assistants::AdapterResolveReport {
+        crate::assistants::health::AdapterResolveReport {
             adapter_id: adapter_id.to_string(),
             ok: false,
             actions: vec![],
