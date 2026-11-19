@@ -225,6 +225,24 @@ test.describe('relay decision form (#389)', () => {
     await page.waitForSelector(NEEDS, 20_000).catch(() => undefined);
   }
 
+  /** The serious and critical axe violations (WCAG A + AA) inside `selector`, as `id: targets`. */
+  async function seriousA11y(page: TauriPageLike, selector: string): Promise<string[]> {
+    await page.evaluate(
+      `(function () { if (!window.axe) { ${readFileSync('node_modules/axe-core/axe.min.js', 'utf8')} } return typeof window.axe === 'object'; })()`,
+    );
+    return JSON.parse(
+      (await page.evaluate(`(async function () {
+        var r = await window.axe.run(document.querySelector(${JSON.stringify(selector)}), {
+          runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+          resultTypes: ['violations'],
+        });
+        return JSON.stringify((r.violations || [])
+          .filter(function (v) { return v.impact === 'serious' || v.impact === 'critical'; })
+          .map(function (v) { return v.id + ': ' + v.nodes.map(function (n) { return n.target.join(' '); }).join(', '); }));
+      })()`)) as string,
+    );
+  }
+
   /** The screen tests share one coordinator and one open screen session per test. */
   async function formLane(goal: string): Promise<RelayLane> {
     return new RelayCrew(DAEMON_URL).register({ role: 'coordinator', family: 'e2e', goal: `${goal} ${RUN_TAG}`, repo_key: FORM_REPO });
@@ -258,21 +276,14 @@ test.describe('relay decision form (#389)', () => {
     await evidence(tauriPage, '1-arrived', card);
 
     // The card passes axe with the form showing (WCAG A + AA; no serious or critical).
-    await tauriPage.evaluate(
-      `(function () { if (!window.axe) { ${readFileSync('node_modules/axe-core/axe.min.js', 'utf8')} } return typeof window.axe === 'object'; })()`,
-    );
-    const violations = JSON.parse(
-      (await tauriPage.evaluate(`(async function () {
-        var r = await window.axe.run(document.querySelector(${JSON.stringify(card)}), {
-          runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
-          resultTypes: ['violations'],
-        });
-        return JSON.stringify((r.violations || [])
-          .filter(function (v) { return v.impact === 'serious' || v.impact === 'critical'; })
-          .map(function (v) { return v.id + ': ' + v.nodes.map(function (n) { return n.target.join(' '); }).join(', '); }));
-      })()`)) as string,
-    );
-    expect(violations, 'serious/critical a11y violations on the form card').toEqual([]);
+    expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the form card').toEqual([]);
+    // Open, the Select's listbox is named for its field (axe aria-input-field-name).
+    const target = `${card} [data-decision-field="target"] [data-select-trigger]`;
+    await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' }), true)`);
+    await tauriPage.locator(target).click();
+    await expect.poll(() => countOf(tauriPage, `${card} [data-decision-field="target"] [role="listbox"]`)).toBe(1);
+    expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations with the Select open').toEqual([]);
+    await tauriPage.locator(target).click();
     if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
   });
 
@@ -383,6 +394,9 @@ test.describe('relay decision form (#389)', () => {
       return true;
     })()`);
     await evidence(tauriPage, '5-several-filled', card);
+    // Filled (members picked, the listbox still open), the card passes axe: no control nested in
+    // the MultiSelect's trigger (nested-interactive) and a named listbox.
+    expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the filled pick-several').toEqual([]);
     await tauriPage.locator(`${card} [data-decision-answer]`).click();
 
     await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(0);

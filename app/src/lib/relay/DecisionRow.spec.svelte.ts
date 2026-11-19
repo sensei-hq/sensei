@@ -4,6 +4,7 @@
 // inline before anything is sent, sent once, and a refusal shown in place with the values kept.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, tick } from 'svelte';
+import axe from 'axe-core';
 import { mountComponent } from '$lib/test-mount.js';
 import type { RelayDecision, RelayDecisionChoice } from '@sensei/state';
 import * as F from '$lib/test-stubs/relay-fixtures.js';
@@ -38,6 +39,17 @@ function setNumber(c: HTMLElement, name: string, value: string) {
   input.value = value;
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/** The serious and critical axe violations in the card (WCAG A + AA; contrast is a browser check). */
+async function seriousA11y(c: HTMLElement): Promise<string[]> {
+  const result = await axe.run(c, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+    rules: { 'color-contrast': { enabled: false } },
+  });
+  return result.violations
+    .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+    .map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
 }
 
 /** Pick an option in rokkit's Select: open it, then press the option. */
@@ -283,6 +295,24 @@ describe('DecisionRow · a form decision', () => {
     expect(onanswer).toHaveBeenCalledWith({ values: { confirm: false } });
   });
 
+  // Every state the card reaches passes axe, not only the empty form: a control's filled state
+  // can draw new elements (a Select's value, a message under a field).
+  it('passes axe empty, with its messages showing, and filled', async () => {
+    const c = mount(F.formDecision());
+    expect(await seriousA11y(c)).toEqual([]);
+    answerButton(c).click();
+    await settle();
+    expect(field(c, 'target')!.querySelector('[data-message]')).not.toBeNull();
+    expect(await seriousA11y(c)).toEqual([]);
+    // Open, the Select's listbox is named for its field (axe aria-input-field-name).
+    field(c, 'target')!.querySelector<HTMLButtonElement>('[data-select-trigger]')!.click();
+    await settle();
+    expect(field(c, 'target')!.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(await seriousA11y(c)).toEqual([]);
+    await pick(c, 'target', 'main');
+    expect(await seriousA11y(c)).toEqual([]);
+  });
+
   it('two cards with the same property names keep their ids apart; each label names its own control', () => {
     const c1 = mount(F.formDecision({ id: 'ask-1' }));
     const c2 = mount(F.formDecision({ id: 'ask-2' }));
@@ -387,5 +417,27 @@ describe('DecisionRow · pick-several and long text', () => {
     answerButton(c).click();
     await settle();
     expect(onanswer).toHaveBeenCalledWith({ values: { areas: ['app'] } });
+  });
+
+  // rokkit 1.16's MultiSelect draws a focusable role=button remove control per picked member inside
+  // its trigger <button>: axe nested-interactive (serious, WCAG 4.1.2). The card must not carry it.
+  it('passes axe with members picked: no control nested inside the trigger', async () => {
+    const c = mount(several());
+    expect(await seriousA11y(c)).toEqual([]);
+    await pickSeveral(c, 'areas', ['db', 'api']);
+    typeNotes(c, 'first line\nsecond line');
+    await settle();
+    expect(await seriousA11y(c)).toEqual([]);
+    const trigger = field(c, 'areas')!.querySelector('[data-select-trigger]')!;
+    expect(trigger.querySelectorAll('[role="button"], [tabindex], button, a[href], input').length).toBe(0);
+  });
+
+  it('shows the picked members outside the trigger, so the person sees what they picked', async () => {
+    const c = mount(several());
+    await pickSeveral(c, 'areas', ['db', 'api']);
+    const picked = field(c, 'areas')!.querySelector('[data-decision-picked]');
+    expect(picked?.textContent).toContain('api');
+    expect(picked?.textContent).toContain('db');
+    expect(field(c, 'areas')!.querySelector('[data-select-trigger] [data-decision-picked]')).toBeNull();
   });
 });
