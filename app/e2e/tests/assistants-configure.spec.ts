@@ -70,6 +70,10 @@ async function waitForPath(tauriPage: TauriPageLike, expected: string, timeoutMs
   throw new Error(`Timed out (${timeoutMs}ms) waiting for path ${expected}. Current: ${final}`);
 }
 
+// The card's switch is named by the catalogue (#455): the `claude` family reads
+// "Claude Code", the seeded catalogue name, not a name the registry kept.
+const CLAUDE_SWITCH = 'button[aria-label="Enable Claude Code"]';
+
 async function resetSetupKeys(): Promise<void> {
   // Strip setup completion so the wizard starts fresh.
   const keys = [
@@ -112,7 +116,7 @@ test.describe('Assistants — per-family configure', () => {
   test('card renders with switch and per-part chips', async ({ tauriPage }) => {
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
     await expect(card).toBeVisible({ timeout: 10_000 });
-    await expect(card.locator('button[aria-label="Enable Claude"]')).toBeVisible();
+    await expect(card.locator(CLAUDE_SWITCH)).toBeVisible();
     // Claude has five capability parts: plugins, skills, commands, agents, mcp.
     // Lock the count so a future trim/expansion of the daemon's parts list
     // surfaces here instead of going unnoticed.
@@ -126,7 +130,7 @@ test.describe('Assistants — per-family configure', () => {
     // defaults `selected` to any-variant-installed = true. Toggling off
     // an unconfigured family is a no-op — there's nothing to remove.
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
-    const sw = card.locator('button[aria-label="Enable Claude"]');
+    const sw = card.locator(CLAUDE_SWITCH);
 
     await expect(sw).toHaveClass(/\bon\b/, { timeout: 10_000 });
     await sw.click();
@@ -137,7 +141,7 @@ test.describe('Assistants — per-family configure', () => {
   test('toggling the switch on fires configure → chips settle to done', async ({ tauriPage }) => {
     // Start from a known-off state so the toggle has work to do.
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
-    const sw = card.locator('button[aria-label="Enable Claude"]');
+    const sw = card.locator(CLAUDE_SWITCH);
 
     await expect(sw).toHaveClass(/\bon\b/, { timeout: 10_000 });
     await sw.click();  // off
@@ -184,7 +188,7 @@ test.describe('Assistants — re-entry and removal', () => {
 
   test('toggling off a configured family fires remove → chips return to idle', async ({ tauriPage }) => {
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
-    const sw = card.locator('button[aria-label="Enable Claude"]');
+    const sw = card.locator(CLAUDE_SWITCH);
 
     await expect(card).toBeVisible({ timeout: 10_000 });
     await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configured', 'true');
