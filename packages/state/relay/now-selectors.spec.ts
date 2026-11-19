@@ -50,9 +50,11 @@ describe('a lane row (CONTRACT §1c-2)', () => {
 
   it('no codename yet: the lane code stands in, never an invented name (#395)', () => {
     expect(one(F.lane()).who).toBe('L1 · Claude Code 2.1');
-    expect(one(F.lane({ version: null, family: 'cursor' })).who).toBe('L1 · Cursor');
-    // A family the screen has no name for reads as the daemon wrote it, made readable.
-    expect(assistantLabel('gemini-cli', null)).toBe('Gemini CLI');
+    expect(one(F.lane({ version: null, family: 'cursor', family_name: 'Cursor' })).who).toBe('L1 · Cursor');
+    // The daemon names the family from its catalogue (#455); the screen keeps no list.
+    expect(assistantLabel('gemini-cli', null, 'Gemini CLI')).toBe('Gemini CLI');
+    // A family the daemon sent no name for reads as its own words, made readable.
+    expect(assistantLabel('gemini-cli', null)).toBe('Gemini cli');
     expect(assistantLabel('some-new-tool', '3')).toBe('Some new tool 3');
   });
 

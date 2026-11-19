@@ -1081,22 +1081,26 @@ async fn grant_next_waiter(
     }
 }
 
-/// Free disk on `/`, in GiB (`df -g` units). Null when unreadable — the
-/// screen degrades, the read never fails for it.
+/// Free disk on the volume holding the user's home, in GiB (`df -g` units) —
+/// `/` on a single-volume Unix, the system drive on Windows. Null when
+/// unreadable — the screen degrades, the read never fails for it.
 fn disk_free_gb() -> Option<u64> {
-    // statvfs widths differ per platform (macOS u32/u64, Linux u64/u64):
-    // the fallible conversions keep one body compiling everywhere.
-    #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
-    fn blocks_to_bytes(blocks: impl TryInto<u64>, size: impl TryInto<u64>) -> Option<u64> {
-        blocks.try_into().ok()?.checked_mul(size.try_into().ok()?)
-    }
-    let mut vfs = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    if unsafe { libc::statvfs(c"/".as_ptr(), vfs.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    let vfs = unsafe { vfs.assume_init() };
-    let free = blocks_to_bytes(vfs.f_bavail, vfs.f_frsize)?;
-    Some(free / 1024 / 1024 / 1024)
+    let home = sensei_bootstrap::config::try_home_dir()?;
+    let disks: Vec<(std::path::PathBuf, u64)> = sysinfo::Disks::new_with_refreshed_list()
+        .iter()
+        .map(|d| (d.mount_point().to_path_buf(), d.available_space()))
+        .collect();
+    free_on(&home, &disks)
+}
+
+/// Free GiB on the deepest mount point that holds `path`, from
+/// `(mount point, available bytes)` pairs.
+fn free_on(path: &std::path::Path, disks: &[(std::path::PathBuf, u64)]) -> Option<u64> {
+    disks
+        .iter()
+        .filter(|(mount, _)| path.starts_with(mount))
+        .max_by_key(|(mount, _)| mount.components().count())
+        .map(|(_, free)| free / 1024 / 1024 / 1024)
 }
 
 /// Free swap, in GiB. macOS reads `vm.swapusage`; anywhere else (or on any
@@ -1500,7 +1504,14 @@ fn now_run_json(crew_id: &Uuid, mut payload: serde_json::Value) -> serde_json::V
 /// One lane as the Now screen shows it: the `relay.now` lane payload,
 /// shaped. `relay_now` lists them; `relay_lane_row` reads one for the
 /// stream (#418), so the event and the read never disagree.
-fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serde_json::Value {
+fn now_lane_json(
+    id: &Uuid,
+    crew_id: &Uuid,
+    payload: &serde_json::Value,
+    names: &crate::assistants::catalogue::CatalogueNames,
+) -> serde_json::Value {
+    let family = payload.get("family").and_then(|v| v.as_str());
+    let host = payload.get("host").and_then(|v| v.as_str());
     let lease_state = payload
         .get("lease")
         .and_then(|l| l.get("state"))
@@ -1518,6 +1529,10 @@ fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serd
         "title": payload.get("title"),
         "role": payload.get("role"),
         "family": payload.get("family"),
+        // #455: the catalogue names and classifies the family and the host; a
+        // word it does not list reads as its own words, kind `unknown`.
+        "family_name": family.map(|f| names.name(f)),
+        "family_kind": family.map(|f| names.kind(f)),
         "version": payload.get("version"),
         "model": payload.get("model"),
         "lease_state": lease_state,
@@ -1531,12 +1546,31 @@ fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serd
         "suggested_name": payload.get("suggested_name"),
         // #396: the editor the session runs in, as it said; null when it said none.
         "host": payload.get("host"),
+        "host_name": host.map(|h| names.name(h)),
+        "host_kind": host.map(|h| names.kind(h)),
         "reviewing": payload.get("reviewing"),
         "presence": payload.get("presence"),
     })
 }
 
+/// Add the catalogue's name for a run-task lane's family (#455), in place; a
+/// null lane stays null.
+fn name_family(lane: &mut serde_json::Value, names: &crate::assistants::catalogue::CatalogueNames) {
+    let Some(family) = lane.get("family").and_then(|f| f.as_str()).map(str::to_owned) else {
+        return;
+    };
+    lane["family_name"] = names.name(&family).into();
+}
+
 impl PgStore {
+    /// The catalogue's names for a relay read: one query; a failure fails the
+    /// read, never an unnamed lane (#455).
+    async fn relay_catalogue_names(
+        &self,
+    ) -> Result<crate::assistants::catalogue::CatalogueNames, RelayError> {
+        self.catalogue_names().await.map_err(RelayError::Internal)
+    }
+
     /// Mint-or-join a lane (Q6). Mints the crew, the lane (next free code),
     /// its lease (granted, `now` + 300 s) and the lane token (returned raw
     /// once; stored hashed) in one transaction.
@@ -4775,6 +4809,7 @@ impl PgStore {
         user_id: Uuid,
         run_id: Uuid,
     ) -> Result<serde_json::Value, RelayError> {
+        let names = self.relay_catalogue_names().await?;
         let row: Option<RunListRow> =
             sqlx_core::query_as::query_as(&format!("{RUN_LIST_SELECT} and id = $2"))
                 .bind(user_id)
@@ -4897,6 +4932,7 @@ impl PgStore {
                     "title": title,
                     "suggested_name": name,
                     "family": family,
+                    "family_name": names.name(family),
                     "model": model,
                 }))
                 .collect::<Vec<_>>(),
@@ -7122,7 +7158,8 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        Ok(row.map(|(id, crew_id, payload)| now_lane_json(&id, &crew_id, &payload)))
+        let names = self.relay_catalogue_names().await?;
+        Ok(row.map(|(id, crew_id, payload)| now_lane_json(&id, &crew_id, &payload, &names)))
     }
 
     /// `RelayNow`, exactly per `relay-api.ts` — crews, facets, lanes,
@@ -7220,9 +7257,10 @@ impl PgStore {
             };
             (rank(&a.1), code_rank(&code(&a.2))).cmp(&(rank(&b.1), code_rank(&code(&b.2))))
         });
+        let names = self.relay_catalogue_names().await?;
         let lanes_json: Vec<serde_json::Value> = lanes
             .iter()
-            .map(|(id, crew_id, payload)| now_lane_json(id, crew_id, payload))
+            .map(|(id, crew_id, payload)| now_lane_json(id, crew_id, payload, &names))
             .collect();
         // The sprint band: one row per open run with its counts, in the
         // order the person created them (the view's `sprint_summary`).
@@ -7281,6 +7319,9 @@ impl PgStore {
             .map(|(mut row, claimed_at, completed_at)| {
                 row["claimed_at"] = claimed_at.map(iso).into();
                 row["completed_at"] = completed_at.map(iso).into();
+                for who in ["lane", "reviewer"] {
+                    name_family(&mut row[who], &names);
+                }
                 row
             })
             .collect();
@@ -7610,6 +7651,7 @@ impl PgStore {
         crew_id: Uuid,
         task_id: Uuid,
     ) -> Result<serde_json::Value, RelayError> {
+        let names = self.relay_catalogue_names().await?;
         let task: Option<(
             String,
             String,
@@ -7740,6 +7782,7 @@ impl PgStore {
                             "code": code,
                             "title": title,
                             "suggested_name": suggested_name,
+                            "family_name": names.name(&family),
                             "family": family,
                             "version": version,
                             "model": model,
@@ -8444,6 +8487,32 @@ fn item_kind_of_issue_type(issue_type: Option<&str>) -> RelayItemKind {
             RelayItemKind::Feature
         }
         _ => RelayItemKind::Issue,
+    }
+}
+
+#[cfg(test)]
+mod disk_free_tests {
+    use super::free_on;
+    use std::path::{Path, PathBuf};
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn picks_the_deepest_mount_holding_the_path() {
+        let disks = [(PathBuf::from("/"), 10 * GIB), (PathBuf::from("/home"), 50 * GIB)];
+        assert_eq!(free_on(Path::new("/home/ana"), &disks), Some(50));
+    }
+
+    #[test]
+    fn falls_back_to_the_root_mount() {
+        let disks = [(PathBuf::from("/"), 10 * GIB), (PathBuf::from("/home"), 50 * GIB)];
+        assert_eq!(free_on(Path::new("/var/lib"), &disks), Some(10));
+    }
+
+    #[test]
+    fn no_mount_holding_the_path_is_null() {
+        let disks = [(PathBuf::from("/mnt/x"), 10 * GIB)];
+        assert_eq!(free_on(Path::new("/home/ana"), &disks), None);
     }
 }
 

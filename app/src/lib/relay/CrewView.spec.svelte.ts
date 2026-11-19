@@ -187,6 +187,8 @@ describe('AddMember', () => {
     roleLocked: false,
     command: { step: 'Step 1 of 2.', text: 'register with sensei as coordinator', note: 'Paste it into an assistant session.' },
     listening: 'Listening · 0 of 2 to start a run',
+    catalogue: null,
+    catalogueError: null,
     ...over,
   });
 
@@ -227,5 +229,70 @@ describe('AddMember', () => {
     const [coordinator, contributor] = [...c.querySelectorAll('[data-role-option]')] as HTMLButtonElement[];
     expect(coordinator.disabled).toBe(true);
     expect(contributor.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  // #455: the catalogue picker — Assistants and Editors this machine has seen.
+  const picker = (picked: string | null = null): NonNullable<RelayAddMemberView['catalogue']> => ({
+    picked,
+    assistants: [
+      { id: 'claude', name: 'Claude Code', used: 'last used 2h ago', details: ['3 sessions this week'], pressed: picked === 'claude' },
+    ],
+    editors: [
+      {
+        id: 'cursor',
+        name: 'Cursor',
+        used: 'last used 5 min ago',
+        details: ['claude-sonnet-4-5', "sensei's tools in ~/.cursor/mcp.json"],
+        pressed: picked === 'cursor',
+      },
+    ],
+  });
+
+  it('the catalogue: Assistants and Editors as pressed-state lists; a pick calls back', () => {
+    const onpick = vi.fn();
+    const c = mount(AddMember, { view: setup({ catalogue: picker('cursor') }), oncopy: vi.fn(), onrole: vi.fn(), onpick });
+    const groups = [...c.querySelectorAll('[data-catalogue-group]')];
+    expect(groups.map((g) => g.getAttribute('data-catalogue-group'))).toEqual(['assistants', 'editors']);
+    const claude = c.querySelector('[data-catalogue-group="assistants"] [data-catalogue-item="claude"]') as HTMLButtonElement;
+    expect(text(claude)).toBe('Claude Code last used 2h ago 3 sessions this week');
+    expect(claude.getAttribute('aria-pressed')).toBe('false');
+    const cursor = c.querySelector('[data-catalogue-group="editors"] [data-catalogue-item="cursor"]')!;
+    expect(text(cursor)).toBe("Cursor last used 5 min ago claude-sonnet-4-5 sensei's tools in ~/.cursor/mcp.json");
+    expect(cursor.getAttribute('aria-pressed')).toBe('true');
+    claude.click();
+    expect(onpick).toHaveBeenCalledWith('claude');
+  });
+
+  it('the note under the line is the view’s, named for the picked tool', () => {
+    const note = "Paste it into Cursor's agent chat. sensei's tools are set up in ~/.cursor/mcp.json.";
+    const c = mount(AddMember, {
+      view: setup({ catalogue: picker('cursor'), command: { ...setup().command, note } }),
+      oncopy: vi.fn(),
+      onrole: vi.fn(),
+    });
+    expect(text(c.querySelector('[data-command-note]'))).toBe(note);
+  });
+
+  it('a failed catalogue read: an error Notice with Retry, and the paste line stays usable', () => {
+    const onretrycatalogue = vi.fn();
+    const c = mount(AddMember, {
+      view: setup({ catalogueError: 'internal error' }),
+      oncopy: vi.fn(),
+      onrole: vi.fn(),
+      onretrycatalogue,
+    });
+    expect(c.querySelector('[data-catalogue-group]')).toBeNull();
+    const notice = c.querySelector('[data-catalogue-error]')!;
+    expect(text(notice)).toContain("Couldn't read the assistants");
+    const retry = [...notice.querySelectorAll('button')].find((b) => text(b) === 'Retry') as HTMLButtonElement;
+    retry.click();
+    expect(onretrycatalogue).toHaveBeenCalled();
+    expect(text(c.querySelector('[data-paste-text]'))).toBe('register with sensei as coordinator');
+  });
+
+  it('no catalogue on this surface: no picker and no error', () => {
+    const c = mount(AddMember, { view: setup(), oncopy: vi.fn(), onrole: vi.fn() });
+    expect(c.querySelector('[data-catalogue-group]')).toBeNull();
+    expect(c.querySelector('[data-catalogue-error]')).toBeNull();
   });
 });

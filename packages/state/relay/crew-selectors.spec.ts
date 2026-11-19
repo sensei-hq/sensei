@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { editorTag, toAddMember, toArchivedRun, toMemberGroups, toPastRuns, toRunCard } from './crew-selectors.js';
 import { hhmm } from './format.js';
 import * as F from './fixtures.js';
+import type { RelayCatalogue } from './types.js';
 
 const AT = Date.now();
 
@@ -293,5 +294,84 @@ describe('toArchivedRun (CONTRACT §1i: a past run, read-only)', () => {
     const v = toArchivedRun(F.runDetail({ run, tasks_by_state: {} }), { base: '/relay', at });
     expect(v.tasks).toEqual([]);
     expect(v.facts[0]).toEqual({ label: 'Tasks', value: 0 });
+  });
+});
+
+describe('toAddMember · the catalogue picker (#455)', () => {
+  const catalogue = (): RelayCatalogue => ({
+    assistants: [
+      { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: F.minutesAgo(120), sessions_week: 3 },
+      { id: 'codex', name: 'Codex', kind: 'assistant', installed: null, last_used_at: null, sessions_week: 0 },
+    ],
+    editors: [
+      { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: F.minutesAgo(5), models: ['claude-sonnet-4-5', 'gpt-5'], mcp_config: '~/.cursor/mcp.json' },
+      { id: 'zed', name: 'Zed', kind: 'editor', installed: true, last_used_at: null, models: [], mcp_config: null },
+    ],
+    unknown: [{ id: 'cowork', name: 'Cowork', kind: 'unknown', last_used_at: F.minutesAgo(30) }],
+  });
+  const add = (picked: string | null, data: RelayCatalogue | null = catalogue(), error: string | null = null) =>
+    toAddMember(F.now(), 'contributor', { data, error, picked }, AT);
+  const DEFAULT_NOTE = `Paste it into an assistant session open in this workspace's repository. It registers, gets a codename, and shows above.`;
+
+  it('two groups: assistants with when they were last used and their sessions this week', () => {
+    const view = add(null).catalogue!;
+    expect(view.assistants).toEqual([
+      { id: 'claude', name: 'Claude Code', used: 'last used 2h ago', details: ['3 sessions this week'], pressed: false },
+      { id: 'codex', name: 'Codex', used: 'not used yet', details: ['no sessions this week'], pressed: false },
+    ]);
+  });
+
+  it('editors with the models seen and where sensei’s tools were found', () => {
+    const view = add(null).catalogue!;
+    expect(view.editors).toEqual([
+      { id: 'cursor', name: 'Cursor', used: 'last used 5 min ago', details: ['claude-sonnet-4-5, gpt-5', "sensei's tools in ~/.cursor/mcp.json"], pressed: false },
+      { id: 'zed', name: 'Zed', used: 'not used yet', details: ['no models seen', "sensei's tools not set up here"], pressed: false },
+    ]);
+  });
+
+  it('a tool the catalogue does not know is not offered', () => {
+    const view = add(null).catalogue!;
+    expect([...view.assistants, ...view.editors].map((i) => i.id)).not.toContain('cowork');
+  });
+
+  it('one session reads singular', () => {
+    const c = catalogue();
+    c.assistants[0].sessions_week = 1;
+    expect(add(null, c).catalogue!.assistants[0].details).toEqual(['1 session this week']);
+  });
+
+  it('nothing picked: today’s note', () => {
+    expect(add(null).command.note).toBe(DEFAULT_NOTE);
+  });
+
+  it('picking an assistant: pressed, and the note names a session of it in the repository', () => {
+    const view = add('claude');
+    expect(view.catalogue!.assistants[0].pressed).toBe(true);
+    expect(view.command.note).toBe("Paste it into a Claude Code session opened in this workspace's repository.");
+  });
+
+  it('picking an editor: the note names its agent chat and where sensei’s tools are', () => {
+    const view = add('cursor');
+    expect(view.catalogue!.editors[0].pressed).toBe(true);
+    expect(view.command.note).toBe("Paste it into Cursor's agent chat. sensei's tools are set up in ~/.cursor/mcp.json.");
+    expect(add('zed').command.note).toBe("Paste it into Zed's agent chat. sensei's tools are not set up there yet.");
+  });
+
+  it('the paste line is the same whatever is picked', () => {
+    const text = add(null).command.text;
+    expect(add('cursor').command.text).toBe(text);
+    expect(add('claude').command.text).toBe(text);
+  });
+
+  it('a read failure is an error, not empty groups', () => {
+    const view = add(null, null, 'the daemon is down');
+    expect(view.catalogue).toBeNull();
+    expect(view.catalogueError).toBe('the daemon is down');
+  });
+
+  it('not read (or no catalogue on this surface): no picker, no error', () => {
+    const view = toAddMember(F.now(), 'contributor');
+    expect(view.catalogue).toBeNull();
+    expect(view.catalogueError).toBeNull();
   });
 });

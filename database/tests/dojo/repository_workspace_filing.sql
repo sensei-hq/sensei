@@ -12,25 +12,36 @@
 -- member of; a second filing — by the same member or ANOTHER — creating a second
 -- workspace or a second link instead of converging; a moved repository keeping its
 -- old link (two workspaces in one tenant); a personal-dōjō workspace landing outside
--- that dōjō; or the link table opening to direct writes.
+-- that dōjō; the link table opening to direct writes; or the filed workspace
+-- unreadable by a NON-admin member who holds a role on the filed repository (the
+-- read path the Workspaces screen takes; an admin reads every workspace of its
+-- dōjō, so it cannot stand in for this) — or readable by a member with no such role.
 
 begin;
 
 insert into dojo.principals (id, auth_user_id, display_name) values
   ('a0000000-0000-4000-8000-000000000171', 'a1000000-0000-4000-8000-000000000171', 'ola'),
   ('a0000000-0000-4000-8000-000000000172', 'a1000000-0000-4000-8000-000000000172', 'eve'),
-  ('a0000000-0000-4000-8000-000000000173', 'a1000000-0000-4000-8000-000000000173', 'ada');
+  ('a0000000-0000-4000-8000-000000000173', 'a1000000-0000-4000-8000-000000000173', 'ada'),
+  ('a0000000-0000-4000-8000-000000000174', 'a1000000-0000-4000-8000-000000000174', 'rho'),
+  ('a0000000-0000-4000-8000-000000000175', 'a1000000-0000-4000-8000-000000000175', 'lex');
 insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
   ('b0000000-0000-4000-8000-00000000017a', 'organization/ztest-rpf-t', 'organization', 'ztest-rpf-t', 'T', 'x'),
   ('b0000000-0000-4000-8000-00000000017b', 'personal/ztest-rpf-ola',   'personal',     'ztest-rpf-ola', 'P', 'x');
 insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via) values
   ('b0000000-0000-4000-8000-00000000017a', 'a0000000-0000-4000-8000-000000000171', 'contributor', 'employer', 'github_oauth'),
   ('b0000000-0000-4000-8000-00000000017b', 'a0000000-0000-4000-8000-000000000171', 'admin',       'personal', 'github_oauth'),
-  ('b0000000-0000-4000-8000-00000000017a', 'a0000000-0000-4000-8000-000000000173', 'contributor', 'employer', 'github_oauth');
+  ('b0000000-0000-4000-8000-00000000017a', 'a0000000-0000-4000-8000-000000000173', 'contributor', 'employer', 'github_oauth'),
+  ('b0000000-0000-4000-8000-00000000017a', 'a0000000-0000-4000-8000-000000000174', 'contributor', 'employer', 'github_oauth'),
+  ('b0000000-0000-4000-8000-00000000017a', 'a0000000-0000-4000-8000-000000000175', 'lead',        'employer', 'github_oauth');
 insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
   ('97000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000017a', 'github.com/ztest-rpf/api', 'api', 'github'),
   ('97000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000017a', 'github.com/ztest-rpf/web', 'web', 'github'),
   ('97000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-00000000017b', 'github.com/ztest-ola/mine', 'mine', 'github');
+-- rho: a plain contributor of T (not an admin) with a forge role on `api`.
+-- lex: T's lead, with no role on any repository here.
+insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values
+  ('97000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000174', 'write', 'contributor');
 
 set local role authenticated;
 
@@ -57,6 +68,18 @@ begin
        and tenant_id = 'b0000000-0000-4000-8000-00000000017a';
     if n <> 1 then raise exception 'the repository was not linked under its workspace (% links)', n; end if;
     set local role authenticated;
+
+    -- The filed workspace reads by repository access, not by the admin branch:
+    -- rho (a non-admin with a role on `api`) sees it; lex (lead, no repository
+    -- role) does not.
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000174"}', true);
+    if not exists (select 1 from dojo.workspaces where id = p1) then
+        raise exception 'a non-admin with a role on the filed repository cannot read its workspace';
+    end if;
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000175"}', true);
+    if exists (select 1 from dojo.workspaces where id = p1) then
+        raise exception 'a member with no role on the filed repository can read its workspace';
+    end if;
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000171"}', true);
 
     -- A second pass converges: same workspace, one link. The second repository of

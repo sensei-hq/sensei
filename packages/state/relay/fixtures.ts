@@ -7,6 +7,7 @@
 // only the first, fails.
 import type { ApiResult } from '../result.js';
 import type {
+  RelayCatalogue,
   RelayNowRunTask,
   RelayNowRunTaskLane,
   RelayRunDetail,
@@ -70,6 +71,9 @@ export function lane(over: Partial<RelayLane> = {}): RelayLane {
     title: 'Diagrams',
     role: 'contributor',
     family: 'claude-code',
+    // The daemon names the family from its catalogue (#455); an override of the family
+    // alone is a family the fixture does not name.
+    family_name: over.family === undefined ? 'Claude Code' : null,
     version: '2.1',
     model: 'claude-opus-5-5',
     lease_state: 'granted',
@@ -262,8 +266,8 @@ export function runDetail(over: Partial<RelayRunDetail> = {}): RelayRunDetail {
       cancelled: [task('t-extra', 'Stretch goal', 'cancelled', null)],
     },
     members: [
-      { id: 'lane-a', code: 'L1', role: 'coordinator', title: 'Diagrams', suggested_name: 'cobalt-lyra', family: 'claude-code', model: 'claude-opus-5-5' },
-      { id: 'lane-b', code: 'L2', role: 'contributor', title: 'Billing', suggested_name: null, family: 'muse', model: null },
+      { id: 'lane-a', code: 'L1', role: 'coordinator', title: 'Diagrams', suggested_name: 'cobalt-lyra', family: 'claude-code', family_name: 'Claude Code', model: 'claude-opus-5-5' },
+      { id: 'lane-b', code: 'L2', role: 'contributor', title: 'Billing', suggested_name: null, family: 'muse', family_name: 'Muse', model: null },
     ],
     ...over,
   };
@@ -788,7 +792,7 @@ export function taskView(over: Partial<RelayTaskView> = {}): RelayTaskView {
       state: 'done',
       round: 2,
       ticket: { provider: 'jira', key: 'SEN-52', url: 'https://acme.atlassian.net/browse/SEN-52' },
-      lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', limit_scope: null, limit_resumes_at: null, limit_note: null, suggested_name: 'cobalt-lyra' },
+      lane: { id: LANE.L1, code: 'L1', title: 'Diagrams', family: 'claude-code', family_name: 'Claude Code', version: '2.1', model: 'claude-opus-5-5', limit_scope: null, limit_resumes_at: null, limit_note: null, suggested_name: 'cobalt-lyra' },
       run_id: null,
       deps_status: 'satisfied',
       unmet_deps: [],
@@ -828,7 +832,7 @@ export function deferred<T>() {
 
 /** A lane as a run task names it (#422). */
 export function runTaskLane(over: Partial<RelayNowRunTaskLane> = {}): RelayNowRunTaskLane {
-  return { id: LANE.L1, code: 'L1', suggested_name: 'cobalt-lyra', family: 'claude-code', version: '2.1', model: 'claude-opus-5-5', ...over };
+  return { id: LANE.L1, code: 'L1', suggested_name: 'cobalt-lyra', family: 'claude-code', family_name: 'Claude Code', version: '2.1', model: 'claude-opus-5-5', ...over };
 }
 
 /** One task of the open run, waiting in the pool unless a spec says otherwise (#422). */
@@ -870,3 +874,15 @@ export const runNow = (): RelayNow =>
       runTask({ task_id: 't-search', title: 'Search on the shell', position: 1 }),
     ],
   });
+
+/** What this machine has seen (#455), as `GET /relay/catalogue` serves it. */
+export function catalogue(over: Partial<RelayCatalogue> = {}): RelayCatalogue {
+  return {
+    assistants: [{ id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: minutesAgo(120), sessions_week: 1 }],
+    editors: [
+      { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: minutesAgo(5), models: ['claude-sonnet-4-5'], mcp_config: '~/.cursor/mcp.json' },
+    ],
+    unknown: [],
+    ...over,
+  };
+}

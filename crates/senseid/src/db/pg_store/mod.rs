@@ -544,6 +544,7 @@ pub struct MetricMeaning {
     pub how_to_read: String,
 }
 
+mod assistant_catalogue;
 mod command_catalogue;
 mod commands;
 mod config;
@@ -1752,6 +1753,20 @@ pub struct LibraryRow<'a> {
     pub base_url: Option<&'a str>,
 }
 
+// Written by `assistant_catalogue.rs`.
+/// One probed tool, as [`PgStore::upsert_assistant_installs`] stores it (#455).
+/// `registry_id` is the detection registry's id; the store resolves it through
+/// the catalogue's words, and a tool with no catalogue row is not stored.
+pub struct AssistantInstallRow<'a> {
+    pub registry_id: &'a str,
+    pub installed: bool,
+    pub config_path: Option<&'a str>,
+    pub configured: bool,
+    /// Whether this sensei configured the tool in the action that triggered
+    /// the run; only then do `configured_at` / `configured_version` move.
+    pub configured_now: bool,
+}
+
 // Written by `sessions.rs`.
 /// A session's model and token usage, as [`PgStore::set_session_metadata`]
 /// applies it. Each `None` keeps what is stored; `split` carries the
@@ -1763,6 +1778,8 @@ pub struct SessionMetadataPatch<'a> {
     pub tokens_in: Option<i64>,
     pub tokens_out: Option<i64>,
     pub split: Option<&'a crate::transcript::SessionTokens>,
+    /// The editor the session ran in (#455); `None` keeps the stored host.
+    pub host: Option<&'a str>,
 }
 
 // Written by `sessions.rs`.

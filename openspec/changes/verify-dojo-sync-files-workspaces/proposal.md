@@ -26,7 +26,10 @@ Already done (each commit is an ancestor of this branch's `HEAD`):
 
 ## What Changes
 
-- No production code changes.
+- One production fix, found by the walkthrough (review of #503): the org Workspaces read
+  (`GET /v1/t/{origin}/{org}/workspaces`) gated at `lead`, so a contributor holding a role on a workspace's
+  repository got 403 on the Workspaces screen. The floor is now `member`; the workspaces RLS policy decides the
+  rows (`dojo/src/routes/v1/t/[origin]/[org]/workspaces/+server.ts`). Nothing else changes in production code.
 - Adds a `dojo-workspace-filing` spec that records the decided behaviour (one shared dōjō workspace per sensei
   workspace, filed by the sync, read by repository access).
 - Adds verification tasks: re-run the existing tests, re-run the local dōjō Playwright walkthrough, and a
