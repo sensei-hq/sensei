@@ -24,13 +24,36 @@ pub enum HostNote {
     IgnoredDetection { detected: String },
 }
 
+/// A trimmed, non-blank value; blank is none.
+fn given(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|v| !v.is_empty())
+}
+
 /// The lane's host from its self-report and the MCP binary's detection.
+/// Both are trimmed, and blank is none. The detection is kept as the catalogue
+/// tool's id, and only when the catalogue knows it as an editor; the report is
+/// kept as given (an unknown word reads `kind: "unknown"`, never guessed).
 pub fn resolve_host(
-    _reported: Option<&str>,
-    _detected: Option<&str>,
-    _catalogue: &CatalogueNames,
+    reported: Option<&str>,
+    detected: Option<&str>,
+    catalogue: &CatalogueNames,
 ) -> ResolvedHost {
-    ResolvedHost { host: None, note: None }
+    let reported = given(reported);
+    let Some(detected) = given(detected) else {
+        return ResolvedHost { host: reported.map(str::to_string), note: None };
+    };
+    let editor = catalogue.entry(detected).filter(|e| e.kind == "editor").map(|e| e.id.as_str());
+    let Some(editor) = editor else {
+        return ResolvedHost {
+            host: reported.map(str::to_string),
+            note: Some(HostNote::IgnoredDetection { detected: detected.to_string() }),
+        };
+    };
+    let same_tool = |r: &str| r == editor || catalogue.entry(r).is_some_and(|e| e.id == editor);
+    let note = reported
+        .filter(|r| !same_tool(r))
+        .map(|r| HostNote::Mismatch { reported: r.to_string(), detected: editor.to_string() });
+    ResolvedHost { host: Some(editor.to_string()), note }
 }
 
 #[cfg(test)]
