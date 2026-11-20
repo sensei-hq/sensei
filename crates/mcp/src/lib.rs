@@ -1557,7 +1557,7 @@ pub fn handle_list_tools() -> Value {
                 &[
                     ("role", "string", "coordinator | contributor (default contributor)"),
                     ("suggested_name", "string", "The name you propose for yourself: becomes the lane title (the code stays the handle)"),
-                    ("host", "string", "The editor you run inside (cursor, zed), when you run in one; omit in a terminal"),
+                    ("host", "string", "The editor you run inside (cursor, zed), when you run in one; omit in a terminal. sensei also detects it, and what it detects wins"),
                     ("version", "string", "Lane version"),
                     ("model", "string", "Model the lane runs"),
                     ("capabilities", "array", "What the lane can do"),
