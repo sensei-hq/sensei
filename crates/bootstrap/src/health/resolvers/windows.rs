@@ -6,7 +6,7 @@ use crate::config::SenseiConfig;
 use crate::health::checkers::windows::describe;
 use crate::health::process_util::{TimedOutcome, output_with_timeout};
 use crate::health::resolver::{ResolveOutcome, Resolver};
-use crate::health::resolvers::DatabaseResolver;
+use crate::health::resolvers::db_setup::DatabaseResolver;
 use crate::health::types::{ComponentId, Remedy};
 use crate::pg_container::{CONTAINER, Runner, State, run_args, start_args, state};
 use std::time::Duration;

@@ -4,7 +4,7 @@ pub mod macos;
 pub mod windows;
 
 use crate::health::checker::Checker;
-use crate::health::checkers::PortChecker;
+use crate::health::checkers::port::PortChecker;
 use std::time::Duration;
 
 // Port-checker timeouts are sized for the resolve-phase re-check.

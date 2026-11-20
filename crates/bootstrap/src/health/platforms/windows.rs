@@ -11,17 +11,20 @@
 use super::{DAEMON_PORT_TIMEOUT, OLLAMA_PORT_TIMEOUT, POSTGRES_PORT_TIMEOUT, port};
 use crate::config::{OLLAMA_PORT, POSTGRES_PORT, SenseiConfig};
 use crate::health::checker::Checker;
+use crate::health::checkers::binary::BinaryChecker;
+use crate::health::checkers::composite::AndChecker;
+use crate::health::checkers::postgres_db::PostgresDatabaseChecker;
 use crate::health::checkers::windows::{
     CredentialsChecker, DockerPostgresChecker, PosixShellChecker,
 };
-use crate::health::checkers::{AndChecker, BinaryChecker, PostgresDatabaseChecker};
 use crate::health::provider::PlatformProvider;
 use crate::health::resolver::Resolver;
+use crate::health::resolvers::daemon_start::DaemonStartResolver;
+use crate::health::resolvers::db_setup::DatabaseResolver;
 use crate::health::resolvers::windows::{
     CredentialedDatabaseResolver, DockerPostgresResolver, OLLAMA_PACKAGE, SenseiWindowsResolver,
     WingetInstallResolver,
 };
-use crate::health::resolvers::{DaemonStartResolver, DatabaseResolver};
 use crate::health::types::{ComponentId, PackageManagerId, Platform, Remedy};
 
 pub struct WindowsProvider;
