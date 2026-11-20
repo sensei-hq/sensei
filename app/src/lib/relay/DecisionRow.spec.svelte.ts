@@ -103,13 +103,13 @@ describe('DecisionRow · a form decision', () => {
     expect(c.querySelector('[aria-hidden="true"][tabindex]:not([tabindex="-1"])')).toBeNull();
   });
 
-  // rokkit draws a Select's placeholder at 60% opacity in ink-mute: 3.98:1 in dark mode, under AA
-  // (axe color-contrast; sensei-hq/rokkit#208). The field's label names it; the trigger shows no
-  // faded text. Contrast is a browser check, so this pins the cause.
-  it('an empty Select draws no faded placeholder text; its label names it', () => {
+  // rokkit 1.16.1 draws a Select's placeholder at full opacity (sensei-hq/rokkit#208 fixed):
+  // the trigger shows it, and the field's label still names the control. Contrast is a browser
+  // check, so this pins the cause: placeholder text is present, not blanked.
+  it('an empty Select shows its placeholder; its label names it', () => {
     const c = mount(F.formDecision());
     const trigger = field(c, 'target')!.querySelector<HTMLElement>('[data-select-trigger]')!;
-    expect(trigger.querySelector('[data-select-placeholder]')?.textContent?.trim() ?? '').toBe('');
+    expect(trigger.querySelector('[data-select-placeholder]')?.textContent?.trim() ?? '').not.toBe('');
     expect(c.querySelector(`label[for="${trigger.id}"]`)?.textContent).toContain('Target branch');
   });
 
@@ -314,7 +314,8 @@ describe('DecisionRow · a form decision', () => {
     await settle();
     expect(field(c, 'target')!.querySelector('[data-message]')).not.toBeNull();
     expect(await seriousA11y(c)).toEqual([]);
-    // Open, the Select's listbox is named for its field (axe aria-input-field-name).
+    // Open, rokkit names the Select's listbox after its trigger (sensei-hq/rokkit#206 fixed in
+    // 1.16.1); the card adds no name of its own. axe aria-input-field-name pins it end to end.
     field(c, 'target')!.querySelector<HTMLButtonElement>('[data-select-trigger]')!.click();
     await settle();
     expect(field(c, 'target')!.querySelector('[role="listbox"]')).not.toBeNull();
@@ -341,7 +342,7 @@ describe('DecisionRow · a form decision', () => {
   });
 });
 
-// R2 (@rokkit/forms 1.16, rokkit#197): an array of enum members draws rokkit's MultiSelect and an
+// R2 (@rokkit/forms 1.16.1, rokkit#197): an array of enum members draws rokkit's MultiSelect and an
 // `x-multiline` string a textarea; both are answered and checked as the daemon checks them.
 describe('DecisionRow · pick-several and long text', () => {
   const several = () =>
@@ -431,8 +432,8 @@ describe('DecisionRow · pick-several and long text', () => {
     expect(onanswer).toHaveBeenCalledWith({ values: { areas: ['app'] } });
   });
 
-  // rokkit 1.16's MultiSelect draws a focusable role=button remove control per picked member inside
-  // its trigger <button>: axe nested-interactive (serious, WCAG 4.1.2). The card must not carry it.
+  // rokkit 1.16.1 draws each picked member as a label, not a control (sensei-hq/rokkit#206
+  // fixed): no focusable remove sits inside the trigger <button>. axe nested-interactive pins it.
   it('passes axe with members picked: no control nested inside the trigger', async () => {
     const c = mount(several());
     expect(await seriousA11y(c)).toEqual([]);
@@ -444,25 +445,30 @@ describe('DecisionRow · pick-several and long text', () => {
     expect(trigger.querySelectorAll('[role="button"], [tabindex], button, a[href], input').length).toBe(0);
   });
 
-  it('shows the picked members outside the trigger, so the person sees what they picked', async () => {
+  // The card draws rokkit's MultiSelect directly: the picked members show as tags in the
+  // trigger, with no beside-trigger list of its own.
+  it('shows the picked members as tags in the trigger', async () => {
     const c = mount(several());
     await pickSeveral(c, 'areas', ['db', 'api']);
-    const picked = field(c, 'areas')!.querySelector('[data-decision-picked]');
-    expect(picked?.textContent).toContain('api');
-    expect(picked?.textContent).toContain('db');
-    expect(field(c, 'areas')!.querySelector('[data-select-trigger] [data-decision-picked]')).toBeNull();
+    const tags = [...field(c, 'areas')!.querySelectorAll('[data-select-trigger] [data-select-tag-text]')].map(
+      (t) => t.textContent,
+    );
+    expect(tags).toEqual(expect.arrayContaining(['api', 'db']));
+    expect(field(c, 'areas')!.querySelector('[data-decision-picked]')).toBeNull();
   });
 
-  // zen-sumi fades a field under `[data-field-disabled]` to 40% opacity whatever the attribute's
-  // value, and rokkit writes `data-field-disabled="false"` on an enabled field (sensei-hq/rokkit#207):
-  // the filled pick-several read 2.49:1 in dark mode (axe color-contrast). Contrast is a browser
-  // check, so this pins the cause: an enabled card's fields carry no disabled mark; a sending one's do.
-  it('an empty pick-several draws no faded placeholder text (sensei-hq/rokkit#208)', () => {
+  // rokkit 1.16.1 draws the placeholder at full opacity (sensei-hq/rokkit#208 fixed): the empty
+  // pick-several shows it. Contrast is a browser check, so this pins the cause.
+  it('an empty pick-several shows its placeholder', () => {
     const c = mount(several());
     const trigger = field(c, 'areas')!.querySelector<HTMLElement>('[data-select-trigger]')!;
-    expect(trigger.querySelector('[data-select-placeholder]')?.textContent?.trim() ?? '').toBe('');
+    expect(trigger.querySelector('[data-select-placeholder]')?.textContent?.trim() ?? '').not.toBe('');
   });
 
+  // rokkit 1.16.1 omits false-valued data-field-* attributes itself (sensei-hq/rokkit#207 fixed),
+  // so zen-sumi's `[data-field-disabled]` fade only ever touches a field the card disabled: the
+  // card passes `disabled` straight through. Contrast is a browser check, so this pins the cause:
+  // an enabled card's fields carry no disabled mark; a sending one's do.
   it('an enabled card marks no field disabled; while it sends, every field is', async () => {
     let release: (v: string | null) => void = () => {};
     const onanswer = vi.fn(() => new Promise<string | null>((r) => (release = r)));
