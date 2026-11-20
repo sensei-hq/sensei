@@ -469,17 +469,47 @@ fn knowledge_request(
 }
 
 /// The editor this MCP session runs in (#455), from the client's `initialize`
-/// name, else `TERM_PROGRAM` (with `CURSOR_TRACE_ID`). None when neither names one.
+/// name, else `TERM_PROGRAM` (with `CURSOR_TRACE_ID`). None when neither names
+/// one: detection never guesses. `env` is injected, never read from the process.
+/// The values are the ones the clients on this machine sent (design.md, task 5.1).
+/// The id it gives is only a proposal: the daemon keeps it only when the
+/// catalogue knows it as an editor.
 pub fn detect_host(
-    _client_name: Option<&str>,
-    _env: &std::collections::HashMap<String, String>,
+    client_name: Option<&str>,
+    env: &std::collections::HashMap<String, String>,
 ) -> Option<&'static str> {
-    None
+    let client = client_name.map(|n| n.trim().to_ascii_lowercase()).unwrap_or_default();
+    let by_client = match client.as_str() {
+        c if c.starts_with("cursor") => Some("cursor"),
+        "zed" => Some("zed"),
+        "visual studio code" | "vscode" => Some("vscode"),
+        c if c.starts_with("windsurf") => Some("windsurf"),
+        c if c.starts_with("kiro") => Some("kiro"),
+        _ => None,
+    };
+    by_client.or_else(|| {
+        let set = |k: &str| env.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+        match set("TERM_PROGRAM")? {
+            "zed" => Some("zed"),
+            "vscode" if set("CURSOR_TRACE_ID").is_some() => Some("cursor"),
+            "vscode" => Some("vscode"),
+            _ => None,
+        }
+    })
 }
 
-/// `relay_register` arguments with the detected host set (#455).
-pub fn with_detected_host(args: &Value, _detected: Option<&str>) -> Value {
-    args.clone()
+/// `relay_register` arguments with the detected host set (#455), or without the
+/// key when nothing was detected. A `host_detected` the caller passed is
+/// dropped: only this binary detects.
+pub fn with_detected_host(args: &Value, detected: Option<&str>) -> Value {
+    let mut args = args.clone();
+    if let Some(map) = args.as_object_mut() {
+        map.remove("host_detected");
+        if let Some(host) = detected {
+            map.insert("host_detected".into(), json!(host));
+        }
+    }
+    args
 }
 
 /// The relay lane loop: register, claim, heartbeat, report and review.
@@ -506,8 +536,10 @@ fn relay_claim_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>
                 "workspace_id",
                 // Queue cutover: the name the assistant proposes for itself.
                 "suggested_name",
-                // #396: the editor the session runs in, when it runs in one.
+                // #396: the editor the session runs in, as the session says.
                 "host",
+                // #455: the editor this binary detected; the daemon prefers it.
+                "host_detected",
             ] {
                 if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
                     body.insert(k.into(), v.clone());
