@@ -198,8 +198,10 @@ pub(crate) struct RegisterBody {
     role: Option<String>,
     /// The name the assistant proposes for itself: the lane's title.
     suggested_name: Option<String>,
-    /// The editor the session runs in (#396), when it runs in one.
+    /// The editor the session runs in (#396), as the session says.
     host: Option<String>,
+    /// The editor the MCP binary detected (#455); preferred over `host`.
+    host_detected: Option<String>,
     family: String,
     version: Option<String>,
     model: Option<String>,
@@ -1011,6 +1013,7 @@ pub(crate) async fn register(
                     .map_err(err)?,
                 suggested_name: body.suggested_name,
                 host: body.host,
+                host_detected: body.host_detected,
             },
             chrono::Utc::now(),
         )

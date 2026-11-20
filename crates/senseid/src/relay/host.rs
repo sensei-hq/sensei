@@ -25,7 +25,7 @@ pub enum HostNote {
 }
 
 /// A trimmed, non-blank value; blank is none.
-fn given(value: Option<&str>) -> Option<&str> {
+pub fn given(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|v| !v.is_empty())
 }
 
