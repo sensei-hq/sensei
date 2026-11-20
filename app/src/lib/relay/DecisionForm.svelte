@@ -76,6 +76,9 @@
   // `disabled` goes to InputField only when true: rokkit writes `data-field-disabled={disabled}`, so an
   // enabled field carries `"false"`, and zen-sumi fades any `[data-field-disabled]` field to 40%
   // (axe color-contrast; sensei-hq/rokkit#207).
+  // A Select or pick-several draws no placeholder: rokkit fades it to 60% in ink-mute, 3.98:1 in dark
+  // mode (axe color-contrast; sensei-hq/rokkit#208). The field's label names the control.
+  const CHOOSERS = new Set(['select', 'multiselect']);
 
   // A pick-several draws through DecisionPickSeveral: no control nested in the MultiSelect's trigger.
   const renderers = { multiselect: DecisionPickSeveral as never };
@@ -115,6 +118,7 @@
       type={element.type}
       value={element.value}
       {...element.props}
+      {...(CHOOSERS.has(element.type ?? '') ? { placeholder: '' } : {})}
       disabled={disabled || undefined}
       {renderers}
       onchange={(value: unknown) => change(path, value)}
