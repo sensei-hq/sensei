@@ -4,8 +4,9 @@ use std::io::{BufRead, Write};
 use sensei_mcp::{
     ActiveWorkspace, DaemonRequest, HttpMethod, NEEDS_WORKSPACE, WORKSPACES_FOR_RESOLUTION,
     WorkspaceResolution, build_log_event_body, build_relay_wait_request, daemon_request_for,
-    detect_host, handle_initialize, handle_list_tools, record_outcome_body, resolve_active_workspace_in,
-    resolve_default_workspace, resolve_from_cwd_in, resolve_workspace_in,
+    detect_host, handle_initialize, handle_list_tools, record_outcome_body,
+    resolve_active_workspace_in, resolve_default_workspace, resolve_from_cwd_in,
+    resolve_workspace_in,
 };
 
 /// The active-workspace pin for THIS MCP session, held in memory — NOT a file.
@@ -219,7 +220,7 @@ fn handle_call_tool(
     let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
     // #455: register carries the editor this binary detected, never the caller's word for it.
     let args = if tool_name == "relay_register" {
-        sensei_mcp::with_detected_host(&args, detected_host.and(None))
+        sensei_mcp::with_detected_host(&args, detected_host)
     } else {
         args
     };
@@ -887,7 +888,8 @@ mod binary_tool_tests {
         }});
         let register = |seen: &Seen| {
             let calls = seen.lock().unwrap();
-            let i = calls.iter().rposition(|c| c.1 == "/api/relay/register").expect("register sent");
+            let i =
+                calls.iter().rposition(|c| c.1 == "/api/relay/register").expect("register sent");
             serde_json::from_str::<Value>(&calls[i].2).unwrap()
         };
         handle_call_tool(&params, &client(), "/repo", &base, Some("zed"));
