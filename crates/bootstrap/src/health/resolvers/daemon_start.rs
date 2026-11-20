@@ -1,11 +1,10 @@
-//! DaemonStartResolver — bring up the senseid daemon. The brew-services
-//! path is preferred (mirrors Postgres/Ollama and gets launchd's keep-alive
-//! restart on crash); direct binary spawn is the fallback when brew isn't
-//! available.
+//! DaemonStartResolver — bring up the senseid daemon. The service manager
+//! is preferred ([`crate::service`]: brew services, which mirrors
+//! Postgres/Ollama and gets launchd's keep-alive restart on crash, or the
+//! Windows logon task); direct binary spawn is the fallback.
 
 use crate::config::SenseiConfig;
 use crate::health::resolver::{ResolveOutcome, Resolver};
-use crate::health::resolvers::brew_helpers::{BrewError, brew_services_start};
 use crate::health::types::{ComponentId, Remedy};
 use std::process::Command;
 
@@ -31,27 +30,22 @@ impl Resolver for DaemonStartResolver {
         let instance_set = std::env::var_os("SENSEI_INSTANCE").is_some_and(|v| !v.is_empty());
 
         if !instance_set {
-            // Stage 1: brew services start sensei. Matches the postgres/ollama
-            // resolver path. Gains launchd auto-restart so the daemon comes back
-            // after a crash without the user noticing.
-            let service = cfg.brew_service_name();
-            tracing::info!(service, "stage 1: brew services start");
-            match brew_services_start(service) {
+            // Stage 1: the service manager — brew services (launchd/systemd
+            // keep-alive restarts the daemon after a crash), or the Windows
+            // logon task.
+            tracing::info!("stage 1: service start");
+            match crate::service::start(cfg.daemon_port) {
                 Ok(()) => {
-                    tracing::info!(service, "stage 1: brew services start ok");
+                    tracing::info!("stage 1: service start ok");
                     return ResolveOutcome::Resolved;
                 }
-                Err(BrewError::BrewNotFound) => {
-                    tracing::warn!("brew not on PATH — falling back to direct daemon spawn");
-                    // Fall through to stage 2.
-                }
                 Err(e) => {
-                    tracing::info!(service, error = ?e, "stage 1 failed — falling back to direct spawn");
+                    tracing::info!(error = %e, "stage 1 failed — falling back to direct spawn");
                 }
             }
         } else {
             tracing::info!(
-                "SENSEI_INSTANCE set — skipping brew services (cannot propagate env), using direct spawn"
+                "SENSEI_INSTANCE set — skipping the service manager (cannot propagate env), using direct spawn"
             );
         }
 
@@ -89,12 +83,10 @@ impl Resolver for DaemonStartResolver {
     }
 
     fn fallback_remedy(&self) -> Remedy {
-        let cfg = SenseiConfig::from_env();
-        let bin = cfg.senseid_binary();
-        let service = cfg.brew_service_name();
+        let bin = SenseiConfig::from_env().senseid_binary();
         Remedy {
-            message: "Daemon port still not listening after start. Try the brew-services restart and check `brew services list` for the service status.".to_string(),
-            script:  format!("brew services restart {service} && {bin} status"),
+            message: "Daemon port still not listening after start. Restart it through the service manager, then check its status.".to_string(),
+            script:  format!("{} && {bin} status", crate::service::restart_hint()),
             url:     None,
         }
     }
@@ -111,12 +103,11 @@ fn missing_remedy(bin: &str) -> Remedy {
 }
 
 fn failed_remedy(bin: &str, detail: String) -> Remedy {
-    let service = SenseiConfig::from_env().brew_service_name();
     Remedy {
         message: format!(
-            "Couldn't start `{bin}` automatically ({detail}). Try the brew-services route below — it gets keep-alive auto-restart from launchd."
+            "Couldn't start `{bin}` automatically ({detail}). Start it through the service manager below."
         ),
-        script: format!("brew services start {service}"),
+        script: crate::service::start_hint(),
         url: None,
     }
 }
@@ -142,6 +133,7 @@ mod tests {
         assert!(r.message.contains(bin), "message '{}' should mention '{bin}'", r.message);
     }
 
+    #[cfg(unix)]
     #[test]
     fn failed_remedy_script_uses_brew_services_start() {
         let cfg = SenseiConfig::from_env();
@@ -150,6 +142,7 @@ mod tests {
         assert_eq!(r.script, format!("brew services start {service}"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn fallback_remedy_runs_brew_services_restart() {
         let cfg = SenseiConfig::from_env();
@@ -160,5 +153,13 @@ mod tests {
             "expected fallback to use brew services restart, got: {}",
             r.script
         );
+    }
+
+    #[test]
+    fn remedies_use_the_platforms_service_commands() {
+        let r = failed_remedy(SenseiConfig::from_env().senseid_binary(), "test".to_string());
+        assert_eq!(r.script, crate::service::start_hint());
+        let r = DaemonStartResolver.fallback_remedy();
+        assert!(r.script.starts_with(&crate::service::restart_hint()), "{}", r.script);
     }
 }

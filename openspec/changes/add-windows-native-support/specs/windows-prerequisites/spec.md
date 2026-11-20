@@ -28,8 +28,8 @@ is missing and start it when it is stopped. The daemon SHALL NOT start or stop t
 ### Requirement: Database credentials come from .env
 The daemon SHALL read `~/.sensei/.env` when present and connect with its `PGUSER` and `PGPASSWORD`, with
 process environment variables taking precedence. Without the file, macOS and Linux SHALL connect as the
-OS user as before. On Windows a missing file or missing `PGPASSWORD` SHALL fail the database check with a
-remedy naming the file and keys; no password SHALL be generated or defaulted, and the password SHALL NOT
+OS user as before. On Windows a missing file or a missing `PGUSER` or `PGPASSWORD` SHALL fail the database
+check with a remedy naming the file and keys; no password SHALL be generated or defaulted, and the password SHALL NOT
 appear in logs or error messages.
 
 #### Scenario: Windows with credentials set
@@ -40,7 +40,7 @@ appear in logs or error messages.
 #### Scenario: Windows without a password
 - **GIVEN** no `~/.sensei/.env` on a Windows host
 - **WHEN** `sensei doctor` runs
-- **THEN** the database check fails, naming `~/.sensei/.env` and `PGPASSWORD`, and no connection is attempted with a default password
+- **THEN** the database check fails, naming `~/.sensei/.env`, `PGUSER` and `PGPASSWORD`, and no connection is attempted with a default password
 
 #### Scenario: macOS unchanged
 - **GIVEN** a macOS install with no `~/.sensei/.env`
@@ -55,3 +55,13 @@ Missing Git for Windows and Ollama SHALL each have a remedy that installs them w
 - **GIVEN** a Windows host without Ollama
 - **WHEN** `sensei doctor --fix` runs
 - **THEN** it runs `winget install Ollama.Ollama` and re-checks Ollama
+
+### Requirement: Postgres tools need no host install on Windows
+On Windows the database setup and its check SHALL run `psql`, `createdb` and `pg_isready` inside the
+`sensei-pg` container, so the host needs no PostgreSQL tools, and the pre-upgrade backup SHALL be written
+to the host.
+
+#### Scenario: Database created without host tools
+- **GIVEN** a Windows host with `sensei-pg` running and no PostgreSQL tools installed
+- **WHEN** `sensei doctor --fix` sets up the database
+- **THEN** the database is created and its schema deployed

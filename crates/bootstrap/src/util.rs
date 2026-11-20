@@ -208,6 +208,50 @@ pub fn exit_code(status: std::process::ExitStatus) -> i32 {
     1
 }
 
+/// Escape text for HTML or XML content and attribute values: `& < > " '`.
+pub fn escape_markup(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// The process with this pid, freshly read, or `None` when no such process exists.
+fn live_process(pid: u32) -> Option<sysinfo::System> {
+    let pid = sysinfo::Pid::from_u32(pid);
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+    sys.process(pid).is_some().then_some(sys)
+}
+
+/// Whether a process with this pid exists (an unreaped zombie counts, as with `kill -0`).
+pub fn pid_alive(pid: u32) -> bool {
+    live_process(pid).is_some()
+}
+
+/// Ask the process with this pid to end. On Unix that is SIGTERM, which a
+/// daemon answers with a graceful shutdown. Windows has no such request for a
+/// process without a window, so there it is terminated outright.
+pub fn terminate(pid: u32) -> Result<(), String> {
+    let sys = live_process(pid).ok_or_else(|| format!("no process with pid {pid}"))?;
+    let process = sys
+        .process(sysinfo::Pid::from_u32(pid))
+        .ok_or_else(|| format!("no process with pid {pid}"))?;
+    #[cfg(unix)]
+    let sent = process.kill_with(sysinfo::Signal::Term).unwrap_or(false);
+    #[cfg(windows)]
+    let sent = process.kill();
+    if sent { Ok(()) } else { Err(format!("could not end pid {pid}")) }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -359,5 +403,50 @@ mod tests {
             std::path::Path::new(&resolved).exists(),
             "resolved qlty path should exist on disk: {resolved}",
         );
+    }
+
+    #[test]
+    fn escape_markup_escapes_the_five_metacharacters() {
+        assert_eq!(super::escape_markup(r#"a&b<c>d"e'f"#), "a&amp;b&lt;c&gt;d&quot;e&#39;f");
+        assert_eq!(super::escape_markup(r"C:\Program Files\sensei"), r"C:\Program Files\sensei");
+    }
+
+    #[test]
+    fn this_process_is_alive() {
+        assert!(super::pid_alive(std::process::id()));
+    }
+
+    /// A child that runs until it is ended, on either platform.
+    fn long_running_child() -> std::process::Child {
+        #[cfg(unix)]
+        let mut cmd = std::process::Command::new("sleep");
+        #[cfg(unix)]
+        cmd.arg("30");
+        #[cfg(windows)]
+        let mut cmd = std::process::Command::new("ping");
+        #[cfg(windows)]
+        cmd.args(["-n", "30", "127.0.0.1"]);
+        cmd.stdout(std::process::Stdio::null()).spawn().expect("spawn a long-running child")
+    }
+
+    #[test]
+    fn terminate_ends_a_running_process_and_it_is_then_not_alive() {
+        let mut child = long_running_child();
+        let pid = child.id();
+        assert!(super::pid_alive(pid));
+        super::terminate(pid).expect("terminate a live child");
+        let status = child.wait().expect("reap the child");
+        assert!(!status.success(), "an ended child does not report success");
+        assert!(!super::pid_alive(pid), "a reaped child is gone");
+    }
+
+    #[test]
+    fn terminate_names_a_pid_with_no_process() {
+        let mut child = long_running_child();
+        let pid = child.id();
+        child.kill().expect("kill");
+        child.wait().expect("reap");
+        let err = super::terminate(pid).expect_err("nothing left to end");
+        assert!(err.contains(&pid.to_string()), "{err}");
     }
 }

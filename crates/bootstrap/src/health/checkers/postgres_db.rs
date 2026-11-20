@@ -15,7 +15,7 @@ impl Checker for PostgresDatabaseChecker {
         // Tauri .app's narrow Finder-launched PATH. Failing here produces
         // a clean "psql not installed" detail rather than the raw OS
         // error 2 the previous bare-name spawn surfaced.
-        let mut exists_cmd = match crate::util::command_for("psql") {
+        let mut exists_cmd = match crate::pg_container::pg_tool("psql") {
             Ok(c) => c,
             Err(e) => return CheckOutcome::failed(e),
         };
@@ -64,7 +64,7 @@ impl Checker for PostgresDatabaseChecker {
         // `extensions` schemas as the model evolves).
         let check_sql = "SELECT 1 FROM pg_extension WHERE extname='vector' UNION ALL \
              SELECT 1 FROM information_schema.schemata WHERE schema_name='sensei'";
-        let mut probe_cmd = match crate::util::command_for("psql") {
+        let mut probe_cmd = match crate::pg_container::pg_tool("psql") {
             Ok(c) => c,
             Err(e) => return CheckOutcome::failed(e),
         };

@@ -22,17 +22,27 @@ already owns the concern, and callers stay platform-free:
   shutdown console events on Windows.
 - Free disk via `sysinfo` (already a dependency of `bootstrap` and the app) on every platform, replacing
   the `libc::statvfs` call.
-- A `service` module (in `bootstrap`, used by the CLI) with `start/stop/restart/status` — see D2.
+- A `service` module (in `bootstrap`, used by the CLI and the daemon-start resolver) with
+  `start/stop/restart` — see D2.
 - A `shell` lookup in `bootstrap::util` that returns the POSIX shell: `sh` on Unix, Git's `sh.exe` on
   Windows (same search order as `run-hook.cmd`: `Program Files\Git`, `Program Files (x86)\Git`, `PATH`).
   A miss is an error naming Git for Windows, never a silent skip.
 
 ### D2. Daemon lifecycle: Task Scheduler logon task
-`sensei start` on Windows registers (once) and runs a per-user scheduled task `sensei\senseid`,
-triggered at logon, running `senseid serve` hidden. `stop` asks the daemon over `POST /stop` first (the
-path every platform already tries), then ends the task. Rejected: a Windows Service — it runs under a
-service account, so the user's Credential Manager entries and `~/.sensei` are not the ones the CLI and
-app see.
+`sensei start` on Windows registers a per-user scheduled task `sensei-senseid` (re-registered on every
+start, so it follows the binary after an upgrade) and runs it. Its trigger is the user's own logon and it
+runs with their interactive token (`LeastPrivilege`), which lets a standard user register it. It sits at
+the root of the Task Scheduler library: creating a folder (`sensei\senseid`, as first planned) needs an
+administrator. The task runs `senseid start`, which spawns the daemon with no console window and exits,
+so the task finishes at once; `ExecutionTimeLimit` is unlimited regardless, since the 72-hour default
+ends whatever a task still runs. The definition is passed to `schtasks /Create /XML` as UTF-16.
+
+`sensei stop` deletes the task (so the daemon does not return at the next sign-in, as `brew services
+stop` does) and then runs `senseid stop`, which asks the daemon over `POST /stop` — the path every
+platform already tries. If the daemon does not answer, the fallback ends it by pid: SIGTERM on Unix, a
+terminate on Windows. Daemon status stays the direct `/health` probe on every platform, so the module has
+no `status`. Rejected: a Windows Service — it runs under a service account, so the user's Credential
+Manager entries and `~/.sensei` are not the ones the CLI and app see.
 
 ### D3. Postgres in Docker
 The prerequisite provider checks, in order: Docker CLI present, Docker engine reachable, container
@@ -43,14 +53,32 @@ stop the container.
 
 **Credentials come from `.env` (user, 2026-11-19).** Today the daemon connects as the OS user with no
 password (`postgres://localhost/<db>`, `bootstrap/src/database.rs`), which a container does not accept.
-The daemon reads `~/.sensei/.env` and takes the standard libpq names `PGUSER` and `PGPASSWORD` from it
-(so `psql` and `dbd` read the same values), building the connection URL in the one place that builds it
-today. The same values feed the container remedy (`POSTGRES_USER`/`POSTGRES_PASSWORD`). Rules:
+`~/.sensei/.env` holds the standard libpq names `PGUSER` and `PGPASSWORD`. The daemon, the CLI and the app
+put them into their own process environment at startup (`credentials::load_into_env`) instead of into a
+connection URL, because every client sensei uses reads them from there: libpq's `psql`/`createdb`/
+`pg_isready`, and sqlx — the daemon's pool and dbd-core's deploy — whenever the URL carries no
+credentials. The URLs stay credential-free, so the password cannot reach a log or an error through one. The
+same values create the container (`POSTGRES_USER`/`POSTGRES_PASSWORD`, handed to `docker run` through its
+environment, never its command line). Rules:
 - The file is optional everywhere; without it, macOS/Linux keep connecting as the OS user, unchanged.
-- On Windows a missing file, or a missing `PGPASSWORD` in it, fails the database check with a remedy
-  naming the file and the keys. Nothing is generated or defaulted.
+- On Windows a missing file, or a missing `PGUSER` or `PGPASSWORD`, fails the database check with a remedy
+  naming the file and the keys. Nothing is generated or defaulted. (`PGUSER` is required too: without it
+  the container's user would be `postgres` while clients connect as the OS user.)
 - Real process environment variables take precedence over the file.
-- The password is never logged, and URLs in logs and errors are redacted. Docker Desktop's licence terms apply to large companies; Rancher Desktop and Podman
+- The file is parsed literally (`KEY=VALUE`, optional `export` and quotes, no `$VAR` expansion, which would
+  corrupt a password), and a parse error names the line number, never its text. The password is never logged.
+
+**The Postgres tools run in the container (user, 2026-11-20).** The database setup and its check shell out
+to `psql`, `createdb` and `pg_isready`, which a Windows host does not have. On Windows they run inside
+`sensei-pg` (`docker exec -e PGUSER -e PGPASSWORD sensei-pg <tool>`), chosen in one place,
+`pg_container::pg_tool`; macOS and Linux keep the host's tools. The pre-upgrade backup now reads
+`\copy … to stdout` and sensei writes the CSV itself, so the file lands on the host on every platform.
+
+**Components.** The health contract's five components stay as they are (the app reads them): Docker and
+the container are checked under Postgres, the credentials under Database, and Git for Windows under
+Sensei (its hooks run under Git's `sh`).
+
+Docker Desktop's licence terms apply to large companies; Rancher Desktop and Podman
 run the same image and pass the same checks (they answer `docker` CLI calls).
 
 ### D4. Distribution: GitHub release assets, unsigned

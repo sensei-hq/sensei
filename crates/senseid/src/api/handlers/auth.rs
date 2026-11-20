@@ -301,27 +301,13 @@ pub(crate) enum SignInPage {
     },
 }
 
-/// Escape text destined for HTML body content.
-///
-/// Both interpolated values are external: the login comes from GitHub and the
-/// detail from the dōjō's error body. Interpolating either raw would make this
-/// page an injection sink reachable by anyone able to influence an OAuth error
-/// message — and it renders in a browser on the user's own machine, same origin
-/// as the daemon on localhost.
-fn escape_html(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
+// Text destined for the HTML page is escaped with `escape_markup`. Both
+// interpolated values are external: the login comes from GitHub and the detail
+// from the dōjō's error body. Interpolating either raw would make this page an
+// injection sink reachable by anyone able to influence an OAuth error message —
+// and it renders in a browser on the user's own machine, same origin as the
+// daemon on localhost.
+use sensei_bootstrap::util::escape_markup;
 
 /// Whether this request came from a browser.
 ///
@@ -347,7 +333,7 @@ fn sign_in_html(page: &SignInPage) -> String {
             "ok",
         ),
         SignInPage::Success { login } => (
-            format!("Signed in as {}", escape_html(login)),
+            format!("Signed in as {}", escape_markup(login)),
             "sensei has what it needs. You can close this window.".to_string(),
             "ok",
         ),
@@ -355,13 +341,13 @@ fn sign_in_html(page: &SignInPage) -> String {
             "Signed in, but not linked".to_string(),
             format!(
                 "{} — sensei will not sync until that is resolved. You can close this window.",
-                escape_html(detail)
+                escape_markup(detail)
             ),
             "warn",
         ),
         SignInPage::Failure { detail } => (
             "Sign-in did not complete".to_string(),
-            format!("{} — you can close this window and try again.", escape_html(detail)),
+            format!("{} — you can close this window and try again.", escape_markup(detail)),
             "bad",
         ),
     };
