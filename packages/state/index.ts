@@ -68,9 +68,11 @@ export {
 export {
   toDecisionForm,
   toAnswerValues,
+  textCap,
   textMisses,
   toPatternMatcher,
   withoutTextRules,
+  withArrayLayout,
   type DecisionFormView,
   type TextMiss,
 } from './relay/decision-form.js';

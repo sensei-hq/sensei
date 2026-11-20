@@ -22,12 +22,11 @@ reason) has no surface, so the exchange falls back to someone carrying the answe
   `relay_answer_decision`) accept `values` (an object keyed by property name) in place of `option` for a form
   decision. The daemon validates the values against the stored schema before storing, in one write (the
   client's check is a convenience, never trusted): no unknown keys, required present and non-empty, type,
-  `enum`, `minimum` / `maximum`, `maxLength` (capped at 600), `pattern`, and the leak guard on text. A refusal
+  `enum`, `minimum` / `maximum`, `maxLength` (capped at 600, 4000 for long text), `pattern`, and the leak guard on text. A refusal
   names the field and why (422), and records nothing.
-- **Not yet: pick-several and long text.** `type: "array"` with `items.enum` (pick several) and long text are
-  refused by the subset check until rokkit draws them: FormRenderer maps an array to its `ArrayEditor`, not a
-  `MultiSelect`, and has no schema hint for a textarea. A sensei-hq/rokkit issue asks for both; sensei bumps
-  rokkit and widens the subset when it ships. No sensei-side override.
+- **Pick-several and long text (R2).** rokkit 1.16 (rokkit#197, raised by R1) draws `type: "array"` with
+  `items.enum` as a `MultiSelect` and a string with `x-multiline: true` as a textarea. The subset takes both: the
+  answer to a pick-several is an array of unique enum members; long text has its own cap of 4000 characters.
 - **Props.** `asked.props` gains `response`; `answered.props` gains `values`, and `option` becomes required
   only when the ask has options. `validate_props` enforces both shapes.
 - **Reads.** The `relay.now` view's `open_asked` payload, the stream's decision row (#418), the task view's
@@ -62,7 +61,7 @@ Not breaking: every existing field keeps its meaning; new fields are optional on
     `packages/state/index.ts` (exports)
   - `app/src/lib/relay/{DecisionRow.svelte,DecisionForm.svelte,NeedsYou.svelte,RelayScreen.svelte,RelayTaskScreen.svelte,catalogue.ts}`
   - `app/e2e/tests/relay-decision-form.spec.ts` (new)
-- Out of scope: pick-several and long-text fields (until the rokkit release, tasks R1-R2); free-text chat; the dōjō's supabase transport (#427 epic) — this change keeps the dōjō seam
+- Out of scope: free-text chat; the dōjō's supabase transport (#427 epic) — this change keeps the dōjō seam
   (`relayRealtimeSource`) type-compatible only.
 - Depends on #414 (`update-shared-state-sources`): `RelayTaskState` answers through the `RelayTaskSource` that change
   adds, so #414 lands first.

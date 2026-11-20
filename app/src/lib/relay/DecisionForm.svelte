@@ -5,11 +5,15 @@
   // The card owns Answer: it calls `collect()`, which checks the form inline (validateAll),
   // shows each field's message, and hands back the values only when nothing failed.
   import { untrack } from 'svelte';
+  import type { Attachment } from 'svelte/attachments';
+  import DecisionPickSeveral from './DecisionPickSeveral.svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
   import {
+    textCap,
     textMisses,
     toAnswerValues,
     toDecisionForm,
+    withArrayLayout,
     withoutTextRules,
     type RelayDecisionResponse,
     type TextMiss,
@@ -35,7 +39,9 @@
   // `maxlength`) in UTF-16 units, where the daemon reads Unicode and counts characters; rokkit
   // checks the rest, and the form checks those two as the daemon does.
   const checked = withoutTextRules(form.schema);
-  const builder = new FormBuilder({ ...form.data }, checked, layout);
+  // A pick-several takes its label and `override` from the schema rokkit draws it from
+  // (sensei-hq/rokkit#205: rokkit drops an array element's layout keys).
+  const builder = new FormBuilder({ ...form.data }, withArrayLayout(checked, layout), layout);
   const labels: Record<string, string> = Object.fromEntries(
     form.layout.elements.map((e) => {
       const path = e.scope.replace(/^#\//, '');
@@ -46,7 +52,7 @@
     const label = labels[path] ?? path;
     const text =
       miss === 'maxLength'
-        ? `${label} must be no more than ${form.schema.properties[path].maxLength} characters`
+        ? `${label} must be no more than ${textCap(form.schema.properties[path])} characters`
         : `${label} format is invalid`;
     return { state: 'error', text };
   }
@@ -67,6 +73,32 @@
     return Object.keys(messages).length > 0 ? null : toAnswerValues(form.schema, builder.data);
   }
 
+  // `disabled` goes to InputField only when true: rokkit writes `data-field-disabled={disabled}`, so an
+  // enabled field carries `"false"`, and zen-sumi fades any `[data-field-disabled]` field to 40%
+  // (axe color-contrast; sensei-hq/rokkit#207).
+  // A Select or pick-several draws no placeholder: rokkit fades it to 60% in ink-mute, 3.98:1 in dark
+  // mode (axe color-contrast; sensei-hq/rokkit#208). The field's label names the control.
+  const CHOOSERS = new Set(['select', 'multiselect']);
+
+  // A pick-several draws through DecisionPickSeveral: no control nested in the MultiSelect's trigger.
+  const renderers = { multiselect: DecisionPickSeveral as never };
+
+  /** Name each listbox rokkit opens in a field after the field's label: rokkit's Select and
+   *  MultiSelect open a `role="listbox"` with no name (axe aria-input-field-name; sensei-hq/rokkit#206). */
+  function nameListboxes(label: string): Attachment<HTMLElement> {
+    return (node) => {
+      const name = () => {
+        for (const box of node.querySelectorAll<HTMLElement>('[role="listbox"]')) {
+          if (!box.hasAttribute('aria-label') && !box.hasAttribute('aria-labelledby')) box.setAttribute('aria-label', label);
+        }
+      };
+      name();
+      const observer = new MutationObserver(name);
+      observer.observe(node, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    };
+  }
+
   type Element = { scope?: string; type?: string; value?: unknown; props?: Record<string, unknown> };
 
   function change(path: string, value: unknown): void {
@@ -80,13 +112,15 @@
 
 {#snippet field(element: Element)}
   {@const path = (element.scope ?? '').replace(/^#\//, '')}
-  <div data-decision-field={path}>
+  <div data-decision-field={path} {@attach nameListboxes(labels[path] ?? path)}>
     <InputField
       name={`${idPrefix}-${path}`}
       type={element.type}
       value={element.value}
       {...element.props}
-      {disabled}
+      {...(CHOOSERS.has(element.type ?? '') ? { placeholder: '' } : {})}
+      disabled={disabled || undefined}
+      {renderers}
       onchange={(value: unknown) => change(path, value)}
     />
   </div>

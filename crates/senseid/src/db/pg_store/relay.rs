@@ -11377,7 +11377,7 @@ mod tests {
         fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
         let mut ask = form_ask(vec![w]);
         ask.response = Some(json!({"schema": {"type": "object", "properties": {
-            "files": {"type": "array", "items": {"enum": ["a", "b"]}}}}}));
+            "files": {"type": "array", "items": {"type": "string"}}}}}));
         let err = pg.relay_ask_decision(u1(), a1, ask).await.unwrap_err();
         match err {
             RelayError::Validation(m) => assert!(m.contains("files") && m.contains("array"), "{m}"),

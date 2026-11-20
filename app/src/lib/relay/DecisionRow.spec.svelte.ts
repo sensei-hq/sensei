@@ -4,6 +4,7 @@
 // inline before anything is sent, sent once, and a refusal shown in place with the values kept.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, tick } from 'svelte';
+import axe from 'axe-core';
 import { mountComponent } from '$lib/test-mount.js';
 import type { RelayDecision, RelayDecisionChoice } from '@sensei/state';
 import * as F from '$lib/test-stubs/relay-fixtures.js';
@@ -38,6 +39,17 @@ function setNumber(c: HTMLElement, name: string, value: string) {
   input.value = value;
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/** The serious and critical axe violations in the card (WCAG A + AA; contrast is a browser check). */
+async function seriousA11y(c: HTMLElement): Promise<string[]> {
+  const result = await axe.run(c, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+    rules: { 'color-contrast': { enabled: false } },
+  });
+  return result.violations
+    .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+    .map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
 }
 
 /** Pick an option in rokkit's Select: open it, then press the option. */
@@ -89,6 +101,16 @@ describe('DecisionRow · a form decision', () => {
     const box = field(c, 'ship')!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(box.hidden).toBe(false);
     expect(c.querySelector('[aria-hidden="true"][tabindex]:not([tabindex="-1"])')).toBeNull();
+  });
+
+  // rokkit draws a Select's placeholder at 60% opacity in ink-mute: 3.98:1 in dark mode, under AA
+  // (axe color-contrast; sensei-hq/rokkit#208). The field's label names it; the trigger shows no
+  // faded text. Contrast is a browser check, so this pins the cause.
+  it('an empty Select draws no faded placeholder text; its label names it', () => {
+    const c = mount(F.formDecision());
+    const trigger = field(c, 'target')!.querySelector<HTMLElement>('[data-select-trigger]')!;
+    expect(trigger.querySelector('[data-select-placeholder]')?.textContent?.trim() ?? '').toBe('');
+    expect(c.querySelector(`label[for="${trigger.id}"]`)?.textContent).toContain('Target branch');
   });
 
   it('the default seeds its field', () => {
@@ -283,6 +305,26 @@ describe('DecisionRow · a form decision', () => {
     expect(onanswer).toHaveBeenCalledWith({ values: { confirm: false } });
   });
 
+  // Every state the card reaches passes axe, not only the empty form: a control's filled state
+  // can draw new elements (a Select's value, a message under a field).
+  it('passes axe empty, with its messages showing, and filled', async () => {
+    const c = mount(F.formDecision());
+    expect(await seriousA11y(c)).toEqual([]);
+    answerButton(c).click();
+    await settle();
+    expect(field(c, 'target')!.querySelector('[data-message]')).not.toBeNull();
+    expect(await seriousA11y(c)).toEqual([]);
+    // Open, the Select's listbox is named for its field (axe aria-input-field-name).
+    field(c, 'target')!.querySelector<HTMLButtonElement>('[data-select-trigger]')!.click();
+    await settle();
+    expect(field(c, 'target')!.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(await seriousA11y(c)).toEqual([]);
+    field(c, 'target')!.querySelector<HTMLButtonElement>('[data-select-trigger]')!.click();
+    await settle();
+    await pick(c, 'target', 'main');
+    expect(await seriousA11y(c)).toEqual([]);
+  });
+
   it('two cards with the same property names keep their ids apart; each label names its own control', () => {
     const c1 = mount(F.formDecision({ id: 'ask-1' }));
     const c2 = mount(F.formDecision({ id: 'ask-2' }));
@@ -296,5 +338,144 @@ describe('DecisionRow · a form decision', () => {
       expect(named.length).toBe(3);
       expect(named.every((control) => c.contains(control))).toBe(true);
     }
+  });
+});
+
+// R2 (@rokkit/forms 1.16, rokkit#197): an array of enum members draws rokkit's MultiSelect and an
+// `x-multiline` string a textarea; both are answered and checked as the daemon checks them.
+describe('DecisionRow · pick-several and long text', () => {
+  const several = () =>
+    F.formDecision({
+      id: 'ask-several',
+      response: {
+        schema: {
+          type: 'object',
+          properties: {
+            areas: { type: 'array', items: { type: 'string', enum: ['api', 'app', 'db'] }, uniqueItems: true, title: 'Areas' },
+            notes: { type: 'string', 'x-multiline': true, title: 'Notes' },
+          },
+          required: ['areas'],
+        },
+      },
+    });
+
+  /** Press members in the MultiSelect: open it, press each option by its text. */
+  async function pickSeveral(c: HTMLElement, name: string, labels: string[]) {
+    field(c, name)!.querySelector<HTMLButtonElement>('[data-select-trigger]')!.click();
+    await settle();
+    for (const label of labels) {
+      const option = [...field(c, name)!.querySelectorAll<HTMLElement>('[data-select-option]')].find(
+        (o) => o.textContent?.trim() === label,
+      );
+      option!.click();
+      await settle();
+    }
+  }
+
+  /** Type into the textarea as the browser reports it. */
+  function typeNotes(c: HTMLElement, value: string) {
+    const area = field(c, 'notes')!.querySelector<HTMLTextAreaElement>('textarea')!;
+    area.value = value;
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+    area.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  it('draws a MultiSelect for the pick-several and a textarea for the long text', () => {
+    const c = mount(several());
+    expect(field(c, 'areas')!.querySelector('[data-multiselect]')).not.toBeNull();
+    expect(field(c, 'areas')!.querySelector('[data-field-type="multiselect"]')).not.toBeNull();
+    const area = field(c, 'notes')!.querySelector<HTMLTextAreaElement>('textarea');
+    expect(area).not.toBeNull();
+    // No native maxlength: the form counts characters as the daemon does.
+    expect(area!.getAttribute('maxlength')).toBeNull();
+    expect(field(c, 'areas')!.textContent).toContain('Areas');
+  });
+
+  it('Answer with no member picked for a required pick-several shows the field message and sends nothing', async () => {
+    const onanswer = vi.fn(async () => null);
+    const c = mount(several(), onanswer);
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).not.toHaveBeenCalled();
+    expect(field(c, 'areas')!.querySelector('[data-message]')?.textContent).toContain('is required');
+  });
+
+  it('sends the picked members and the long text, line breaks kept', async () => {
+    const onanswer = vi.fn(async () => null);
+    const c = mount(several(), onanswer);
+    await pickSeveral(c, 'areas', ['db', 'api']);
+    typeNotes(c, 'first line\nsecond line');
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).toHaveBeenCalledTimes(1);
+    const sent = (onanswer.mock.calls[0] as unknown as [{ values: { areas: string[]; notes: string } }])[0].values;
+    expect([...sent.areas].sort()).toEqual(['api', 'db']);
+    expect(sent.notes).toBe('first line\nsecond line');
+  });
+
+  it("long text over the daemon's 4000-character cap is refused inline; an empty optional one is left out", async () => {
+    const onanswer = vi.fn(async () => null);
+    const c = mount(several(), onanswer);
+    await pickSeveral(c, 'areas', ['app']);
+    typeNotes(c, 'x'.repeat(4001));
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).not.toHaveBeenCalled();
+    expect(field(c, 'notes')!.querySelector('[data-message]')?.textContent).toContain('no more than 4000 characters');
+    typeNotes(c, '');
+    await settle();
+    answerButton(c).click();
+    await settle();
+    expect(onanswer).toHaveBeenCalledWith({ values: { areas: ['app'] } });
+  });
+
+  // rokkit 1.16's MultiSelect draws a focusable role=button remove control per picked member inside
+  // its trigger <button>: axe nested-interactive (serious, WCAG 4.1.2). The card must not carry it.
+  it('passes axe with members picked: no control nested inside the trigger', async () => {
+    const c = mount(several());
+    expect(await seriousA11y(c)).toEqual([]);
+    await pickSeveral(c, 'areas', ['db', 'api']);
+    typeNotes(c, 'first line\nsecond line');
+    await settle();
+    expect(await seriousA11y(c)).toEqual([]);
+    const trigger = field(c, 'areas')!.querySelector('[data-select-trigger]')!;
+    expect(trigger.querySelectorAll('[role="button"], [tabindex], button, a[href], input').length).toBe(0);
+  });
+
+  it('shows the picked members outside the trigger, so the person sees what they picked', async () => {
+    const c = mount(several());
+    await pickSeveral(c, 'areas', ['db', 'api']);
+    const picked = field(c, 'areas')!.querySelector('[data-decision-picked]');
+    expect(picked?.textContent).toContain('api');
+    expect(picked?.textContent).toContain('db');
+    expect(field(c, 'areas')!.querySelector('[data-select-trigger] [data-decision-picked]')).toBeNull();
+  });
+
+  // zen-sumi fades a field under `[data-field-disabled]` to 40% opacity whatever the attribute's
+  // value, and rokkit writes `data-field-disabled="false"` on an enabled field (sensei-hq/rokkit#207):
+  // the filled pick-several read 2.49:1 in dark mode (axe color-contrast). Contrast is a browser
+  // check, so this pins the cause: an enabled card's fields carry no disabled mark; a sending one's do.
+  it('an empty pick-several draws no faded placeholder text (sensei-hq/rokkit#208)', () => {
+    const c = mount(several());
+    const trigger = field(c, 'areas')!.querySelector<HTMLElement>('[data-select-trigger]')!;
+    expect(trigger.querySelector('[data-select-placeholder]')?.textContent?.trim() ?? '').toBe('');
+  });
+
+  it('an enabled card marks no field disabled; while it sends, every field is', async () => {
+    let release: (v: string | null) => void = () => {};
+    const onanswer = vi.fn(() => new Promise<string | null>((r) => (release = r)));
+    const c = mount(several(), onanswer);
+    await pickSeveral(c, 'areas', ['db', 'api']);
+    typeNotes(c, 'first line');
+    await settle();
+    expect(c.querySelectorAll('[data-field-root]').length).toBe(2);
+    expect(c.querySelectorAll('[data-field-disabled]').length).toBe(0);
+    answerButton(c).click();
+    await settle();
+    expect(c.querySelectorAll('[data-field-root][data-field-disabled="true"]').length).toBe(2);
+    release(null);
+    await settle();
   });
 });

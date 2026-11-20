@@ -16,6 +16,10 @@
  * card leaves with no navigation and the lane reads the exact values; the task view
  * answers a task-bound form the same way. "No refresh" is proved by a marker on
  * `window` that a reload would wipe, and an unchanged path.
+ *
+ * Slice R (R2) — pick-several and long text: rokkit 1.16 draws an array of enum members as a
+ * MultiSelect and an `x-multiline` string as a textarea; the person answers both live and the
+ * lane reads the exact members and text back.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { test, expect, type TauriPageLike } from '../fixtures';
@@ -221,6 +225,29 @@ test.describe('relay decision form (#389)', () => {
     await page.waitForSelector(NEEDS, 20_000).catch(() => undefined);
   }
 
+  /** The serious and critical axe violations (WCAG A + AA) inside `selector`, as `id: targets`. */
+  async function seriousA11y(page: TauriPageLike, selector: string): Promise<string[]> {
+    await page.evaluate(
+      `(function () { if (!window.axe) { ${readFileSync('node_modules/axe-core/axe.min.js', 'utf8')} } return typeof window.axe === 'object'; })()`,
+    );
+    return JSON.parse(
+      (await page.evaluate(`(async function () {
+        var r = await window.axe.run(document.querySelector(${JSON.stringify(selector)}), {
+          runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+          resultTypes: ['violations'],
+        });
+        return JSON.stringify((r.violations || [])
+          .filter(function (v) { return v.impact === 'serious' || v.impact === 'critical'; })
+          .map(function (v) {
+            return v.id + ': ' + v.nodes.map(function (n) {
+              var why = (n.any || []).concat(n.all || []).map(function (c) { return c.message; }).join('; ');
+              return n.target.join(' ') + (why ? ' (' + why + ')' : '');
+            }).join(', ');
+          }));
+      })()`)) as string,
+    );
+  }
+
   /** The screen tests share one coordinator and one open screen session per test. */
   async function formLane(goal: string): Promise<RelayLane> {
     return new RelayCrew(DAEMON_URL).register({ role: 'coordinator', family: 'e2e', goal: `${goal} ${RUN_TAG}`, repo_key: FORM_REPO });
@@ -254,21 +281,26 @@ test.describe('relay decision form (#389)', () => {
     await evidence(tauriPage, '1-arrived', card);
 
     // The card passes axe with the form showing (WCAG A + AA; no serious or critical).
-    await tauriPage.evaluate(
-      `(function () { if (!window.axe) { ${readFileSync('node_modules/axe-core/axe.min.js', 'utf8')} } return typeof window.axe === 'object'; })()`,
-    );
-    const violations = JSON.parse(
-      (await tauriPage.evaluate(`(async function () {
-        var r = await window.axe.run(document.querySelector(${JSON.stringify(card)}), {
-          runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
-          resultTypes: ['violations'],
-        });
-        return JSON.stringify((r.violations || [])
-          .filter(function (v) { return v.impact === 'serious' || v.impact === 'critical'; })
-          .map(function (v) { return v.id + ': ' + v.nodes.map(function (n) { return n.target.join(' '); }).join(', '); }));
-      })()`)) as string,
-    );
-    expect(violations, 'serious/critical a11y violations on the form card').toEqual([]);
+    expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the form card').toEqual([]);
+    // Open, the Select's listbox is named for its field (axe aria-input-field-name).
+    const target = `${card} [data-decision-field="target"] [data-select-trigger]`;
+    const listbox = `${card} [data-decision-field="target"] [role="listbox"]`;
+    // A press that lands while the fresh card still settles can miss: press again until it opens.
+    await expect
+      .poll(async () => {
+        if ((await countOf(tauriPage, listbox)) === 1) return true;
+        await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' }), true)`);
+        await tauriPage.locator(target).click();
+        return false;
+      }, { intervals: [500] })
+      .toBe(true);
+    // Scoped to the field: the open listbox is fixed over the field below it, and axe then reads
+    // that field's empty text against the listbox's paper, which no one sees.
+    expect(
+      await seriousA11y(tauriPage, `${card} [data-decision-field="target"]`),
+      'serious/critical a11y violations with the Select open',
+    ).toEqual([]);
+    await tauriPage.locator(target).click();
     if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
   });
 
@@ -328,6 +360,82 @@ test.describe('relay decision form (#389)', () => {
     const answer = (await coord.envelope()).answers.find((a) => a.decision_id === decisionId);
     expect(answer).toMatchObject({ decision_id: decisionId, option: null, values: { target: 'main', count: 3 } });
     expect(Object.keys((answer as { values: Record<string, unknown> }).values).sort()).toEqual(['count', 'target']);
+    if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
+  });
+
+  test('a pick-several and long-text decision is answered live', async ({ tauriPage }) => {
+    test.setTimeout(180_000);
+    await openRelay(tauriPage);
+    const at = await markPage(tauriPage);
+    const coord = await formLane('form several');
+    lane ??= coord;
+    const several = {
+      schema: {
+        type: 'object',
+        properties: {
+          areas: { type: 'array', items: { type: 'string', enum: ['api', 'app', 'db'] }, uniqueItems: true, title: 'Areas' },
+          notes: { type: 'string', 'x-multiline': true, maxLength: 2000, title: 'Notes' },
+        },
+        required: ['areas'],
+      },
+    };
+    const decisionId = await coord.ask({ question: `Pick several? ${RUN_TAG}`, response: several });
+    const card = `${NEEDS} [data-decision="${decisionId}"]`;
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
+    expect(await countOf(tauriPage, `${card} [data-decision-field="areas"] [data-multiselect]`)).toBe(1);
+    expect(await countOf(tauriPage, `${card} [data-decision-field="notes"] textarea`)).toBe(1);
+
+    // Pick two members: open the MultiSelect with a real press, then press each option.
+    const trigger = `${card} [data-decision-field="areas"] [data-select-trigger]`;
+    await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(trigger)}).scrollIntoView({ block: 'center' }), true)`);
+    await tauriPage.locator(trigger).click();
+    for (const member of ['db', 'api']) {
+      await expect
+        .poll(() =>
+          tauriPage.evaluate(`(() => {
+            const o = [...document.querySelectorAll(${JSON.stringify(`${card} [data-decision-field="areas"] [data-select-option]`)})]
+              .find((e) => e.textContent.trim() === ${JSON.stringify(member)});
+            if (!o) return false;
+            o.click();
+            return true;
+          })()`),
+        )
+        .toBe(true);
+    }
+    const notes = 'first line\nsecond line';
+    // The person closes the list with a press on its trigger and moves to the notes to type: focus
+    // leaves the listbox.
+    // A focused, picked option in an open listbox is text-primary on paper-mute, 4.4:1 in dark mode
+    // (sensei-hq/rokkit#209): rokkit's look, kept as shipped; axe covers it once rokkit fixes it.
+    test.info().annotations.push({ type: 'upstream', description: 'sensei-hq/rokkit#209: focused selected option contrast' });
+    const listbox = `${card} [data-decision-field="areas"] [role="listbox"]`;
+    await tauriPage.locator(trigger).click();
+    await expect.poll(() => countOf(tauriPage, listbox)).toBe(0);
+    // TauriPage's press does not move focus in WebKit, so focus the notes as a person's press would.
+    await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(`${card} [data-decision-field="notes"] textarea`)}).focus(), true)`);
+    expect(await tauriPage.evaluate('document.activeElement?.tagName')).toBe('TEXTAREA');
+    await tauriPage.evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(`${card} [data-decision-field="notes"] textarea`)});
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, ${JSON.stringify(notes)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await evidence(tauriPage, '5-several-filled', card);
+    // Filled (members picked, notes typed), the card passes axe: no control nested in the
+    // MultiSelect's trigger (nested-interactive), and no field faded by a "false" disabled mark
+    // (sensei-hq/rokkit#207).
+    expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the filled pick-several').toEqual([]);
+    await tauriPage.locator(`${card} [data-decision-answer]`).click();
+
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(0);
+    expect(JSON.parse(await stillMarked(tauriPage))).toEqual({ mark: RUN_TAG, at });
+    const answer = (await coord.envelope()).answers.find((a) => a.decision_id === decisionId) as
+      | { option: unknown; values: { areas: string[]; notes: string } }
+      | undefined;
+    expect(answer?.option).toBeNull();
+    expect([...(answer?.values.areas ?? [])].sort()).toEqual(['api', 'db']);
+    expect(answer?.values.notes).toBe(notes);
     if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
   });
 

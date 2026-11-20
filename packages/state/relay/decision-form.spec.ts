@@ -4,7 +4,7 @@
 // the data starts from each `default`. The answer keeps what was filled and drops the
 // optional fields left empty, so absent stays absent (D83).
 import { describe, it, expect } from 'vitest';
-import { textMisses, toAnswerValues, toDecisionForm, toPatternMatcher, withoutTextRules } from './decision-form.js';
+import { textCap, textMisses, toAnswerValues, toDecisionForm, toPatternMatcher, withoutTextRules } from './decision-form.js';
 import type { RelayDecisionResponse } from './types.js';
 import * as F from './fixtures.js';
 
@@ -79,6 +79,44 @@ describe('toDecisionForm', () => {
     const r = response();
     r.schema.properties.ship.default = false;
     expect(toDecisionForm(r).data).toEqual({ max_retries: 2, ship: false });
+  });
+});
+
+// R2 (@rokkit/forms 1.16, rokkit#197): pick-several (an array of enum members) and long text
+// (`x-multiline`) pass through to rokkit, which draws a MultiSelect and a textarea from them.
+const severalSchema = () => ({
+  type: 'object' as const,
+  properties: {
+    areas: { type: 'array' as const, items: { type: 'string' as const, enum: ['api', 'app', 'db'] }, uniqueItems: true as const },
+    also: { type: 'array' as const, items: { enum: ['x', 'y'] }, default: ['y'] },
+    notes: { type: 'string' as const, 'x-multiline': true as const },
+  },
+  required: ['areas'],
+});
+
+describe('toDecisionForm · pick-several and long text', () => {
+  it('passes items, uniqueItems and x-multiline through unchanged and seeds an array default', () => {
+    const r = { schema: severalSchema() };
+    const form = toDecisionForm(r);
+    expect(form.schema).toEqual(severalSchema());
+    expect(form.data).toEqual({ also: ['y'] });
+    expect(form.layout.elements.map((e) => e.label)).toEqual(['Areas', 'Also', 'Notes']);
+  });
+
+  it('drops an optional pick-several left empty, and keeps a required one so the daemon names it', () => {
+    const s = severalSchema();
+    expect(toAnswerValues(s, { areas: ['db'], also: [], notes: '' })).toEqual({ areas: ['db'] });
+    expect(toAnswerValues(s, { areas: [] })).toEqual({ areas: [] });
+    expect(toAnswerValues(s, { areas: ['api', 'db'], notes: 'one\ntwo' })).toEqual({ areas: ['api', 'db'], notes: 'one\ntwo' });
+  });
+});
+
+describe('textCap', () => {
+  it("is the property's maxLength, else the daemon's cap: 600 for one line, 4000 for long text", () => {
+    expect(textCap({ type: 'string', maxLength: 20 })).toBe(20);
+    expect(textCap({ type: 'string' })).toBe(600);
+    expect(textCap({ type: 'string', 'x-multiline': true })).toBe(4000);
+    expect(textCap({ type: 'string', 'x-multiline': true, maxLength: 1000 })).toBe(1000);
   });
 });
 
@@ -234,6 +272,16 @@ describe('textMisses / withoutTextRules', () => {
     expect(textMisses(schema, { short: 'é😀' })).toEqual({});
     expect(textMisses(schema, { short: '😀😀😀' })).toEqual({ short: 'maxLength' });
     expect(textMisses(schema, { short: 'abc' })).toEqual({ short: 'maxLength' });
+  });
+
+  it("holds text with no maxLength to the daemon's cap, in characters: 600 for one line, 4000 for long text", () => {
+    const capped = {
+      type: 'object' as const,
+      properties: { line: { type: 'string' as const }, notes: { type: 'string' as const, 'x-multiline': true as const } },
+    };
+    expect(textMisses(capped, { line: '😀'.repeat(600), notes: '😀'.repeat(4000) })).toEqual({});
+    expect(textMisses(capped, { line: 'x'.repeat(601) })).toEqual({ line: 'maxLength' });
+    expect(textMisses(capped, { notes: 'x'.repeat(4001) })).toEqual({ notes: 'maxLength' });
   });
 
   it('reads maxLength before the pattern, as the daemon does', () => {
