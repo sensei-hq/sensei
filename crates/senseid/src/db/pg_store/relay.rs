@@ -2388,6 +2388,63 @@ impl PgStore {
         Ok(())
     }
 
+    /// Lock order for a task write (#398): the crew row first. A close
+    /// holds the crew `for update`, then its dead lanes, then their held
+    /// tasks; a write that locked a task first and then waited on the crew
+    /// for its `relay.actions` foreign keys would deadlock it (40P01). The
+    /// crew is held `for key share` — the lock those keys take anyway —
+    /// so only a close waits on it, never a heartbeat or another writer.
+    async fn relay_hold_crew(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+    ) -> Result<(), RelayError> {
+        let held: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.crews where user_id = $1 and id = $2 for key share",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        held.map(|_| ()).ok_or_else(|| RelayError::NotFound("crew not found".into()))
+    }
+
+    /// A lane's task write takes its crew row first (`relay_hold_crew`),
+    /// then reads the lane afresh: a close that released the lane while
+    /// the write waited answers `410`, so a released lane never writes
+    /// over the task the close interrupted. Returns the lane's crew.
+    async fn relay_hold_lane_crew(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        lane_id: Uuid,
+    ) -> Result<Uuid, RelayError> {
+        let crew_id: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select crew_id from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        let Some(crew_id) = crew_id else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        Self::relay_hold_crew(tx, user_id, crew_id).await?;
+        let unregistered: Option<DateTime<Utc>> = sqlx_core::query_scalar::query_scalar(
+            "select unregistered_at from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        if unregistered.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        Ok(crew_id)
+    }
+
     /// The user's single active crew (queue cutover): a register without
     /// `crew_id` and a run without one both land here. None or several are
     /// the caller's to resolve (`relay_no_active_crew`,
@@ -2824,6 +2881,7 @@ impl PgStore {
         let next = transition(RelayTaskState::Assigned, TaskEvent::Started)
             .map_err(|_| RelayError::Conflict("task cannot start".into()))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, lane_id).await?;
         let started = sqlx_core::query::query(
             "update relay.tasks set state = $1::relay.task_state,
                     state_changed_at = current_timestamp
@@ -2879,6 +2937,7 @@ impl PgStore {
     ) -> Result<RelayReportOutput, RelayError> {
         self.relay_start_if_assigned(user_id, caller_lane, task_id).await?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
         let task: Option<(Uuid, Option<Uuid>, String, i32, String, Vec<String>, Vec<Uuid>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, lane_id, state::text, round, phase::text, owned_paths, deps
@@ -3122,6 +3181,7 @@ impl PgStore {
         validate_props(RelayActionKind::Reviewed, &props)
             .map_err(|e| RelayError::Validation(e.message))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
         let task: Option<(Uuid, String, i32, String, Option<Uuid>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, state::text, round, phase::text, review_claimed_by
@@ -4264,6 +4324,7 @@ impl PgStore {
             check_summary(reason, "reason")?;
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, lane_id).await?;
         let task: Option<(Uuid, Option<Uuid>, String, Option<Uuid>, i32, String)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, lane_id, state::text, review_claimed_by, round, phase::text
@@ -4404,6 +4465,7 @@ impl PgStore {
         validate_props(RelayActionKind::Checkpointed, &patch)
             .map_err(|e| RelayError::Internal(format!("checkpoint props: {}", e.message)))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, lane_id).await?;
         let stamp: DateTime<Utc> = sqlx_core::query_scalar::query_scalar(
             "update relay.tasks set checkpoint = checkpoint || $1
              where user_id = $2 and id = $3
@@ -5208,6 +5270,7 @@ impl PgStore {
         validate_props(RelayActionKind::Asked, &props)
             .map_err(|e| RelayError::Validation(e.message))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
         for (blocked_id, cur) in &blocked {
             sqlx_core::query::query(
                 "update relay.tasks set state = 'blocked'::relay.task_state,
@@ -5373,6 +5436,7 @@ impl PgStore {
             .transpose()?
             .unwrap_or_default();
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_crew(&mut tx, user_id, crew_id).await?;
         let answer_id = new_id();
         sqlx_core::query::query(
             "insert into relay.actions
@@ -5910,13 +5974,16 @@ impl PgStore {
         validate_props(RelayActionKind::Assigned, &props)
             .map_err(|e| RelayError::Internal(format!("handover props: {}", e.message)))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
+        // The holder and state were read before the crew row was held: a
+        // task a close interrupted meanwhile is refused, not moved.
         let task_update = sqlx_core::query::query(
             "update relay.tasks set lane_id = $1, phase = $2::relay.task_phase,
                     state = $3::relay.task_state, round = $4,
                     review_claimed_by = null, review_claimed_at = null,
                     owned_paths = $5, acceptance = $6,
                     assigned_at = current_timestamp, state_changed_at = current_timestamp
-             where user_id = $7 and id = $8",
+             where user_id = $7 and id = $8 and lane_id = $9 and state = $10::relay.task_state",
         )
         .bind(to_lane)
         .bind(phase.as_str())
@@ -5926,13 +5993,19 @@ impl PgStore {
         .bind(accept)
         .bind(user_id)
         .bind(task_id)
+        .bind(from_lane)
+        .bind(state.as_str())
         .execute(&mut *tx)
         .await;
-        if let Err(e) = task_update {
-            if is_unique_violation(&e) {
+        match task_update {
+            Err(e) if is_unique_violation(&e) => {
                 return Err(RelayError::Conflict("lane is already busy".into()));
             }
-            return Err(db_err(e));
+            Err(e) => return Err(db_err(e)),
+            Ok(moved) if moved.rows_affected() == 0 => {
+                return Err(RelayError::Conflict("task changed state; hand over again".into()));
+            }
+            Ok(_) => {}
         }
         sqlx_core::query::query(
             "insert into relay.actions
