@@ -66,7 +66,12 @@ pub fn start_hint() -> String {
 }
 
 #[cfg(unix)]
-mod platform {
+use brew as platform;
+#[cfg(windows)]
+use task_scheduler as platform;
+
+#[cfg(unix)]
+mod brew {
     use super::*;
     use crate::util::which_binary;
     use std::process::Command;
@@ -115,7 +120,7 @@ mod platform {
 }
 
 #[cfg(windows)]
-mod platform {
+mod task_scheduler {
     use super::*;
     use crate::util::which_binary;
     use std::process::Command;
