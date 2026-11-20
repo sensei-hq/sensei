@@ -11,10 +11,15 @@
 - [ ] 1.8 Extend the Windows job to `app/src-tauri` (its own workspace; not covered by 1.1)
 
 ## 2. Runtime on Windows (slice 2, depends on 1)
-- [ ] 2.1 POSIX shell lookup in `bootstrap::util` (Git `sh.exe` on Windows; a miss names Git for Windows)
-- [ ] 2.2 `metrics/coverage.rs` and other `sh -c` call sites use it
-- [ ] 2.3 Process start time for `.in_use` matching on Windows (verify Claude Code's marker format there first)
-- [ ] 2.4 `/Applications` probe in `assistants/mcp_file.rs` gains the Windows install locations
+- [x] 2.1 POSIX shell lookup in `bootstrap::util` (Git `sh.exe` on Windows; a miss names Git for Windows)
+- [x] 2.2 `metrics/coverage.rs` and other `sh -c` call sites use it (the only production one; the rest are tests)
+- [x] 2.3 Process start time for `.in_use` matching on Windows — decided (user, 2026-11-20): write `{"pid":N}`
+  with no start time. Claude Code keeps a separate `procStartFt` on Windows whose format the Linux build does not
+  show, and its reader accepts a marker without one. Its Linux build reads `/proc/<pid>/stat`, not `ps`: #509
+- [x] 2.4 `/Applications` probe in `assistants/mcp_file.rs` — no change: it is false on Windows and detection
+  falls through to `bin_names` on PATH (`cursor`, `code`, `zed`, …)
+- [ ] 2.6 Windows config paths for the MCP-file assistants (`config_rel` is macOS-shaped for Claude Desktop, and
+  Zed / VS Code keep settings elsewhere on Windows) — verify each app's real Windows location before changing
 - [ ] 2.5 Run the full senseid suite on the Windows CI job (DB tests against a `pgvector/pgvector:pg17` service)
 
 ## 3. Daemon lifecycle (slice 3, depends on 1)
