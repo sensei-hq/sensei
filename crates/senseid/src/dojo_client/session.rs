@@ -659,7 +659,9 @@ mod tests {
             || load_provider_token(persona).ok().as_deref() != Some("gho_keep")
         {
             let _ = clear_session(persona);
-            eprintln!("discard-test skipped: the keychain fixture did not take (stale {persona} item?)");
+            eprintln!(
+                "discard-test skipped: the keychain fixture did not take (stale {persona} item?)"
+            );
             return;
         }
 
