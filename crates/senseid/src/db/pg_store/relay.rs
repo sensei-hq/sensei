@@ -14701,6 +14701,67 @@ mod tests {
         assert_eq!(actions, 1);
     }
 
+    /// PR #502 review: a task a close interrupted stays `interrupted` —
+    /// the sweep never re-offers it past the grace into the closed crew,
+    /// where no lane can claim it (`crew is closed`).
+    #[tokio::test]
+    async fn sweep_never_reoffers_a_closed_crews_task() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xfb);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        assert_eq!(out.released, vec![(a2, Some(t))]);
+        // The grace has run out on close's `interrupted` action.
+        sqlx_core::query::query(
+            "update relay.actions set created_at = $1
+             where task_id = $2 and kind = 'interrupted'",
+        )
+        .bind(t0() - chrono::Duration::seconds(REOFFER_GRACE_SECS as i64 + 1))
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.reoffered_tasks, 0, "{:?}", rep.task_changes);
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+        let reoffers: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where task_id = $1 and kind = 'reoffered'",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(reoffers, 0);
+    }
+
+    /// Same class: a review left floating in a closed crew has nobody to
+    /// claim it, so the sweep never nudges the crew about it.
+    #[tokio::test]
+    async fn sweep_never_nudges_a_closed_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xfc);
+        fx_floating_review(&pg, c1, a2, t).await;
+        pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        sqlx_core::query::query("update relay.tasks set state_changed_at = $1 where id = $2")
+            .bind(t0() - chrono::Duration::seconds(NUDGE_AFTER_SECS as i64 + 1))
+            .bind(t)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.nudged, 0);
+        let nudges: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where crew_id = $1 and kind = 'message'",
+        )
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(nudges, 0);
+    }
+
     /// Close holds the crew row, then releases a dead lane's lease. A
     /// heartbeat racing it must take the crew row first too, so it waits
     /// behind close instead of holding the lease close needs (a 40P01
