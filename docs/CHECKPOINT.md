@@ -1,23 +1,25 @@
-# Checkpoint — 2026-11-20 (rokkit 1.16.1 follow-up — #389 R3/R4 workarounds dropped)
+# Checkpoint — 2026-11-20 (qlty security sweep — 26 findings triaged)
 
-**Slice:** rokkit 1.16.1 follow-up (`add-relay-decision-response-form` R3/R4 done-notes).
-**Branch:** `lane/relay-rokkit-1.16.1` (worktree `lanes/relay-rokkit`), from origin/develop @ c4162893d (#510); #514 merged in.
+**Slice:** security follow-up to v0.25.0 (`qlty check --all`: 162 issues, 26 security).
+**Branch:** `lane/security-qlty` (worktree `lanes/security-qlty`), from origin/develop @ 39df4c0d4.
 
 ## Done
-- Bump: `@rokkit/*` ^1.16.0 → ^1.16.1 in `app/` + `dojo/` (+ lockfiles); 1.16.1 verified on npm.
-- Deleted `DecisionPickSeveral.svelte`: the card draws rokkit's MultiSelect directly (#206).
-- Removed the listbox-naming attachment (#206), `disabled`-only-when-true (#207),
-  chooser placeholder blanking (#208). #205 still OPEN in rokkit: `withArrayLayout` stays.
-- Specs (red→green): tags in trigger, placeholders shown, axe on every state. e2e covers
-  the open pick-several with members picked (#209); `#209` annotation removed.
-- Gates: app check 0 errors, app unit 3912 pass, dojo test 2411 pass + check clean,
-  e2e `relay-decision-form.spec.ts` 7/7. Prod daemon restored after the run.
+- zizmor ×3 fixed: per-job permissions (coverage.yml), persist-credentials
+  (deploy-dojo), no-cache (deploy-worker setup-bun). Verified with zizmor 1.29.
+- Patched: tokio 1.54.1, rustix 1.1.6, aws-smithy-json 0.62.7 (CVE-2026-18140),
+  block-buffer 0.12.1, async-executor 1.14.1. cargo audit ×3 green.
+- Excepted per bar with proof: number_prefix + paste (dead ort feature),
+  glib + proc-macro-error (Linux-GTK-only). quick-xml was already excepted.
+- Accepted risk in #120: chrono, pin-utils, unsafe-libyaml (no fix exists);
+  zbus 5→6 migration BLOCKED (secret-service 6 is RC; keyring pins ss5).
+- Residual qlty security set is exactly the 12 accepted + 7 excepted; zero fixed
+  items linger. qlty has no advisory-level suppression, so they keep listing.
 
 ## Remaining
-- Push lane, PR to develop, CI green, merge. No issue to close (follow-up of closed #389).
+- Push lane, PR to develop, CI green, merge.
 
 ## Next command
-`git push -u origin lane/relay-rokkit-1.16.1` (from `lanes/relay-rokkit`), then `gh pr create`.
+`git push -u origin lane/security-qlty` (from `lanes/security-qlty`), then `gh pr create`.
 
 ## Open questions
 - None.
