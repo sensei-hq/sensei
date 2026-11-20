@@ -26,4 +26,24 @@ ignore = [
     # quick-xml >= 0.41.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+
+    # RUSTSEC-2025-0119 (number_prefix) + RUSTSEC-2024-0436 (paste) — both
+    # unmaintained, reached only through `tokenizers` (indicatif /
+    # macro_rules_attribute), which hangs off gateway's `local-providers/ort`
+    # behind senseid's `embedded-ort` feature. No build enables it: Makefile
+    # CRATE_FEATURES and the release matrix use `embedded-llama-cpp` only, and
+    # `cargo tree -i tokenizers` prints nothing under default, embedded-llama-cpp,
+    # embedded-fastembed and `-e all`. Remove these if `embedded-ort` is ever built.
+    "RUSTSEC-2025-0119",
+    "RUSTSEC-2024-0436",
+
+    # RUSTSEC-2024-0429 (glib unsound VariantStrIter) + RUSTSEC-2024-0370
+    # (proc-macro-error unmaintained, via glib-macros) — desktop-app lock only,
+    # Linux-GTK-only: `cargo tree --target aarch64-apple-darwin -i glib` (and
+    # -i proc-macro-error) print nothing, and release.yml's build-app runs on
+    # macos-latest for aarch64+x86_64 only. The fixed glib is 0.20 (a minor
+    # bump its gtk-rs parents do not allow yet). Remove these the day a Linux
+    # desktop ships, or when the chain moves to glib >= 0.20.
+    "RUSTSEC-2024-0429",
+    "RUSTSEC-2024-0370",
 ]
