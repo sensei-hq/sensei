@@ -57,8 +57,11 @@ pub struct RelayRegisterInput {
     /// the lane and used as its title; the code stays the handle.
     pub suggested_name: Option<String>,
     /// The editor the session runs in, as the session says (#396); none for a
-    /// terminal session. Never guessed.
+    /// terminal session. Never guessed. The fallback when nothing was detected.
     pub host: Option<String>,
+    /// The editor the MCP binary detected (#455). It wins over `host` when the
+    /// catalogue knows it as an editor; otherwise it is ignored with a warning.
+    pub host_detected: Option<String>,
 }
 
 /// An editor's name is short: a longer host is prose, not a name (#396).
@@ -1594,6 +1597,20 @@ impl PgStore {
         now: DateTime<Utc>,
     ) -> Result<RelayRegisterOutput, RelayError> {
         let mode = register_mode(input.role, input.crew_id.map(|_| "present"));
+        // #396/#455: a host is an editor's name, not prose — reported or detected.
+        for value in [&input.host, &input.host_detected] {
+            if value.as_deref().is_some_and(|h| h.trim().chars().count() > HOST_MAX_CHARS) {
+                return Err(RelayError::Validation(format!(
+                    "host names the editor in at most {HOST_MAX_CHARS} characters"
+                )));
+            }
+        }
+        // The catalogue says whether a detection is an editor; read only when one came.
+        let detected = crate::relay::host::given(input.host_detected.as_deref());
+        let names = match detected {
+            Some(_) => self.relay_catalogue_names().await?,
+            None => crate::assistants::catalogue::CatalogueNames::default(),
+        };
         let token = Uuid::new_v4().simple().to_string();
         let token_hash = hash_lane_token(&token);
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
@@ -1650,13 +1667,24 @@ impl PgStore {
         // (`L4 · Muse`), else the bare code when the family is empty.
         let offered =
             input.suggested_name.as_deref().map(str::trim).filter(|name| !name.is_empty());
-        // #396: the host as the session named it; blank is none.
-        let host = input.host.as_deref().map(str::trim).filter(|h| !h.is_empty());
-        if host.is_some_and(|h| h.chars().count() > HOST_MAX_CHARS) {
-            return Err(RelayError::Validation(format!(
-                "host names the editor in at most {HOST_MAX_CHARS} characters"
-            )));
+        // #455: the detected editor wins; the session's own word is the fallback.
+        let resolved = crate::relay::host::resolve_host(input.host.as_deref(), detected, &names);
+        match &resolved.note {
+            Some(crate::relay::host::HostNote::Mismatch { reported, detected }) => {
+                tracing::warn!(
+                    lane = %code,
+                    "relay: lane {code} reported host {reported}, detected {detected}; using {detected}"
+                );
+            }
+            Some(crate::relay::host::HostNote::IgnoredDetection { detected }) => {
+                tracing::warn!(
+                    lane = %code,
+                    "relay: lane {code} detected host {detected} is not an editor the catalogue knows; ignored"
+                );
+            }
+            None => {}
         }
+        let host = resolved.host.as_deref();
         let title = match offered {
             Some(name) => name.to_string(),
             None if input.family.is_empty() => code.clone(),
@@ -9100,6 +9128,7 @@ mod tests {
             workspace_id: None,
             suggested_name: None,
             host: None,
+            host_detected: None,
         }
     }
 
