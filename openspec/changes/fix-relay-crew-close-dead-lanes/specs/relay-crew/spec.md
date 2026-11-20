@@ -40,6 +40,12 @@ reregister SHALL get `409 crew is closed`.
 - **WHEN** the coordinator closes the crew
 - **THEN** the task is `interrupted` with an `interrupted` action naming that lane
 
+#### Scenario: A closed crew's interrupted task is never re-offered
+- **GIVEN** a task the coordinator's close interrupted
+- **WHEN** the lease sweep runs past the re-offer grace
+- **THEN** the task stays `interrupted` with no `reoffered` action, since no lane can claim in a closed crew
+- **AND** the sweep sends the closed crew no review nudge
+
 ### Requirement: The screen drops a crew closed by its lanes without a reload
 The lane close SHALL emit `lane.unregistered` for each lane it released, `task.interrupt` for each task it interrupted,
 and `run.completed` for the crew. The relay screen SHALL remove the closed crew's lane rows from the stream with no

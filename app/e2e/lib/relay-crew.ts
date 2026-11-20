@@ -190,6 +190,11 @@ export class RelayLane {
     return this.#post('/api/relay/unregister');
   }
 
+  /** Close the lane's crew (coordinator): the lanes it released with no live lease (#398). */
+  closeCrew(): Promise<{ crew_id: string; status: string; released: string[] }> {
+    return this.#post(`/api/relay/crews/${this.crewId}/close`);
+  }
+
   /** Run a call the journey expects may be refused: its result, or the refusal. */
   static async attempt<T>(
     run: () => Promise<T>,

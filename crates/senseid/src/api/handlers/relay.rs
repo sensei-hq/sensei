@@ -1749,12 +1749,27 @@ pub(crate) async fn close_crew(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
+    emit_released(&state, &out.crew_id, &out.released).await;
     // A crew's lifecycle event: the crew id stands as the run id (§3k).
     emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
+    let released: Vec<String> = out.released.iter().map(|(lane, _)| lane.to_string()).collect();
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,
+        "released": released,
     }))
+}
+
+/// Lanes a close released leave Now on the stream, each followed by the
+/// task it held, now interrupted. The lane close (#398) and the person
+/// close (#419) share it.
+async fn emit_released(state: &AppState, crew_id: &Uuid, released: &[(Uuid, Option<Uuid>)]) {
+    for (lane_id, interrupted) in released {
+        emit_lane(state, LaneChange::Unregistered, lane_id, crew_id).await;
+        if let Some(task_id) = interrupted {
+            emit_task(state, "interrupt", task_id).await;
+        }
+    }
 }
 
 // ─── Person routes ───
@@ -1768,12 +1783,7 @@ pub(crate) async fn person_close_crew(
     let user_id = person_user(&state).await.map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_person_close_crew(user_id, crew_id).await.map_err(err)?;
-    for (lane_id, interrupted) in &out.released {
-        emit_lane(&state, LaneChange::Unregistered, lane_id, &out.crew_id).await;
-        if let Some(task_id) = interrupted {
-            emit_task(&state, "interrupt", task_id).await;
-        }
-    }
+    emit_released(&state, &out.crew_id, &out.released).await;
     if out.closed_now {
         // A crew's lifecycle event: the crew id stands as the run id (§3k).
         emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
@@ -6492,6 +6502,104 @@ mod tests {
         let (status, now) = call(&h, "GET", "/relay/now", None, None).await;
         assert_eq!(status, StatusCode::OK, "{now}");
         assert_eq!(now["crews"][0]["status"], "active");
+    }
+
+    /// Back-date a lane's lease past its end: the session died and the
+    /// sweeper has not run yet (#398).
+    async fn kill_lane_lease(h: &Harness, lane_id: &str) {
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp - interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane' and state = 'granted'",
+        )
+        .bind(lane_id)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_with_dead_lane_closes() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        kill_lane_lease(&h, &lane_id).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "closed");
+        assert_eq!(body["released"], json!([lane_id]));
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(
+            !now["crews"].as_array().unwrap().iter().any(|c| c["id"] == coord.2),
+            "the closed crew is not on Now: {now}"
+        );
+        // The dead session comes back: gone, and the crew is closed to it.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::GONE, "{body}");
+        assert_eq!(body["error"], "relay_lane_gone");
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/reregister",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["message"].as_str().unwrap_or("").contains("crew is closed"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn close_emits_lane_unregistered_for_released_lanes() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        kill_lane_lease(&h, &lane_id).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // In order: the lane leaves, its task is interrupted, the crew completes.
+        let mut seen = Vec::new();
+        loop {
+            let event = serde_json::to_value(next_event(&mut rx).await).unwrap();
+            let done = event["entity"] == "run" && event["data"]["op"] == "completed";
+            seen.push(event);
+            if done {
+                break;
+            }
+        }
+        let at = |pred: &dyn Fn(&Value) -> bool| seen.iter().position(pred);
+        let lane_gone =
+            at(&|e| e["entity"] == "lane" && e["action"] == "remove" && e["data"]["id"] == lane_id);
+        let interrupted = at(&|e| {
+            e["entity"] == "task"
+                && e["data"]["op"] == "interrupt"
+                && e["data"]["task_id"] == task_id
+        });
+        let completed = seen.len() - 1;
+        assert!(lane_gone.is_some_and(|i| i < completed), "{seen:?}");
+        assert!(interrupted.is_some_and(|i| i < completed), "{seen:?}");
     }
 
     #[tokio::test]
