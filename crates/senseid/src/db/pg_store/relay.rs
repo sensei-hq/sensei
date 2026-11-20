@@ -5272,11 +5272,13 @@ impl PgStore {
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
         for (blocked_id, cur) in &blocked {
-            sqlx_core::query::query(
+            // The state was read before the crew row was held: a task a
+            // close interrupted meanwhile is refused, not blocked over.
+            let blocked_now = sqlx_core::query::query(
                 "update relay.tasks set state = 'blocked'::relay.task_state,
                         blocked_from_state = $1::relay.task_state,
                         state_changed_at = current_timestamp
-                 where user_id = $2 and id = $3",
+                 where user_id = $2 and id = $3 and state = $1::relay.task_state",
             )
             .bind(word(*cur))
             .bind(user_id)
@@ -5284,6 +5286,9 @@ impl PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
+            if blocked_now.rows_affected() == 0 {
+                return Err(RelayError::Conflict("a blocked task changed state; ask again".into()));
+            }
         }
         let decision_id = new_id();
         sqlx_core::query::query(
