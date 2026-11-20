@@ -18,7 +18,11 @@
   ask, answer, hand-over) take the crew row `for key share` first (`relay_hold_crew`/`relay_hold_lane_crew`,
   410 for a lane the close released); they deadlocked a close (40P01). Ask and hand-over write only from
   the state they read (409). Red `d48982306`/`9733fe5a1`, green `c91cf752d`/`c17278409`; design.md 3.
-- Gate: fmt, clippy (senseid), relay DB tests (465), e2e relay-crew-close.spec.ts,
+- Review fix 6 (PR #502, round 6): the lane's own unregister takes the crew row first (40P01 with
+  close; 410 once released). No writer acts on a task state a racer moved on: unregister_tx, sweep
+  (expiry/pause/re-offer), report, review, answer read `for update`; merge, task cancel, assign write
+  only from the state+holder read (409). Red `f0ba39396` (11 race tests), green `9205e06fd`; design.md 3.
+- Gate: fmt, clippy (senseid), relay DB tests (476), e2e relay-crew-close.spec.ts,
   openspec validate --strict.
 
 ## Remaining
@@ -32,5 +36,4 @@
 
 ## Known-broken
 - None. Noted, out of slice: `relay_unregister_tx` grants freed resource slots without the
-  per-resource advisory lock (pre-existing), and reads the held task without `for update`, so a
-  person `cancel_run` committing between that read and its update can be overwritten to interrupted.
+  per-resource advisory lock (pre-existing).
