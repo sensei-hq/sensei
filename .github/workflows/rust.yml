@@ -112,6 +112,17 @@ jobs:
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
       - name: Clippy (Windows)
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # Tests that need no database. GitHub's Windows runners cannot start the
+      # pgvector service container the `test` job uses, so the DB-coupled suite
+      # stays on Linux. senseid runs its pure modules through the same selection
+      # and guards as its coverage job; bootstrap's DB tests are #[ignore]d.
+      - name: Test the no-DB crates (Windows)
+        run: cargo test --workspace --exclude senseid
+      - name: Test senseid's pure modules (Windows)
+        shell: bash
+        env:
+          PYTHON: python
+        run: scripts/senseid-pure-coverage.sh --test-only
 
   test:
     runs-on: ubuntu-latest
