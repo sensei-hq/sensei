@@ -14727,4 +14727,50 @@ mod tests {
         assert!(unregistered, "the lane came back live in a closed crew");
         assert_eq!(granted, 0, "the lane was granted a lease in a closed crew");
     }
+
+    /// The sweeper and a close both act on a dead lane: the sweeper
+    /// expires its lease and ends its limit pause, close releases its
+    /// lease. Both take the crew row first, so the sweep waits behind the
+    /// close instead of holding the lease close needs while it waits on
+    /// the lane close holds (a 40P01 deadlock that fails one of them).
+    #[tokio::test]
+    async fn sweep_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        // A2 hit its quota, then died: its pause is due to end.
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = $1, limit_scope = 'daily',
+                    limit_resumes_at = $2
+             where id = $3",
+        )
+        .bind(t0())
+        .bind(t0() + chrono::Duration::seconds(60))
+        .bind(a2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        // Close's first steps: the crew row, then the dead lane, held.
+        let mut close = close_holding_crew(&pg, c1).await;
+        sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select id from relay.lanes
+             where crew_id = $1 and unregistered_at is null and id <> $2
+             order by id for update",
+        )
+        .bind(c1)
+        .bind(v7(0x11))
+        .fetch_all(&mut *close)
+        .await
+        .unwrap();
+        let store = pg.clone();
+        let sweep = tokio::spawn(async move {
+            store.relay_sweep_leases(t0() + chrono::Duration::seconds(3600)).await
+        });
+        assert!(some_session_waits_on_a_lock(&pg).await, "the sweep never waited on the close");
+        // Close's next step: release the dead lane (its lease included).
+        let released = PgStore::relay_unregister_tx(&mut close, u1(), c1, a2).await;
+        assert!(released.is_ok(), "close deadlocked with the sweep: {released:?}");
+        close_commits(close, c1).await;
+        let swept = sweep.await.unwrap();
+        assert!(swept.is_ok(), "the sweep deadlocked with the close: {:?}", swept.err());
+    }
 }
