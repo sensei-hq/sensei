@@ -6592,6 +6592,19 @@ impl PgStore {
         // The sweep acts at the fed `now`: its writes are stamped then, so
         // the pass is a pure function of (database, now) — a task it
         // interrupts is never due for re-offer in the same pass.
+        //
+        // Lock order matches the closes (#398): the crew rows first, then
+        // lanes and leases. A close holds its crew `for update` while it
+        // releases dead lanes; a sweep that took their leases first and
+        // then waited on a lane row close holds would deadlock. `key
+        // share` waits only for a close — heartbeats and the open-crew
+        // gate pass. A closed crew cannot close again, so open ones do.
+        sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select id from relay.crews where status <> 'closed' order by id for key share",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
         let expired: Vec<(Uuid, Uuid, Uuid)> = sqlx_core::query_as::query_as(
             "update relay.leases set state = 'expired'::relay.lease_state
              where kind = 'lane' and state = 'granted' and expires_at <= $1
