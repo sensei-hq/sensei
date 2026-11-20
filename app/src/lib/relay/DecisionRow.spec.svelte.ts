@@ -103,6 +103,16 @@ describe('DecisionRow · a form decision', () => {
     expect(c.querySelector('[aria-hidden="true"][tabindex]:not([tabindex="-1"])')).toBeNull();
   });
 
+  // rokkit draws a Select's placeholder at 60% opacity in ink-mute: 3.98:1 in dark mode, under AA
+  // (axe color-contrast; sensei-hq/rokkit#208). The field's label names it; the trigger shows no
+  // faded text. Contrast is a browser check, so this pins the cause.
+  it('an empty Select draws no faded placeholder text; its label names it', () => {
+    const c = mount(F.formDecision());
+    const trigger = field(c, 'target')!.querySelector<HTMLElement>('[data-select-trigger]')!;
+    expect(trigger.querySelector('[data-select-placeholder]')?.textContent?.trim() ?? '').toBe('');
+    expect(c.querySelector(`label[for="${trigger.id}"]`)?.textContent).toContain('Target branch');
+  });
+
   it('the default seeds its field', () => {
     const c = mount(F.formDecision());
     expect(field(c, 'max_retries')!.querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe('2');
@@ -447,6 +457,12 @@ describe('DecisionRow · pick-several and long text', () => {
   // value, and rokkit writes `data-field-disabled="false"` on an enabled field (sensei-hq/rokkit#207):
   // the filled pick-several read 2.49:1 in dark mode (axe color-contrast). Contrast is a browser
   // check, so this pins the cause: an enabled card's fields carry no disabled mark; a sending one's do.
+  it('an empty pick-several draws no faded placeholder text (sensei-hq/rokkit#208)', () => {
+    const c = mount(several());
+    const trigger = field(c, 'areas')!.querySelector<HTMLElement>('[data-select-trigger]')!;
+    expect(trigger.querySelector('[data-select-placeholder]')?.textContent?.trim() ?? '').toBe('');
+  });
+
   it('an enabled card marks no field disabled; while it sends, every field is', async () => {
     let release: (v: string | null) => void = () => {};
     const onanswer = vi.fn(() => new Promise<string | null>((r) => (release = r)));
