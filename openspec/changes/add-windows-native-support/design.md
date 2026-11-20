@@ -22,17 +22,27 @@ already owns the concern, and callers stay platform-free:
   shutdown console events on Windows.
 - Free disk via `sysinfo` (already a dependency of `bootstrap` and the app) on every platform, replacing
   the `libc::statvfs` call.
-- A `service` module (in `bootstrap`, used by the CLI) with `start/stop/restart/status` — see D2.
+- A `service` module (in `bootstrap`, used by the CLI and the daemon-start resolver) with
+  `start/stop/restart` — see D2.
 - A `shell` lookup in `bootstrap::util` that returns the POSIX shell: `sh` on Unix, Git's `sh.exe` on
   Windows (same search order as `run-hook.cmd`: `Program Files\Git`, `Program Files (x86)\Git`, `PATH`).
   A miss is an error naming Git for Windows, never a silent skip.
 
 ### D2. Daemon lifecycle: Task Scheduler logon task
-`sensei start` on Windows registers (once) and runs a per-user scheduled task `sensei\senseid`,
-triggered at logon, running `senseid serve` hidden. `stop` asks the daemon over `POST /stop` first (the
-path every platform already tries), then ends the task. Rejected: a Windows Service — it runs under a
-service account, so the user's Credential Manager entries and `~/.sensei` are not the ones the CLI and
-app see.
+`sensei start` on Windows registers a per-user scheduled task `sensei-senseid` (re-registered on every
+start, so it follows the binary after an upgrade) and runs it. Its trigger is the user's own logon and it
+runs with their interactive token (`LeastPrivilege`), which lets a standard user register it. It sits at
+the root of the Task Scheduler library: creating a folder (`sensei\senseid`, as first planned) needs an
+administrator. The task runs `senseid start`, which spawns the daemon with no console window and exits,
+so the task finishes at once; `ExecutionTimeLimit` is unlimited regardless, since the 72-hour default
+ends whatever a task still runs. The definition is passed to `schtasks /Create /XML` as UTF-16.
+
+`sensei stop` deletes the task (so the daemon does not return at the next sign-in, as `brew services
+stop` does) and then runs `senseid stop`, which asks the daemon over `POST /stop` — the path every
+platform already tries. If the daemon does not answer, the fallback ends it by pid: SIGTERM on Unix, a
+terminate on Windows. Daemon status stays the direct `/health` probe on every platform, so the module has
+no `status`. Rejected: a Windows Service — it runs under a service account, so the user's Credential
+Manager entries and `~/.sensei` are not the ones the CLI and app see.
 
 ### D3. Postgres in Docker
 The prerequisite provider checks, in order: Docker CLI present, Docker engine reachable, container

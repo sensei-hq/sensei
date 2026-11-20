@@ -26,9 +26,12 @@
   on PR #510 after 3 rounds: Unix-only signal/script/permission tests gated, two tests' path expectations fixed
 
 ## 3. Daemon lifecycle (slice 3, depends on 1)
-- [ ] 3.1 `service` module with start/stop/restart/status: Homebrew services on macOS/Linux (current behaviour,
-  tests unchanged), Task Scheduler logon task on Windows
-- [ ] 3.2 `sensei start|stop|restart` and `senseid stop` call it; the `kill <pid>` fallback is Unix-only
+- [x] 3.1 `service` module with start/stop/restart: Homebrew services on macOS/Linux (current behaviour,
+  tests unchanged), Task Scheduler logon task `sensei-senseid` on Windows. No `status`: daemon status
+  stays the direct `/health` probe (D2)
+- [x] 3.2 `sensei start|stop|restart` and the daemon-start resolver call it; `senseid start|stop` use the
+  shared `util::pid_alive`/`util::terminate` instead of `kill`, and the daemon starts with no console
+  window on Windows
 - [ ] 3.3 Manual check on a Windows host: start, sign out/in (daemon back), stop (graceful shutdown logged)
 
 ## 4. Prerequisite checker (slice 4, depends on 3)

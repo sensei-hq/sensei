@@ -151,16 +151,8 @@ fn is_orphan(name: &str) -> bool {
         .strip_prefix(PREFIX)
         .and_then(|rest| rest.split('_').nth(1))
         .and_then(|p| p.parse::<u32>().ok());
-    created < now_secs().saturating_sub(STALE_AFTER_SECS) || pid.is_some_and(|p| !pid_alive(p))
-}
-
-/// Whether a process with this pid exists (`kill -0`).
-fn pid_alive(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    created < now_secs().saturating_sub(STALE_AFTER_SECS)
+        || pid.is_some_and(|p| !sensei_bootstrap::util::pid_alive(p))
 }
 
 /// The template against the DDL tree it must match: the fingerprint

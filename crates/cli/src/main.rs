@@ -323,7 +323,14 @@ fn main() -> ExitCode {
             remove_cmd(&target, name.as_deref(), purge)
         }
         Some(Commands::Start { port }) => {
-            daemon_cmd("start", Some(port.unwrap_or_else(|| cfg().daemon_port)))
+            let port = port.unwrap_or_else(|| cfg().daemon_port);
+            // On Windows `sensei start` registers the logon task (#505 D2).
+            // macOS and Linux keep the direct `senseid start`: brew services
+            // cannot take `--port`.
+            #[cfg(windows)]
+            start_and_report(port);
+            #[cfg(not(windows))]
+            daemon_cmd("start", Some(port));
         }
         Some(Commands::Stop) => daemon_cmd("stop", None),
         Some(Commands::Restart { port }) => {
@@ -394,43 +401,42 @@ fn ensure_daemon() {
     }
 
     eprintln!("Daemon not running — starting...");
-    start_daemon();
+    start_daemon(cfg().daemon_port);
 
     if daemon_available() {
         check_daemon_version(true);
         return;
     }
 
-    eprintln!("Could not start daemon. Run: brew services start sensei");
+    eprintln!("Could not start daemon. Run: {}", sensei_bootstrap::service::start_hint());
     std::process::exit(1);
 }
 
-fn start_daemon() {
-    // Prefer `brew services start sensei` — matches the postgres/ollama
-    // startup path AND inherits launchd's keep-alive auto-restart on crash.
-    // Direct spawn is the fallback when brew isn't available or the service
-    // isn't registered yet.
-    let cfg = cfg();
-    let service = cfg.brew_service_name();
-    let mut started_via_brew = false;
-    if let Ok(out) =
-        std::process::Command::new("brew").args(["services", "start", service]).output()
-        && out.status.success()
-    {
-        started_via_brew = true;
+/// `sensei start` on Windows: start through the logon task, and exit 0 only
+/// once the daemon answers.
+#[cfg(windows)]
+fn start_and_report(port: u16) -> ! {
+    start_daemon(port);
+    if daemon_available() {
+        std::process::exit(0);
     }
+    eprintln!("Could not start daemon. Run: {SENSEID_BIN} start --port {port}");
+    std::process::exit(1);
+}
 
-    if !started_via_brew {
+fn start_daemon(port: u16) {
+    // Prefer the service manager — brew services (launchd's keep-alive
+    // restarts the daemon after a crash) or the Windows logon task. Direct
+    // spawn is the fallback when it isn't available.
+    if let Err(e) = sensei_bootstrap::service::start(port) {
+        eprintln!("Service start unavailable ({e}) — starting {SENSEID_BIN} directly.");
         let bin = daemon_bin();
-        let port = cfg.daemon_port;
-        match std::process::Command::new(&bin).args(["start", "--port", &port.to_string()]).spawn()
+        if let Err(e) =
+            std::process::Command::new(&bin).args(["start", "--port", &port.to_string()]).spawn()
         {
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("Failed to spawn daemon ({}): {}", bin.display(), e);
-                eprintln!("Try: brew services start {service}");
-                return;
-            }
+            eprintln!("Failed to spawn daemon ({}): {}", bin.display(), e);
+            eprintln!("Try: {}", sensei_bootstrap::service::start_hint());
+            return;
         }
     }
 
@@ -468,7 +474,7 @@ fn check_daemon_version(allow_restart: bool) {
         let _ = std::process::Command::new(&bin).arg("stop").status();
         std::thread::sleep(std::time::Duration::from_millis(500));
 
-        start_daemon();
+        start_daemon(cfg().daemon_port);
         check_daemon_version(false);
     } else {
         eprintln!("  ✗ Daemon still out of sync after restart.");
@@ -1102,15 +1108,13 @@ fn join_strs(v: &serde_json::Value) -> String {
 // ── Daemon / Scan / AddLib ──────────────────────────────────────────────────
 
 fn restart_daemon(port: u16) {
-    // Prefer brew services restart for parity with start (keep-alive +
-    // launchd ownership). Fall back to direct binary stop+start when brew
-    // isn't on PATH or the service isn't registered.
-    let service = cfg().brew_service_name();
-    if let Ok(out) =
-        std::process::Command::new("brew").args(["services", "restart", service]).status()
-        && out.success()
-    {
-        std::process::exit(0);
+    // Prefer the service manager for parity with start. Fall back to direct
+    // binary stop+start when it isn't available.
+    match sensei_bootstrap::service::restart(port) {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("Service restart unavailable ({e}) — restarting {SENSEID_BIN} directly.")
+        }
     }
 
     let bin = daemon_bin();
@@ -1126,20 +1130,19 @@ fn restart_daemon(port: u16) {
 }
 
 fn daemon_cmd(cmd: &str, port: Option<u16>) {
-    // Lifecycle commands (stop) prefer brew services so launchd's keep-alive
-    // marker stays in sync with the daemon's actual state. Status stays a
-    // direct call — it's an informational probe of the binary, not a
-    // lifecycle change.
+    // Stop goes through the service manager first, so its autostart stays in
+    // sync with the daemon's actual state. Status stays a direct call — it's
+    // an informational probe of the binary, not a lifecycle change.
     if cmd == "stop" {
-        let service = cfg().brew_service_name();
-        if let Ok(out) =
-            std::process::Command::new("brew").args(["services", "stop", service]).status()
-            && out.success()
-        {
-            std::process::exit(0);
+        use sensei_bootstrap::service::{Stopped, stop};
+        match stop() {
+            Ok(Stopped::Daemon) => std::process::exit(0),
+            // The Windows logon task is gone; `senseid stop` below ends the daemon.
+            Ok(Stopped::AutostartOnly) => {}
+            Err(e) => {
+                eprintln!("Service stop unavailable ({e}) — stopping {SENSEID_BIN} directly.")
+            }
         }
-        // Fall through to direct spawn — brew not available or service not
-        // registered with launchd.
     }
 
     let bin = daemon_bin();
