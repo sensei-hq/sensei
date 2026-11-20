@@ -4,10 +4,12 @@ on:
     branches: [main, develop]
   pull_request:
 
-# Least-privilege: the jobs read the repo and upload coverage to qlty (token) and
-# to DeepSource over OIDC (user, 2026-11-12): `id-token: write` lets the pinned
-# DeepSource CLI exchange the workflow's OIDC token for a temporary DSN, so no
-# DeepSource secret is stored here.
+# Least-privilege: the jobs read the repo and upload coverage to DeepSource over
+# OIDC (user, 2026-11-12): `id-token: write` lets the pinned DeepSource CLI
+# exchange the workflow's OIDC token for a temporary DSN, so no DeepSource
+# secret is stored here. (Qlty uploads paused, 2026-11-20: analysis minutes at
+# 90%+; the qlty-action/coverage steps are removed below, restored by re-adding
+# them beside each DeepSource report step.)
 permissions:
   id-token: write
   contents: read
@@ -19,9 +21,9 @@ concurrency:
 # Three INDEPENDENT jobs so one broken suite can't block the others' uploads.
 # (Previously a single sequential job: the app `--coverage` step crashes on the
 # CI linux runner under vitest-4/rolldown — `Could not resolve 'node:module'` —
-# and, with no `if: always()`, aborted the whole job BEFORE any qlty upload ran,
-# so Rust coverage generated but never uploaded and dojo never ran. qlty merges
-# per-commit reports across jobs, so splitting is safe.)
+# and, with no `if: always()`, aborted the whole job BEFORE any upload ran,
+# so Rust coverage generated but never uploaded and dojo never ran. DeepSource
+# merges same-key reports across jobs, so splitting is safe.)
 jobs:
   rust:
     runs-on: ubuntu-latest
@@ -47,11 +49,6 @@ jobs:
         run: cargo llvm-cov -p sensei-bootstrap -p sensei-cli -p sensei-mcp -p sensei-logger -p dojo-protocol --lcov --output-path target/lcov.info
       - name: Normalize Rust paths to repo root
         run: sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" target/lcov.info
-      - name: Upload Rust coverage
-        uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
-        with:
-          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
-          files: target/lcov.info
       # DeepSource, over OIDC (.github/actions/deepsource-report: a pinned,
       # checksummed CLI; --use-oidc, so there is no DSN). The paths are repo-root
       # relative after the sed above. Several reports under one key merge
@@ -64,7 +61,7 @@ jobs:
 
   # senseid's pure (DB-free) modules — language parsers, config adapters, assistant
   # transcript parsing, ranking/classifiers/plan-graph/etc. Their tests run with NO
-  # Postgres, so we measure them here and fold the coverage into the qlty aggregate
+  # Postgres, so we measure them here and report the coverage to DeepSource
   # (the DB-coupled remainder still needs test-infra work — see the `rust` job note).
   senseid:
     runs-on: ubuntu-latest
@@ -91,11 +88,6 @@ jobs:
         run: scripts/senseid-pure-coverage.sh target/senseid-pure.lcov
       - name: Normalize paths to repo root
         run: sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" target/senseid-pure.lcov
-      - name: Upload senseid pure coverage
-        uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
-        with:
-          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
-          files: target/senseid-pure.lcov
       - name: Report senseid pure coverage to DeepSource
         uses: ./.github/actions/deepsource-report
         with:
@@ -115,8 +107,8 @@ jobs:
       # KNOWN ISSUE: app is on vitest ^4 / vite ^8; `--coverage` runs fine locally
       # but crashes on the CI linux runner under rolldown-vite (node:module
       # externalize). `continue-on-error` keeps that from failing the workflow;
-      # `skip-missing-files` lets the upload no-op if no lcov was produced. App
-      # coverage uploads when the run succeeds. FOLLOW-UP: align app to dojo's
+      # the DeepSource report below warns (skip-missing) if no lcov was produced.
+      # App coverage reports when the run succeeds. FOLLOW-UP: align app to dojo's
       # stable vitest ^3.2.4, or debug the rolldown crash.
       # Deliberately NOT continue-on-error, unlike the coverage step below: this
       # is the app's only CI gate on types. `make app-check` existed and was
@@ -138,16 +130,9 @@ jobs:
       - name: app coverage
         continue-on-error: true
         run: cd app && bun run test:unit --coverage
-      - name: Upload app coverage
-        uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
-        with:
-          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
-          files: app/coverage/lcov.info
-          add-prefix: app
-          skip-missing-files: true
-      # The app's lcov paths are relative to app/ (qlty gets `add-prefix`); DeepSource
-      # reads the file from the repo root, so the action prefixes a copy. The coverage
-      # step above is continue-on-error, so a missing file is a warning, not silence.
+      # The app's lcov paths are relative to app/; DeepSource reads the file from
+      # the repo root, so the action prefixes a copy. The coverage step above is
+      # continue-on-error, so a missing file is a warning, not silence.
       - name: Report app coverage to DeepSource
         uses: ./.github/actions/deepsource-report
         with:
@@ -168,12 +153,6 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - name: dojo coverage
         run: cd dojo && bun install --frozen-lockfile && bun run test --coverage
-      - name: Upload dojo coverage
-        uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
-        with:
-          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
-          files: dojo/coverage/lcov.info
-          add-prefix: dojo
       - name: Report dojo coverage to DeepSource
         uses: ./.github/actions/deepsource-report
         with:
