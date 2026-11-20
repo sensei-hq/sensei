@@ -2392,7 +2392,11 @@ impl PgStore {
     /// `crew_id` and a run without one both land here. None or several are
     /// the caller's to resolve (`relay_no_active_crew`,
     /// `relay_crew_ambiguous`), never a guess. Returns the crew's id,
-    /// repo_key and workspace_id.
+    /// repo_key and workspace_id. The open crews are held `for share`, as
+    /// the open-crew gate holds one: a crew a racing close holds is read
+    /// after the close commits and drops out, so a closed crew is never
+    /// joined. Every open crew is read (no `limit`): a row that drops out
+    /// after the wait must not hide a third crew from the count.
     async fn relay_single_active_crew(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         user_id: Uuid,
@@ -2400,7 +2404,7 @@ impl PgStore {
         let active: Vec<(Uuid, Option<String>, Option<Uuid>)> = sqlx_core::query_as::query_as(
             "select id, repo_key, workspace_id from relay.crews
              where user_id = $1 and status <> 'closed'
-             order by started_at, id limit 2",
+             order by started_at, id for share",
         )
         .bind(user_id)
         .fetch_all(&mut **tx)
@@ -6602,6 +6606,25 @@ impl PgStore {
         sqlx_core::query_scalar::query_scalar::<_, Uuid>(
             "select id from relay.crews where status <> 'closed' order by id for key share",
         )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        // Then the lanes this pass writes or expires, before their leases:
+        // heartbeat (lane `for share`, then its lease) and unregister (the
+        // lane, then its lease) take the same order. Expiring a lease first
+        // and then ending the lane's limit pause would hold the lease they
+        // wait on while waiting on the lane they hold (40P01).
+        sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select l.id from relay.lanes l
+             where (l.limit_paused_at is not null and l.limit_resumes_at is not null
+                    and l.limit_resumes_at <= $1)
+                or exists (
+                    select 1 from relay.leases s
+                    where s.lane_id = l.id and s.kind = 'lane'
+                      and s.state = 'granted' and s.expires_at <= $1)
+             order by l.id for no key update",
+        )
+        .bind(now)
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;

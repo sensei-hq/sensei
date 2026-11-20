@@ -39,10 +39,15 @@ flowchart TD
    update`, matching the person close (`relay.rs:6089`, `6116-6121`), so two closes serialize. A register-join,
    reregister, plan, assign or claim passes `relay_require_crew_open`, which reads the crew `for share` (PR #502
    review): a close racing one of them serializes with it, and the gate sees the status the close committed, so a
-   closed crew never gains a lane or a lease. The lease sweeper takes every open crew row `for key share` in id
+   closed crew never gains a lane or a lease. A contributor that names no crew (#402) reads the user's open crews
+   `for share` too, all of them, not `limit 2`: a crew a racing close holds drops out once the close commits, and the
+   register answers `relay_no_active_crew` instead of joining it. The lease sweeper takes every open crew row `for key share` in id
    order before it expires leases or ends limit pauses (PR #502 review): a sweep that held a dead lane's lease while
    waiting on the lane row close holds would deadlock (`40P01`). `key share` waits only for a close, not for
-   heartbeats or the open-crew gate.
+   heartbeats or the open-crew gate. It then takes the lanes it will touch (a due limit pause or a lapsed lane lease)
+   `for no key update` in id order, before their leases (PR #502 review): heartbeat (lane `for share`, then lease) and
+   a lane's own unregister (lane, then lease) take that order, and a sweep that expired the lease first and then ended
+   the lane's pause would deadlock with either. `no key update` lets task writes' foreign-key checks pass.
 4. **Heartbeat race.** A heartbeat that commits between the liveness read and the close's commit is still released
    by close (the lane row is locked and unregistered in the same transaction); its next call gets `410`. Heartbeat
    takes the same order as close (PR #502 review): it updates the crew row first, then reads the lane `for share`,
