@@ -20,9 +20,10 @@
   falls through to `bin_names` on PATH (`cursor`, `code`, `zed`, …)
 - [ ] 2.6 Windows config paths for the MCP-file assistants (`config_rel` is macOS-shaped for Claude Desktop, and
   Zed / VS Code keep settings elsewhere on Windows) — verify each app's real Windows location before changing
-- [ ] 2.5 Run the no-DB tests on the Windows CI job (decided, user 2026-11-20: GitHub's Windows runners cannot
+- [x] 2.5 Run the no-DB tests on the Windows CI job (decided, user 2026-11-20: GitHub's Windows runners cannot
   start the pgvector service container, so the DB-coupled suite stays on Linux): every crate but senseid, plus
-  senseid's pure modules via `scripts/senseid-pure-coverage.sh --test-only` (same selection and guards)
+  senseid's pure modules via `scripts/senseid-pure-coverage.sh --test-only` (same selection and guards). Green
+  on PR #510 after 3 rounds: Unix-only signal/script/permission tests gated, two tests' path expectations fixed
 
 ## 3. Daemon lifecycle (slice 3, depends on 1)
 - [ ] 3.1 `service` module with start/stop/restart/status: Homebrew services on macOS/Linux (current behaviour,
