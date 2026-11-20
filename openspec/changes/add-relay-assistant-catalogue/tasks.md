@@ -113,32 +113,32 @@ Every numbered item starts with a red commit (the failing test) before the green
 ## Slice 2: Host detection at register (detected wins; self-report is the fallback)
 
 ### 5. Detection
-- [ ] 5.1 Check the facts on this machine before pinning them: the `clientInfo.name` that Claude Code, Cursor and
+- [x] 5.1 Check the facts on this machine before pinning them: the `clientInfo.name` that Claude Code, Cursor and
       Zed send (log one `initialize` from each), and `TERM_PROGRAM` / `CURSOR_TRACE_ID` in a Cursor terminal, a
       Zed terminal, and Terminal.app. Record the values in design.md and correct the flowchart if one differs.
-- [ ] 5.2 Red: `crates/mcp` unit tests for `detect_host(client_name, env)` over the flowchart cases, with env
+- [x] 5.2 Red: `crates/mcp` unit tests for `detect_host(client_name, env)` over the flowchart cases, with env
       injected as a map and no process globals (Cursor client → `cursor`; Claude Code client with
       `TERM_PROGRAM=zed` → `zed`; `vscode` + `CURSOR_TRACE_ID` → `cursor`; `Apple_Terminal` → none; an unknown
       client name with no `TERM_PROGRAM` → none). The register request built by `relay_claim_request`
       (`crates/mcp/src/lib.rs:473`, keys at `:479-503`) carries `host_detected` when detection finds an editor and
       omits it otherwise, and still forwards a self-reported `host`.
-- [ ] 5.3 Green: `main.rs` keeps `params.clientInfo.name` from `initialize` (`crates/mcp/src/main.rs:174-177`;
+- [x] 5.3 Green: `main.rs` keeps `params.clientInfo.name` from `initialize` (`crates/mcp/src/main.rs:174-177`;
       `handle_initialize`, `lib.rs:1084-1090`, is unchanged) and reads the environment once at start; both reach
       `handle_call_tool` (`main.rs:200-205`), which adds `host_detected` to the `relay_register` args before the
       request is built. `detect_host` lives in `lib.rs` beside the request builders.
-- [ ] 5.4 Red (unit): `resolve_host(reported, detected, catalogue)` in `crates/senseid/src/relay/` — detected
+- [x] 5.4 Red (unit): `resolve_host(reported, detected, catalogue)` in `crates/senseid/src/relay/` — detected
       catalogue editor wins over a different report and returns a mismatch; detected alone is used; report alone
       is used (fallback); a detected value the catalogue does not know as an editor (`muse`, `claude`) is ignored
       and the report stands; blank report and no detection give none; an unknown reported word is kept as given.
-- [ ] 5.5 Red (handler test, serial DB): a register with `host_detected: "zed"` and no host stores host `zed`; a
+- [x] 5.5 Red (handler test, serial DB): a register with `host_detected: "zed"` and no host stores host `zed`; a
       register with `host: "cursor"` and `host_detected: "zed"` stores `zed`; a register with only
       `host: "cursor"` stores `cursor`; a `host_detected` longer than 64 characters is refused, like `host`
       (`api/handlers/relay.rs:5618-5630`).
-- [ ] 5.6 Green: `RegisterBody.host_detected` (`api/handlers/relay.rs:195-210`), `RelayRegisterInput`
+- [x] 5.6 Green: `RegisterBody.host_detected` (`api/handlers/relay.rs:195-210`), `RelayRegisterInput`
       (`db/pg_store/relay.rs:58-60`), and the store (`relay.rs:1600-1606`) call `resolve_host` with the catalogue
       and `tracing::warn!` on a mismatch or an ignored detection, naming the lane code and both values. No DDL:
       `relay.lanes.host` keeps the resolved host.
-- [ ] 5.7 e2e `app/e2e/tests/relay-host.spec.ts` (red first). Use the `RelayCrew` driver
+- [x] 5.7 e2e `app/e2e/tests/relay-host.spec.ts` (red first). Use the `RelayCrew` driver
       (`app/e2e/lib/relay-crew.ts:84`) on a clean slate, as `relay-run.spec.ts` does. Register a coordinator, a
       lane with only `host_detected: 'zed'`, a lane with `host: 'cursor', host_detected: 'zed'`, and a lane with
       only `host: 'cursor'`. Their cards appear live with no reload and read "in Zed", "in Zed" and "in Cursor".
