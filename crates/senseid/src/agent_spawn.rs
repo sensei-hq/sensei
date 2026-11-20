@@ -442,10 +442,12 @@ mod tests {
 
     #[tokio::test]
     async fn with_cwd_runs_in_directory() {
-        // pwd should print the cwd we set. Use the OS temp dir (portable) and
-        // compare on the trailing component to sidestep /var vs /private/var
-        // symlink canonicalisation on macOS.
-        let dir = std::env::temp_dir();
+        // pwd should print the cwd we set. A uniquely named dir, compared on its
+        // trailing component: that survives macOS's /var vs /private/var
+        // canonicalisation and Git for Windows' pwd, which shows the temp dir
+        // as /tmp.
+        let tmp = tempfile::Builder::new().prefix("sensei-cwd-probe").tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let cmd = AgentCommand::new("pwd", vec![], short()).with_cwd(&dir);
         let out = run_agent(&cmd).await.expect("pwd should run");
         let last = dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
