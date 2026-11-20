@@ -1,27 +1,23 @@
-# Checkpoint — 2026-11-20 (relay open items — #455 slice 2/2)
+# Checkpoint — 2026-11-20 (rokkit 1.16.1 follow-up — #389 R3/R4 workarounds dropped)
 
-**Slice:** #455 slice 2 — host detection at register (`add-relay-assistant-catalogue`, tasks 5.1-5.7).
-**Branch:** `lane/relay-455-s2` (worktree `lanes/relay-open`), from origin/develop after slice 1 (PR #506).
+**Slice:** rokkit 1.16.1 follow-up (`add-relay-decision-response-form` R3/R4 done-notes).
+**Branch:** `lane/relay-rokkit-1.16.1` (worktree `lanes/relay-rokkit`), from origin/develop @ c4162893d (#510); #514 merged in.
 
 ## Done
-- 5.1: client names and env values checked on this machine with a logging MCP probe (Claude Code
-  `claude-code`, Zed `Zed`, VS Code `Visual Studio Code`, Terminal.app `Apple_Terminal`); recorded in design.md.
-  Cursor, Windsurf and Kiro are not installed here; their published values stand.
-- 5.2/5.3: `crates/mcp` `detect_host(client_name, env)` and `with_detected_host`; `main.rs` keeps
-  `clientInfo.name` from `initialize`, reads the environment once, and register carries `host_detected`
-  (a caller's own `host_detected` is dropped).
-- 5.4-5.6: `relay::host::resolve_host`; register prefers a detected catalogue editor, falls back to the
-  report, warns on a mismatch or an ignored detection, refuses either value over 64 characters. No DDL.
-- 5.7: `app/e2e/tests/relay-host.spec.ts` green with relay-run and relay-catalogue (3 passed).
-- 6.2: openspec validate --strict; lanes.md §4 describes the host and the picker.
-- 6.3: follow-ups raised: #512 (hook-captured sessions' host), #513 (launch templates).
+- Bump: `@rokkit/*` ^1.16.0 → ^1.16.1 in `app/` + `dojo/` (+ lockfiles); 1.16.1 verified on npm.
+- Deleted `DecisionPickSeveral.svelte`: the card draws rokkit's MultiSelect directly (#206).
+- Removed the listbox-naming attachment (#206), `disabled`-only-when-true (#207),
+  chooser placeholder blanking (#208). #205 still OPEN in rokkit: `withArrayLayout` stays.
+- Specs (red→green): tags in trigger, placeholders shown, axe on every state. e2e covers
+  the open pick-several with members picked (#209); `#209` annotation removed.
+- Gates: app check 0 errors, app unit 3912 pass, dojo test 2411 pass + check clean,
+  e2e `relay-decision-form.spec.ts` 7/7. Prod daemon restored after the run.
 
 ## Remaining
-- PR to develop (Closes #455); CI green; merge.
-- 6.1's full `make test-app-e2e` across every spec was not run here (the three relay specs were).
+- Push lane, PR to develop, CI green, merge. No issue to close (follow-up of closed #389).
 
 ## Next command
-`gh pr checks <pr> --watch`
+`git push -u origin lane/relay-rokkit-1.16.1` (from `lanes/relay-rokkit`), then `gh pr create`.
 
 ## Open questions
 - None.

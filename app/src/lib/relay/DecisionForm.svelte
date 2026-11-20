@@ -5,8 +5,6 @@
   // The card owns Answer: it calls `collect()`, which checks the form inline (validateAll),
   // shows each field's message, and hands back the values only when nothing failed.
   import { untrack } from 'svelte';
-  import type { Attachment } from 'svelte/attachments';
-  import DecisionPickSeveral from './DecisionPickSeveral.svelte';
   import { FormBuilder, FormRenderer, InputField, validateAll } from '@rokkit/forms';
   import {
     textCap,
@@ -73,32 +71,11 @@
     return Object.keys(messages).length > 0 ? null : toAnswerValues(form.schema, builder.data);
   }
 
-  // `disabled` goes to InputField only when true: rokkit writes `data-field-disabled={disabled}`, so an
-  // enabled field carries `"false"`, and zen-sumi fades any `[data-field-disabled]` field to 40%
-  // (axe color-contrast; sensei-hq/rokkit#207).
-  // A Select or pick-several draws no placeholder: rokkit fades it to 60% in ink-mute, 3.98:1 in dark
-  // mode (axe color-contrast; sensei-hq/rokkit#208). The field's label names the control.
-  const CHOOSERS = new Set(['select', 'multiselect']);
-
-  // A pick-several draws through DecisionPickSeveral: no control nested in the MultiSelect's trigger.
-  const renderers = { multiselect: DecisionPickSeveral as never };
-
-  /** Name each listbox rokkit opens in a field after the field's label: rokkit's Select and
-   *  MultiSelect open a `role="listbox"` with no name (axe aria-input-field-name; sensei-hq/rokkit#206). */
-  function nameListboxes(label: string): Attachment<HTMLElement> {
-    return (node) => {
-      const name = () => {
-        for (const box of node.querySelectorAll<HTMLElement>('[role="listbox"]')) {
-          if (!box.hasAttribute('aria-label') && !box.hasAttribute('aria-labelledby')) box.setAttribute('aria-label', label);
-        }
-      };
-      name();
-      const observer = new MutationObserver(name);
-      observer.observe(node, { childList: true, subtree: true });
-      return () => observer.disconnect();
-    };
-  }
-
+  // rokkit 1.16.1 draws the pick-several itself: each picked member is a label in the trigger
+  // (sensei-hq/rokkit#206), the open listbox names itself after the trigger, a Select or
+  // pick-several shows its placeholder at full opacity (#208), and rokkit omits false-valued
+  // data-field-* attributes so an enabled field takes no disabled styling (#207). The card passes
+  // `disabled` straight through and adds no renderer of its own.
   type Element = { scope?: string; type?: string; value?: unknown; props?: Record<string, unknown> };
 
   function change(path: string, value: unknown): void {
@@ -112,15 +89,13 @@
 
 {#snippet field(element: Element)}
   {@const path = (element.scope ?? '').replace(/^#\//, '')}
-  <div data-decision-field={path} {@attach nameListboxes(labels[path] ?? path)}>
+  <div data-decision-field={path}>
     <InputField
       name={`${idPrefix}-${path}`}
       type={element.type}
       value={element.value}
       {...element.props}
-      {...(CHOOSERS.has(element.type ?? '') ? { placeholder: '' } : {})}
-      disabled={disabled || undefined}
-      {renderers}
+      disabled={disabled}
       onchange={(value: unknown) => change(path, value)}
     />
   </div>
