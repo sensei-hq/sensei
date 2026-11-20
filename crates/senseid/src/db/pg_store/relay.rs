@@ -15186,4 +15186,312 @@ mod tests {
         assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
         assert_eq!(task_state(&pg, t).await, "interrupted");
     }
+
+    /// The lane's own unregister racing a close: it takes the crew row
+    /// first like every other lane write, so it waits behind the close
+    /// (which holds the crew, then the lane) instead of holding the lane
+    /// and the task while it waits on the crew for its `relay.actions`
+    /// foreign key (a 40P01 deadlock). Once close commits it answers `410`
+    /// and the task is interrupted once, by the close.
+    #[tokio::test]
+    async fn unregister_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd7);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let mut close = close_holding_crew(&pg, c1).await;
+        let store = pg.clone();
+        let leave = tokio::spawn(async move { store.relay_unregister(a2).await });
+        assert!(
+            some_session_waits_on_a_lock(&pg).await,
+            "the unregister never waited on the close"
+        );
+        // Close's next steps: its dead lanes `for update`, then release them.
+        let dead = sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select id from relay.lanes
+             where user_id = $1 and crew_id = $2 and unregistered_at is null and id <> $3
+             order by id for update",
+        )
+        .bind(u1())
+        .bind(c1)
+        .bind(a1)
+        .fetch_all(&mut *close)
+        .await;
+        assert!(dead.is_ok(), "close deadlocked with the unregister: {dead:?}");
+        let released = PgStore::relay_unregister_tx(&mut close, u1(), c1, a2).await;
+        assert!(released.is_ok(), "close deadlocked with the unregister: {released:?}");
+        close_commits(close, c1).await;
+        let left = leave.await.unwrap();
+        assert!(matches!(&left, Err(RelayError::Gone(_))), "{:?}", left.map(|o| o.interrupted));
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+        assert_eq!(kind_count(&pg, t, "interrupted").await, 1);
+    }
+
+    /// Another writer's transaction holding task `t`, moved to `state`
+    /// (a person's `cancel_run`, a merge), not yet committed.
+    async fn racer_holding_task(
+        pg: &PgStore,
+        t: Uuid,
+        state: &str,
+    ) -> sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres> {
+        let mut racer = lane_tx(pg).await;
+        sqlx_core::query::query(
+            "update relay.tasks set state = $1::relay.task_state, blocked_from_state = null,
+                    state_changed_at = current_timestamp
+             where id = $2",
+        )
+        .bind(state)
+        .bind(t)
+        .execute(&mut *racer)
+        .await
+        .unwrap();
+        racer
+    }
+
+    /// A write racing another writer that moves task `t` to `state`: the
+    /// racer holds the task, the write starts and must wait on it, then
+    /// the racer commits. Returns the write's answer. A write that acted
+    /// on the state it read before the racer committed overwrites it.
+    async fn write_racing_a_task_move<T, F, Fut>(
+        pg: &PgStore,
+        t: Uuid,
+        state: &str,
+        write: F,
+    ) -> Result<T, RelayError>
+    where
+        T: Send + 'static,
+        F: FnOnce(PgStore) -> Fut,
+        Fut: std::future::Future<Output = Result<T, RelayError>> + Send + 'static,
+    {
+        let racer = racer_holding_task(pg, t, state).await;
+        let write = tokio::spawn(write(pg.clone()));
+        assert!(some_session_waits_on_a_lock(pg).await, "the write never waited on the task");
+        racer.commit().await.unwrap();
+        write.await.unwrap()
+    }
+
+    async fn kind_count(pg: &PgStore, t: Uuid, kind: &str) -> i64 {
+        sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where task_id = $1 and kind::text = $2",
+        )
+        .bind(t)
+        .bind(kind)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    /// A person cancels the run while the lane close releases the dead
+    /// lane holding its task: close interrupts only a task still active
+    /// once it holds it, so the cancel stands and no `interrupted` row
+    /// lands (the sweeper would re-offer a cancelled run's task).
+    #[tokio::test]
+    async fn close_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd8);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store.relay_close_crew(u1(), a1, c1).await
+        })
+        .await
+        .unwrap();
+        assert_eq!(out.released, vec![(a2, None)]);
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "interrupted").await, 0);
+    }
+
+    /// The sweep expiring a lapsed lane racing a cancel leaves the task
+    /// cancelled.
+    #[tokio::test]
+    async fn sweep_expiry_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd9);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store.relay_sweep_leases(t0() + chrono::Duration::seconds(3600)).await
+        })
+        .await;
+        assert!(out.is_ok(), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "interrupted").await, 0);
+    }
+
+    /// The sweep suspending a limit-paused lane's work racing a cancel
+    /// leaves the task cancelled.
+    #[tokio::test]
+    async fn sweep_pause_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = $1, limit_scope = 'daily',
+                    limit_resumes_at = $2
+             where id = $3",
+        )
+        .bind(t0())
+        .bind(t0() + chrono::Duration::days(1))
+        .bind(a2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let t = v7(0xda);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store.relay_sweep_leases(t0() + chrono::Duration::seconds(100)).await
+        })
+        .await;
+        assert!(out.is_ok(), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "interrupted").await, 0);
+    }
+
+    /// The sweep re-offering an interrupted task racing a cancel leaves
+    /// the task cancelled: a cancelled run's task never returns to the
+    /// pool.
+    #[tokio::test]
+    async fn sweep_reoffer_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xdb);
+        fx_task(&pg, u1(), t, c1, Some(a2), "interrupted", "tests", 1).await;
+        fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a2),
+                kind: "interrupted",
+                round: Some(1),
+                phase: Some("tests"),
+                ..Default::default()
+            },
+        )
+        .await;
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store.relay_sweep_leases(Utc::now() + chrono::Duration::days(1)).await
+        })
+        .await;
+        assert!(out.is_ok(), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "reoffered").await, 0);
+    }
+
+    /// A report racing a cancel is refused (`409`); the task stays
+    /// cancelled, not floated into review.
+    #[tokio::test]
+    async fn report_racing_a_cancel_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xdc);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store.relay_report_task(u1(), a2, t, report_input()).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "reported").await, 0);
+    }
+
+    /// A review racing a cancel is refused (`409`); the task stays
+    /// cancelled, not approved.
+    #[tokio::test]
+    async fn review_racing_a_cancel_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xdd);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        pg.relay_report_task(u1(), a2, t, report_input()).await.unwrap();
+        pg.relay_claim_review(u1(), a1, t, t0()).await.unwrap();
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store.relay_submit_review(u1(), a1, t, review_input()).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+    }
+
+    /// An answer racing a cancel of a task its ask blocked records the
+    /// answer but leaves the task cancelled, not resumed.
+    #[tokio::test]
+    async fn answer_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xde);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let ask = pg.relay_ask_decision(u1(), a1, ask_input(vec![t])).await.unwrap();
+        let answer = RelayAnswerInput { option: Some("db".into()), values: None, note: None };
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store
+                .relay_answer_decision(
+                    u1(),
+                    RelayCaller::Person { surface: RelaySurface::Desktop },
+                    ask.decision_id,
+                    answer,
+                )
+                .await
+        })
+        .await;
+        assert!(out.is_ok(), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+    }
+
+    /// A merge racing a cancel is refused (`409`); the task stays
+    /// cancelled, not done.
+    #[tokio::test]
+    async fn merge_racing_a_cancel_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xdf);
+        fx_task(&pg, u1(), t, c1, Some(a2), "approved", "tests", 1).await;
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store.relay_merge_task(u1(), a1, t, merge_input()).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{out:?}");
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "merged").await, 0);
+    }
+
+    /// A task cancel racing a merge is refused (`409`); the merged task
+    /// stays done.
+    #[tokio::test]
+    async fn cancel_racing_a_merge_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xe0);
+        fx_task(&pg, u1(), t, c1, Some(a2), "approved", "tests", 1).await;
+        // The holder left: only a live holder refuses a cancel.
+        sqlx_core::query::query("update relay.lanes set unregistered_at = $1 where id = $2")
+            .bind(t0())
+            .bind(a2)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let out = write_racing_a_task_move(&pg, t, "done", move |store| async move {
+            store.relay_cancel_task(u1(), a1, t).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "done");
+    }
+
+    /// An assign racing a cancel is refused (`409`); the pool task stays
+    /// cancelled, not handed to a lane.
+    #[tokio::test]
+    async fn assign_racing_a_cancel_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xe1);
+        fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
+        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
+            store.relay_assign_task(u1(), a1, t, assign_input(a2)).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|_| ()));
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "assigned").await, 0);
+    }
 }
