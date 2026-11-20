@@ -1,28 +1,26 @@
-# Checkpoint — 2026-11-20 (relay open items — #398, PR #502 landing)
+# Checkpoint — 2026-11-20 (rokkit 1.16.1 follow-up — #389 R3/R4 workarounds dropped)
 
-**Slice:** #398 — lane close tolerates and releases dead-lease lanes (`fix-relay-crew-close-dead-lanes`, 1/1).
-**Branch:** `lane/relay-398-s1` (worktree `lanes/relay-open`), PR #502 to develop; origin/develop merged in.
+**Slice:** rokkit 1.16.1 follow-up (`add-relay-decision-response-form` R3/R4 done-notes).
+**Branch:** `lane/relay-rokkit-1.16.1` (worktree `lanes/relay-rokkit`), from origin/develop @ c4162893d (#510).
 
 ## Done
-- Store: `relay_close_crew` judges liveness by the lane lease, locks crew then lanes, releases each
-  dead lane through `relay_unregister_tx`; `RelayCloseOutput.released`.
-- Handler: `close_crew` emits `lane.unregistered` + `task.interrupt` per released lane, then
-  `run.completed`; answer gains `released`.
-- e2e `app/e2e/tests/relay-crew-close.spec.ts`: red on the pre-fix daemon (409), green on this branch.
-- Review fixes 1-7 (PR #502): every crew/lane/task writer takes the crew row first; writers act only
-  from the state they read; the sweep skips closed crews. design.md 3.
-- Gate: fmt, clippy (senseid), relay DB tests (478), e2e relay-crew-close.spec.ts, openspec validate --strict.
-- #389 (PR #508) landed on develop separately; its rokkit upstream issues rokkit#205-#209 stay open.
+- Bump: `@rokkit/*` ^1.16.0 → ^1.16.1 in `app/` + `dojo/` (+ lockfiles); 1.16.1 verified on npm.
+- Deleted `DecisionPickSeveral.svelte`: the card draws rokkit's MultiSelect directly (#206).
+- Removed the listbox-naming attachment (#206), `disabled`-only-when-true (#207),
+  chooser placeholder blanking (#208). #205 still OPEN in rokkit: `withArrayLayout` stays.
+- Specs (red→green): tags in trigger, placeholders shown, axe on every state. e2e covers
+  the open pick-several with members picked (#209); `#209` annotation removed.
+- Gates: app check 0 errors, app unit 3912 pass, dojo test 2411 pass + check clean,
+  e2e `relay-decision-form.spec.ts` 7/7. Prod daemon restored after the run.
 
 ## Remaining
-- PR #502 CI green, merge to develop, close #398.
+- Push lane, PR to develop, CI green, merge. No issue to close (follow-up of closed #389).
 
 ## Next command
-`gh pr checks 502 --watch`
+`git push -u origin lane/relay-rokkit-1.16.1` (from `lanes/relay-rokkit`), then `gh pr create`.
 
 ## Open questions
 - None.
 
 ## Known-broken
-- None. Noted, out of slice: `relay_unregister_tx` grants freed resource slots without the
-  per-resource advisory lock (pre-existing).
+- None.

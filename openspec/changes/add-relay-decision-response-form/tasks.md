@@ -147,6 +147,8 @@ Red commit first for every numbered group; green in the next commit.
   `renderers` registry (`DecisionPickSeveral`: the MultiSelect with `maxDisplay={0}`, the picked members beside the
   trigger), and an open listbox takes its field's label. Unit and e2e run axe on every state the card reaches
   (empty, messages showing, Select open, filled). Drop both once rokkit#206 ships.
+  (Done: rokkit#206 shipped in `@rokkit/*` 1.16.1 — `DecisionPickSeveral` deleted, the card draws
+  rokkit's MultiSelect directly, and the listbox-naming attachment is gone with it.)
 - [x] R4 Acceptance r1 on PR #508 (red then green): the filled pick-several failed axe `color-contrast` in dark mode
   (2.49:1). rokkit writes `data-field-disabled="false"` on an enabled field, and zen-sumi fades any
   `[data-field-disabled]` field to 40% (sensei-hq/rokkit#207). `DecisionForm` passes `disabled` to InputField only
@@ -155,6 +157,9 @@ Red commit first for every numbered group; green in the next commit.
   e2e closes the list and focuses the notes before typing, as a person does: a focused picked option in an open
   list is text-primary on paper-mute, 4.4:1 in dark mode (sensei-hq/rokkit#209, rokkit's look kept as shipped;
   annotated on the test). Drop the workarounds and cover that state once rokkit ships the fixes.
+  (Done: #207/#208/#209 shipped in `@rokkit/*` 1.16.1 — the card passes `disabled` straight through,
+  choosers show their placeholder, and the e2e axes the open pick-several with members picked. #205
+  is still open: `withArrayLayout` stays until rokkit ships it.)
 
 ## Close
 - [x] C1 `openspec validate add-relay-decision-response-form --strict`
