@@ -278,6 +278,11 @@ enum ModelsCommands {
 const UPGRADE_ENDPOINT: &str = "/api/assistants/upgrade";
 
 fn main() -> ExitCode {
+    // Database credentials from `~/.sensei/.env` (#505), for `doctor` and the
+    // setup it runs. SAFETY: first thing in `main`; no other thread exists.
+    if let Err(e) = unsafe { sensei_bootstrap::credentials::load_into_env() } {
+        eprintln!("warning: could not read the database credentials: {e}");
+    }
     let cli = Cli::parse();
     let _ = DAEMON_BASE.set(sensei_bootstrap::daemon_url_with_flag(cli.daemon_url.as_deref()));
 

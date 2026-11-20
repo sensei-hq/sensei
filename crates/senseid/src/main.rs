@@ -150,6 +150,11 @@ async fn main() {
             std::env::set_var("SENSEI_INSTANCE", inst);
         }
     }
+    // Database credentials from `~/.sensei/.env` (#505), under the same
+    // contract: before the log writer's thread starts. Reported once logging
+    // is up.
+    // SAFETY: as above — no thread that reads the environment is running yet.
+    let credentials = unsafe { sensei_bootstrap::credentials::load_into_env() };
 
     // LOGGING IS INSTALLED HERE, NOT AT THE TOP OF `main`, and the ordering is
     // load-bearing: the log directory hangs off the instance's data dir, and
@@ -173,6 +178,10 @@ async fn main() {
         // Never leave the daemon silent: an unwritable log directory costs the
         // rolling file, not the log itself.
         sensei_bootstrap::tracing_init::install_daemon_console(DEFAULT_LOG_FILTER);
+    }
+
+    if let Err(e) = credentials {
+        tracing::error!(error = %e, "could not read the database credentials file");
     }
 
     let startup_cfg = sensei_bootstrap::SenseiConfig::from_env();

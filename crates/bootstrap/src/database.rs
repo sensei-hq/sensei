@@ -28,7 +28,7 @@ use crate::config::SenseiConfig;
 /// .app's Finder-launched environment). A missing binary returns false
 /// — equivalent to "not ready".
 pub fn pg_is_ready() -> bool {
-    crate::util::command_for("pg_isready")
+    crate::pg_container::pg_tool("pg_isready")
         .ok()
         .and_then(|mut cmd| cmd.args(["--quiet"]).status().ok())
         .map(|s| s.success())
@@ -41,7 +41,7 @@ pub fn database_exists(db_name: &str) -> Result<bool, String> {
     // (whose Finder-launched PATH misses /opt/homebrew/bin). A missing
     // psql surfaces as a clean "psql not installed" rather than the raw
     // "No such file or directory (os error 2)" callers used to see.
-    let output = crate::util::command_for("psql")?
+    let output = crate::pg_container::pg_tool("psql")?
         .args(["-lqt"])
         .output()
         .map_err(|e| format!("could not run psql: {e}"))?;
@@ -60,7 +60,7 @@ pub fn database_exists(db_name: &str) -> Result<bool, String> {
 /// Run `createdb <db_name>`. Treats "already exists" as success — the
 /// idempotent shape resolvers want.
 pub fn create(db_name: &str) -> Result<(), String> {
-    let output = crate::util::command_for("createdb")?
+    let output = crate::pg_container::pg_tool("createdb")?
         .arg(db_name)
         .output()
         .map_err(|e| format!("createdb failed: {e}"))?;
@@ -77,7 +77,7 @@ pub fn create(db_name: &str) -> Result<(), String> {
 
 /// `CREATE EXTENSION IF NOT EXISTS vector` against `db_name`.
 pub fn ensure_extensions(db_name: &str) -> Result<(), String> {
-    let output = crate::util::command_for("psql")?
+    let output = crate::pg_container::pg_tool("psql")?
         .args(["-d", db_name, "-c", "CREATE EXTENSION IF NOT EXISTS vector"])
         .output()
         .map_err(|e| format!("psql failed: {e}"))?;
@@ -674,22 +674,23 @@ fn tables_among<'a>(design: &Design, altered: impl Iterator<Item = &'a str>) -> 
 }
 
 /// Copy each of `tables` (`schema.table`) to `<backup_dir>/<UTC time>/<table>.csv`
-/// with psql's `\copy` — client-side, so it works whatever the server's major
-/// version. Returns the directory written. Any failure is an Err, and the
-/// caller does not run the destructive plan without its backup.
+/// with psql's `\copy … to stdout` — client-side, so it works whatever the
+/// server's major version — and this process writes the file. Writing it here
+/// rather than having psql write it keeps the backup on this machine when psql
+/// runs inside the Postgres container (Windows). Returns the directory
+/// written. Any failure is an Err, and the caller does not run the destructive
+/// plan without its backup.
 fn back_up_tables(db_url: &str, tables: &[&str], backup_dir: &Path) -> Result<PathBuf, String> {
     let dir = backup_dir.join(chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string());
     std::fs::create_dir_all(&dir).map_err(|e| format!("backup dir {}: {e}", dir.display()))?;
     for table in tables {
         let file = dir.join(format!("{table}.csv"));
-        let copy = format!(
-            "\\copy {} to '{}' with (format csv, header)",
-            quoted_relation(table),
-            file.display().to_string().replace('\'', "''")
-        );
-        run_psql(db_url, &copy).map_err(|e| {
-            format!("backing up {table} before a destructive schema change failed: {e}")
-        })?;
+        let copy = format!("\\copy {} to stdout with (format csv, header)", quoted_relation(table));
+        let csv = psql_stdout(db_url, &["-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", &copy])
+            .map_err(|e| {
+                format!("backing up {table} before a destructive schema change failed: {e}")
+            })?;
+        std::fs::write(&file, csv).map_err(|e| format!("writing {}: {e}", file.display()))?;
     }
     Ok(dir)
 }
@@ -727,7 +728,7 @@ fn drop_views_reading(db_url: &str, tables: &[&str]) -> Result<(), String> {
 /// Run one command through psql, stopping on its first error; the Err is
 /// psql's own message.
 fn run_psql(db_url: &str, command: &str) -> Result<(), String> {
-    let out = crate::util::command_for("psql")?
+    let out = crate::pg_container::pg_tool("psql")?
         .args([db_url, "-v", "ON_ERROR_STOP=1", "-c", command])
         .output()
         .map_err(|e| format!("could not run psql: {e}"))?;
@@ -752,12 +753,21 @@ fn quoted_ident(part: &str) -> String {
 /// own message. Tuples-only unaligned, so a single-column result is one value
 /// per line.
 fn query_psql(db_url: &str, command: &str) -> Result<String, String> {
-    let out = crate::util::command_for("psql")?
-        .args([db_url, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", command])
+    let out =
+        psql_stdout(db_url, &["-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", command])?;
+    Ok(String::from_utf8_lossy(&out).to_string())
+}
+
+/// Run psql against `db_url` with `args` and return its stdout as bytes; the
+/// Err is psql's own message.
+fn psql_stdout(db_url: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let out = crate::pg_container::pg_tool("psql")?
+        .arg(db_url)
+        .args(args)
         .output()
         .map_err(|e| format!("could not run psql: {e}"))?;
     if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+        Ok(out.stdout)
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }

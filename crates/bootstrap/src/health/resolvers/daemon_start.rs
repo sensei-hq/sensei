@@ -83,12 +83,10 @@ impl Resolver for DaemonStartResolver {
     }
 
     fn fallback_remedy(&self) -> Remedy {
-        let cfg = SenseiConfig::from_env();
-        let bin = cfg.senseid_binary();
-        let service = cfg.brew_service_name();
+        let bin = SenseiConfig::from_env().senseid_binary();
         Remedy {
-            message: "Daemon port still not listening after start. Try the brew-services restart and check `brew services list` for the service status.".to_string(),
-            script:  format!("brew services restart {service} && {bin} status"),
+            message: "Daemon port still not listening after start. Restart it through the service manager, then check its status.".to_string(),
+            script:  format!("{} && {bin} status", crate::service::restart_hint()),
             url:     None,
         }
     }
@@ -105,12 +103,11 @@ fn missing_remedy(bin: &str) -> Remedy {
 }
 
 fn failed_remedy(bin: &str, detail: String) -> Remedy {
-    let service = SenseiConfig::from_env().brew_service_name();
     Remedy {
         message: format!(
-            "Couldn't start `{bin}` automatically ({detail}). Try the brew-services route below — it gets keep-alive auto-restart from launchd."
+            "Couldn't start `{bin}` automatically ({detail}). Start it through the service manager below."
         ),
-        script: format!("brew services start {service}"),
+        script: crate::service::start_hint(),
         url: None,
     }
 }
@@ -136,6 +133,7 @@ mod tests {
         assert!(r.message.contains(bin), "message '{}' should mention '{bin}'", r.message);
     }
 
+    #[cfg(unix)]
     #[test]
     fn failed_remedy_script_uses_brew_services_start() {
         let cfg = SenseiConfig::from_env();
@@ -144,6 +142,7 @@ mod tests {
         assert_eq!(r.script, format!("brew services start {service}"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn fallback_remedy_runs_brew_services_restart() {
         let cfg = SenseiConfig::from_env();
@@ -154,5 +153,13 @@ mod tests {
             "expected fallback to use brew services restart, got: {}",
             r.script
         );
+    }
+
+    #[test]
+    fn remedies_use_the_platforms_service_commands() {
+        let r = failed_remedy(SenseiConfig::from_env().senseid_binary(), "test".to_string());
+        assert_eq!(r.script, crate::service::start_hint());
+        let r = DaemonStartResolver.fallback_remedy();
+        assert!(r.script.starts_with(&crate::service::restart_hint()), "{}", r.script);
     }
 }

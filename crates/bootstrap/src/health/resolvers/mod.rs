@@ -5,6 +5,7 @@ pub mod ollama_install;
 pub mod postgres_install;
 pub mod sensei_install;
 pub(crate) mod service_cascade;
+pub mod windows;
 
 pub use daemon_start::DaemonStartResolver;
 pub use db_setup::DatabaseResolver;

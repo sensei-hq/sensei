@@ -120,6 +120,10 @@ fn build_app_menu(
 }
 
 pub fn run() {
+    // Database credentials from `~/.sensei/.env` (#505), for the health check
+    // and setup the app runs. SAFETY: before the Tauri builder starts any
+    // thread; `run` is the first call in `main`.
+    let credentials = unsafe { sensei_bootstrap::credentials::load_into_env() };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -150,7 +154,7 @@ pub fn run() {
             commands::update::run_upgrade_steps,
             commands::update::check_for_update,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // ── Tracing subscriber → flog ────────────────────────────────
             // The sidecar links `sensei-bootstrap`, which emits structured
             // tracing events at every probe / brew shell-out / dbd step.
@@ -159,6 +163,9 @@ pub fn run() {
             // to the explicit flog::log lines. Default level is `info`;
             // bump via RUST_LOG=sensei_bootstrap=debug when launching.
             install_tracing();
+            if let Err(e) = &credentials {
+                flog::log(&format!("could not read the database credentials: {e}"));
+            }
 
             // ── Startup banner ────────────────────────────────────────────
             let cfg = sensei_bootstrap::SenseiConfig::from_env();

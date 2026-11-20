@@ -65,6 +65,11 @@ pub fn start_hint() -> String {
     platform::start_hint()
 }
 
+/// The command a person runs to restart the daemon by hand.
+pub fn restart_hint() -> String {
+    platform::restart_hint()
+}
+
 #[cfg(unix)]
 use brew as platform;
 #[cfg(windows)]
@@ -98,6 +103,10 @@ mod brew {
 
     pub fn start_hint() -> String {
         format!("brew services start {}", service())
+    }
+
+    pub fn restart_hint() -> String {
+        format!("brew services restart {}", service())
     }
 
     fn brew_services(args: &[&str]) -> Result<(), ServiceError> {
@@ -169,6 +178,10 @@ mod task_scheduler {
 
     pub fn start_hint() -> String {
         "sensei start".into()
+    }
+
+    pub fn restart_hint() -> String {
+        "sensei restart".into()
     }
 
     fn registered() -> Result<bool, ServiceError> {

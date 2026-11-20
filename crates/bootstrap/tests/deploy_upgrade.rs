@@ -143,6 +143,11 @@ async fn a_column_the_design_dropped_is_backed_up_before_it_goes() {
         "one backup holds the dropped column's data: {:?}",
         walk(backups.path())
     );
+    // The file is the table's CSV and nothing else: psql's own status line
+    // (`COPY n`) shares its stdout, so a lost `-q` would corrupt the backup.
+    let csv = std::fs::read_to_string(&saved[0]).unwrap();
+    assert!(csv.starts_with("domain,code,"), "a CSV header first: {csv}");
+    assert!(!csv.lines().any(|l| l.starts_with("COPY ")), "no psql status line: {csv}");
 }
 
 #[tokio::test]
