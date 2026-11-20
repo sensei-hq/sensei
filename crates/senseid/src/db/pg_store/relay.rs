@@ -519,6 +519,16 @@ pub struct RelayCreateRunOutput {
     pub started: Option<RelayStartedRun>,
 }
 
+/// A live-lane check (#398, #161: typed inputs, not five positional ones):
+/// whose crew, the clock to judge leases at (None = the transaction's), and
+/// the one lane to leave out (the closing caller).
+struct LiveLaneQuery {
+    user_id: Uuid,
+    crew_id: Uuid,
+    at: Option<DateTime<Utc>>,
+    except: Option<Uuid>,
+}
+
 /// A run's start (#419): the crew it bound and Task 0 it minted.
 /// Starting a run, inside the caller's transaction (#161: typed inputs, not five
 /// positional ones): whose, which run, the crew to bind (None = the one active),
@@ -4706,11 +4716,9 @@ impl PgStore {
     /// lane close (#398) share it: liveness is the lease, not the flag.
     async fn relay_crew_has_live_lane(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
-        user_id: Uuid,
-        crew_id: Uuid,
-        at: Option<DateTime<Utc>>,
-        except: Option<Uuid>,
+        query: LiveLaneQuery,
     ) -> Result<bool, RelayError> {
+        let LiveLaneQuery { user_id, crew_id, at, except } = query;
         sqlx_core::query_scalar::query_scalar(
             "select exists (
                select 1 from relay.lanes l
@@ -4773,7 +4781,11 @@ impl PgStore {
         Self::relay_require_crew_open(tx, user_id, crew_id).await?;
         // A crew with nobody answering cannot take Task 0: one live lane at
         // least (registered, its lease granted and not past its end).
-        let live = Self::relay_crew_has_live_lane(tx, user_id, crew_id, Some(now), None).await?;
+        let live = Self::relay_crew_has_live_lane(
+            tx,
+            LiveLaneQuery { user_id, crew_id, at: Some(now), except: None },
+        )
+        .await?;
         if !live {
             return Err(RelayError::Conflict("the crew has no live lane to start the run".into()));
         }
@@ -6279,9 +6291,11 @@ impl PgStore {
         };
         let mut released = Vec::new();
         if status != "closed" {
-            let live =
-                Self::relay_crew_has_live_lane(&mut tx, user_id, crew_id, None, Some(caller_lane))
-                    .await?;
+            let live = Self::relay_crew_has_live_lane(
+                &mut tx,
+                LiveLaneQuery { user_id, crew_id, at: None, except: Some(caller_lane) },
+            )
+            .await?;
             if live {
                 return Err(RelayError::Conflict("crew has live lanes".into()));
             }
@@ -15255,17 +15269,14 @@ mod tests {
     /// write starts and must wait; close then releases the lane (its held
     /// task interrupted) and commits. Returns the write's answer. A write
     /// that locked the task before the crew row deadlocks here (40P01).
-    async fn lane_write_racing_a_close<T, F, Fut>(
+    /// `write` is the store call, not yet polled: it starts once close holds
+    /// its rows and runs alongside the release.
+    async fn lane_write_racing_a_close<T>(
         pg: &PgStore,
         crew: Uuid,
         dead: Uuid,
-        write: F,
-    ) -> Result<T, RelayError>
-    where
-        T: Send + 'static,
-        F: FnOnce(PgStore) -> Fut,
-        Fut: std::future::Future<Output = Result<T, RelayError>> + Send + 'static,
-    {
+        write: impl std::future::Future<Output = Result<T, RelayError>>,
+    ) -> Result<T, RelayError> {
         let mut close = close_holding_crew(pg, crew).await;
         sqlx_core::query_scalar::query_scalar::<_, Uuid>(
             "select id from relay.lanes where id = $1 for update",
@@ -15274,12 +15285,16 @@ mod tests {
         .fetch_all(&mut *close)
         .await
         .unwrap();
-        let write = tokio::spawn(write(pg.clone()));
-        assert!(some_session_waits_on_a_lock(pg).await, "the lane write never waited on the close");
-        let released = PgStore::relay_unregister_tx(&mut close, u1(), crew, dead).await;
-        assert!(released.is_ok(), "close deadlocked with the lane write: {released:?}");
-        close_commits(close, crew).await;
-        write.await.unwrap()
+        let (out, ()) = tokio::join!(write, async move {
+            assert!(
+                some_session_waits_on_a_lock(pg).await,
+                "the lane write never waited on the close"
+            );
+            let released = PgStore::relay_unregister_tx(&mut close, u1(), crew, dead).await;
+            assert!(released.is_ok(), "close deadlocked with the lane write: {released:?}");
+            close_commits(close, crew).await;
+        });
+        out
     }
 
     /// The lane whose lease lapsed checkpoints while close releases it:
@@ -15296,10 +15311,9 @@ mod tests {
             notes: None,
             steps: vec![],
         };
-        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
-            store.relay_checkpoint_task(u1(), a2, t, input).await
-        })
-        .await;
+        let out =
+            lane_write_racing_a_close(&pg, c1, a2, pg.relay_checkpoint_task(u1(), a2, t, input))
+                .await;
         assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "interrupted");
         let rows: i64 = sqlx_core::query_scalar::query_scalar(
@@ -15320,9 +15334,12 @@ mod tests {
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xd2);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
-        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
-            store.relay_report_task(u1(), a2, t, report_input()).await
-        })
+        let out = lane_write_racing_a_close(
+            &pg,
+            c1,
+            a2,
+            pg.relay_report_task(u1(), a2, t, report_input()),
+        )
         .await;
         assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "interrupted");
@@ -15336,9 +15353,12 @@ mod tests {
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xd3);
         fx_task(&pg, u1(), t, c1, Some(a2), "assigned", "tests", 1).await;
-        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
-            store.relay_report_task(u1(), a2, t, report_input()).await
-        })
+        let out = lane_write_racing_a_close(
+            &pg,
+            c1,
+            a2,
+            pg.relay_report_task(u1(), a2, t, report_input()),
+        )
         .await;
         assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "interrupted");
@@ -15352,10 +15372,9 @@ mod tests {
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xd4);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
-        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
-            store.relay_release_task(release(a2, t, None)).await
-        })
-        .await;
+        let out =
+            lane_write_racing_a_close(&pg, c1, a2, pg.relay_release_task(release(a2, t, None)))
+                .await;
         assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.map(|o| o.state));
         assert_eq!(task_state(&pg, t).await, "interrupted");
     }
@@ -15368,9 +15387,12 @@ mod tests {
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xd5);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
-        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
-            store.relay_ask_decision(u1(), a2, ask_input(vec![t])).await
-        })
+        let out = lane_write_racing_a_close(
+            &pg,
+            c1,
+            a2,
+            pg.relay_ask_decision(u1(), a2, ask_input(vec![t])),
+        )
         .await;
         assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "interrupted");
@@ -15387,9 +15409,12 @@ mod tests {
         fx_lane(&pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
         let t = v7(0xd7);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
-        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
-            store.relay_ask_decision(u1(), a3, ask_input(vec![t])).await
-        })
+        let out = lane_write_racing_a_close(
+            &pg,
+            c1,
+            a2,
+            pg.relay_ask_decision(u1(), a3, ask_input(vec![t])),
+        )
         .await;
         assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "interrupted");
@@ -15409,10 +15434,9 @@ mod tests {
         let t = v7(0xd6);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
         let input = RelayHandoverInput { to_lane: a3, note: String::new() };
-        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
-            store.relay_handover_task(u1(), a1, t, input).await
-        })
-        .await;
+        let out =
+            lane_write_racing_a_close(&pg, c1, a2, pg.relay_handover_task(u1(), a1, t, input))
+                .await;
         assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
         assert_eq!(task_state(&pg, t).await, "interrupted");
     }
@@ -15482,22 +15506,20 @@ mod tests {
     /// racer holds the task, the write starts and must wait on it, then
     /// the racer commits. Returns the write's answer. A write that acted
     /// on the state it read before the racer committed overwrites it.
-    async fn write_racing_a_task_move<T, F, Fut>(
+    /// `write` is the store call, not yet polled: it starts once the racer
+    /// holds the task and runs alongside the racer's commit.
+    async fn write_racing_a_task_move<T>(
         pg: &PgStore,
         t: Uuid,
         state: &str,
-        write: F,
-    ) -> Result<T, RelayError>
-    where
-        T: Send + 'static,
-        F: FnOnce(PgStore) -> Fut,
-        Fut: std::future::Future<Output = Result<T, RelayError>> + Send + 'static,
-    {
+        write: impl std::future::Future<Output = Result<T, RelayError>>,
+    ) -> Result<T, RelayError> {
         let racer = racer_holding_task(pg, t, state).await;
-        let write = tokio::spawn(write(pg.clone()));
-        assert!(some_session_waits_on_a_lock(pg).await, "the write never waited on the task");
-        racer.commit().await.unwrap();
-        write.await.unwrap()
+        let (out, ()) = tokio::join!(write, async move {
+            assert!(some_session_waits_on_a_lock(pg).await, "the write never waited on the task");
+            racer.commit().await.unwrap();
+        });
+        out
     }
 
     async fn kind_count(pg: &PgStore, t: Uuid, kind: &str) -> i64 {
@@ -15521,11 +15543,9 @@ mod tests {
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xd8);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store.relay_close_crew(u1(), a1, c1).await
-        })
-        .await
-        .unwrap();
+        let out = write_racing_a_task_move(&pg, t, "cancelled", pg.relay_close_crew(u1(), a1, c1))
+            .await
+            .unwrap();
         assert_eq!(out.released, vec![(a2, None)]);
         assert_eq!(task_state(&pg, t).await, "cancelled");
         assert_eq!(kind_count(&pg, t, "interrupted").await, 0);
@@ -15539,9 +15559,12 @@ mod tests {
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xd9);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store.relay_sweep_leases(t0() + chrono::Duration::seconds(3600)).await
-        })
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_sweep_leases(t0() + chrono::Duration::seconds(3600)),
+        )
         .await;
         assert!(out.is_ok(), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "cancelled");
@@ -15567,9 +15590,12 @@ mod tests {
         .unwrap();
         let t = v7(0xda);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store.relay_sweep_leases(t0() + chrono::Duration::seconds(100)).await
-        })
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_sweep_leases(t0() + chrono::Duration::seconds(100)),
+        )
         .await;
         assert!(out.is_ok(), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "cancelled");
@@ -15599,9 +15625,12 @@ mod tests {
             },
         )
         .await;
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store.relay_sweep_leases(Utc::now() + chrono::Duration::days(1)).await
-        })
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_sweep_leases(Utc::now() + chrono::Duration::days(1)),
+        )
         .await;
         assert!(out.is_ok(), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "cancelled");
@@ -15616,9 +15645,12 @@ mod tests {
         let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xdc);
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store.relay_report_task(u1(), a2, t, report_input()).await
-        })
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_report_task(u1(), a2, t, report_input()),
+        )
         .await;
         assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
         assert_eq!(task_state(&pg, t).await, "cancelled");
@@ -15635,9 +15667,12 @@ mod tests {
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
         pg.relay_report_task(u1(), a2, t, report_input()).await.unwrap();
         pg.relay_claim_review(u1(), a1, t, t0()).await.unwrap();
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store.relay_submit_review(u1(), a1, t, review_input()).await
-        })
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_submit_review(u1(), a1, t, review_input()),
+        )
         .await;
         assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
         assert_eq!(task_state(&pg, t).await, "cancelled");
@@ -15653,16 +15688,17 @@ mod tests {
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
         let ask = pg.relay_ask_decision(u1(), a1, ask_input(vec![t])).await.unwrap();
         let answer = RelayAnswerInput { option: Some("db".into()), values: None, note: None };
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store
-                .relay_answer_decision(
-                    u1(),
-                    RelayCaller::Person { surface: RelaySurface::Desktop },
-                    ask.decision_id,
-                    answer,
-                )
-                .await
-        })
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_answer_decision(
+                u1(),
+                RelayCaller::Person { surface: RelaySurface::Desktop },
+                ask.decision_id,
+                answer,
+            ),
+        )
         .await;
         assert!(out.is_ok(), "{:?}", out.err());
         assert_eq!(task_state(&pg, t).await, "cancelled");
@@ -15676,9 +15712,12 @@ mod tests {
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xdf);
         fx_task(&pg, u1(), t, c1, Some(a2), "approved", "tests", 1).await;
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store.relay_merge_task(u1(), a1, t, merge_input()).await
-        })
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_merge_task(u1(), a1, t, merge_input()),
+        )
         .await;
         assert!(matches!(&out, Err(RelayError::Conflict(_))), "{out:?}");
         assert_eq!(task_state(&pg, t).await, "cancelled");
@@ -15700,10 +15739,7 @@ mod tests {
             .execute(pg.pool())
             .await
             .unwrap();
-        let out = write_racing_a_task_move(&pg, t, "done", move |store| async move {
-            store.relay_cancel_task(u1(), a1, t).await
-        })
-        .await;
+        let out = write_racing_a_task_move(&pg, t, "done", pg.relay_cancel_task(u1(), a1, t)).await;
         assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
         assert_eq!(task_state(&pg, t).await, "done");
     }
@@ -15716,9 +15752,12 @@ mod tests {
         let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
         let t = v7(0xe1);
         fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
-        let out = write_racing_a_task_move(&pg, t, "cancelled", move |store| async move {
-            store.relay_assign_task(u1(), a1, t, assign_input(a2)).await
-        })
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_assign_task(u1(), a1, t, assign_input(a2)),
+        )
         .await;
         assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|_| ()));
         assert_eq!(task_state(&pg, t).await, "cancelled");
