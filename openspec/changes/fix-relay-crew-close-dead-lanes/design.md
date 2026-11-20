@@ -48,6 +48,14 @@ flowchart TD
    `for no key update` in id order, before their leases (PR #502 review): heartbeat (lane `for share`, then lease) and
    a lane's own unregister (lane, then lease) take that order, and a sweep that expired the lease first and then ended
    the lane's pause would deadlock with either. `no key update` lets task writes' foreign-key checks pass.
+   A lane task write takes the crew row `for key share` before it touches a task (PR #502 review):
+   `relay_hold_crew`, or `relay_hold_lane_crew`, which also re-reads the lane and answers `410` when a close
+   released it meanwhile. Checkpoint, report, the holder's first-write start, review, release, ask, answer and
+   hand-over do this. Each one updated the task first, then waited on the crew row for its `relay.actions` foreign
+   keys, while close held the crew and waited on that task (`40P01`). Ask and hand-over also write only when the
+   task is still in the state they read, so a task a close interrupted is refused (`409`), not overwritten. Single
+   task updates with no later lock (step, cancel) and writes on tasks close never touches (merge and the gate
+   outcome, on approved tasks) cannot close a cycle and keep their order.
 4. **Heartbeat race.** A heartbeat that commits between the liveness read and the close's commit is still released
    by close (the lane row is locked and unregistered in the same transaction); its next call gets `410`. Heartbeat
    takes the same order as close (PR #502 review): it updates the crew row first, then reads the lane `for share`,

@@ -11,19 +11,14 @@
   (`emit_released`, shared with the person close), then `run.completed`; answer gains `released`.
 - MCP `relay_close_crew` text and `lanes.md` §12 updated.
 - e2e `app/e2e/tests/relay-crew-close.spec.ts`: red on the pre-fix daemon (409), green on this branch.
-- Review fix (PR #502): heartbeat now takes the crew row, then the lane `for share`, then its lease —
-  the order close uses — so close and heartbeat no longer deadlock (40P01); a heartbeat queued behind
-  close answers 410. Red `480fe1a3f`, green `875c3a080`; design.md decision 4 amended.
-- Review fix 2 (PR #502): `relay_require_crew_open` reads the crew `for share`, so a register-join
-  or reregister racing a close waits, then answers `409 crew is closed` — no lane or lease lands in a
-  closed crew. Red `6eace665a`, green `a9fcc6f01`; design.md decision 3 amended.
-- Review fix 3 (PR #502): the sweep takes open crew rows `for key share` before leases, so it no longer
-  deadlocks a close (40P01). Red `7745e6719`, green `7517eeb76`; design.md decision 3 amended.
-- Review fix 4 (PR #502, round 4): a contributor naming no crew reads the open crews `for share`
-  (no `limit`), so a join racing a close answers `relay_no_active_crew`; the sweep takes the lanes it
-  touches `for no key update` before their leases, matching heartbeat and unregister (both deadlocked
-  with it, 40P01; unregister's was pre-existing). Red `4cf99c51b`, green `5ef857718`.
-- Gate: fmt, clippy (senseid), relay DB tests (458), e2e relay-crew-close.spec.ts,
+- Review fixes 1-4 (PR #502): heartbeat, open-crew gate, active-crew join and sweep take the crew row
+  before lanes and leases (40P01 / closed-crew joins). Greens `875c3a080`, `a9fcc6f01`, `7517eeb76`,
+  `5ef857718`; design.md decisions 3-4.
+- Review fix 5 (PR #502, round 5): lane task writes (checkpoint, report, holder start, review, release,
+  ask, answer, hand-over) take the crew row `for key share` first (`relay_hold_crew`/`relay_hold_lane_crew`,
+  410 for a lane the close released); they deadlocked a close (40P01). Ask and hand-over write only from
+  the state they read (409). Red `d48982306`/`9733fe5a1`, green `c91cf752d`/`c17278409`; design.md 3.
+- Gate: fmt, clippy (senseid), relay DB tests (465), e2e relay-crew-close.spec.ts,
   openspec validate --strict.
 
 ## Remaining
@@ -37,4 +32,5 @@
 
 ## Known-broken
 - None. Noted, out of slice: `relay_unregister_tx` grants freed resource slots without the
-  per-resource advisory lock that request/release take (pre-existing since item 3).
+  per-resource advisory lock (pre-existing), and reads the held task without `for update`, so a
+  person `cancel_run` committing between that read and its update can be overwritten to interrupted.
