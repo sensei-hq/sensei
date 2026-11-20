@@ -65,6 +65,22 @@ export interface ActivityEvent {
 
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
 
+/** One stored install (#455): the catalogue tool, and what detection found on this
+ *  machine at `detected_at`. Nulls are not reported (D83). */
+export interface AssistantInstall {
+  id: string;
+  name: string;
+  kind: 'assistant' | 'editor';
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+  config_path: string | null;
+  configured: boolean;
+  configured_at: string | null;
+  configured_version: string | null;
+  detected_at: string;
+}
+
 export interface AssistantStatus {
   id: string;
   name: string;
@@ -127,13 +143,17 @@ export interface InstallResult {
   commands_installed: number;
   stale_commands_removed: number;
   stale_skills_removed: number;
-  assistants_configured: string[];
+  /** `POST /api/install` (installer::InstallResult) names this `acps_configured`. */
+  acps_configured: string[];
   errors: string[];
+  /** The install landed but a follow-up (e.g. the install re-detect) failed. */
+  warnings: string[];
   marketplace_version: string;
 }
 
 export interface RemoveResult {
-  assistants_removed: string[];
+  /** `POST /api/remove` (installer::RemoveResult) names this `acps_removed`. */
+  acps_removed: string[];
   plugin_removed: boolean;
   commands_removed: number;
   skills_removed: number;
@@ -141,12 +161,18 @@ export interface RemoveResult {
   hooks_removed: boolean;
   cache_cleared: boolean;
   workspaces_cleaned: string[];
+  /** The removal failed for these. */
   errors: string[];
+  /** The removal landed but a follow-up (the install re-detect) failed. */
+  warnings: string[];
 }
 
 export interface AssistantRemoveResult {
   assistants_removed: string[];
+  /** The removal failed for these. */
   errors: string[];
+  /** The removal landed but a follow-up (the install re-detect) failed. */
+  warnings: string[];
 }
 
 export interface InstalledItem {

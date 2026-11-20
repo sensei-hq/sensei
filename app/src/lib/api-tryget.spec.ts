@@ -72,6 +72,9 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetLibraryUsage', call: () => api().tryGetLibraryUsage('l1'), body: { usage: [] } },
   // #288 — Settings.
   { name: 'tryDetectAssistants', call: () => api().tryDetectAssistants(), body: [] },
+  // #455 — this machine's stored installs, and the detection that stores them.
+  { name: 'tryGetAssistantInstalls', call: () => api().tryGetAssistantInstalls(), body: [] },
+  { name: 'tryDetectAssistantInstalls', call: () => api().tryDetectAssistantInstalls(), body: [] },
   { name: 'tryGetInstalledItems', call: () => api().tryGetInstalledItems(), body: [] },
   { name: 'tryListGatewayChains', call: () => api().tryListGatewayChains(), body: { chains: [] } },
   { name: 'tryProvisionStatus', call: () => api().tryProvisionStatus(), body: { models: [] } },

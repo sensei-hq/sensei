@@ -523,7 +523,7 @@ else
     # Detached HEAD derives nothing: refuse, naming TEST_DATABASE_URL.
     fakerepo2=$(mktemp -d)/repo
     mkdir -p "$fakerepo2" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init -qb main "$fakerepo2" >/dev/null 2>&1 \
-        && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$fakerepo2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m x >/dev/null 2>&1 \
+        && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$fakerepo2" -c user.email=t@t -c user.name=t commit -q --no-verify --allow-empty -m x >/dev/null 2>&1 \
         && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$fakerepo2" checkout -q --detach >/dev/null 2>&1
     out=$(env -u TEST_DATABASE_URL -u SENSEI_DATABASE_URL -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_DIR="$fakerepo2/.git" ./run.sh --apply sensei "$FX/a_sensei.ddl" "$FX/sensei.probe" 2>&1); code=$?
     case "$code:$out" in

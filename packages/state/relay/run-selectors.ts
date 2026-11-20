@@ -62,7 +62,7 @@ export interface RelayCrewAgentsView {
 }
 
 const modelOf = (model: string | null) => model ?? 'model not reported';
-const whoOf = (l: RelayNowRunTaskLane) => `${codename(l)} · ${assistantLabel(l.family, l.version)} · ${modelOf(l.model)}`;
+const whoOf = (l: RelayNowRunTaskLane) => `${codename(l)} · ${assistantLabel(l.family, l.version, l.family_name)} · ${modelOf(l.model)}`;
 
 type Stage = 'waiting' | 'active' | 'done';
 const stageOf = (t: RelayNowRunTask): Stage => (t.state === 'done' ? 'done' : t.lane ? 'active' : 'waiting');
@@ -154,7 +154,7 @@ export function toAgentGroups(now: RelayNow | null, o: NowRowOptions): RelayCrew
           id: l.id,
           code: l.code,
           name: codename(l),
-          who: `${assistantLabel(l.family, l.version)} · ${modelOf(l.model)}`,
+          who: `${assistantLabel(l.family, l.version, l.family_name)} · ${modelOf(l.model)}`,
           state: laneRow(l, now, o).state,
           // The group names the lane; a row adds only who reviewed it.
           tasks: [...ran, ...holds].map((t) => ({

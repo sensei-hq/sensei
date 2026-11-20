@@ -11,7 +11,8 @@ import { Pill, StatCard } from '@rokkit/ui';
 import type { PreviewEntry, PreviewView } from '$lib/preview/catalogue.js';
 import { toAgentGroups, toPastRuns, toRunCard, toRunGroups, type NowRowOptions } from '@sensei/state';
 import * as RF from '$lib/test-stubs/relay-fixtures.js';
-import { decision, floatingReview, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
+import { decision, floatingReview, formDecision, history, laneRefs, personMessage, sprint } from '$lib/test-stubs/relay-fixtures.js';
+import type { RelayDecisionResponse } from '@sensei/state';
 import PastRunsList from './PastRunsList.svelte';
 import RelayRunScreen from './RelayRunScreen.svelte';
 import { toRelayShell, type RelayShellInput, type RelayStatFilter } from './relay-shell.js';
@@ -30,7 +31,7 @@ import RunDetails from './RunDetails.svelte';
 import HandoffCard from './HandoffCard.svelte';
 import { mockupHandoff, mockupHandoffUntaken, mockupRunDetails, mockupTaskHeader, mockupTaskHeaderUnnamed } from './task.fixtures.js';
 import AddMember from './AddMember.svelte';
-import { addContributor, mockupGroups, mockupRunCard, setupStep1, setupStep2 } from './crew.fixtures.js';
+import { addCatalogueError, addContributor, addWithCatalogue, mockupGroups, mockupRunCard, setupStep1, setupStep2 } from './crew.fixtures.js';
 import { mockupBacklog, mockupTriage } from './queue.fixtures.js';
 import RelayChecklist from './RelayChecklist.svelte';
 import RoleMark from './RoleMark.svelte';
@@ -64,6 +65,22 @@ const entry = (
   props: PreviewEntry['props'],
   frame?: PreviewEntry['frame'],
 ): PreviewEntry => ({ id, note, component, props, frame });
+
+/** A form decision with every field kind the subset draws (#389): text with a pattern,
+ *  pick-one, a bounded number, an integer, yes/no. */
+const FORM_RESPONSE: RelayDecisionResponse = {
+  schema: {
+    type: 'object',
+    properties: {
+      target: { type: 'string', enum: ['develop', 'main'], title: 'Target branch' },
+      path: { type: 'string', pattern: '^/', maxLength: 200, description: 'An absolute path.' },
+      budget: { type: 'number', minimum: 0.5, maximum: 8 },
+      retries: { type: 'integer', minimum: 0, maximum: 5, default: 2 },
+      ship: { type: 'boolean', description: 'Ship it now?' },
+    },
+    required: ['target', 'path'],
+  },
+};
 
 /** The preview never answers a decision or adds to a backlog: a fixture's
  *  callbacks resolve to "no refusal" so the component can be exercised. */
@@ -213,6 +230,9 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
   entry('AddMember/setup', 'no crew yet: step 1 of 2, the coordinator', AddMember, { view: setupStep1(), oncopy: () => {}, onrole: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
   entry('AddMember/setup-step2', 'the coordinator in: step 2 of 2, a contributor; the line names the crew (#419, beyond the mockup line)', AddMember, { view: setupStep2(), oncopy: () => {}, onrole: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
   entry('AddMember/add', 'a crew at work: Add a member, contributors only', AddMember, { view: addContributor(), oncopy: () => {}, onrole: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
+  entry('AddMember/catalogue', 'the picker (#455): the assistants and editors this machine has seen, nothing picked', AddMember, { view: addWithCatalogue(), oncopy: () => {}, onrole: () => {}, onpick: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
+  entry('AddMember/catalogue-editor-picked', 'the picker: Cursor picked, the note names its agent chat and its config', AddMember, { view: addWithCatalogue('cursor'), oncopy: () => {}, onrole: () => {}, onpick: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
+  entry('AddMember/catalogue-error', 'the picker could not read the catalogue: an error with Retry; the line still pastes', AddMember, { view: addCatalogueError(), oncopy: () => {}, onrole: () => {}, onretrycatalogue: () => {} }), // skipcq - preview props; the handlers intentionally do nothing
   entry('TaskHeader/merged', 'the task header: back, title and state, the ticket pill, the facts', TaskHeader, { header: mockupTaskHeader() }),
   entry('TaskHeader/unnamed', 'the task header: a lane with no codename reads its code alone', TaskHeader, { header: mockupTaskHeaderUnnamed() }),
   entry('RunDetails/folded', 'Run details, folded to its line (open it: a value nobody reported reads so)', RunDetails, { run: mockupRunDetails() }),
@@ -231,6 +251,32 @@ export const RELAY_CATALOGUE: PreviewEntry[] = [
   entry('DecisionRow/two-options', 'a decision with the recommended option marked', DecisionRow, {
     decision: decision(),
     href: '/relay/crew/task',
+    onanswer: accepted,
+  }),
+
+  entry('DecisionRow/form', 'a form decision: text, pick-one, bounded number, integer, yes/no; the layout built from the schema', DecisionRow, {
+    decision: formDecision({ response: FORM_RESPONSE }),
+    href: '/relay/crew/task',
+    onanswer: accepted,
+  }),
+
+  entry('DecisionRow/form-layout', "a form decision with the lane's own layout: labels, help, a placeholder, its order", DecisionRow, {
+    decision: formDecision({
+      response: {
+        ...FORM_RESPONSE,
+        layout: {
+          type: 'vertical',
+          elements: [
+            { scope: '#/target', label: 'Ship to', description: 'The branch the merge lands on.' },
+            { scope: '#/path', label: 'Log folder', props: { placeholder: '/var/log/sensei' } },
+            { scope: '#/budget', label: 'Budget (hours)' },
+            { scope: '#/retries', label: 'Retries' },
+            { scope: '#/ship', label: 'Ship it now' },
+          ],
+        },
+      },
+    }),
+    href: null,
     onanswer: accepted,
   }),
 

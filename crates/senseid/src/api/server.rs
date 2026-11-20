@@ -424,6 +424,27 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // worker touches the database — `brew upgrade` neither deploys nor restarts.
     crate::tasks::schema_deploy::on_boot(&state.pg).await;
 
+    // First run (#455): a machine that skipped the setup wizard still gets its
+    // installs. Detected once, when no install row exists; never on every boot
+    // (configure/remove/upgrade and "Detect again" keep the rows current).
+    {
+        let pg = state.pg.clone();
+        tokio::spawn(async move {
+            match pg.assistant_installs_empty().await {
+                Ok(true) => match crate::assistants::sync_installs(&pg, &[]).await {
+                    Ok(rows) => {
+                        tracing::info!(stored = rows.len(), "startup: detected assistant installs")
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "startup: assistant install detection failed")
+                    }
+                },
+                Ok(false) => {}
+                Err(e) => tracing::warn!(error = %e, "startup: reading assistant installs failed"),
+            }
+        });
+    }
+
     // Boot reconcile (D6b/W2): before any worker can create a new
     // task_execution row, terminate rows left `running` by a dead prior
     // session — their in-memory tasks vanished with the process, so they can

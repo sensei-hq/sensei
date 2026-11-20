@@ -1952,7 +1952,7 @@ mod tests {
         assert!(validate_props(K::Asked, &rec).is_err());
         // Out of the subset: delegated to decision_schema, its message kept.
         let array = json!({"response": {"schema": {"type": "object",
-            "properties": {"files": {"type": "array", "items": {"enum": ["a"]}}}}},
+            "properties": {"files": {"type": "array", "items": {"type": "string"}}}}},
             "blocks": [], "asked_of": "person"});
         let err = validate_props(K::Asked, &array).unwrap_err();
         assert!(err.message.contains("files") && err.message.contains("array"), "{err:?}");

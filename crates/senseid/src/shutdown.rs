@@ -5,36 +5,63 @@
 //! real stop paths reach SIGTERM — `brew services stop sensei` leaves it to
 //! launchd, and `stop_daemon` shells out to `kill` with the pid from
 //! `serve.pid` AFTER first trying `POST /stop` and finding no handler for it.
+//! Windows has no signals; its console control events play the same role.
 
-use tokio::signal::unix::{SignalKind, signal};
+use std::future::Future;
 
-/// Completes when the process is asked to stop, by SIGINT or SIGTERM,
-/// whichever arrives first.
+/// Completes when the process is asked to stop, whichever stop signal arrives
+/// first: SIGINT or SIGTERM on Unix; Ctrl-C, Ctrl-Break, console close or
+/// system shutdown on Windows.
 ///
 /// If a handler cannot be registered the daemon keeps serving — losing
 /// graceful shutdown is not a reason to refuse to start — but that arm then
 /// waits forever instead of completing, because a handler we failed to
 /// install must never be mistaken for a signal that arrived: completing would
 /// tear the server down the moment it came up.
+#[cfg(unix)]
 pub async fn shutdown_signal() {
+    use tokio::signal::unix::SignalKind;
     tokio::select! {
-        _ = wait_for(SignalKind::interrupt(), "SIGINT") => {}
-        _ = wait_for(SignalKind::terminate(), "SIGTERM") => {}
+        _ = wait_for(next(SignalKind::interrupt()), "SIGINT") => {}
+        _ = wait_for(next(SignalKind::terminate()), "SIGTERM") => {}
     }
 }
 
-/// Completes once `kind` is delivered; otherwise never.
-async fn wait_for(kind: SignalKind, name: &'static str) {
-    match signal(kind) {
-        Ok(mut stream) => {
-            if stream.recv().await.is_some() {
+#[cfg(windows)]
+pub async fn shutdown_signal() {
+    use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_shutdown};
+    tokio::select! {
+        _ = wait_for(ctrl_c().map(|mut s| async move { s.recv().await }), "CTRL_C") => {}
+        _ = wait_for(ctrl_break().map(|mut s| async move { s.recv().await }), "CTRL_BREAK") => {}
+        _ = wait_for(ctrl_close().map(|mut s| async move { s.recv().await }), "CTRL_CLOSE") => {}
+        _ = wait_for(ctrl_shutdown().map(|mut s| async move { s.recv().await }), "CTRL_SHUTDOWN") => {}
+    }
+}
+
+/// Registers a handler for `kind`, yielding the wait for its next delivery.
+#[cfg(unix)]
+fn next(
+    kind: tokio::signal::unix::SignalKind,
+) -> std::io::Result<impl Future<Output = Option<()>>> {
+    tokio::signal::unix::signal(kind).map(|mut s| async move { s.recv().await })
+}
+
+/// Completes once the registered signal is delivered; otherwise never — a
+/// failed registration (`Err`) or a closed stream (`None`) parks.
+async fn wait_for(
+    registered: std::io::Result<impl Future<Output = Option<()>>>,
+    name: &'static str,
+) {
+    match registered {
+        Ok(delivered) => {
+            if delivered.await.is_some() {
                 tracing::info!(signal = name, "shutdown signal received");
                 return;
             }
-            // `recv()` yielding None means the runtime's signal driver is
-            // gone. Parking is the conservative read: a closed stream is not a
-            // signal, and completing here would tear the server down for a
-            // reason nobody asked for.
+            // `None` means the runtime's signal driver is gone. Parking is the
+            // conservative read: a closed stream is not a signal, and
+            // completing here would tear the server down for a reason nobody
+            // asked for.
             tracing::warn!(signal = name, "signal stream closed before any signal arrived");
         }
         Err(e) => {
@@ -49,6 +76,42 @@ async fn wait_for(kind: SignalKind, name: &'static str) {
 }
 
 #[cfg(test)]
+mod platform_free_tests {
+    use super::*;
+    use std::future::ready;
+    use std::time::Duration;
+
+    async fn completes<F: std::future::Future<Output = ()>>(f: F) -> bool {
+        tokio::time::timeout(Duration::from_millis(200), f).await.is_ok()
+    }
+
+    #[tokio::test]
+    async fn a_delivered_signal_completes() {
+        assert!(completes(wait_for(Ok(ready(Some(()))), "TEST")).await);
+    }
+
+    #[tokio::test]
+    async fn a_closed_stream_waits_instead_of_completing() {
+        assert!(!completes(wait_for(Ok(ready(None)), "TEST")).await);
+    }
+
+    #[tokio::test]
+    async fn a_failed_registration_waits_instead_of_completing() {
+        let failed: std::io::Result<std::future::Ready<Option<()>>> =
+            Err(std::io::Error::other("no handler"));
+        assert!(!completes(wait_for(failed, "TEST")).await);
+    }
+
+    #[test]
+    fn the_future_is_send_and_static() {
+        // `axum::serve(..).with_graceful_shutdown(f)` requires exactly this of
+        // `f`; a non-Send future here would only surface at the call site.
+        fn requires<F: std::future::Future<Output = ()> + Send + 'static>(_: F) {}
+        requires(shutdown_signal());
+    }
+}
+
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::time::Duration;
@@ -119,22 +182,16 @@ mod tests {
             "SIGKILL registered successfully — this test is no longer exercising the failure branch"
         );
 
-        let outcome =
-            tokio::time::timeout(Duration::from_millis(200), wait_for(uncatchable, "SIGKILL"))
-                .await;
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(200),
+            wait_for(next(uncatchable), "SIGKILL"),
+        )
+        .await;
 
         assert!(
             outcome.is_err(),
             "wait_for() completed on a handler it never installed — the daemon would shut \
              itself down the instant it finished starting up"
         );
-    }
-
-    #[test]
-    fn the_future_is_send_and_static() {
-        // `axum::serve(..).with_graceful_shutdown(f)` requires exactly this of
-        // `f`; a non-Send future here would only surface at the call site.
-        fn requires<F: std::future::Future<Output = ()> + Send + 'static>(_: F) {}
-        requires(shutdown_signal());
     }
 }

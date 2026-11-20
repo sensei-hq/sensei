@@ -66,6 +66,17 @@ export {
   type RelayStats,
 } from './relay/relay-selectors.js';
 export {
+  toDecisionForm,
+  toAnswerValues,
+  textCap,
+  textMisses,
+  toPatternMatcher,
+  withoutTextRules,
+  withArrayLayout,
+  type DecisionFormView,
+  type TextMiss,
+} from './relay/decision-form.js';
+export {
   RelayTaskState,
   type RelayTaskSource,
   type RelayTaskStateOptions,
@@ -122,6 +133,9 @@ export {
   toArchivedRun,
   runHref,
   type RelayAddMemberView,
+  type RelayCatalogueInput,
+  type RelayCatalogueItemView,
+  type RelayCatalogueView,
   type RelayMemberGroupView,
   type RelayMemberView,
   type RelayPresence,

@@ -197,23 +197,43 @@ pub fn tick_adapter(
 
 use std::sync::Arc;
 
+/// Re-detect after a tick that re-ran configure, so the install rows follow
+/// the repair (#455). Returns the failure, logged, for the caller to record.
+pub async fn resync_after_tick(
+    pg: &PgStore,
+    outcome: TickOutcome,
+    adapter_id: &str,
+) -> Option<String> {
+    match outcome {
+        TickOutcome::Resolved => {
+            crate::assistants::resync_installs(pg, &[adapter_id.to_string()]).await
+        }
+        TickOutcome::Suspended => crate::assistants::resync_installs(pg, &[]).await,
+        TickOutcome::Skipped
+        | TickOutcome::Healthy
+        | TickOutcome::StaleWarned
+        | TickOutcome::StaleAlreadyNotified => None,
+    }
+}
+
 /// Resolve a single adapter by id (re-run configure) and return the report.
 /// Clears any breaker suspension for that adapter (explicit manual retry).
 pub fn resolve_adapter(
     adapter_id: &str,
     breaker: &BreakerMap,
-) -> crate::assistants::AdapterResolveReport {
+) -> crate::assistants::health::AdapterResolveReport {
     if let Ok(mut map) = breaker.lock() {
         let e = map.entry(adapter_id.to_string()).or_default();
         e.suspended = None;
         e.stale_notified = false;
     }
     crate::assistants::resolve_by_id(adapter_id).unwrap_or_else(|| {
-        crate::assistants::AdapterResolveReport {
+        crate::assistants::health::AdapterResolveReport {
             adapter_id: adapter_id.to_string(),
             ok: false,
             actions: vec![],
             errors: vec![format!("unknown adapter {adapter_id}")],
+            warnings: vec![],
         }
     })
 }
@@ -272,6 +292,11 @@ pub async fn run_sweep(
             &|| AdapterHealth::new(&id, &fam, config_health_for(&id), true),
         );
         breaker.lock().unwrap().insert(h.adapter_id.clone(), watch);
+
+        // A repair re-ran configure: re-detect so the install rows follow it.
+        if let Some(w) = resync_after_tick(pg, outcome, &h.adapter_id).await {
+            logger.warn(&format!("watchdog {}: {w}", h.adapter_id), None).await;
+        }
 
         // Refresh the keep-alive marker so Claude Code's plugin in-use sweep
         // doesn't prune the daemon-installed plugin (anthropics/claude-code#69626).

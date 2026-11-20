@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { extractCompletion, extractPreferences, mapLibraries, loadWizardData } from './loaders.js';
+import { extractCompletion, extractPreferences, mapLibraries, loadWizardData, storeAssistantInstalls } from './loaders.js';
 import { wizardState } from '$lib/wizard-state.svelte.js';
 import type { LibEntry } from '$lib/types.js';
 
@@ -219,4 +219,24 @@ describe('loadWizardData — any other read that fails', () => {
       await expect(loadWizardData(7744)).rejects.toThrow(new RegExp(`${what}.*Service Unavailable`));
     });
   }
+});
+
+// #455: first run stores this machine's installs — the assistants stage posts the
+// detection on entry, so the rows exist before Settings or the relay picker read them.
+describe('storeAssistantInstalls', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('posts /api/assistants/detect', async () => {
+    const fetchSpy = vi.fn(async () => new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    expect(await storeAssistantInstalls(7744)).toBeNull();
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url).pathname).toBe('/api/assistants/detect');
+    expect(init.method).toBe('POST');
+  });
+
+  it('a failure says why', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500, statusText: 'Internal Server Error' })));
+    expect(await storeAssistantInstalls(7744)).toMatch(/500|Internal/);
+  });
 });

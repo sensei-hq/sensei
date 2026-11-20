@@ -857,6 +857,13 @@ export function senseiApi(port: number) {
     /** Detected assistants (#288: a failure is an error, not "none detected"). */
     tryDetectAssistants: () => tryGet<import('./types').AssistantStatus[]>('/api/assistants/detect'),
 
+    /** This machine's stored installs, joined to the catalogue (#455): what detection
+     *  last found. A failure is an error, never "none detected". */
+    tryGetAssistantInstalls: () => tryGet<import('./types').AssistantInstall[]>('/api/assistants/installs'),
+
+    /** Probe this machine and store what it found (#455); the stored rows back. */
+    tryDetectAssistantInstalls: () => tryPost<import('./types').AssistantInstall[]>('/api/assistants/detect', {}),
+
     /** Assistant families the daemon detects (#288: a failure is an error). */
     tryDetectAssistantFamilies: () => tryGet<import('./types').AssistantFamily[]>('/api/assistants/families'),
 

@@ -165,18 +165,23 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
   answers on the desktop app or the dōjō (mobile relay).
   - **Buttons or a form (#389).** A decision carries `options` (buttons) or a `response` (a form), never both.
     `response = {schema, layout?}`. The schema is one `type: "object"` with 1-12 properties, each named
-    `^[a-z][a-z0-9_]{0,39}$` and typed `string`, `number`, `integer` or `boolean`. Allowed: `required`, `enum`
-    (pick one, on a string, 1-50 members), `minimum` / `maximum` (numbers), `maxLength` (1-600) and `pattern`
-    (≤ 200 chars, compiles, no `(?`) on a string, and the annotations `title`, `description`, `default`. The
-    layout is `{type: "vertical", elements: [{scope: "#/<name>", label?, description?, props?: {placeholder?}}]}`.
-  - **Refused with 422 at ask time**, naming the property and keyword: `type: "array"` (pick several) and long text
-    wait for rokkit to draw them; `format`, a layout `renderer`, `override`, `readonly`, `options` or `min`/`max`
-    would let the lane choose a control the daemon does not check; nested objects, `$ref` and schema composition
-    are outside the subset.
+    `^[a-z][a-z0-9_]{0,39}$` and typed `string`, `number`, `integer`, `boolean` or `array`. Allowed: `required`,
+    `enum` (pick one, on a string, 1-50 members), `minimum` / `maximum` (numbers), `maxLength` (1-600) and
+    `pattern` (≤ 200 chars, compiles, no `(?`) on a string, and the annotations `title`, `description`, `default`.
+    The layout is `{type: "vertical", elements: [{scope: "#/<name>", label?, description?, props?: {placeholder?}}]}`.
+  - **Pick several and long text** (rokkit 1.16, rokkit#197). An `array` is a pick-several, drawn as a
+    MultiSelect: `items: {type?: "string", enum: [...]}` (1-50 unique, non-empty members) and an optional
+    `uniqueItems: true`; the answer is an array of unique members, and a required one needs at least one. A string
+    with `x-multiline: true` is long text, drawn as a textarea: its `maxLength` may go to 4000, and without one it
+    is held to 4000 characters (one-line text stays at 600). `x-multiline` with an `enum` is refused.
+  - **Refused with 422 at ask time**, naming the property and keyword: `format`, a layout `renderer`, `override`,
+    `readonly`, `options` or `min`/`max` would let the lane choose a control the daemon does not check;
+    `minItems` / `maxItems` (rokkit does not honour them), an array without `items.enum`, nested objects, `$ref`
+    and schema composition are outside the subset.
   - **The answer** carries `option` for buttons or `values` (keyed by property name) for a form. The daemon checks
     the values against the stored schema before it writes: no unknown keys, required present and non-empty, the
-    type (`integer` is whole), `enum`, bounds, `maxLength` (600 when none is set), `pattern` (unanchored) and the
-    leak guard. A refusal is 422 naming the property; nothing is recorded and the decision stays open. An absent
+    type (`integer` is whole), `enum`, bounds, `maxLength` (600 when none is set, 4000 for long text), `pattern`
+    (unanchored), a pick-several's members (each on the list, none twice) and the leak guard. A refusal is 422 naming the property; nothing is recorded and the decision stays open. An absent
     optional property stays absent: `default` seeds the form only.
 
 ## 8. Resources and safety (learned the hard way)

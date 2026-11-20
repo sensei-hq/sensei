@@ -1,5 +1,5 @@
 // Route-level tests for GET /v1/t/{origin}/{org}/workspaces — the org workspaces
-// read. Covers the LEAD floor, the { workspaces } envelope, AdminError → status,
+// read. Covers the MEMBER floor, the { workspaces } envelope, AdminError → status,
 // and auth-Response propagation. The store is mocked.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -57,11 +57,14 @@ beforeEach(() => {
 });
 
 describe('GET /workspaces', () => {
-	it('returns { workspaces } at the LEAD floor', async () => {
+	it('returns { workspaces } to any member: the workspaces policy, not a role floor, narrows the rows (#299)', async () => {
+		// A contributor with a role on a workspace's repository reads that workspace
+		// (access-matrix "Workspaces and repositories": R repository). A LEAD floor
+		// refused them with 403 before the policy could admit the row.
 		mocks.listOrgWorkspaces.mockResolvedValueOnce([{ id: 'p1', slug: 'acme/x' }]);
 		const res = await route.GET(ev());
 		expect(await res.json()).toEqual({ workspaces: [{ id: 'p1', slug: 'acme/x' }] });
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.lead
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(0); // ACCESS.member
 	});
 	it('maps an AdminError(500) to 500 (fail-closed, never a fixture)', async () => {
 		mocks.listOrgWorkspaces.mockRejectedValueOnce(new AdminError(500, 'boom'));

@@ -7,7 +7,7 @@ Every numbered item starts with a red commit (the failing test) before the green
 ## Slice 1: Seeded catalogue, installs, session host, AddMember picker
 
 ### 1. The seeded catalogue and this machine's installs
-- [ ] 1.1 DDL (source first): enum `sensei.tool_kind` (`assistant`, `editor`); table `sensei.assistant_catalogue`
+- [x] 1.1 DDL (source first): enum `sensei.tool_kind` (`assistant`, `editor`); table `sensei.assistant_catalogue`
       (`id` pk, `name`, `kind`, `aliases text[]`, `joins_crew`, `sequence`, `modified_at`); view
       `sensei.assistant_catalogue_words` (`word, id, name, kind, joins_crew`, one row per id and per alias); table
       `sensei.assistant_installs` (`catalogue_id` pk → `assistant_catalogue(id)`, `installed`, `version`, `path`,
@@ -20,60 +20,60 @@ Every numbered item starts with a red commit (the failing test) before the green
       table whose file is gone and record it in the commit. Fix the `activity.sessions` comment that names
       `sensei.assistants.family` (`database/ddl/table/activity/sessions.ddl:90`). `dbd reconcile` then
       `dbd import` on the dev, test and e2e DBs (`make test-template` after).
-- [ ] 1.2 Red (pgTAP, `database/tests/`): after import, `assistant_catalogue_words` resolves `claude-code` to
+- [x] 1.2 Red (pgTAP, `database/tests/`): after import, `assistant_catalogue_words` resolves `claude-code` to
       `claude` / Claude Code / assistant and `cursor` to Cursor / editor; `claude-desktop` has `joins_crew = false`;
       every `assistant_installs.catalogue_id` must exist in the catalogue (FK refuses `muse`).
-- [ ] 1.3 Red (unit + DB test, serial): `assistants::sync_installs(pg)` with the probe injected (two installed,
+- [x] 1.3 Red (unit + DB test, serial): `assistants::sync_installs(pg)` with the probe injected (two installed,
       one configured) upserts exactly those catalogue rows with `detected_at`; a second run updates in place; a
       registry id with no catalogue row is not stored. A unit test pins that every `all_assistants()` id
       (`crates/senseid/src/assistants/mod.rs:24-117`) resolves through the catalogue seed (read from the jsonl), so
       a registry entry without a seed row fails the build's tests.
-- [ ] 1.4 Green: `sync_installs` in `crates/senseid/src/assistants/mod.rs` (the probe stays `detect()`,
+- [x] 1.4 Green: `sync_installs` in `crates/senseid/src/assistants/mod.rs` (the probe stays `detect()`,
       `:178-180`); `POST /api/assistants/detect` runs it and returns the stored rows; `GET /api/assistants/installs`
       reads them joined to the catalogue (500 on a failed read, never `[]`); `assistant_configure`, `remove` and
       `upgrade` (`api/handlers/config.rs:138-177`) call it after acting; the daemon runs it once at boot when
       `assistant_installs` is empty (beside `engine_boot::spawn()`, `crates/senseid/src/main.rs:295`). Routes beside
       `api/routes.rs:464-470`.
-- [ ] 1.5 Red, then green (app): the setup wizard's assistants stage (`app/src/routes/(config)/stages.ts:44-45`)
+- [x] 1.5 Red, then green (app): the setup wizard's assistants stage (`app/src/routes/(config)/stages.ts:44-45`)
       posts `/api/assistants/detect` on entry (first run); Settings → Assistants
       (`app/src/routes/(preferences)/settings/assistants/+page.ts`, `settings-reads.ts:37-48`) reads
       `/api/assistants/installs`, shows "detected <when>" and a "Detect again" action, and shows an error state on a
       failed read. Specs: `settings-reads.spec.ts` and the wizard loader spec. `assistants-configure.spec.ts` and
       `configure-assistants.spec.ts` stay green.
-- [ ] 1.6 Red, then green: the names the detection endpoints serve come from the catalogue (the registry's own
+- [x] 1.6 Red, then green: the names the detection endpoints serve come from the catalogue (the registry's own
       `name` fields at `assistants/mod.rs:33-115` and `ClaudeCodeAssistant::name`, `assistants/claude_code.rs:435`,
       are removed); the existing `detect_families` tests stay green.
 
 ### 2. Session host and attribution
-- [ ] 2.1 DDL: `activity.sessions.host text` with its comment (the editor the session ran in; null for a terminal
+- [x] 2.1 DDL: `activity.sessions.host text` with its comment (the editor the session ran in; null for a terminal
       session or one with no evidence; never guessed). Edit the full file, then `dbd reconcile` on the dev and
       test DBs.
-- [ ] 2.2 Red: `TranscriptAdapter::host()` pinned per adapter (cursor → `cursor`, zed → `zed`, vscode → `vscode`;
+- [x] 2.2 Red: `TranscriptAdapter::host()` pinned per adapter (cursor → `cursor`, zed → `zed`, vscode → `vscode`;
       claude_code, copilot_cli, opencode → none). The method has no default.
-- [ ] 2.3 Green: add `host()` to the trait (`transcript/mod.rs:426-431`) and to every adapter.
-- [ ] 2.4 Red (DB test, serial): ingesting a Cursor transcript writes `sessions.host = 'cursor'` and its model,
+- [x] 2.3 Green: add `host()` to the trait (`transcript/mod.rs:426-431`) and to every adapter.
+- [x] 2.4 Red (DB test, serial): ingesting a Cursor transcript writes `sessions.host = 'cursor'` and its model,
       both for a new session and for one that already had a row with `meta_synced_at` null. A Claude Code
       transcript leaves `host` null. A metadata write with no host does not clear a set one.
-- [ ] 2.5 Green: `SessionMetadataPatch` (`db/pg_store/mod.rs:1759`) gains `host`. `set_session_metadata`
+- [x] 2.5 Green: `SessionMetadataPatch` (`db/pg_store/mod.rs:1759`) gains `host`. `set_session_metadata`
       (`db/pg_store/sessions.rs:1418-1454`) sets `host = COALESCE($host, host)`. The transcript coordinator's
       `set_session_metadata` (`transcript/mod.rs:710-747`) passes `adapter.host()`. Update the other
       `SessionMetadataPatch` user (`db/pg_store/tests/typed_rows_tests.rs:689`). `SessionEventRow` and
       `record_session_event` are not touched.
-- [ ] 2.6 Red, then green: `get_model_effectiveness` counts a Cursor-hosted session under its model, and no row
+- [x] 2.6 Red, then green: `get_model_effectiveness` counts a Cursor-hosted session under its model, and no row
       is named `cursor` (`db/pg_store/metrics.rs:1205`). The sessions API serves `host`
       (`db/pg_store/sessions.rs:250-273`).
 
 ### 3. The catalogue read
-- [ ] 3.1 Red (handler test, serial DB): `GET /relay/catalogue` with seeded sessions (a `claude` session today, a
+- [x] 3.1 Red (handler test, serial DB): `GET /relay/catalogue` with seeded sessions (a `claude` session today, a
       `cursor`-hosted session with model `claude-sonnet-4-5`, a 9-day-old `codex` session, a `cowork` session)
       and seeded `assistant_installs` rows (Cursor installed + configured with a config path) returns Claude Code
       with `sessions_week: 1`, Codex with `sessions_week: 0` and its `last_used_at`, Cursor under editors with
       `models: ["claude-sonnet-4-5"]` and `mcp_config` from its install row, `cowork` under `unknown` with
       `kind: "unknown"`, and no Claude Desktop in either group. A tool with no install row has
       `installed: null`. A failed session or catalogue read is a 500, never empty lists. No filesystem probe.
-- [ ] 3.2 Green: the store query (joins `assistant_catalogue_words` and `assistant_installs`), the handler, and the
+- [x] 3.2 Green: the store query (joins `assistant_catalogue_words` and `assistant_installs`), the handler, and the
       route beside `/relay/now` (`api/routes.rs:133`).
-- [ ] 3.3 Red, then green (handler tests): every relay read that carries a lane's family also serves its
+- [x] 3.3 Red, then green (handler tests): every relay read that carries a lane's family also serves its
       catalogue name and kind, from one helper (`CatalogueNames`, one query per read). The Now lane
       (`now_lane_json`, `db/pg_store/relay.rs:1497-1531`) gains `family_name`, `family_kind`, `host_name` and
       `host_kind`; the Now run task `lane`/`reviewer` (`relay.rs:7213-7218`), the run detail `members`
@@ -82,21 +82,21 @@ Every numbered item starts with a red commit (the failing test) before the green
       keeps the raw words.
 
 ### 4. The picker
-- [ ] 4.1 Red: `packages/state/relay` specs. The client reads `/relay/catalogue`. `toAddMember` takes the
+- [x] 4.1 Red: `packages/state/relay` specs. The client reads `/relay/catalogue`. `toAddMember` takes the
       catalogue and the picked id and gives the two groups (name, "last used 2h ago" or "not used yet",
       "3 sessions this week", editor models and config); `unknown` tools are not offered. Picking an assistant or
       an editor changes the note as the design says. A read failure gives an error, not empty groups.
       `assistantLabel` takes the served `family_name` at all its callers (`now-selectors.ts:120`,
       `crew-selectors.ts:228,247,254`, `run-selectors.ts:65,157`, `task-selectors.ts:133`), and `FAMILY_NAMES` is
       deleted. Update `now-selectors.spec.ts:55` (`gemini-cli` reads "Gemini CLI" only when served).
-- [ ] 4.2 Green: types, client, selectors, and state (`readCatalogue` when the Crew view opens, like `readRuns`
+- [x] 4.2 Green: types, client, selectors, and state (`readCatalogue` when the Crew view opens, like `readRuns`
       at `app/src/lib/relay/RelayScreen.svelte:173-175`; `pickTool(id)`).
-- [ ] 4.3 Red, then green: `AddMember.svelte` component spec. It renders Assistants and Editors as a pressed-state
+- [x] 4.3 Red, then green: `AddMember.svelte` component spec. It renders Assistants and Editors as a pressed-state
       list (`data-catalogue-group`, `data-catalogue-item=<id>`, `aria-pressed`) and the error Notice with Retry.
       Add `/preview` fixtures `AddMember/catalogue`, `AddMember/catalogue-editor-picked` and
       `AddMember/catalogue-error` to `app/src/lib/relay/catalogue.ts`, and check them in the capture matrix
       (light/dark × wide/phone × kanji/icon).
-- [ ] 4.4 e2e `app/e2e/tests/relay-catalogue.spec.ts` (written red before 4.2 and 4.3, green after). Seed with psql
+- [x] 4.4 e2e `app/e2e/tests/relay-catalogue.spec.ts` (written red before 4.2 and 4.3, green after). Seed with psql
       on `sensei_e2e` only, guarded by `/health` `dbName` as in `seed-ticket.ts`: a `claude` session now and a
       `cursor`-hosted session with model `claude-sonnet-4-5`, each with a fixed `client_session_id` and
       `on conflict do nothing`, so a re-run on a kept DB does not double the count; and an `assistant_installs`

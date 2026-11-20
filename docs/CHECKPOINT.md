@@ -1,35 +1,24 @@
-# Checkpoint
+# Checkpoint — 2026-11-20 (relay open items — #398, PR #502 landing)
 
 **Slice:** #398 — lane close tolerates and releases dead-lease lanes (`fix-relay-crew-close-dead-lanes`, 1/1).
-**Branch:** `lane/relay-398-s1` (worktree `lanes/relay-open`), PR to develop.
+**Branch:** `lane/relay-398-s1` (worktree `lanes/relay-open`), PR #502 to develop; origin/develop merged in.
 
 ## Done
-- Store: `relay_close_crew` judges liveness by the lane lease via `relay_crew_has_live_lane`
-  (shared with run start), locks crew then lanes, releases each dead lane through
-  `relay_unregister_tx`; `RelayCloseOutput.released`.
-- Handler: `close_crew` emits `lane.unregistered` + `task.interrupt` per released lane
-  (`emit_released`, shared with the person close), then `run.completed`; answer gains `released`.
+- Store: `relay_close_crew` judges liveness by the lane lease, locks crew then lanes, releases each
+  dead lane through `relay_unregister_tx`; `RelayCloseOutput.released`.
+- Handler: `close_crew` emits `lane.unregistered` + `task.interrupt` per released lane, then
+  `run.completed`; answer gains `released`.
 - e2e `app/e2e/tests/relay-crew-close.spec.ts`: red on the pre-fix daemon (409), green on this branch.
-- Review fixes 1-4 (PR #502): heartbeat, open-crew gate, active-crew join, sweep take the crew row first.
-- Review fix 5 (PR #502, round 5): lane task writes (checkpoint, report, holder start, review, release,
-  ask, answer, hand-over) take the crew row `for key share` first (`relay_hold_crew`/`relay_hold_lane_crew`,
-  410 for a lane the close released); they deadlocked a close (40P01). Ask and hand-over write only from
-  the state they read (409). Red `d48982306`/`9733fe5a1`, green `c91cf752d`/`c17278409`; design.md 3.
-- Review fix 6 (PR #502, round 6): the lane's own unregister takes the crew row first (40P01 with
-  close; 410 once released). No writer acts on a task state a racer moved on: unregister_tx, sweep
-  (expiry/pause/re-offer), report, review, answer read `for update`; merge, task cancel, assign write
-  only from the state+holder read (409). Red `f0ba39396` (11 race tests), green `9205e06fd`; design.md 3.
-- Review fix 7 (PR #502, round 7): the sweep's re-offer and review nudge skip closed crews; a task
-  close interrupted stays `interrupted` (no lane can claim there). Red `26553a112`, green `2358ed430`;
-  design.md 3 + spec scenario. Gate merges of approved work unchanged (close never touches them).
-- Gate: fmt, clippy (senseid), relay DB tests (478), e2e relay-crew-close.spec.ts,
-  openspec validate --strict.
+- Review fixes 1-7 (PR #502): every crew/lane/task writer takes the crew row first; writers act only
+  from the state they read; the sweep skips closed crews. design.md 3.
+- Gate: fmt, clippy (senseid), relay DB tests (478), e2e relay-crew-close.spec.ts, openspec validate --strict.
+- #389 (PR #508) landed on develop separately; its rokkit upstream issues rokkit#205-#209 stay open.
 
 ## Remaining
-- PR review and merge to develop (not merged by the lane).
+- PR #502 CI green, merge to develop, close #398.
 
 ## Next command
-`gh pr view --web` on the slice PR.
+`gh pr checks 502 --watch`
 
 ## Open questions
 - None.
