@@ -15141,6 +15141,25 @@ mod tests {
         assert_eq!(task_state(&pg, t).await, "interrupted");
     }
 
+    /// A live lane asks, blocking the dead lane's task, while a close
+    /// releases the dead lane: the ask waits for the crew row, then finds
+    /// the task interrupted (`409`) instead of blocking over the close.
+    #[tokio::test]
+    async fn ask_blocking_a_task_a_close_interrupts_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = v7(0x14);
+        fx_lane(&pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
+        let t = v7(0xd7);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
+            store.relay_ask_decision(u1(), a3, ask_input(vec![t])).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
     /// The coordinator hands the dead lane's task to a live lane while a
     /// close releases the dead lane: the hand-over waits for the crew row,
     /// then finds the task interrupted (`409`), which stays the sweeper's
