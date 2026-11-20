@@ -9,11 +9,8 @@
   `relay_unregister_tx`; `RelayCloseOutput.released`.
 - Handler: `close_crew` emits `lane.unregistered` + `task.interrupt` per released lane
   (`emit_released`, shared with the person close), then `run.completed`; answer gains `released`.
-- MCP `relay_close_crew` text and `lanes.md` §12 updated.
 - e2e `app/e2e/tests/relay-crew-close.spec.ts`: red on the pre-fix daemon (409), green on this branch.
-- Review fixes 1-4 (PR #502): heartbeat, open-crew gate, active-crew join and sweep take the crew row
-  before lanes and leases (40P01 / closed-crew joins). Greens `875c3a080`, `a9fcc6f01`, `7517eeb76`,
-  `5ef857718`; design.md decisions 3-4.
+- Review fixes 1-4 (PR #502): heartbeat, open-crew gate, active-crew join, sweep take the crew row first.
 - Review fix 5 (PR #502, round 5): lane task writes (checkpoint, report, holder start, review, release,
   ask, answer, hand-over) take the crew row `for key share` first (`relay_hold_crew`/`relay_hold_lane_crew`,
   410 for a lane the close released); they deadlocked a close (40P01). Ask and hand-over write only from
@@ -22,7 +19,10 @@
   close; 410 once released). No writer acts on a task state a racer moved on: unregister_tx, sweep
   (expiry/pause/re-offer), report, review, answer read `for update`; merge, task cancel, assign write
   only from the state+holder read (409). Red `f0ba39396` (11 race tests), green `9205e06fd`; design.md 3.
-- Gate: fmt, clippy (senseid), relay DB tests (476), e2e relay-crew-close.spec.ts,
+- Review fix 7 (PR #502, round 7): the sweep's re-offer and review nudge skip closed crews; a task
+  close interrupted stays `interrupted` (no lane can claim there). Red `26553a112`, green `2358ed430`;
+  design.md 3 + spec scenario. Gate merges of approved work unchanged (close never touches them).
+- Gate: fmt, clippy (senseid), relay DB tests (478), e2e relay-crew-close.spec.ts,
   openspec validate --strict.
 
 ## Remaining
