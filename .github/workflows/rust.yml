@@ -117,7 +117,7 @@ jobs:
       # stays on Linux. senseid runs its pure modules through the same selection
       # and guards as its coverage job; bootstrap's DB tests are #[ignore]d.
       - name: Test the no-DB crates (Windows)
-        run: cargo test --workspace --exclude senseid
+        run: cargo test --workspace --exclude senseid --no-fail-fast
       - name: Test senseid's pure modules (Windows)
         shell: bash
         env:

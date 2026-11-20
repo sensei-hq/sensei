@@ -254,6 +254,7 @@ mod tests {
     /// A child killed by a signal has no exit code, and `code().unwrap_or(0)`
     /// reported it as SUCCESS: `sensei restart` exited 0 for a daemon that died.
     /// The shell's convention instead: 128 + the signal.
+    #[cfg(unix)]
     #[test]
     fn a_child_killed_by_a_signal_is_not_a_success() {
         let run =
