@@ -6890,13 +6890,15 @@ impl PgStore {
         .map_err(db_err)?;
         // Re-offer tasks past the grace, measured from the latest
         // `interrupted` action. Tasks without one are left alone (the grace
-        // has nothing to measure from).
+        // has nothing to measure from), and so are a closed crew's: no lane
+        // can claim there (#398), so its task stays `interrupted`.
         let cutoff = now - Duration::seconds(REOFFER_GRACE_SECS as i64);
         let due: Vec<(Uuid, Uuid, Uuid, Option<Uuid>, i32, String)> =
             sqlx_core::query_as::query_as(
                 "select t.user_id, t.crew_id, t.id, t.lane_id, t.round, t.phase::text
                  from relay.tasks t
-                 where t.state = 'interrupted'
+                 join relay.crews c on c.user_id = t.user_id and c.id = t.crew_id
+                 where t.state = 'interrupted' and c.status <> 'closed'
                    and (select max(a.created_at) from relay.actions a
                         where a.user_id = t.user_id and a.task_id = t.id
                           and a.kind = 'interrupted') <= $1
@@ -7002,11 +7004,14 @@ impl PgStore {
         .rows_affected();
         // F07: a review floating past the window gets one nudge to everyone
         // in its crew per window — the newest nudge about it dates the next.
+        // A closed crew has nobody left to claim it (#398): no nudge.
         let nudge_cutoff = now - Duration::seconds(NUDGE_AFTER_SECS as i64);
         let stale: Vec<(Uuid, Uuid, Uuid, String, DateTime<Utc>)> = sqlx_core::query_as::query_as(
             "select t.user_id, t.crew_id, t.id, t.title, t.state_changed_at
              from relay.tasks t
+             join relay.crews c on c.user_id = t.user_id and c.id = t.crew_id
              where t.state = 'in_review' and t.review_claimed_by is null
+               and c.status <> 'closed'
                and t.state_changed_at <= $1
                and not exists (
                  select 1 from relay.actions a

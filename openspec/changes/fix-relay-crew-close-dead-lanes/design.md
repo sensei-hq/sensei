@@ -61,8 +61,13 @@ flowchart TD
    `410`. A write never acts on a task state a racing writer (a person's `cancel_run`, a merge) moved on (PR #502
    review): the leave the close runs per dead lane, the sweep (expiry, limit pause, re-offer), report, review and
    answer read the task `for update`, so a cancelled task drops out or is refused; merge, task cancel and assign,
-   which read before their transaction, write only from the state and holder they read (`409`). A closed crew's or
-   cancelled run's task is never interrupted, re-offered, reviewed, merged or handed out over that state.
+   which read before their transaction, write only from the state and holder they read (`409`), so a task a racing
+   cancel moved on is never interrupted, re-offered, reviewed, merged or handed out over that state. A closed crew's
+   task is never re-offered (PR #502 review): the sweep's re-offer skips closed crews, because no lane can claim
+   there (`crew is closed`), so a task close interrupted stays `interrupted`, and the sweep never nudges a closed
+   crew about a floating review. A sprint run on that crew stays open until the person cancels it, as it already did
+   for its ready tasks (the lane close has no run guard, below). The gate still lands an approved task's merge:
+   close never touches approved work.
 4. **Heartbeat race.** A heartbeat that commits between the liveness read and the close's commit is still released
    by close (the lane row is locked and unregistered in the same transaction); its next call gets `410`. Heartbeat
    takes the same order as close (PR #502 review): it updates the crew row first, then reads the lane `for share`,
