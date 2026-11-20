@@ -16,6 +16,7 @@
 pub mod decision_schema;
 pub mod envelope;
 pub mod gate;
+pub mod host;
 pub mod plan;
 pub mod rows;
 

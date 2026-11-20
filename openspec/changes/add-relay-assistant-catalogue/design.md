@@ -185,6 +185,19 @@ Where things stand on develop (`c25d1a930`):
     B -->|anything else or absent| N[no detection]
   ```
 
+  Checked on this machine (task 5.1, 2026-11-20), by a stdio MCP server that logs its `initialize` and
+  environment:
+  - Claude Code 2.1.325 sends `clientInfo.name` `claude-code`; started from Terminal.app its server sees
+    `TERM_PROGRAM=Apple_Terminal` and no `CURSOR_TRACE_ID` (no detection, as the flowchart says).
+  - Zed sends `clientInfo.name` `Zed` (matched case-insensitively). A server Zed starts sees no `TERM_PROGRAM`;
+    Zed's own terminal sets `TERM_PROGRAM=zed` (the Zed binary pairs the two).
+  - VS Code names its MCP client after the product's long name, `Visual Studio Code`, and its terminal sets
+    `TERM_PROGRAM=vscode`.
+  - Cursor, Windsurf and Kiro are not installed here, so their values are not observed: Cursor's published client
+    name is `cursor-vscode` and its terminal adds `CURSOR_TRACE_ID` to VS Code's `TERM_PROGRAM=vscode`. The prefix
+    match (`cursor*`, `windsurf*`, `kiro*`) covers a renamed client; a value that matches nothing gives no
+    detection, so the self-report stands.
+
   The daemon resolves the lane's host with a pure `resolve_host(reported, detected, catalogue)`:
   1. a `host_detected` that the catalogue knows as an `editor` → that is the host;
   2. else the trimmed, non-blank self-reported `host` → that is the host (a word the catalogue does not know is

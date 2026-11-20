@@ -52,6 +52,16 @@ well each assistant did. Two sessions are enough: one coordinator and one worker
   - `version` is the assistant's own version and is recorded on every execution, since versions change often.
   - `model` is the model id in use.
   - `capabilities` is e.g. `rust`, `sql`, `ts`, `mockups`, `can-push`, `can-run-hooks`.
+  - The lane's **host** is the editor it runs in (#396, #455). The MCP binary detects it, since it is the one
+    process that sees the client: the `initialize` client name first (`cursor*`, `Zed`, `Visual Studio Code`,
+    `windsurf*`, `kiro*`), then `TERM_PROGRAM` (`zed`; `vscode`, which is Cursor when `CURSOR_TRACE_ID` is set).
+    It sends that as `host_detected`. The daemon keeps the detected value when the seeded catalogue
+    (`sensei.assistant_catalogue`) knows it as an editor, else the session's own `host`, else none. A
+    disagreement, or a detection the catalogue does not know as an editor, is a warning in the log, never a
+    stored guess. Either value over 64 characters is refused. A lane registered over plain HTTP sends no
+    `host_detected`, so its own `host` stands. The Crew card reads "in Zed"; a terminal lane has no tag.
+  - The Crew view's **AddMember** picker lists the catalogue's assistants and editors this machine has seen
+    (installed, or named by a session), and picking one words the note under the paste line (#455).
   - It returns a **lane token** and the lane it was given: the first open lane whose requirements its
     capabilities meet.
   - It returns a **`guidance` block** (F9): `version` (schema, currently `"2"`) + `generic`, the

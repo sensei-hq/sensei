@@ -4,8 +4,9 @@ use std::io::{BufRead, Write};
 use sensei_mcp::{
     ActiveWorkspace, DaemonRequest, HttpMethod, NEEDS_WORKSPACE, WORKSPACES_FOR_RESOLUTION,
     WorkspaceResolution, build_log_event_body, build_relay_wait_request, daemon_request_for,
-    handle_initialize, handle_list_tools, record_outcome_body, resolve_active_workspace_in,
-    resolve_default_workspace, resolve_from_cwd_in, resolve_workspace_in,
+    detect_host, handle_initialize, handle_list_tools, record_outcome_body,
+    resolve_active_workspace_in, resolve_default_workspace, resolve_from_cwd_in,
+    resolve_workspace_in,
 };
 
 /// The active-workspace pin for THIS MCP session, held in memory — NOT a file.
@@ -155,6 +156,14 @@ fn main() {
     }
     let base = sensei_bootstrap::daemon_url_with_flag(flag.as_deref());
 
+    // #455: the editor this session runs in. The environment is the client's (it
+    // started this process) and is read once, here; the client's name arrives with
+    // `initialize`. Until then, detection has only the environment.
+    let env: std::collections::HashMap<String, String> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+        .collect();
+    let mut detected_host = detect_host(None, &env);
+
     for line in stdin.lock().lines() {
         let line = match line {
             Ok(l) => l,
@@ -174,10 +183,13 @@ fn main() {
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
 
         let result = match method {
-            "initialize" => handle_initialize(),
+            "initialize" => {
+                detected_host = detect_host(params["clientInfo"]["name"].as_str(), &env);
+                handle_initialize()
+            }
             "notifications/initialized" => continue,
             "tools/list" => handle_list_tools(),
-            "tools/call" => handle_call_tool(&params, &client, &cwd, &base),
+            "tools/call" => handle_call_tool(&params, &client, &cwd, &base, detected_host),
             "resources/list" => json!({"resources": []}),
             "prompts/list" => json!({"prompts": []}),
             _ => {
@@ -202,9 +214,16 @@ fn handle_call_tool(
     client: &reqwest::blocking::Client,
     cwd: &str,
     base: &str,
+    detected_host: Option<&str>,
 ) -> Value {
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    // #455: register carries the editor this binary detected, never the caller's word for it.
+    let args = if tool_name == "relay_register" {
+        sensei_mcp::with_detected_host(&args, detected_host)
+    } else {
+        args
+    };
 
     // A required argument that is missing is the caller's mistake, said as one —
     // sent on as an empty value it came back as an empty, plausible answer.
@@ -856,10 +875,39 @@ mod binary_tool_tests {
         );
     }
 
+    /// #455 5.3: what the binary detected rides `relay_register`; a caller's own
+    /// `host_detected` never does.
+    #[test]
+    fn register_carries_the_host_this_binary_detected() {
+        let (base, seen) = fake_daemon(vec![
+            (200, "[]"),
+            (200, r#"{"lane_id":"l"}"#),
+            (200, "[]"),
+            (200, r#"{"lane_id":"l"}"#),
+        ]);
+        let params = json!({ "name": "relay_register", "arguments": {
+            "family": "claude-code", "host": "cursor", "host_detected": "kiro"
+        }});
+        let register = |seen: &Seen| {
+            let calls = seen.lock().unwrap();
+            let i =
+                calls.iter().rposition(|c| c.1 == "/api/relay/register").expect("register sent");
+            serde_json::from_str::<Value>(&calls[i].2).unwrap()
+        };
+        handle_call_tool(&params, &client(), "/repo", &base, Some("zed"));
+        let body = register(&seen);
+        assert_eq!(body["host_detected"], "zed");
+        assert_eq!(body["host"], "cursor");
+        handle_call_tool(&params, &client(), "/repo", &base, None);
+        let body = register(&seen);
+        assert!(body.get("host_detected").is_none(), "{body}");
+        assert_eq!(body["host"], "cursor");
+    }
+
     #[test]
     fn record_outcome_with_unreadable_outcomes_is_an_error_without_a_daemon_call() {
         let params = json!({ "name": "record_outcome", "arguments": { "outcomes": "[{oops" } });
-        let result = handle_call_tool(&params, &client(), "/repo", &closed_base());
+        let result = handle_call_tool(&params, &client(), "/repo", &closed_base(), None);
         assert!(is_error(&result));
         assert!(text(&result).contains("not valid JSON"), "{result}");
     }

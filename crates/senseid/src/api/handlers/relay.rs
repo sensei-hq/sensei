@@ -198,8 +198,10 @@ pub(crate) struct RegisterBody {
     role: Option<String>,
     /// The name the assistant proposes for itself: the lane's title.
     suggested_name: Option<String>,
-    /// The editor the session runs in (#396), when it runs in one.
+    /// The editor the session runs in (#396), as the session says.
     host: Option<String>,
+    /// The editor the MCP binary detected (#455); preferred over `host`.
+    host_detected: Option<String>,
     family: String,
     version: Option<String>,
     model: Option<String>,
@@ -1011,6 +1013,7 @@ pub(crate) async fn register(
                     .map_err(err)?,
                 suggested_name: body.suggested_name,
                 host: body.host,
+                host_detected: body.host_detected,
             },
             chrono::Utc::now(),
         )
@@ -5811,6 +5814,55 @@ mod tests {
         )
         .await;
         // A refusal of the body's values is relay_invalid, 422, like every other.
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    /// #455 5.5: the detected host wins; the self-report is the fallback. A
+    /// detection the catalogue does not know as an editor is never stored.
+    #[tokio::test]
+    async fn register_prefers_the_detected_host_over_the_reported_one() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let cases = [
+            (json!({"host_detected": "zed"}), json!("zed")),
+            (json!({"host": "cursor", "host_detected": "zed"}), json!("zed")),
+            (json!({"host": "cursor"}), json!("cursor")),
+            (json!({"host": "cursor", "host_detected": "claude"}), json!("cursor")),
+            (json!({"host_detected": "muse"}), Value::Null),
+        ];
+        let mut lanes = Vec::new();
+        for (extra, _) in &cases {
+            let mut req = json!({"family": "claude-code", "crew_id": coord.2});
+            for (k, v) in extra.as_object().unwrap() {
+                req[k] = v.clone();
+            }
+            let (status, body) = call(&h, "POST", "/api/relay/register", Some(req), None).await;
+            assert_eq!(status, StatusCode::OK, "{extra}: {body}");
+            lanes.push(body["lane_id"].as_str().unwrap().to_string());
+        }
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for ((extra, want), id) in cases.iter().zip(&lanes) {
+            let lane = body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == **id).unwrap();
+            assert_eq!(&lane["host"], want, "{extra}");
+        }
+    }
+
+    /// #455 5.5: a detected host is an editor's name too — a long one is refused.
+    #[tokio::test]
+    async fn register_refuses_a_detected_host_longer_than_a_name() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({
+                "family": "claude-code", "crew_id": coord.2, "host_detected": "x".repeat(65)
+            })),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     }
 
