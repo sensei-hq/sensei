@@ -1,5 +1,13 @@
 // @sensei/state — domain state shared by the desktop app and the dōjō (#414).
 export type { StateEvent } from './events.js';
+export {
+  sseEvents,
+  realtimeEvents,
+  type StateStream,
+  type EventStream,
+  type ChannelStatus,
+  type ChannelSubscriber,
+} from './source.js';
 export { ReactiveStageContext } from './stage.svelte.js';
 export { EventManager, type EventHandler } from './event-manager.js';
 export { failureFrom, failureReason, type ApiError, type ApiResult } from './result.js';
@@ -27,15 +35,28 @@ export {
   type RelayRunRow,
   type RelayTaskRow,
 } from './relay/entity-states.svelte.js';
-export { relaySseSource, sseEvents, type RelayEventStream } from './relay/sources/sse.js';
+export { relaySseSource, relayTaskSseSource, type RelayEventStream } from './relay/sources/sse.js';
 export {
   relayRealtimeSource,
-  realtimeEvents,
+  relayRealtimeTaskSource,
   cannedRealtime,
   type CannedWrite,
   type RelayChannelStatus,
   type RelayRealtimeTransport,
 } from './relay/sources/realtime.js';
+export {
+  fromPostgresChange,
+  RELAY_TABLES,
+  type PostgresChangePayload,
+  type RelayTableEntry,
+  type RelayTableMap,
+} from './relay/sources/postgres-change.js';
+export {
+  realtimeChannel,
+  type RealtimeChannelLike,
+  type RealtimeChannelSpec,
+  type RealtimeClientLike,
+} from './relay/sources/channel.js';
 export {
   toStats,
   firstPassLine,
@@ -44,7 +65,23 @@ export {
   minutesSince,
   type RelayStats,
 } from './relay/relay-selectors.js';
-export { RelayTaskState, type TaskReads } from './relay/task-state.svelte.js';
+export {
+  toDecisionForm,
+  toAnswerValues,
+  textCap,
+  textMisses,
+  toPatternMatcher,
+  withoutTextRules,
+  withArrayLayout,
+  type DecisionFormView,
+  type TextMiss,
+} from './relay/decision-form.js';
+export {
+  RelayTaskState,
+  type RelayTaskSource,
+  type RelayTaskStateOptions,
+  type TaskReads,
+} from './relay/task-state.svelte.js';
 export {
   nameOf,
   nameOfCode,
@@ -62,6 +99,7 @@ export {
   taskStateLabel,
   ticketLabel,
   todayLine,
+  answerGist,
 } from './relay/format.js';
 export {
   assistantLabel,
@@ -95,6 +133,9 @@ export {
   toArchivedRun,
   runHref,
   type RelayAddMemberView,
+  type RelayCatalogueInput,
+  type RelayCatalogueItemView,
+  type RelayCatalogueView,
   type RelayMemberGroupView,
   type RelayMemberView,
   type RelayPresence,

@@ -429,6 +429,10 @@ pub trait TranscriptAdapter: Send + Sync {
     /// Harness/agent family (the `sensei.assistant_family` enum: "claude", "zed", …).
     /// The precise per-unit model, when known, is carried on [`ParsedTranscript::model`].
     fn family(&self) -> &'static str;
+    /// The editor this source's sessions run in (`cursor`, `zed`, `vscode`), or
+    /// `None` for a terminal harness (#455). No default: a new adapter decides.
+    /// Never guessed — a source with no evidence of an editor answers `None`.
+    fn host(&self) -> Option<&'static str>;
     /// Units this adapter can ingest, each with a change-stamp for cursor skipping.
     fn units(&self) -> Vec<UnitRef>;
     /// Cheap change-stamp for a unit key (no content read) — the cursor
@@ -698,7 +702,7 @@ async fn ingest_one(
     //    transcript whether the session was just synthesized or already existed, so
     //    a re-run backfills columns added after the session was first captured.
     //    Idempotent; a miss leaves the column untouched (never a fabricated value).
-    set_session_metadata(pg, &session_id, &parsed).await;
+    set_session_metadata(pg, &session_id, &parsed, adapter.host()).await;
     let session_id = (turns > 0).then(|| session_id.clone());
     Ok(IngestOutcome { skipped: false, turns, analyze_workspace, session_id })
 }
@@ -712,6 +716,7 @@ async fn set_session_metadata(
     pg: &crate::db::pg_store::PgStore,
     session_id: &str,
     parsed: &ParsedTranscript,
+    host: Option<&str>,
 ) {
     let (provider, model_name) = match &parsed.model {
         Some((p, m)) => (Some(p.as_str()), Some(m.as_str())),
@@ -737,6 +742,7 @@ async fn set_session_metadata(
                 tokens_in,
                 tokens_out,
                 split: t.as_ref(),
+                host,
             },
         )
         .await
@@ -1194,6 +1200,9 @@ mod tests {
         fn family(&self) -> &'static str {
             "claude"
         }
+        fn host(&self) -> Option<&'static str> {
+            None
+        }
         fn units(&self) -> Vec<UnitRef> {
             vec![]
         }
@@ -1410,6 +1419,9 @@ mod tests {
         }
         fn family(&self) -> &'static str {
             self.inner.family()
+        }
+        fn host(&self) -> Option<&'static str> {
+            self.inner.host()
         }
         fn units(&self) -> Vec<UnitRef> {
             self.inner.units()
@@ -2016,5 +2028,138 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── The session's host: the editor it ran in (#455) ──────────────────
+
+    #[test]
+    fn every_adapter_declares_its_host() {
+        let p = std::path::PathBuf::from("/nowhere");
+        assert_eq!(cursor::CursorAdapter::new(p.clone()).host(), Some("cursor"));
+        assert_eq!(zed::ZedAdapter::new(p.clone()).host(), Some("zed"));
+        assert_eq!(vscode::VscodeAdapter::new(p.clone()).host(), Some("vscode"));
+        assert_eq!(claude::ClaudeAdapter::new(p.clone()).host(), None);
+        assert_eq!(copilot_cli::CopilotCliAdapter::new(p.clone()).host(), None);
+        assert_eq!(opencode::OpenCodeAdapter::new(p).host(), None);
+    }
+
+    /// Cursor, with the model a transcript carries when its source reports one
+    /// (Cursor's JSONL does not; the host write must not depend on that).
+    struct ModelCursor(cursor::CursorAdapter);
+    impl TranscriptAdapter for ModelCursor {
+        fn source(&self) -> &'static str {
+            self.0.source()
+        }
+        fn family(&self) -> &'static str {
+            self.0.family()
+        }
+        fn host(&self) -> Option<&'static str> {
+            self.0.host()
+        }
+        fn units(&self) -> Vec<UnitRef> {
+            self.0.units()
+        }
+        fn stamp_for(&self, key: &str) -> Option<i64> {
+            self.0.stamp_for(key)
+        }
+        fn session_id_for(&self, key: &str) -> Option<String> {
+            self.0.session_id_for(key)
+        }
+        fn load_content(&self, key: &str) -> Option<String> {
+            self.0.load_content(key)
+        }
+        fn parse(&self, content: &str) -> ParsedTranscript {
+            let mut p = self.0.parse(content);
+            p.model = Some(("anthropic".into(), "claude-sonnet-4-5".into()));
+            p
+        }
+    }
+
+    /// A Cursor transcript under a tracked repository, written to a temp root.
+    async fn cursor_transcript(
+        pg: &crate::db::pg_store::PgStore,
+    ) -> (tempfile::TempDir, String, String) {
+        let stem = format!("_test-host-{}", uuid::Uuid::new_v4());
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("proj-hash").join("agent-transcripts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let cwd = format!("/nowhere/host-{}", uuid::Uuid::new_v4());
+        let rid = pg.add_watch_root("/nowhere", "nowhere", &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&rid, "git", "host", &cwd).await.unwrap();
+        let body = format!(
+            r#"{{"type":"user","cwd":"{cwd}","timestamp":"2026-06-22T10:00:00.000Z","message":{{"role":"user","content":"add a login page"}}}}
+{{"type":"assistant","cwd":"{cwd}","timestamp":"2026-06-22T10:00:02.000Z","message":{{"role":"assistant","content":[{{"type":"text","text":"On it."}}]}}}}
+"#
+        );
+        let file = dir.join(format!("{stem}.jsonl"));
+        std::fs::write(&file, body).unwrap();
+        (root, file.to_string_lossy().to_string(), format!("cursor-{stem}"))
+    }
+
+    async fn host_and_model(
+        pg: &crate::db::pg_store::PgStore,
+        sid: &str,
+    ) -> (Option<String>, Option<String>) {
+        sqlx_core::query_as::query_as(
+            "SELECT host, model FROM activity.sessions WHERE client_session_id = $1",
+        )
+        .bind(sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_new_cursor_session_gets_its_host_and_model() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (root, key, sid) = cursor_transcript(&pg).await;
+        let ad = ModelCursor(cursor::CursorAdapter::new(root.path().to_path_buf()));
+        ingest_one(&pg, &ad, &key).await.unwrap();
+        assert_eq!(
+            host_and_model(&pg, &sid).await,
+            (Some("cursor".into()), Some("claude-sonnet-4-5".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_existing_cursor_session_awaiting_its_metadata_gets_its_host() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (root, key, sid) = cursor_transcript(&pg).await;
+        let ad = ModelCursor(cursor::CursorAdapter::new(root.path().to_path_buf()));
+        ingest_one(&pg, &ad, &key).await.unwrap();
+        // Captured before hosts existed: no host, metadata not yet synced.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET host = NULL, model = NULL, meta_synced_at = NULL
+              WHERE client_session_id = $1",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        ingest_one(&pg, &ad, &key).await.unwrap();
+        assert_eq!(
+            host_and_model(&pg, &sid).await,
+            (Some("cursor".into()), Some("claude-sonnet-4-5".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_claude_code_session_has_no_host() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let sid = format!("_test-nohost-{}", uuid::Uuid::new_v4());
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("proj")).unwrap();
+        let cwd = format!("/nowhere/nohost-{}", uuid::Uuid::new_v4());
+        let rid = pg.add_watch_root("/nowhere", "nowhere", &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&rid, "git", "nohost", &cwd).await.unwrap();
+        let head = format!(
+            r#"{{"type":"user","cwd":"{cwd}","timestamp":"2026-06-22T09:59:00.000Z","message":{{"role":"user","content":[{{"type":"tool_result","content":"ok"}}]}}}}"#
+        );
+        let file = root.path().join("proj").join(format!("{sid}.jsonl"));
+        std::fs::write(&file, format!("{head}{SAMPLE}")).unwrap();
+        let ad = claude::ClaudeAdapter::new(root.path().to_path_buf());
+        ingest_one(&pg, &ad, &file.to_string_lossy()).await.unwrap();
+        let (host, _) = host_and_model(&pg, &sid).await;
+        assert_eq!(host, None, "a terminal session is never given a host");
     }
 }

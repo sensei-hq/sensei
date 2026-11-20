@@ -7,6 +7,9 @@
 
 export type EventHandler<T> = (event: T) => void;
 
+/** Called when a payload fails to parse; the payload is skipped and the stream keeps going. */
+export type ParseErrorHandler = (error: unknown, data: string) => void;
+
 export class EventManager<T> {
   /** Fires on every socket open, initial and reconnects (F8: routes re-read
    *  on reconnect — broadcast has no replay). Mirrors EventSource's shape. */
@@ -19,6 +22,8 @@ export class EventManager<T> {
     private url: string,
     private parse: (data: string) => T,
     private reconnectMs = 3000,
+    private onError: ParseErrorHandler = (error, data) =>
+      console.warn(`[EventManager] ${url}: payload failed to parse, skipped`, error, data),
   ) {}
 
   /** Subscribe a handler. Returns an unsubscribe function. */
@@ -71,13 +76,15 @@ export class EventManager<T> {
     this.source = new EventSource(this.url);
 
     this.source.onmessage = (e) => {
+      let parsed: T;
       try {
-        const parsed = this.parse(e.data);
-        for (const handler of this.handlers) {
-          handler(parsed);
-        }
-      } catch {
-        // Parse error — skip event, don't crash
+        parsed = this.parse(e.data);
+      } catch (error) {
+        this.onError(error, e.data);
+        return;
+      }
+      for (const handler of this.handlers) {
+        handler(parsed);
       }
     };
 

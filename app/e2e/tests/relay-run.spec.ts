@@ -29,6 +29,7 @@ import { navigateToScreen, seedSetupComplete, DAEMON_URL } from '../helpers';
 import { RelayCrew, RelayLane } from '../lib/relay-crew';
 import { shot } from '../lib/shot';
 import { seedJiraTicket } from '../lib/seed-ticket';
+import { cleanSlate, person } from '../lib/relay-slate';
 
 const STREAM = 20_000;
 const EVIDENCE = 'test-results/relay-run';
@@ -38,28 +39,6 @@ const RUN_TAG = Date.now().toString(36);
 const ITEMS = [`Run journey ${RUN_TAG}: the first file`, `Run journey ${RUN_TAG}: the second file`];
 /** A ticket the e2e broker's seeded tracker holds (#449), unique per run like the items. */
 const TICKET = { key: `E2E-${RUN_TAG.toUpperCase()}`, title: `Run journey ${RUN_TAG}: the ticket` };
-
-/** A person route on the daemon (no lane token). */
-async function person<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${DAEMON_URL}${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status}: ${await res.text()}`);
-  return (await res.json()) as T;
-}
-
-/** Earlier specs leave crews and runs open on the shared e2e broker: end them, so this
- *  journey starts with no crew (Create run drafts) and one crew after it registers. */
-async function cleanSlate(): Promise<void> {
-  const runs = await person<{ active: Array<{ id: string }> }>('GET', '/relay/runs');
-  for (const run of runs.active) await person('POST', `/relay/runs/${run.id}/cancel`, {});
-  const now = await person<{ crews: Array<{ id: string }> }>('GET', '/relay/now');
-  for (const crew of now.crews) await person('POST', `/relay/crews/${crew.id}/close`, {});
-  // Backlog and triage leftovers would be picked alongside ours; leave them, the
-  // journey picks its own rows by title.
-}
 
 let repo = '';
 let tauri: TauriPageLike;
@@ -310,6 +289,8 @@ async function taskPageLive(lane: RelayLane, taskId: string): Promise<void> {
   const stepKeys = async () =>
     JSON.parse(String(await tauri.evaluate(`JSON.stringify([...document.querySelectorAll('[data-step]')].map((s) => s.getAttribute('data-step')))`))) as string[];
   await expect.poll(stepKeys, { timeout: STREAM }).toEqual(['write', 'check']);
+  // A full reload would clear this; the step must arrive through the task source's stream.
+  await tauri.evaluate(`window.__taskPageNoReload = true`);
   await lane.checkpoint(taskId, {
     current_step: 'Tidy it',
     steps: [
@@ -320,6 +301,7 @@ async function taskPageLive(lane: RelayLane, taskId: string): Promise<void> {
   });
   await expect.poll(stepKeys, { timeout: STREAM }).toEqual(['write', 'check', 'tidy']);
   await expect.poll(() => attrOf('[data-step="check"]', 'data-step-state'), { timeout: STREAM }).toBe('done');
+  expect(await tauri.evaluate(`window.__taskPageNoReload === true`)).toBe(true);
   const body = JSON.parse(
     String(
       await tauri.evaluate(`(() => {

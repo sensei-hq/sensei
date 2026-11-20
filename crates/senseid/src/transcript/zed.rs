@@ -69,6 +69,9 @@ impl TranscriptAdapter for ZedAdapter {
     fn source(&self) -> &'static str {
         "zed"
     }
+    fn host(&self) -> Option<&'static str> {
+        Some("zed")
+    }
     fn family(&self) -> &'static str {
         // `family` is the harness/agent (the `sensei.assistant_family` enum:
         // claude, cursor, zed, …) — here, Zed. The precise *model* a thread used

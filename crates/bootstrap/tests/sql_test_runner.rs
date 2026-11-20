@@ -7,6 +7,8 @@
 //!
 //! Driven with a fake `psql` that answers for the dōjō's URL, refuses the
 //! daemon's, and logs every file it is asked to run — so no Postgres is needed.
+//! Unix only: the runner and the fake are shell scripts.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

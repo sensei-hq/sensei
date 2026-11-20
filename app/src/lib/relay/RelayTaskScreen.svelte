@@ -87,11 +87,15 @@
         <RunDetails run={parts!.run} />
 
         {#if view.decision}
-          <DecisionRow
-            decision={view.decision}
-            href={null}
-            onanswer={(option) => state.answer(view.decision!, option)}
-          />
+          <!-- Keyed by id: a re-read can bring a different open decision, and the card
+               (its chosen option, its form and values) belongs to one decision. -->
+          {#key view.decision.id}
+            <DecisionRow
+              decision={view.decision}
+              href={null}
+              onanswer={(choice) => state.answer(view.decision!, choice)}
+            />
+          {/key}
         {/if}
 
         {#if parts?.handoff}

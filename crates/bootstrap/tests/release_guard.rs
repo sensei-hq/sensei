@@ -3,6 +3,8 @@
 //! commit on a clean develop that reaches main through the PR; the RELEASE tags
 //! main's head — clean, exactly `origin/main`, its VERSION not yet tagged — and
 //! pushes only the tag. Driven against real throwaway git repositories.
+//! Unix only: the guard is a shell script run where releases are cut (macOS/Linux).
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

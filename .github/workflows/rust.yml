@@ -94,6 +94,38 @@ jobs:
       - name: Shared JS dependency specs
         run: make check-shared-js-specs
 
+  # Native Windows support (#505). The workspace must compile for
+  # x86_64-pc-windows-msvc so Unix-only code (a `tokio::signal::unix`, a
+  # `libc::statvfs`, a bare `HOME`) fails here instead of on a user's machine.
+  # Clippy rather than `check` so a Unix-only helper left dead on Windows is
+  # reported too. No Postgres: the suite on Windows is a later step of #505.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
+      - name: Clippy (Windows)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # Tests that need no database. GitHub's Windows runners cannot start the
+      # pgvector service container the `test` job uses, so the DB-coupled suite
+      # stays on Linux. senseid runs its pure modules through the same selection
+      # and guards as its coverage job; bootstrap's DB tests are #[ignore]d.
+      - name: Test the no-DB crates (Windows)
+        run: cargo test --workspace --exclude senseid --no-fail-fast
+      - name: Test senseid's pure modules (Windows)
+        # Runs even when the step above failed, so one round reports both.
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          PYTHON: python
+        run: scripts/senseid-pure-coverage.sh --test-only
+
   test:
     runs-on: ubuntu-latest
     services:

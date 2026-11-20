@@ -198,8 +198,10 @@ pub(crate) struct RegisterBody {
     role: Option<String>,
     /// The name the assistant proposes for itself: the lane's title.
     suggested_name: Option<String>,
-    /// The editor the session runs in (#396), when it runs in one.
+    /// The editor the session runs in (#396), as the session says.
     host: Option<String>,
+    /// The editor the MCP binary detected (#455); preferred over `host`.
+    host_detected: Option<String>,
     family: String,
     version: Option<String>,
     model: Option<String>,
@@ -810,6 +812,8 @@ pub(crate) struct AskBody {
     #[serde(default)]
     options: Vec<OptionBody>,
     recommended: Option<String>,
+    /// A form in place of options (#389): `{schema, layout?}`.
+    response: Option<serde_json::Value>,
     #[serde(default)]
     blocks: Vec<String>,
     asked_of: String,
@@ -818,14 +822,20 @@ pub(crate) struct AskBody {
 #[derive(Debug, Deserialize)]
 pub(crate) struct LaneAnswerBody {
     lane_id: String,
-    option: String,
+    /// The pick, for an options decision.
+    option: Option<String>,
+    /// The values, for a form decision (#389).
+    values: Option<serde_json::Value>,
     note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PersonAnswerBody {
     decision_id: String,
-    option: String,
+    /// The pick, for an options decision.
+    option: Option<String>,
+    /// The values, for a form decision (#389).
+    values: Option<serde_json::Value>,
     note: Option<String>,
     surface: String,
 }
@@ -1003,6 +1013,7 @@ pub(crate) async fn register(
                     .map_err(err)?,
                 suggested_name: body.suggested_name,
                 host: body.host,
+                host_detected: body.host_detected,
             },
             chrono::Utc::now(),
         )
@@ -1512,6 +1523,7 @@ pub(crate) async fn ask(
                     .map(|o| RelayDecisionOption { id: o.id, label: o.label, detail: o.detail })
                     .collect(),
                 recommended: body.recommended,
+                response: body.response,
                 blocks,
                 asked_of,
             },
@@ -1544,7 +1556,7 @@ pub(crate) async fn lane_answer(
             session.user_id,
             RelayCaller::Lane { lane_id: caller },
             decision_id,
-            RelayAnswerInput { option: body.option, note: body.note },
+            RelayAnswerInput { option: body.option, values: body.values, note: body.note },
         )
         .await
         .map_err(err)?;
@@ -1740,12 +1752,27 @@ pub(crate) async fn close_crew(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
+    emit_released(&state, &out.crew_id, &out.released).await;
     // A crew's lifecycle event: the crew id stands as the run id (§3k).
     emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
+    let released: Vec<String> = out.released.iter().map(|(lane, _)| lane.to_string()).collect();
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,
+        "released": released,
     }))
+}
+
+/// Lanes a close released leave Now on the stream, each followed by the
+/// task it held, now interrupted. The lane close (#398) and the person
+/// close (#419) share it.
+async fn emit_released(state: &AppState, crew_id: &Uuid, released: &[(Uuid, Option<Uuid>)]) {
+    for (lane_id, interrupted) in released {
+        emit_lane(state, LaneChange::Unregistered, lane_id, crew_id).await;
+        if let Some(task_id) = interrupted {
+            emit_task(state, "interrupt", task_id).await;
+        }
+    }
 }
 
 // ─── Person routes ───
@@ -1759,12 +1786,7 @@ pub(crate) async fn person_close_crew(
     let user_id = person_user(&state).await.map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_person_close_crew(user_id, crew_id).await.map_err(err)?;
-    for (lane_id, interrupted) in &out.released {
-        emit_lane(&state, LaneChange::Unregistered, lane_id, &out.crew_id).await;
-        if let Some(task_id) = interrupted {
-            emit_task(&state, "interrupt", task_id).await;
-        }
-    }
+    emit_released(&state, &out.crew_id, &out.released).await;
     if out.closed_now {
         // A crew's lifecycle event: the crew id stands as the run id (§3k).
         emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
@@ -1779,6 +1801,15 @@ pub(crate) async fn now(
     let user_id = person_user(&state).await.map_err(err)?;
     let now = state.pg.relay_now(user_id, read_filter(&query).map_err(err)?).await.map_err(err)?;
     ok(now)
+}
+
+/// `GET /relay/catalogue` (#455): the assistants and editors this machine has
+/// seen, for AddMember's picker. `workspace_id` is accepted for launch templates
+/// (deferred) and unused. A failed read is a 500, never empty lists.
+pub(crate) async fn catalogue(State(state): State<AppState>) -> RelayResult {
+    person_user(&state).await.map_err(err)?;
+    let catalogue = state.pg.relay_catalogue().await.map_err(|e| err(RelayError::Internal(e)))?;
+    ok(catalogue)
 }
 
 pub(crate) async fn queue(
@@ -1848,7 +1879,7 @@ pub(crate) async fn person_answer(
             user_id,
             RelayCaller::Person { surface },
             decision_id,
-            RelayAnswerInput { option: body.option, note: body.note },
+            RelayAnswerInput { option: body.option, values: body.values, note: body.note },
         )
         .await
         .map_err(err)?;
@@ -4651,6 +4682,160 @@ mod tests {
         }
     }
 
+    fn form_response() -> serde_json::Value {
+        json!({"schema": {"type": "object", "properties": {
+            "path": {"type": "string", "pattern": "^src/"},
+            "count": {"type": "integer", "minimum": 1, "maximum": 5},
+            "ship": {"type": "boolean"}
+        }, "required": ["path"]}})
+    }
+
+    /// A lane asks the person a form decision; its id.
+    async fn ask_form(h: &Harness, task_id: &str, holder: &str, token: &str) -> String {
+        let (status, body) = call(
+            h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                holder,
+                json!({
+                    "task_id": task_id, "question": "Where does it go?",
+                    "response": form_response(),
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["decision_id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn a_form_decision_rides_now_and_the_stream_and_is_answered_with_values() {
+        // #389: the Now row and the stream's add row carry the response; the
+        // person answers with values; the row leaves.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let decision_id = ask_form(&h, &task_id, &holder, &token).await;
+        let asked = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let mut row = now["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == decision_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("decision not on Now: {now}"));
+        // The schema as sent; no layout was sent, so the stored one lists the
+        // fields in the order the lane wrote them (jsonb reorders `properties`).
+        let mut stored = form_response();
+        stored["layout"] = json!({"type": "vertical", "elements": [
+            {"scope": "#/path"}, {"scope": "#/count"}, {"scope": "#/ship"}]});
+        assert_eq!(row["response"], stored);
+        assert_eq!(row["options"], json!([]));
+        row["op"] = json!("asked");
+        assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/answers",
+            Some(json!({"decision_id": decision_id, "values": {"path": "src/x", "ship": true},
+                        "note": null, "surface": "desktop"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let answered = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
+        assert_eq!(answered["action"], "remove");
+        assert_eq!(answered["data"]["id"], decision_id);
+    }
+
+    #[tokio::test]
+    async fn a_form_outside_the_subset_is_422_naming_the_property() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &holder,
+                json!({
+                    "task_id": task_id, "question": "Which files?",
+                    "response": {"schema": {"type": "object", "properties": {
+                        "files": {"type": "array", "items": {"type": "string"}}}}},
+                    "blocks": [], "asked_of": "person",
+                }),
+            )),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        let message = body["message"].as_str().unwrap_or_default();
+        assert!(message.contains("files") && message.contains("array"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn bad_values_are_422_naming_the_field_and_record_nothing() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (task_id, holder, token) = working_task(&h, &coord).await;
+        let decision_id = ask_form(&h, &task_id, &holder, &token).await;
+        for (values, needle) in [
+            (json!({"count": 2}), "values.path is required"),
+            (json!({"path": "src/x", "count": 9}), "values.count"),
+            (json!({"path": "lib/x"}), "values.path"),
+        ] {
+            let (status, body) = call(
+                &h,
+                "POST",
+                "/relay/answers",
+                Some(json!({"decision_id": decision_id, "values": values, "surface": "desktop"})),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+            assert!(body["message"].as_str().unwrap_or_default().contains(needle), "{body}");
+        }
+        // Still open: Now lists it.
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(now["decisions"].as_array().unwrap().iter().any(|d| d["id"] == decision_id));
+    }
+
+    #[tokio::test]
+    async fn a_lane_answers_a_form_asked_of_it_with_values() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/decisions",
+            Some(lane_body(
+                &coord.0,
+                json!({"question": "Where?", "response": form_response(),
+                       "blocks": [], "asked_of": lane_id}),
+            )),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let decision_id = body["decision_id"].as_str().unwrap().to_string();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/decisions/{decision_id}/answer"),
+            Some(lane_body(&lane_id, json!({"values": {"path": "src/a"}}))),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
     /// The next event naming `entity`, skipping others (5 s).
     async fn event_for_entity(
         rx: &mut tokio::sync::broadcast::Receiver<crate::api::events::StateEvent>,
@@ -5632,6 +5817,55 @@ mod tests {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     }
 
+    /// #455 5.5: the detected host wins; the self-report is the fallback. A
+    /// detection the catalogue does not know as an editor is never stored.
+    #[tokio::test]
+    async fn register_prefers_the_detected_host_over_the_reported_one() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let cases = [
+            (json!({"host_detected": "zed"}), json!("zed")),
+            (json!({"host": "cursor", "host_detected": "zed"}), json!("zed")),
+            (json!({"host": "cursor"}), json!("cursor")),
+            (json!({"host": "cursor", "host_detected": "claude"}), json!("cursor")),
+            (json!({"host_detected": "muse"}), Value::Null),
+        ];
+        let mut lanes = Vec::new();
+        for (extra, _) in &cases {
+            let mut req = json!({"family": "claude-code", "crew_id": coord.2});
+            for (k, v) in extra.as_object().unwrap() {
+                req[k] = v.clone();
+            }
+            let (status, body) = call(&h, "POST", "/api/relay/register", Some(req), None).await;
+            assert_eq!(status, StatusCode::OK, "{extra}: {body}");
+            lanes.push(body["lane_id"].as_str().unwrap().to_string());
+        }
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for ((extra, want), id) in cases.iter().zip(&lanes) {
+            let lane = body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == **id).unwrap();
+            assert_eq!(&lane["host"], want, "{extra}");
+        }
+    }
+
+    /// #455 5.5: a detected host is an editor's name too — a long one is refused.
+    #[tokio::test]
+    async fn register_refuses_a_detected_host_longer_than_a_name() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({
+                "family": "claude-code", "crew_id": coord.2, "host_detected": "x".repeat(65)
+            })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
     #[tokio::test]
     async fn now_lists_open_crews_only() {
         // #426: a closed crew stayed in now.crews, and the screen took the first
@@ -6322,6 +6556,104 @@ mod tests {
         assert_eq!(now["crews"][0]["status"], "active");
     }
 
+    /// Back-date a lane's lease past its end: the session died and the
+    /// sweeper has not run yet (#398).
+    async fn kill_lane_lease(h: &Harness, lane_id: &str) {
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp - interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane' and state = 'granted'",
+        )
+        .bind(lane_id)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_with_dead_lane_closes() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        kill_lane_lease(&h, &lane_id).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "closed");
+        assert_eq!(body["released"], json!([lane_id]));
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(
+            !now["crews"].as_array().unwrap().iter().any(|c| c["id"] == coord.2),
+            "the closed crew is not on Now: {now}"
+        );
+        // The dead session comes back: gone, and the crew is closed to it.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::GONE, "{body}");
+        assert_eq!(body["error"], "relay_lane_gone");
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/reregister",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["message"].as_str().unwrap_or("").contains("crew is closed"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn close_emits_lane_unregistered_for_released_lanes() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        kill_lane_lease(&h, &lane_id).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // In order: the lane leaves, its task is interrupted, the crew completes.
+        let mut seen = Vec::new();
+        loop {
+            let event = serde_json::to_value(next_event(&mut rx).await).unwrap();
+            let done = event["entity"] == "run" && event["data"]["op"] == "completed";
+            seen.push(event);
+            if done {
+                break;
+            }
+        }
+        let at = |pred: &dyn Fn(&Value) -> bool| seen.iter().position(pred);
+        let lane_gone =
+            at(&|e| e["entity"] == "lane" && e["action"] == "remove" && e["data"]["id"] == lane_id);
+        let interrupted = at(&|e| {
+            e["entity"] == "task"
+                && e["data"]["op"] == "interrupt"
+                && e["data"]["task_id"] == task_id
+        });
+        let completed = seen.len() - 1;
+        assert!(lane_gone.is_some_and(|i| i < completed), "{seen:?}");
+        assert!(interrupted.is_some_and(|i| i < completed), "{seen:?}");
+    }
+
     #[tokio::test]
     async fn close_requires_coordinator() {
         let h = harness().await;
@@ -6816,5 +7148,193 @@ mod tests {
         assert_eq!(body["error"], "relay_internal");
         // A failed read never answers 200-with-empty either.
         assert_ne!(status, StatusCode::OK);
+    }
+
+    // ── #455: the catalogue read and the names every relay read serves ──
+
+    async fn seed_session(
+        h: &Harness,
+        sid: &str,
+        acp: &str,
+        host: Option<&str>,
+        model: Option<&str>,
+        age_days: i32,
+    ) {
+        sqlx_core::query::query(
+            "insert into activity.sessions (client_session_id, acp_id, host, model, started_at)
+             values ($1, $2, $3, $4, now() - make_interval(days => $5))",
+        )
+        .bind(sid)
+        .bind(acp)
+        .bind(host)
+        .bind(model)
+        .bind(age_days)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+    }
+
+    async fn clean_slate(h: &Harness) {
+        for sql in ["delete from activity.sessions", "delete from sensei.assistant_installs"] {
+            sqlx_core::query::query(sql).execute(h.state.pg.pool()).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn catalogue_serves_what_this_machine_has_seen() {
+        let h = harness().await;
+        clean_slate(&h).await;
+        seed_session(&h, "cat-claude", "claude", None, Some("claude-opus-4-1"), 0).await;
+        seed_session(&h, "cat-cursor", "cursor", Some("cursor"), Some("claude-sonnet-4-5"), 1)
+            .await;
+        seed_session(&h, "cat-codex", "codex", None, None, 9).await;
+        seed_session(&h, "cat-cowork", "cowork", None, None, 2).await;
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs (catalogue_id, installed, config_path, configured, detected_at)
+             values ('cursor', true, '/home/x/.cursor/mcp.json', true, now()),
+                    ('claude-desktop', true, '/home/x/claude.json', true, now())",
+        )
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = call(&h, "GET", "/relay/catalogue", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let assistants = body["assistants"].as_array().unwrap_or_else(|| panic!("{body}"));
+        let ids: Vec<&str> = assistants.iter().map(|a| a["id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids,
+            ["claude", "codex"],
+            "ordered by sessions this week, Claude Desktop never offered: {body}"
+        );
+        assert_eq!(assistants[0]["name"], "Claude Code");
+        assert_eq!(assistants[0]["kind"], "assistant");
+        assert_eq!(assistants[0]["sessions_week"], 1);
+        assert_eq!(assistants[0]["installed"], Value::Null, "never detected reads null");
+        assert!(assistants[0]["last_used_at"].is_string());
+        assert_eq!(assistants[1]["name"], "Codex");
+        assert_eq!(assistants[1]["sessions_week"], 0);
+        assert!(assistants[1]["last_used_at"].is_string(), "{body}");
+        let editors = body["editors"].as_array().unwrap();
+        assert_eq!(editors.len(), 1, "{body}");
+        assert_eq!(editors[0]["id"], "cursor");
+        assert_eq!(editors[0]["name"], "Cursor");
+        assert_eq!(editors[0]["kind"], "editor");
+        assert_eq!(editors[0]["installed"], true);
+        assert_eq!(editors[0]["models"], json!(["claude-sonnet-4-5"]));
+        assert_eq!(editors[0]["mcp_config"], "/home/x/.cursor/mcp.json");
+        assert!(editors[0]["last_used_at"].is_string());
+        let unknown = body["unknown"].as_array().unwrap();
+        assert_eq!(unknown.len(), 1, "{body}");
+        assert_eq!(unknown[0]["id"], "cowork");
+        assert_eq!(unknown[0]["name"], "Cowork");
+        assert_eq!(unknown[0]["kind"], "unknown");
+    }
+
+    #[tokio::test]
+    async fn an_installed_tool_is_seen_without_a_session_and_unconfigured_has_no_config() {
+        let h = harness().await;
+        clean_slate(&h).await;
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs (catalogue_id, installed, config_path, configured, detected_at)
+             values ('zed', true, '/home/x/.config/zed/settings.json', false, now())",
+        )
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = call(&h, "GET", "/relay/catalogue", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let zed = &body["editors"][0];
+        assert_eq!(zed["id"], "zed", "{body}");
+        assert_eq!(zed["last_used_at"], Value::Null);
+        assert_eq!(zed["models"], json!([]));
+        assert_eq!(zed["mcp_config"], Value::Null, "sensei is not configured there");
+    }
+
+    #[tokio::test]
+    async fn a_failed_catalogue_read_is_a_500_with_no_lists() {
+        let h = harness().await;
+        sqlx_core::query::query("alter view sensei.assistant_catalogue_words rename to gone_words")
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        let (status, body) = call(&h, "GET", "/relay/catalogue", None, None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert!(body.get("assistants").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn every_relay_read_names_the_lane_from_the_catalogue() {
+        let h = harness().await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "coordinator", "family": "claude-code", "host": "zed"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let crew = body["crew_id"].as_str().unwrap().to_string();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "contributor", "family": "muse", "crew_id": crew})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (muse, muse_token) = (
+            body["lane_id"].as_str().unwrap().to_string(),
+            body["lane_token"].as_str().unwrap().to_string(),
+        );
+
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let lanes = now["lanes"].as_array().unwrap();
+        let coord = lanes.iter().find(|l| l["role"] == "coordinator").unwrap();
+        assert_eq!(coord["family_name"], "Claude Code", "{coord}");
+        assert_eq!(coord["family_kind"], "assistant");
+        assert_eq!(coord["host_name"], "Zed");
+        assert_eq!(coord["host_kind"], "editor");
+        let m = lanes.iter().find(|l| l["id"] == muse).unwrap();
+        assert_eq!(m["family_name"], "Muse", "{m}");
+        assert_eq!(m["family_kind"], "unknown");
+        assert_eq!(m["host_name"], Value::Null);
+        assert_eq!(m["host_kind"], Value::Null);
+
+        // A run: Task 0 claimed by the muse lane.
+        let item = triage_item(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/runs",
+            Some(json!({"title": "S", "goal": "G", "item_ids": [item], "repo_key": "github.com/o/r", "start": true})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let run_id = body["run_id"].as_str().unwrap().to_string();
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let (status, body) = claim_next(&h, &muse, &muse_token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let task =
+            now["run_tasks"].as_array().unwrap().iter().find(|t| t["task_id"] == task0).unwrap();
+        assert_eq!(task["lane"]["family_name"], "Muse", "{task}");
+
+        let (status, detail) = call(&h, "GET", &format!("/relay/runs/{run_id}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{detail}");
+        let members = detail["members"].as_array().unwrap();
+        assert!(!members.is_empty(), "{detail}");
+        for m in members {
+            let want = if m["family"] == "muse" { "Muse" } else { "Claude Code" };
+            assert_eq!(m["family_name"], want, "{m}");
+        }
+
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{crew}/{task0}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["lane"]["family_name"], "Muse", "{view}");
     }
 }

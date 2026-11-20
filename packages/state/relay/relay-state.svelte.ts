@@ -13,16 +13,19 @@
 // leaves the screen as it was (D83).
 
 import { failureReason, type ApiError, type ApiResult } from '../result.js';
+import type { StateStream } from '../source.js';
 import type { RelayWaitRowView } from './now-selectors.js';
 import type {
   RelayAddToBacklog,
   RelayAddTriage,
   RelayAnswer,
   RelayCancelledRun,
+  RelayCatalogue,
   RelayCreateRun,
   RelayCreatedRun,
   RelayCrew,
   RelayDecision,
+  RelayDecisionChoice,
   RelayFacets,
   RelayNowRunTask,
   RelayFilter,
@@ -61,14 +64,16 @@ export interface RelaySource {
   readRuns(): Promise<ApiResult<RelayRunList>>;
   startRun(runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>>;
   cancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
+  /** What this machine has seen, for AddMember's picker (#455). Only the desktop has a
+   *  machine: a surface without one leaves it out, and the picker is not shown. */
+  readCatalogue?(): Promise<ApiResult<RelayCatalogue>>;
   /** Subscribe to the stream: every event, and every open — the first and each
    *  reconnect (a broadcast has no replay). Returns the teardown. */
-  events(on: (event: RelayStreamEvent) => void, onOpen: () => void): () => void;
+  events: RelayEvents;
 }
 
-/** A source's stream: subscribe with a handler for every event and one for every open;
- *  returns the teardown. The task state listens through the same shape (#414). */
-export type RelayEvents = RelaySource['events'];
+/** The relay stream: the package's StateStream (#414) carrying relay events. */
+export type RelayEvents = StateStream<RelayStreamEvent>;
 
 /** What a loader hands the page: the two reads, or why each could not be read. */
 export interface RelayReads {
@@ -139,6 +144,9 @@ export class RelayState {
   /** A read the person asked for is in flight: the body says so instead of showing a stale crew. */
   reading = $state(false);
   readingQueue = $state(false);
+  /** Why the live stream is down, so what the screen shows may be stale (D83); null while
+   *  it is up. The stream's next open clears it. */
+  streamFault = $state<string | null>(null);
 
   // ── The screen's own state ──
   /** Now's Lanes grouped by run or by agent (#422); the person's choice, kept. */
@@ -169,6 +177,12 @@ export class RelayState {
   runList = $state<RelayRunList | null>(null);
   /** Why the last read of the runs failed; null when it did not. */
   runsError = $state<string | null>(null);
+  /** The assistants and editors this machine has seen (#455); null until read. */
+  catalogue = $state<RelayCatalogue | null>(null);
+  /** Why the last catalogue read failed; null when it did not. */
+  catalogueError = $state<string | null>(null);
+  /** The tool the person picked in AddMember; null until one is. */
+  pickedTool = $state<string | null>(null);
   /** The run being started or cancelled; null when none is. */
   startingRun = $state<string | null>(null);
   /** Why the last start or cancel was refused. */
@@ -305,7 +319,13 @@ export class RelayState {
       case 'lane':
       case 'task':
       case 'relay':
+      case 'decision':
+      case 'message':
         void this.reReadNow();
+        return;
+      case 'item':
+        // A queue row named by its id alone (a relay.items change, #414): read the queue.
+        void this.reReadQueue();
         return;
       default:
         // A step is the task screen's; anything else names nothing this state holds.
@@ -352,8 +372,12 @@ export class RelayState {
     return this.source.events(
       (event) => this.apply(event),
       () => {
+        this.streamFault = null;
         void this.reReadNow();
         void this.reReadQueue();
+      },
+      (reason) => {
+        this.streamFault = reason;
       },
     );
   }
@@ -441,8 +465,8 @@ export class RelayState {
   // ── The person's writes ──
 
   /** Answer a decision: the reason it was refused, or null when it was taken. Its event confirms it. */
-  async answer(decision: RelayDecision, option: string): Promise<string | null> {
-    const answer = await this.source.answer({ decision_id: decision.id, option, note: null, surface: this.surface });
+  async answer(decision: RelayDecision, choice: RelayDecisionChoice): Promise<string | null> {
+    const answer = await this.source.answer({ decision_id: decision.id, ...choice, note: null, surface: this.surface });
     return answer.ok ? null : failureReason(answer.error);
   }
 
@@ -561,6 +585,26 @@ export class RelayState {
     }
     this.runsError = null;
     this.runList = answer.data;
+  }
+
+  // ── The catalogue AddMember picks from (#455) ──
+
+  /** Read what this machine has seen. A failure says so and keeps what was read before;
+   *  a surface with no catalogue reads nothing. */
+  async readCatalogue(): Promise<void> {
+    if (!this.source.readCatalogue) return;
+    const answer = await this.source.readCatalogue();
+    if (!answer.ok) {
+      this.catalogueError = failureReason(answer.error);
+      return;
+    }
+    this.catalogueError = null;
+    this.catalogue = answer.data;
+  }
+
+  /** The person picked a tool: the note under the paste line names it. */
+  pickTool(id: string): void {
+    this.pickedTool = id;
   }
 
   /** Start a draft on the screen's crew. Null when taken; else why it was refused. One

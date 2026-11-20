@@ -48,7 +48,10 @@ pub struct EnvelopeAnswer {
     pub decision_id: String,
     /// The ask's task (crew-level asks carry none).
     pub task_id: Option<String>,
-    pub option: String,
+    /// The pick, for an options decision; null for a form (#389).
+    pub option: Option<String>,
+    /// The values, for a form decision; null for an options decision (#389).
+    pub values: Option<serde_json::Value>,
     /// The answer's optional note.
     pub note: Option<String>,
     /// Who answered, by code; null = the person.
@@ -153,7 +156,8 @@ mod tests {
             id: "a1".into(),
             decision_id: "d1".into(),
             task_id: None,
-            option: "db".into(),
+            option: Some("db".into()),
+            values: None,
             note: Some("go".into()),
             from_lane_code: None,
             created_at: "2026-11-05T16:02:00Z".into(),
@@ -162,6 +166,12 @@ mod tests {
         assert_eq!(v["decision_id"], "d1");
         assert_eq!(v["note"], "go");
         assert_eq!(serde_json::from_value::<EnvelopeAnswer>(v).unwrap(), a);
+        // A form answer (#389): values, and option null — never absent.
+        let form =
+            EnvelopeAnswer { option: None, values: Some(serde_json::json!({"path": "src/"})), ..a };
+        let v = serde_json::to_value(&form).unwrap();
+        assert_eq!(v.get("option"), Some(&serde_json::Value::Null));
+        assert_eq!(v["values"]["path"], "src/");
     }
 
     #[test]

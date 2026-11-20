@@ -11,7 +11,7 @@
 -- for yesterday's or a working task; an `approved` task without its fallback
 -- stamp; a completed run in sprint_summary, or a run's counts off by state; a
 -- claimed review in floating_review; a section outside the six; a non-owner
--- reading a row.
+-- reading a row; an open ask whose payload lacks `response` (null for options, #389).
 --
 -- Run from database/tests/ (`run.sh relay`, `run.sh --apply sensei`
 -- fixtures/relay_apply.ddl relay/relay_now.sql`, or psql $SENSEI_DATABASE_URL -f relay/relay_now.sql):
@@ -163,7 +163,7 @@ insert into relay.tasks (user_id, id, crew_id, run_id, lane_id, review_claimed_b
 
 -- A1: open, asked of the person, blocking T1. A2: open, asked of a lane (out).
 -- A3: asked of the person, answered (out). A5: T3's merge. A6/A7: T8's asked
--- then answered. A9: U2's open person ask.
+-- then answered. A9: U2's open person ask, a form (#389).
 insert into relay.actions (user_id, id, crew_id, task_id, lane_id, kind, body_md, props, reply_to, created_at) values
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f941',
    '11111111-1111-7000-8000-00000000f901', '11111111-1111-7000-8000-00000000f931',
@@ -200,7 +200,7 @@ insert into relay.actions (user_id, id, crew_id, task_id, lane_id, kind, body_md
   ('a2222222-2222-4222-8222-222222222222', '22222222-2222-7000-8000-00000000f949',
    '22222222-2222-7000-8000-00000000f909', '22222222-2222-7000-8000-00000000f939',
    '22222222-2222-7000-8000-00000000f919', 'asked', 'Their question?',
-   '{"context": null, "options": [], "recommended": null, "blocks": ["22222222-2222-7000-8000-00000000f939"], "asked_of": "person"}',
+   '{"context": null, "response": {"schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}, "blocks": ["22222222-2222-7000-8000-00000000f939"], "asked_of": "person"}',
    null, '2026-11-05T16:10:00Z');
 
 -- I1/I2: manual triage (counted). I3: ticketed triage (the daemon's tracker
@@ -325,6 +325,16 @@ begin
   end if;
   if v_json->'options' is distinct from '[{"id": "db", "label": "In the database", "detail": null}]'::jsonb then
     raise exception 'A1 options wrong: %.', v_json->'options';
+  end if;
+  -- #389: an options decision carries `response` as null, never absent; a form
+  -- decision carries its response whole.
+  if not (v_json ? 'response') or v_json->'response' is distinct from 'null'::jsonb then
+    raise exception 'A1 should carry response null, saw %.', v_json;
+  end if;
+  select payload into v_json from relay.now where section = 'open_asked' and id = '22222222-2222-7000-8000-00000000f949';
+  if v_json->'response' is distinct from
+     '{"schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}'::jsonb then
+    raise exception 'A9 response wrong: %.', v_json->'response';
   end if;
   select count(*) into n from relay.now where section = 'open_asked'
     and id in ('11111111-1111-7000-8000-00000000f942', '11111111-1111-7000-8000-00000000f943',

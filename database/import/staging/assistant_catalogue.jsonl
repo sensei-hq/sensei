@@ -1,0 +1,13 @@
+{"id":"claude","name":"Claude Code","kind":"assistant","aliases":["claude-code"],"joins_crew":true,"sequence":1,"modified_at":"2026-11-19"}
+{"id":"claude-desktop","name":"Claude Desktop","kind":"assistant","aliases":[],"joins_crew":false,"sequence":2,"modified_at":"2026-11-19"}
+{"id":"codex","name":"Codex","kind":"assistant","aliases":[],"joins_crew":true,"sequence":3,"modified_at":"2026-11-19"}
+{"id":"copilot","name":"Copilot CLI","kind":"assistant","aliases":["copilot-cli","copilot_cli"],"joins_crew":true,"sequence":4,"modified_at":"2026-11-19"}
+{"id":"opencode","name":"OpenCode","kind":"assistant","aliases":[],"joins_crew":true,"sequence":5,"modified_at":"2026-11-19"}
+{"id":"aider","name":"Aider","kind":"assistant","aliases":[],"joins_crew":true,"sequence":6,"modified_at":"2026-11-19"}
+{"id":"gemini","name":"Gemini CLI","kind":"assistant","aliases":["gemini-cli"],"joins_crew":true,"sequence":7,"modified_at":"2026-11-19"}
+{"id":"continue","name":"Continue","kind":"assistant","aliases":[],"joins_crew":true,"sequence":8,"modified_at":"2026-11-19"}
+{"id":"cursor","name":"Cursor","kind":"editor","aliases":[],"joins_crew":true,"sequence":1,"modified_at":"2026-11-19"}
+{"id":"zed","name":"Zed","kind":"editor","aliases":[],"joins_crew":true,"sequence":2,"modified_at":"2026-11-19"}
+{"id":"vscode","name":"VS Code","kind":"editor","aliases":[],"joins_crew":true,"sequence":3,"modified_at":"2026-11-19"}
+{"id":"windsurf","name":"Windsurf","kind":"editor","aliases":[],"joins_crew":true,"sequence":4,"modified_at":"2026-11-19"}
+{"id":"kiro","name":"Kiro","kind":"editor","aliases":[],"joins_crew":true,"sequence":5,"modified_at":"2026-11-19"}

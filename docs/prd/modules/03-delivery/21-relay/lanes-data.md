@@ -179,8 +179,8 @@ review → the report it reviews) · `created_at`.
 | `started` | — | — |
 | `reported` | the summary sent with the request for review | `look_at`, `flags`, `base`, `branch`, `commits[]`, `files[{path,added,removed,outside_owned}]`, `gates[{cmd,exit,counts}]`, `family`, `version`, `model`, `tokens_in`, `tokens_out`, `tokens_cache`, `started_at`, `ended_at`, `context_tokens`, `compactions`, `peak_memory_mb`, `subagents[{role,model}]`, `partial?` (bool; true = progress only, task keeps working, no reviewer picked) |
 | `reviewed` | the review summary | `verdict` (`approved` / `changes_requested`), `findings[{severity,class,text,file,line}]`, `probes`, `subagents[]`, the same telemetry keys |
-| `asked` | the question | `context` (one line: what is waiting on it), `options[{id,label,detail}]`, `recommended`, `blocks[task_id]`, `asked_of` (`person` / lane id) |
-| `answered` | an optional note | `option`, `surface` (`desktop` / `dojo` / `lane`; `lane` is the daemon's on a lane-sent answer and is never sent, Q12) |
+| `asked` | the question | `context` (one line: what is waiting on it), `options[{id,label,detail}]` (non-empty) **or** `response{schema, layout?}` (a form, #389), `recommended` (options only), `blocks[task_id]`, `asked_of` (`person` / lane id) |
+| `answered` | an optional note | `option` (an options decision) **or** `values{<property>: value}` (a form), `surface` (`desktop` / `dojo` / `lane`; `lane` is the daemon's on a lane-sent answer and is never sent, Q12) |
 | `message` | the message | `to` = `{kind: 'coordinator' \| 'lane' \| 'everyone' \| 'person', lane_id?}` (a lane by its **uuid**; the screen shows its code; `person` is Q2's target, slice 2), `surface` (`desktop` / `dojo` / `lane`, same split), and for a nudge `nudge` (`true`) + `reason` + `waiting_min`, or `standing_by` (`true`) (§15) |
 | `delivered` / `read` | — | none; `reply_to` = the message (receipts, one per recipient) |
 | `merged` | the merge note | `commits[]`, `into`, `gates[]` (the gate's own merge has no lane) |
@@ -191,6 +191,12 @@ review → the report it reviews) · `created_at`.
 
 - **Decisions are actions** (`asked` and `answered`, linked by `reply_to`). An open decision is an `asked` with no answer,
   and its task reads "needs your answer" while it is open. The same applies to messages.
+- **A decision is buttons or a form (#389).** An `asked` carries `options` or `response`, never both and never neither.
+  `response.schema` is a flat JSON Schema subset that `@rokkit/forms` draws as is; `response.layout` is an optional
+  rokkit vertical layout (labels, help, placeholders). The daemon checks the subset at ask time and checks an answer's
+  `values` against the stored schema before writing (rules in [lanes.md §7](lanes.md)). Reads carry both: the
+  `relay.now` `open_asked` payload and the task view's decision have `response` (null for options), the task history
+  shows `response` / `values`, and the lane envelope's answer has `option` and `values` (one of them null).
 - **Finding classes:** a lookup table `relay.finding_classes (code, label, added_by)`, seeded from the README checklist. The
   daemon rejects an unknown class in `props.findings`. The learning loop adds classes.
 

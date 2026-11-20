@@ -8,14 +8,11 @@ use log_collector::LogCollector;
 use tauri::{Emitter, Manager};
 
 /// Send `tracing::info!` / `debug!` events from `sensei-bootstrap` to the
-/// same `/tmp/sensei-bootstrap.log` file the `flog::log` helper writes to.
+/// same bootstrap log file the `flog::log` helper writes to ([`flog::log_path`]).
 /// The shared helper handles open-failure (silent no-op) and `try_init`
 /// idempotency so this is a one-liner.
 fn install_tracing() {
-    sensei_bootstrap::tracing_init::install_file(
-        "/tmp/sensei-bootstrap.log",
-        "sensei_bootstrap=info",
-    );
+    sensei_bootstrap::tracing_init::install_file(flog::log_path(), "sensei_bootstrap=info");
 }
 
 /// Build the full application menu. The Window submenu lists the currently-open
@@ -158,7 +155,7 @@ pub fn run() {
             // The sidecar links `sensei-bootstrap`, which emits structured
             // tracing events at every probe / brew shell-out / dbd step.
             // Without a subscriber installed those events go nowhere; with
-            // this one they get appended to /tmp/sensei-bootstrap.log next
+            // this one they get appended to the bootstrap log next
             // to the explicit flog::log lines. Default level is `info`;
             // bump via RUST_LOG=sensei_bootstrap=debug when launching.
             install_tracing();

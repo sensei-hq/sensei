@@ -87,6 +87,20 @@ describe('RelayLane · the loop', () => {
     expect(calls[0].body).toMatchObject({ lane_id: 'lane-1', asked_of: 'person', task_id: 't0', question: 'One crate or two?' });
   });
 
+  it('asks a form decision: the response rides the body, and no options (#389)', async () => {
+    const { l, calls } = await lane({ 'POST /api/relay/decisions': { status: 200, body: { decision_id: 'd2' } } });
+    const response = { schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } };
+    expect(await l.ask({ question: 'Where?', response })).toBe('d2');
+    expect(calls[0].body).toEqual({ lane_id: 'lane-1', asked_of: 'person', question: 'Where?', response });
+  });
+
+  it('reads its envelope with its token: a GET naming the lane (#389)', async () => {
+    const envelope = { messages: [], answers: [{ decision_id: 'd2', option: null, values: { path: 'src/' } }], reviews: [], assignments: [] };
+    const { l, calls } = await lane({ 'GET /api/relay/tasks': { status: 200, body: envelope } });
+    expect(await l.envelope()).toEqual(envelope);
+    expect(calls[0]).toMatchObject({ method: 'GET', path: '/api/relay/tasks?lane_id=lane-1', auth: 'Bearer tok-1', body: null });
+  });
+
   it('a refusal throws with its status and the daemon’s body; attempt() returns it instead', async () => {
     const { l } = await lane({
       'POST /api/relay/tasks/t2/report': { status: 409, body: { error: 'relay_upstream_deps_unmet', message: 'deps unmet' } },

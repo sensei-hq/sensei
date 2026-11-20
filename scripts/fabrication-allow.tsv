@@ -113,7 +113,6 @@ crates/senseid/src/indexer/community.rs	R3	Err(e) => {	GENUINE-EMPTY	Err(e) => �
 crates/senseid/src/indexer/community.rs	R4	.filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())	GENUINE-EMPTY	.ok() — DB ids are uuids; invariant	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/community.rs	R4	members.iter().filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok()).collect();	GENUINE-EMPTY	.ok() — DB ids are uuids; invariant	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/compiler_session.rs	R1	std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())	PARSE-DEFAULT	.unwrap_or_else( — canonicalize documented fallback	audit 2026-11-03 App. C	2026-11-03
-crates/senseid/src/indexer/compiler_session.rs	R6	let Ok(meta) = std::fs::metadata(p) else { return false };	GENUINE-EMPTY	let Ok( — missing file not executable	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/index.rs	R4	files.iter().filter_map(|placed| read_one(placed, types).ok()).collect()	GENUINE-EMPTY	.ok() — counted drop by contract	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/lang/rust/walk.rs	R3	Err(_) => Vec::new(),	GENUINE-EMPTY	Err(_) => — unmintable ref -> no candidate; added	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/resolve.rs	R3	Err(_) => Vec::new(),	GENUINE-EMPTY	Err(_) => — unmintable ref -> no candidate; added	audit 2026-11-03 App. C	2026-11-03

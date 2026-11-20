@@ -15,6 +15,53 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-11-20
+
+### Added
+
+- **Structured response forms on relay decisions (#389).** A lane asks the person
+  with a `response` schema and reads typed values back; the Relay screen draws
+  one control per property live with no refresh — selects, numbers, yes/no,
+  a pick-several MultiSelect, long text — checked inline as the daemon checks
+  them. The task view answers task-bound forms the same way.
+- **Assistant catalogue and AddMember picker (#455).** A seeded catalogue tells
+  assistants (harnesses that run a model) from editors (hosts); sessions carry
+  their host, the transcript adapters attribute through it, and register detects
+  the host itself — a detected catalogue editor wins over the self-report.
+- **Native Windows support, first slices (#505).** Windows CI, compile and
+  runtime fixes, and the no-DB suites running on Windows; consumer install and
+  daemon lifecycle continue in follow-up slices.
+- A crew whose lanes hold dead leases can close: close releases each dead lane
+  instead of refusing (#398).
+
+### Changed
+
+- The relay gate fails closed: an unclear reply to a high-risk step is denied,
+  and gate outcomes are recorded in the run's activity (#312, slice 1).
+- Relay task view and Now read through shared `@sensei/state` sources with a
+  realtime channel adapter; the dōjō hosts the package too (#414).
+- `@rokkit/*` 1.16.1: the decision card draws MultiSelect directly and shows
+  chooser placeholders — the nested-control, disabled-fade and placeholder
+  workarounds are gone (upstream #206–#209; #205 still open).
+- Qlty coverage uploads paused while analysis minutes are exhausted; DeepSource
+  reports continue.
+
+### Fixed
+
+- The Ollama router waits 600 s for a 27B cold load instead of timing out at
+  120 s (#447 follow-up).
+
+### Database
+
+- New: `sensei.assistant_catalogue` and `sensei.assistant_installs` (staging
+  table, import procedure, seed, `assistant_catalogue_words` view), the
+  `sensei.tool_kind` enum, `activity.sessions.host`; the relay Now view carries
+  each asked decision's `response`.
+- Retired: `sensei.assistants` — nothing ever read or wrote it, and an apply
+  hook drops it while empty (a row in it refuses the deploy rather than
+  deleting data).
+- Seed: Ollama `timeout_ms` 120000 → 600000.
+
 ## [0.24.0] — 2026-11-17
 
 ### Added

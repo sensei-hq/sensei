@@ -692,6 +692,7 @@ async fn a_session_metadata_patch_lands_field_for_field() {
             tokens_in: Some(100),
             tokens_out: Some(200),
             split: Some(&split),
+            host: Some("zed"),
         },
     )
     .await
@@ -726,6 +727,59 @@ async fn a_session_metadata_patch_lands_field_for_field() {
             Some(15)
         )
     );
+    let host: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT host FROM activity.sessions WHERE client_session_id = 'sm-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(host.as_deref(), Some("zed"), "the host lands");
+    // A later write with no host keeps it (#455).
+    s.set_session_metadata(
+        "sm-161",
+        &SessionMetadataPatch {
+            provider: None,
+            model: None,
+            tokens_in: None,
+            tokens_out: None,
+            split: None,
+            host: None,
+        },
+    )
+    .await
+    .unwrap();
+    let host: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT host FROM activity.sessions WHERE client_session_id = 'sm-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(host.as_deref(), Some("zed"), "a write with no host never clears one");
+}
+
+/// Work is attributed to the assistant's model, not the editor (#455): a
+/// Cursor-hosted session counts under its model, and no row is named `cursor`.
+/// The sessions API serves the host.
+#[tokio::test]
+async fn an_editor_hosted_session_counts_under_its_model_and_serves_its_host() {
+    let s = super::pg_store().await;
+    let id: uuid::Uuid = sqlx_core::query_scalar::query_scalar(
+        "INSERT INTO activity.sessions (client_session_id, acp_id, host, provider, model, analyzed_at, ftr)
+         VALUES ('host-455', 'cursor', 'cursor', 'anthropic', 'claude-sonnet-4-5', now(), true)
+         RETURNING id",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    let rows = s.get_model_effectiveness().await.unwrap();
+    let text = serde_json::to_string(&rows).unwrap();
+    assert!(text.contains("claude-sonnet-4-5"), "the session counts under its model: {text}");
+    assert!(
+        !rows.iter().any(|r| r.as_object().unwrap().values().any(|v| v == "cursor")),
+        "no model row is named after the editor: {text}"
+    );
+    let session = s.get_session(&id).await.unwrap().unwrap();
+    assert_eq!(session["host"], "cursor", "{session}");
 }
 
 #[tokio::test]

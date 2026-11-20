@@ -4,15 +4,13 @@
 // state reads on it: nothing before the socket opened is missed.
 
 import type { RelayApi } from '../client.js';
-import type { RelayEvents, RelaySource } from '../relay-state.svelte.js';
+import type { RelaySource } from '../relay-state.svelte.js';
+import type { RelayTaskSource } from '../task-state.svelte.js';
 import type { RelayStreamEvent } from '../types.js';
+import { sseEvents, type EventStream } from '../../source.js';
 
-/** What the source needs of a socket: the EventManager's shape. */
-export interface RelayEventStream {
-  onopen: (() => void) | null;
-  subscribe(handler: (event: RelayStreamEvent) => void): () => void;
-  destroy(): void;
-}
+/** What the source needs of a socket: the EventManager's shape, carrying relay events. */
+export type RelayEventStream = EventStream<RelayStreamEvent>;
 
 /** A RelaySource over the daemon: `api` for reads and writes, `stream()` for a fresh socket per subscription. */
 export function relaySseSource(api: RelayApi, stream: () => RelayEventStream): RelaySource {
@@ -27,20 +25,17 @@ export function relaySseSource(api: RelayApi, stream: () => RelayEventStream): R
     readRuns: () => api.tryGetRuns(),
     startRun: (runId, crewId) => api.tryStartRun(runId, crewId),
     cancelRun: (runId) => api.tryCancelRun(runId),
+    readCatalogue: () => api.tryGetCatalogue(),
     events: sseEvents(stream),
   };
 }
 
-/** The daemon's stream alone: a fresh socket per subscription, every open reported.
- *  The task view listens through this, narrowed to its crew by the socket it is given. */
-export function sseEvents(stream: () => RelayEventStream): RelayEvents {
-  return (on, onOpen) => {
-    const socket = stream();
-    socket.onopen = () => onOpen();
-    const unsubscribe = socket.subscribe(on);
-    return () => {
-      unsubscribe();
-      socket.destroy();
-    };
+/** A RelayTaskSource over the daemon (#414): one task's read and answer through `api`,
+ *  its crew's stream through a fresh socket per subscription. */
+export function relayTaskSseSource(api: RelayApi, stream: () => RelayEventStream): RelayTaskSource {
+  return {
+    readTask: (crewId, taskId) => api.tryGetTask(crewId, taskId),
+    answer: (body) => api.tryAnswerDecision(body),
+    events: sseEvents(stream),
   };
 }

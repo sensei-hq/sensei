@@ -49,7 +49,10 @@ test.describe('Configure Assistants — hook registration', () => {
         await goToAssistants(tauriPage);
 
         const seen: string[] = [];
-        const deadline = Date.now() + 10_000;
+        // Continue configures the Claude family first (plugin install, both
+        // variants, then the install re-detect): ~11s on a machine with Claude
+        // Desktop installed. Same bound as assistants-configure's Continue test.
+        const deadline = Date.now() + 20_000;
         await tauriPage.click('[data-action="next"]');
 
         let reached = false;

@@ -146,6 +146,10 @@ export interface RelayLane {
   title: string | null;
   role: RelayRole;
   family: string;
+  /** The family's name from the daemon's catalogue (#455); absent where no catalogue names it. */
+  family_name?: string | null;
+  /** What the catalogue says the family is; `unknown` when it does not list it. */
+  family_kind?: RelayToolKind | null;
   version: string | null;
   model: string | null;
   lease_state: RelayLeaseState;
@@ -161,6 +165,9 @@ export interface RelayLane {
   suggested_name: string | null;
   /** The editor the session runs in, as it said at register (#396); null for none. */
   host: string | null;
+  /** The host's name from the catalogue (#455); null with no host. */
+  host_name?: string | null;
+  host_kind?: RelayToolKind | null;
   /** The review this lane holds (`review_claimed_by`), beside its own task; null when none. */
   reviewing: RelayLaneReview | null;
   /** The session's presence, the daemon's call on its lease and what it holds (#419; CONTRACT §1h). */
@@ -219,6 +226,41 @@ export interface RelayDecisionOption {
   detail: string | null;
 }
 
+/** One form property: the flat JSON Schema subset the daemon accepts (#389 D1). */
+export interface RelayDecisionProperty {
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'array';
+  title?: string;
+  description?: string;
+  default?: string | number | boolean | string[];
+  /** Pick one, on a string. */
+  enum?: string[];
+  maxLength?: number;
+  pattern?: string;
+  /** Long text, on a string: rokkit 1.16 draws a textarea (rokkit#197). */
+  'x-multiline'?: true;
+  minimum?: number;
+  maximum?: number;
+  /** Pick several, on an array: its members (rokkit 1.16 draws a MultiSelect, rokkit#197). */
+  items?: { type?: 'string'; enum: string[] };
+  /** On an array: a member is picked at most once (the daemon holds to it either way). */
+  uniqueItems?: true;
+}
+
+/** A rokkit vertical layout: labels, help and placeholders, nothing that picks a control. */
+export interface RelayDecisionLayout {
+  type: 'vertical';
+  elements: Array<{ scope: string; label?: string; description?: string; props?: { placeholder?: string } }>;
+}
+
+/** A form decision's response (#389): the schema `@rokkit/forms` draws, and an optional layout. */
+export interface RelayDecisionResponse {
+  schema: { type: 'object'; properties: Record<string, RelayDecisionProperty>; required?: string[] };
+  layout?: RelayDecisionLayout;
+}
+
+/** How the person answers: a pick for an options decision, values for a form (#389 D7). */
+export type RelayDecisionChoice = { option: string } | { values: Record<string, unknown> };
+
 /** An open `asked` action for the person (`props.asked_of = 'person'`). */
 export interface RelayDecision {
   /** The `asked` action's id; the answer replies to it. */
@@ -229,8 +271,11 @@ export interface RelayDecision {
   /** `body_md` of the `asked` action. */
   question: string;
   context: string | null;
+  /** Buttons; empty for a form decision. */
   options: RelayDecisionOption[];
   recommended: string | null;
+  /** A form in place of buttons; null for an options decision (#389). */
+  response: RelayDecisionResponse | null;
   asked_at: string;
 }
 
@@ -296,6 +341,8 @@ export interface RelayNowRunTaskLane {
   code: string;
   suggested_name: string | null;
   family: string;
+  /** The family's name from the daemon's catalogue (#455); absent where no catalogue names it. */
+  family_name?: string | null;
   version: string | null;
   /** Null when the lane reported none: "model not reported", never a default (D83). */
   model: string | null;
@@ -389,6 +436,8 @@ export interface RelayTaskLane {
   code: string;
   title: string | null;
   family: string;
+  /** The family's name from the daemon's catalogue (#455); absent where no catalogue names it. */
+  family_name?: string | null;
   version: string | null;
   model: string | null;
   /** Set exactly when the lane reported quota exhaustion. */
@@ -546,11 +595,14 @@ export interface RelayActionProps {
     context: string | null;
     options: RelayDecisionOption[];
     recommended: string | null;
+    /** A form decision's response (#389); null for options. */
+    response?: RelayDecisionResponse | null;
     blocks: string[];
     /** `person`, or a lane id. */
     asked_of: string;
   };
-  answered: { option: string; surface: RelaySurface };
+  /** `option` for an options decision, `values` for a form (#389). */
+  answered: { option: string | null; values?: Record<string, unknown> | null; surface: RelaySurface };
   message: { to: RelayMessageTo; surface: RelaySurface };
   /** Receipts: `reply_to` = the message, one per recipient (L0 ruling 2). */
   delivered: Record<string, never>;
@@ -637,15 +689,14 @@ export interface RelaySendMessage {
   waiting_min?: number;
 }
 
-/** CONTRACT §3e `answer_decision`. */
-export interface RelayAnswer {
+/** CONTRACT §3e `answer_decision`: a pick or a form's values (#389 D7). */
+export type RelayAnswer = {
   decision_id: string;
-  option: string;
   note: string | null;
   /** No `by`: the daemon records the person as `lane_id = null` (lanes-data), CONTRACT §3e's `by: 'person'`. */
   /** Person-only: 'lane' is set by the daemon, never sent (Q12). */
   surface: 'desktop' | 'dojo';
-}
+} & RelayDecisionChoice;
 
 /** CONTRACT §3h `add_to_backlog`: a manual item by id, a tracker task by its identity. */
 export type RelayAddToBacklog =
@@ -742,6 +793,8 @@ export interface RelayRunMember {
   title: string | null;
   suggested_name: string | null;
   family: string;
+  /** The family's name from the daemon's catalogue (#455); absent where no catalogue names it. */
+  family_name?: string | null;
   model: string | null;
 }
 
@@ -794,4 +847,49 @@ export function parseRelayStreamEvent(raw: string): RelayStreamEvent {
     throw new Error('relay stream event names no action');
   }
   return { action, entity, data: data as RelayStreamEvent['data'] };
+}
+
+// ─── The catalogue (#455) ───────────────────────────────────────────────────
+
+/** What the daemon's catalogue says a tool is; `unknown` when it does not list it. */
+export type RelayToolKind = 'assistant' | 'editor' | 'unknown';
+
+/** An assistant this machine has seen (`GET /relay/catalogue`). Nulls are not reported (D83). */
+export interface RelayCatalogueAssistant {
+  id: string;
+  name: string;
+  kind: 'assistant';
+  /** From this machine's install row; null when never detected. */
+  installed: boolean | null;
+  last_used_at: string | null;
+  /** Sessions started in the last 7 days. */
+  sessions_week: number;
+}
+
+/** An editor this machine has seen. */
+export interface RelayCatalogueEditor {
+  id: string;
+  name: string;
+  kind: 'editor';
+  installed: boolean | null;
+  last_used_at: string | null;
+  /** The models its sessions ran, newest first. */
+  models: string[];
+  /** Where sensei's tools are set up in it; null when not configured. */
+  mcp_config: string | null;
+}
+
+/** A word a session named that the catalogue does not list: never offered. */
+export interface RelayCatalogueUnknown {
+  id: string;
+  name: string;
+  kind: 'unknown';
+  last_used_at: string | null;
+}
+
+/** `GET /relay/catalogue`: what this machine has seen, for AddMember's picker. */
+export interface RelayCatalogue {
+  assistants: RelayCatalogueAssistant[];
+  editors: RelayCatalogueEditor[];
+  unknown: RelayCatalogueUnknown[];
 }
