@@ -55,7 +55,14 @@ flowchart TD
    keys, while close held the crew and waited on that task (`40P01`). Ask and hand-over also write only when the
    task is still in the state they read, so a task a close interrupted is refused (`409`), not overwritten. Single
    task updates with no later lock (step, cancel) and writes on tasks close never touches (merge and the gate
-   outcome, on approved tasks) cannot close a cycle and keep their order.
+   outcome, on approved tasks) cannot close a cycle and keep their order. A lane's own unregister takes the crew
+   row first too (PR #502 review): it took the lane and its task, then waited on the crew for its `interrupted`
+   action's key while close held the crew and waited on the lane (`40P01`); one that waited behind a close answers
+   `410`. A write never acts on a task state a racing writer (a person's `cancel_run`, a merge) moved on (PR #502
+   review): the leave the close runs per dead lane, the sweep (expiry, limit pause, re-offer), report, review and
+   answer read the task `for update`, so a cancelled task drops out or is refused; merge, task cancel and assign,
+   which read before their transaction, write only from the state and holder they read (`409`). A closed crew's or
+   cancelled run's task is never interrupted, re-offered, reviewed, merged or handed out over that state.
 4. **Heartbeat race.** A heartbeat that commits between the liveness read and the close's commit is still released
    by close (the lane row is locked and unregistered in the same transaction); its next call gets `410`. Heartbeat
    takes the same order as close (PR #502 review): it updates the crew row first, then reads the lane `for share`,

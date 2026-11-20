@@ -1986,6 +1986,14 @@ impl PgStore {
             return Err(RelayError::Gone("lane already unregistered".into()));
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // The crew row first, like every lane task write: a close holds it,
+        // then the lane; a leave that took the lane and its task first and
+        // then waited on the crew for its action's key would deadlock it.
+        // A close that released the lane meanwhile answers `410`.
+        Self::relay_hold_lane_crew(&mut tx, user_id, lane_id).await.map_err(|e| match e {
+            RelayError::Gone(_) => RelayError::Gone("lane already unregistered".into()),
+            e => e,
+        })?;
         let interrupted = Self::relay_unregister_tx(&mut tx, user_id, crew_id, lane_id).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(RelayUnregisterOutput { interrupted })
@@ -2026,10 +2034,14 @@ impl PgStore {
         // Block memory clears with it: only a blocked task remembers where
         // it was (the tasks_blocked_memory check; cancel's precedent). A
         // report in review floats on the queue: not the lane's to lose.
+        // `for update`: a task a racing writer (a person's cancel_run)
+        // moved on meanwhile drops out of the read, so the leave never
+        // writes over it.
         let task: Option<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
             "select id, state::text, round, phase::text from relay.tasks
              where user_id = $1 and lane_id = $2
-               and state in ('assigned', 'working', 'rework', 'blocked')",
+               and state in ('assigned', 'working', 'rework', 'blocked')
+             for update",
         )
         .bind(user_id)
         .bind(lane_id)
@@ -2791,7 +2803,8 @@ impl PgStore {
                     owned_paths = $6, acceptance = $7, resources = $8, deps = $9,
                     item_id = $10, review_claimed_by = null, review_claimed_at = null,
                     assigned_at = current_timestamp, state_changed_at = current_timestamp
-             where user_id = $11 and id = $12",
+             where user_id = $11 and id = $12
+               and state = $13::relay.task_state and lane_id is not distinct from $14",
         )
         .bind(input.to_lane)
         .bind(input.title.as_str())
@@ -2805,13 +2818,21 @@ impl PgStore {
         .bind(item_id)
         .bind(user_id)
         .bind(task_id)
+        .bind(word(cur))
+        .bind(task_lane)
         .execute(&mut *tx)
         .await;
-        if let Err(e) = task_update {
-            if is_unique_violation(&e) {
+        // Only from the state and holder it read: a task a racing writer
+        // moved on (a person's cancel_run) is refused, not handed out.
+        match task_update {
+            Err(e) if is_unique_violation(&e) => {
                 return Err(RelayError::Conflict("lane is already busy".into()));
             }
-            return Err(db_err(e));
+            Err(e) => return Err(db_err(e)),
+            Ok(moved) if moved.rows_affected() == 0 => {
+                return Err(RelayError::Conflict("task changed state; assign again".into()));
+            }
+            Ok(_) => {}
         }
         let props = serde_json::json!({
             "docs": input.brief_docs,
@@ -2941,7 +2962,7 @@ impl PgStore {
         let task: Option<(Uuid, Option<Uuid>, String, i32, String, Vec<String>, Vec<Uuid>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, lane_id, state::text, round, phase::text, owned_paths, deps
-                 from relay.tasks where user_id = $1 and id = $2",
+                 from relay.tasks where user_id = $1 and id = $2 for update",
             )
             .bind(user_id)
             .bind(task_id)
@@ -3185,7 +3206,7 @@ impl PgStore {
         let task: Option<(Uuid, String, i32, String, Option<Uuid>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, state::text, round, phase::text, review_claimed_by
-                 from relay.tasks where user_id = $1 and id = $2",
+                 from relay.tasks where user_id = $1 and id = $2 for update",
             )
             .bind(user_id)
             .bind(task_id)
@@ -5469,7 +5490,7 @@ impl PgStore {
         for blocked_id in &ask_blocks {
             let row: Option<(String, Option<String>, String)> = sqlx_core::query_as::query_as(
                 "select state::text, blocked_from_state::text, executor::text from relay.tasks
-                 where user_id = $1 and id = $2",
+                 where user_id = $1 and id = $2 for update",
             )
             .bind(user_id)
             .bind(blocked_id)
@@ -5718,18 +5739,24 @@ impl PgStore {
         let next = transition(cur, TaskEvent::Merged)
             .map_err(|_| RelayError::Conflict("task cannot merge".into()))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
-        sqlx_core::query::query(
+        // Only from the state it read: a task a racing writer moved on (a
+        // person's cancel_run) is refused, not overwritten.
+        let merged = sqlx_core::query::query(
             "update relay.tasks set state = $1::relay.task_state,
                     completed_at = current_timestamp,
                     state_changed_at = current_timestamp
-             where user_id = $2 and id = $3",
+             where user_id = $2 and id = $3 and state = $4::relay.task_state",
         )
         .bind(word(next))
         .bind(user_id)
         .bind(task_id)
+        .bind(word(cur))
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+        if merged.rows_affected() == 0 {
+            return Err(RelayError::Conflict("task changed state; merge again".into()));
+        }
         sqlx_core::query::query(
             "insert into relay.actions
                (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
@@ -5804,20 +5831,26 @@ impl PgStore {
                 return Err(RelayError::Conflict("task is held by a live lane".into()));
             }
         }
-        let mut tx = self.pool().begin().await.map_err(db_err)?;
-        sqlx_core::query::query(
+        // Only from the state and holder it read: a task a racing writer
+        // moved on (a merge that ended it) is refused, not overwritten.
+        let cancelled = sqlx_core::query::query(
             "update relay.tasks set state = $1::relay.task_state,
                     blocked_from_state = null,
                     state_changed_at = current_timestamp
-             where user_id = $2 and id = $3",
+             where user_id = $2 and id = $3 and state = $4::relay.task_state
+               and lane_id is not distinct from $5",
         )
         .bind(word(next))
         .bind(user_id)
         .bind(task_id)
-        .execute(&mut *tx)
+        .bind(word(cur))
+        .bind(task_lane)
+        .execute(self.pool())
         .await
         .map_err(db_err)?;
-        tx.commit().await.map_err(db_err)?;
+        if cancelled.rows_affected() == 0 {
+            return Err(RelayError::Conflict("task changed state; cancel again".into()));
+        }
         Ok(RelayCancelOutput { task_id, state: next })
     }
 
@@ -6721,10 +6754,12 @@ impl PgStore {
         let mut task_changes = Vec::new();
         let mut interrupted_tasks = 0u64;
         for (user_id, crew_id, lane_id) in &expired {
+            // `for update`: a task a racing writer moved on drops out.
             let tasks: Vec<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
                 "select id, state::text, round, phase::text from relay.tasks
                  where user_id = $1 and lane_id = $2
-                   and state in ('assigned', 'working', 'rework', 'blocked')",
+                   and state in ('assigned', 'working', 'rework', 'blocked')
+                 order by id for update",
             )
             .bind(user_id)
             .bind(lane_id)
@@ -6791,10 +6826,12 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         for (user_id, crew_id, lane_id) in &paused {
+            // `for update`: a task a racing writer moved on drops out.
             let tasks: Vec<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
                 "select id, state::text, round, phase::text from relay.tasks
                  where user_id = $1 and lane_id = $2
-                   and state in ('assigned', 'working', 'rework', 'blocked')",
+                   and state in ('assigned', 'working', 'rework', 'blocked')
+                 order by id for update",
             )
             .bind(user_id)
             .bind(lane_id)
@@ -6862,7 +6899,8 @@ impl PgStore {
                  where t.state = 'interrupted'
                    and (select max(a.created_at) from relay.actions a
                         where a.user_id = t.user_id and a.task_id = t.id
-                          and a.kind = 'interrupted') <= $1",
+                          and a.kind = 'interrupted') <= $1
+                 order by t.id for update of t",
             )
             .bind(cutoff)
             .fetch_all(&mut *tx)
