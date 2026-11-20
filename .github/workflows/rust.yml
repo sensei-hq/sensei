@@ -119,6 +119,8 @@ jobs:
       - name: Test the no-DB crates (Windows)
         run: cargo test --workspace --exclude senseid --no-fail-fast
       - name: Test senseid's pure modules (Windows)
+        # Runs even when the step above failed, so one round reports both.
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           PYTHON: python
