@@ -14786,4 +14786,136 @@ mod tests {
         let swept = sweep.await.unwrap();
         assert!(swept.is_ok(), "the sweep deadlocked with the close: {:?}", swept.err());
     }
+
+    /// A contributor naming no crew joins the single active one (#402).
+    /// When a close holds that crew, the register waits for it and then
+    /// finds no active crew: the closed crew gains no lane.
+    #[tokio::test]
+    async fn register_joining_the_active_crew_racing_a_close_finds_none() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, _, _, _) = fx_two_crews(&pg).await;
+        let close = close_holding_crew(&pg, c1).await;
+        let store = pg.clone();
+        let register = tokio::spawn(async move {
+            store.relay_register(u1(), register_input(RelayRole::Contributor, None), t0()).await
+        });
+        assert!(some_session_waits_on_a_lock(&pg).await, "register never waited on the close");
+        close_commits(close, c1).await;
+        let out = register.await.unwrap();
+        assert!(
+            matches!(&out, Err(RelayError::NoActiveCrew)),
+            "{:?}",
+            out.as_ref().map(|o| o.lane_id)
+        );
+        let lanes: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.lanes where crew_id = $1",
+        )
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(lanes, 2, "a lane joined the closed crew");
+    }
+
+    /// Lane A2 hit its quota (pause due to end) and its lease lapsed; the
+    /// sweep will expire the lease and end the pause.
+    async fn fx_due_pause_and_lapsed_lease(pg: &PgStore, lane: Uuid) {
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = $1, limit_scope = 'daily',
+                    limit_resumes_at = $2
+             where id = $3",
+        )
+        .bind(t0())
+        .bind(t0() + chrono::Duration::seconds(60))
+        .bind(lane)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+
+    /// A lane transaction held open with `lock_timeout` set, so a lock
+    /// cycle surfaces as an error rather than a hang.
+    async fn lane_tx(
+        pg: &PgStore,
+    ) -> sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres> {
+        let mut tx = pg.pool().begin().await.unwrap();
+        sqlx_core::query::query("set local lock_timeout = '5s'").execute(&mut *tx).await.unwrap();
+        tx
+    }
+
+    /// A heartbeat holds its lane `for share` before it renews the lease.
+    /// The sweep takes lanes before leases too, so it waits behind the
+    /// heartbeat instead of holding the lease the heartbeat renews while
+    /// it waits on the lane (a 40P01 deadlock that fails one of them).
+    #[tokio::test]
+    async fn sweep_racing_a_heartbeat_takes_the_lane_before_the_lease() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        fx_due_pause_and_lapsed_lease(&pg, a2).await;
+        let sweep_at = t0() + chrono::Duration::seconds(3600);
+        // The heartbeat's first steps: the crew row, then the lane, held.
+        let mut hb = lane_tx(&pg).await;
+        sqlx_core::query::query("update relay.crews set heartbeat_at = $1 where id = $2")
+            .bind(sweep_at)
+            .bind(c1)
+            .execute(&mut *hb)
+            .await
+            .unwrap();
+        sqlx_core::query::query("select unregistered_at from relay.lanes where id = $1 for share")
+            .bind(a2)
+            .execute(&mut *hb)
+            .await
+            .unwrap();
+        let store = pg.clone();
+        let sweep = tokio::spawn(async move { store.relay_sweep_leases(sweep_at).await });
+        assert!(some_session_waits_on_a_lock(&pg).await, "the sweep never waited on the heartbeat");
+        // The heartbeat's next step: renew the lane lease.
+        let renewed = sqlx_core::query::query(
+            "update relay.leases set expires_at = $1 where id = (
+               select id from relay.leases
+               where lane_id = $2 and kind = 'lane' and state = 'granted'
+               order by granted_at desc nulls last, id desc limit 1)",
+        )
+        .bind(sweep_at + chrono::Duration::seconds(300))
+        .bind(a2)
+        .execute(&mut *hb)
+        .await;
+        assert!(renewed.is_ok(), "the heartbeat deadlocked with the sweep: {renewed:?}");
+        hb.commit().await.unwrap();
+        let swept = sweep.await.unwrap();
+        assert!(swept.is_ok(), "the sweep deadlocked with the heartbeat: {:?}", swept.err());
+    }
+
+    /// A lane's own unregister takes its lane row, then its lease. The
+    /// sweep takes the lane first too, so the two serialize instead of
+    /// deadlocking over a lapsed lease whose pause is due to end.
+    #[tokio::test]
+    async fn sweep_racing_an_unregister_takes_the_lane_before_the_lease() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        fx_due_pause_and_lapsed_lease(&pg, a2).await;
+        // The unregister's first step: the lane row, held.
+        let mut leave = lane_tx(&pg).await;
+        sqlx_core::query::query(
+            "update relay.lanes set unregistered_at = current_timestamp where id = $1",
+        )
+        .bind(a2)
+        .execute(&mut *leave)
+        .await
+        .unwrap();
+        let store = pg.clone();
+        let sweep = tokio::spawn(async move {
+            store.relay_sweep_leases(t0() + chrono::Duration::seconds(3600)).await
+        });
+        assert!(
+            some_session_waits_on_a_lock(&pg).await,
+            "the sweep never waited on the unregister"
+        );
+        // The unregister's next steps: release its lease, interrupt its task.
+        let left = PgStore::relay_unregister_tx(&mut leave, u1(), c1, a2).await;
+        assert!(left.is_ok(), "the unregister deadlocked with the sweep: {left:?}");
+        leave.commit().await.unwrap();
+        let swept = sweep.await.unwrap();
+        assert!(swept.is_ok(), "the sweep deadlocked with the unregister: {:?}", swept.err());
+    }
 }
