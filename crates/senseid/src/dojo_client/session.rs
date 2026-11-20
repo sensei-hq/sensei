@@ -639,13 +639,29 @@ mod tests {
         // so sign-in deletes it rather than storing a 182-day GitHub grant that
         // nothing can use.
         let persona = "discard-test";
+        // Clear FIRST: the post-run cleanup below never runs after a panic, so
+        // a previous failed run leaves its fixture behind — and `update_` will
+        // not overwrite a credential it cannot read (by design), which failed
+        // every later run until the stale item was deleted by hand. Observed
+        // live with a 2026-11-17 leftover.
+        let _ = clear_session(persona);
         // Skipped where the Keychain is unavailable (CI, a locked login
         // keychain). A machine that cannot store secrets is not evidence.
         if keychain_set(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona), "ghr_x").is_err()
         {
             return;
         }
-        let _ = store_provider_token(persona, "gho_keep");
+        // The fixture must take AND read back, or there is nothing to assert
+        // on. A discarded store result turned an untakable fixture into a
+        // misleading failure at the final assert; the honest outcome is the
+        // same skip as above.
+        if store_provider_token(persona, "gho_keep").is_err()
+            || load_provider_token(persona).ok().as_deref() != Some("gho_keep")
+        {
+            let _ = clear_session(persona);
+            eprintln!("discard-test skipped: the keychain fixture did not take (stale {persona} item?)");
+            return;
+        }
 
         assert!(discard_provider_refresh_token(persona).is_ok());
         assert!(
