@@ -14941,4 +14941,152 @@ mod tests {
         let swept = sweep.await.unwrap();
         assert!(swept.is_ok(), "the sweep deadlocked with the unregister: {:?}", swept.err());
     }
+
+    /// A lane write racing the lane close that releases dead lane `dead`.
+    /// Close holds the crew row, then the dead lane, `for update`; the
+    /// write starts and must wait; close then releases the lane (its held
+    /// task interrupted) and commits. Returns the write's answer. A write
+    /// that locked the task before the crew row deadlocks here (40P01).
+    async fn lane_write_racing_a_close<T, F, Fut>(
+        pg: &PgStore,
+        crew: Uuid,
+        dead: Uuid,
+        write: F,
+    ) -> Result<T, RelayError>
+    where
+        T: Send + 'static,
+        F: FnOnce(PgStore) -> Fut,
+        Fut: std::future::Future<Output = Result<T, RelayError>> + Send + 'static,
+    {
+        let mut close = close_holding_crew(pg, crew).await;
+        sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select id from relay.lanes where id = $1 for update",
+        )
+        .bind(dead)
+        .fetch_all(&mut *close)
+        .await
+        .unwrap();
+        let write = tokio::spawn(write(pg.clone()));
+        assert!(some_session_waits_on_a_lock(pg).await, "the lane write never waited on the close");
+        let released = PgStore::relay_unregister_tx(&mut close, u1(), crew, dead).await;
+        assert!(released.is_ok(), "close deadlocked with the lane write: {released:?}");
+        close_commits(close, crew).await;
+        write.await.unwrap()
+    }
+
+    /// The lane whose lease lapsed checkpoints while close releases it:
+    /// the checkpoint waits for the crew row, then answers `410`; the task
+    /// stays interrupted and no `checkpointed` row lands.
+    #[tokio::test]
+    async fn checkpoint_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd1);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let input = RelayCheckpointInput {
+            current_step: Some("clippy".into()),
+            notes: None,
+            steps: vec![],
+        };
+        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
+            store.relay_checkpoint_task(u1(), a2, t, input).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+        let rows: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where task_id = $1 and kind = 'checkpointed'",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(rows, 0, "a released lane's checkpoint landed");
+    }
+
+    /// A report racing the close waits for the crew row, then answers
+    /// `410`: the interrupted task does not float into review.
+    #[tokio::test]
+    async fn report_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd2);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
+            store.relay_report_task(u1(), a2, t, report_input()).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// The holder's first write starts an assigned task: that start races
+    /// the close like any task write, and the report answers `410`.
+    #[tokio::test]
+    async fn starting_an_assigned_task_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd3);
+        fx_task(&pg, u1(), t, c1, Some(a2), "assigned", "tests", 1).await;
+        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
+            store.relay_report_task(u1(), a2, t, report_input()).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// Giving a task back races the close too: `410`, and the task stays
+    /// interrupted on its lane rather than floating back to the pool.
+    #[tokio::test]
+    async fn release_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd4);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
+            store.relay_release_task(release(a2, t, None)).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// An ask that blocks the dead lane's task races the close: `410`,
+    /// and the task stays interrupted, not blocked.
+    #[tokio::test]
+    async fn ask_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd5);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
+            store.relay_ask_decision(u1(), a2, ask_input(vec![t])).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// The coordinator hands the dead lane's task to a live lane while a
+    /// close releases the dead lane: the hand-over waits for the crew row,
+    /// then finds the task interrupted (`409`), which stays the sweeper's
+    /// to re-offer.
+    #[tokio::test]
+    async fn handover_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = v7(0x14);
+        fx_lane(&pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
+        fx_lease(&pg, u1(), c1, a3, "granted", Some(Utc::now() + chrono::Duration::hours(1))).await;
+        let t = v7(0xd6);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let input = RelayHandoverInput { to_lane: a3, note: String::new() };
+        let out = lane_write_racing_a_close(&pg, c1, a2, move |store| async move {
+            store.relay_handover_task(u1(), a1, t, input).await
+        })
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
 }
