@@ -17,10 +17,13 @@
 - Review fix 2 (PR #502): `relay_require_crew_open` reads the crew `for share`, so a register-join
   or reregister racing a close waits, then answers `409 crew is closed` — no lane or lease lands in a
   closed crew. Red `6eace665a`, green `a9fcc6f01`; design.md decision 3 amended.
-- Review fix 3 (PR #502, re-derived round 3): the lease sweep takes every open crew row `for key
-  share` (id order) before leases, so a sweep racing a close over a dead, limit-paused lane no longer
-  deadlocks (40P01). Red `7745e6719`, green `7517eeb76`; design.md decision 3 amended.
-- Gate: fmt, clippy (senseid), relay DB tests (455), e2e relay-crew-close.spec.ts,
+- Review fix 3 (PR #502): the sweep takes open crew rows `for key share` before leases, so it no longer
+  deadlocks a close (40P01). Red `7745e6719`, green `7517eeb76`; design.md decision 3 amended.
+- Review fix 4 (PR #502, round 4): a contributor naming no crew reads the open crews `for share`
+  (no `limit`), so a join racing a close answers `relay_no_active_crew`; the sweep takes the lanes it
+  touches `for no key update` before their leases, matching heartbeat and unregister (both deadlocked
+  with it, 40P01; unregister's was pre-existing). Red `4cf99c51b`, green `5ef857718`.
+- Gate: fmt, clippy (senseid), relay DB tests (458), e2e relay-crew-close.spec.ts,
   openspec validate --strict.
 
 ## Remaining
