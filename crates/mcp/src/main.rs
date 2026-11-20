@@ -867,9 +867,11 @@ mod binary_tool_tests {
         let ok = generate_image_tool(&args, &client(), "/repo", &base);
         assert!(!is_error(&ok));
         assert_eq!(seen.lock().unwrap()[0].1, "/api/gateway/image/generate");
+        // Joined with the platform separator (`/repo\out.png` on Windows).
+        let joined = std::path::Path::new("/repo").join("out.png");
         assert_eq!(
             body_of(&seen, 0),
-            json!({ "prompt": "p", "output_path": "/repo/out.png", "size": "1024x1024", "n": 2 })
+            json!({ "prompt": "p", "output_path": joined.to_string_lossy(), "size": "1024x1024", "n": 2 })
         );
     }
 

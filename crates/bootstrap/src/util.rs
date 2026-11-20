@@ -62,6 +62,53 @@ fn user_local_bin_dirs() -> Vec<String> {
     dirs
 }
 
+/// Why a POSIX shell could not be found — Windows only: Unix always has `sh`.
+pub const NO_POSIX_SHELL: &str = "no POSIX shell: install Git for Windows (winget install Git.Git), \
+     which provides the sh.exe sensei runs shell commands with";
+
+/// The POSIX shell to run `sh -c` commands with: `sh` on Unix; on Windows Git
+/// for Windows' `sh.exe` — its install folders first (the same search as the
+/// plugin's `run-hook.cmd`), then `PATH`. A miss is [`NO_POSIX_SHELL`], never a
+/// silent fallback to `cmd`.
+pub fn posix_shell() -> Result<std::path::PathBuf, String> {
+    #[cfg(unix)]
+    {
+        Ok(std::path::PathBuf::from("sh"))
+    }
+    #[cfg(windows)]
+    {
+        let candidates = git_sh_candidates(
+            std::env::var_os("ProgramFiles"),
+            std::env::var_os("ProgramFiles(x86)"),
+        );
+        first_existing(&candidates, |p| p.is_file())
+            .or_else(|| which_binary("sh").map(std::path::PathBuf::from))
+            .ok_or_else(|| NO_POSIX_SHELL.to_string())
+    }
+}
+
+/// `<Program Files>\Git\bin\sh.exe` for each Program Files folder that is set.
+#[cfg_attr(unix, allow(dead_code))]
+fn git_sh_candidates(
+    program_files: Option<std::ffi::OsString>,
+    program_files_x86: Option<std::ffi::OsString>,
+) -> Vec<std::path::PathBuf> {
+    [program_files, program_files_x86]
+        .into_iter()
+        .flatten()
+        .filter(|d| !d.is_empty())
+        .map(|d| std::path::PathBuf::from(d).join("Git").join("bin").join("sh.exe"))
+        .collect()
+}
+
+#[cfg_attr(unix, allow(dead_code))]
+fn first_existing(
+    candidates: &[std::path::PathBuf],
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> Option<std::path::PathBuf> {
+    candidates.iter().find(|p| exists(p)).cloned()
+}
+
 /// Find a binary on PATH (and well-known directories).
 ///
 /// Uses `which` on Unix and `where` on Windows; falls back to scanning
@@ -163,9 +210,51 @@ pub fn exit_code(status: std::process::ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn git_sh_candidates_cover_both_program_files() {
+        let c = git_sh_candidates(
+            Some(r"C:\Program Files".into()),
+            Some(r"C:\Program Files (x86)".into()),
+        );
+        assert_eq!(
+            c,
+            vec![
+                PathBuf::from(r"C:\Program Files").join("Git").join("bin").join("sh.exe"),
+                PathBuf::from(r"C:\Program Files (x86)").join("Git").join("bin").join("sh.exe"),
+            ]
+        );
+    }
+
+    #[test]
+    fn git_sh_candidates_skip_unset_dirs() {
+        assert!(git_sh_candidates(None, None).is_empty());
+    }
+
+    #[test]
+    fn first_existing_picks_the_first_present_candidate() {
+        let c = [PathBuf::from("/a/sh.exe"), PathBuf::from("/b/sh.exe")];
+        let found = first_existing(&c, |p: &Path| p == Path::new("/b/sh.exe"));
+        assert_eq!(found, Some(PathBuf::from("/b/sh.exe")));
+        assert_eq!(first_existing(&c, |_: &Path| false), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_shell_is_sh_on_unix() {
+        assert_eq!(posix_shell().unwrap(), PathBuf::from("sh"));
+    }
+
+    #[test]
+    fn no_shell_error_names_git_for_windows() {
+        assert!(NO_POSIX_SHELL.contains("Git for Windows"));
+    }
+
     /// A child killed by a signal has no exit code, and `code().unwrap_or(0)`
     /// reported it as SUCCESS: `sensei restart` exited 0 for a daemon that died.
     /// The shell's convention instead: 128 + the signal.
+    #[cfg(unix)]
     #[test]
     fn a_child_killed_by_a_signal_is_not_a_success() {
         let run =

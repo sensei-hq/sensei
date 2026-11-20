@@ -31,8 +31,16 @@
 # tests selected.
 #
 # Usage: scripts/senseid-pure-coverage.sh <output-lcov-path>
+#        scripts/senseid-pure-coverage.sh --test-only
+# `--test-only` runs the same selection, with the same guards, as a plain
+# `cargo test` and writes no lcov: the Windows CI job (#505), where GitHub's
+# runners cannot start the Postgres service container. PYTHON overrides the
+# interpreter (Windows runners ship `python`, not `python3`).
 set -euo pipefail
 
+PY="${PYTHON:-python3}"
+TEST_ONLY=0
+if [ "${1:-}" = "--test-only" ]; then TEST_ONLY=1; shift; fi
 OUT="${1:-senseid-pure.lcov}"
 RAW="$(mktemp)"
 
@@ -66,7 +74,7 @@ for r in "${SKIP_ROOTS[@]}"; do FILTERS+=(--skip "${r}::"); done
 # fails the run with "Connection refused". Such tests belong in
 # `src/db/pg_store/tests/`. An `#[ignore]`d test is exempt: the filters never
 # run it.
-python3 - "crates/senseid/src" "${PURE_MODULES[@]}" <<'PY'
+"$PY" - "crates/senseid/src" "${PURE_MODULES[@]}" <<'PY'
 import os, re, sys
 src, mods = sys.argv[1], sys.argv[2:]
 opens_db = re.compile(r'\b(?:test_store|connect_test)\s*\(')
@@ -104,14 +112,18 @@ PY
 
 echo "senseid-pure-coverage: running DB-free module tests (${#PURE_MODULES[@]} modules)…"
 RUN_LOG="$(mktemp)"
-cargo llvm-cov -p senseid --no-fail-fast --lcov --output-path "$RAW" \
-  -- "${FILTERS[@]}" 2>&1 | tee "$RUN_LOG"
+if [ "$TEST_ONLY" = 1 ]; then
+  cargo test -p senseid --bin senseid --no-fail-fast -- "${FILTERS[@]}" 2>&1 | tee "$RUN_LOG"
+else
+  cargo llvm-cov -p senseid --no-fail-fast --lcov --output-path "$RAW" \
+    -- "${FILTERS[@]}" 2>&1 | tee "$RUN_LOG"
+fi
 
 # GUARD: every test that actually ran must have a pure root module. Without this
 # a new DB module nested under a new root re-introduces the collision silently —
 # and it only announces itself if it happens to need Postgres. Assert the
 # property instead of relying on the symptom.
-python3 - "$RUN_LOG" "${PURE_MODULES[@]}" <<'PY'
+"$PY" - "$RUN_LOG" "${PURE_MODULES[@]}" <<'PY'
 import re, sys
 log, mods = sys.argv[1], set(sys.argv[2:])
 ran = re.findall(r'^test ([\w:]+) \.\.\.', open(log, errors='replace').read(), re.M)
@@ -128,10 +140,12 @@ print(f"senseid-pure-coverage: {len(ran)} tests ran, all with a pure root module
 PY
 rm -f "$RUN_LOG"
 
+if [ "$TEST_ONLY" = 1 ]; then rm -f "$RAW"; exit 0; fi
+
 # Keep only records whose SF is one of the pure modules (dir `src/<m>/` or file
 # `src/<m>.rs`). Everything else — DB-touching code that wasn't exercised — is
 # dropped so it can't drag the number down at 0%.
-python3 - "$RAW" "$OUT" "${PURE_MODULES[@]}" <<'PY'
+"$PY" - "$RAW" "$OUT" "${PURE_MODULES[@]}" <<'PY'
 import re, sys
 raw, out = sys.argv[1], sys.argv[2]
 mods = sys.argv[3:]

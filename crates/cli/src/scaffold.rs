@@ -427,11 +427,13 @@ mod tests {
         assert_eq!(fs::read_to_string(&vision).unwrap(), "EDITED", "not overwritten");
     }
 
+    #[cfg(unix)]
     #[test]
     fn materialize_records_failures_instead_of_swallowing() {
         // A read-only base dir → writes inside it fail; failures must be recorded,
         // not silently dropped (house "no silent errors" rule). Tests run as a
-        // normal user; root would ignore the perms.
+        // normal user; root would ignore the perms. Unix only: Windows ignores the
+        // read-only attribute on a directory, so nothing would fail.
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
 

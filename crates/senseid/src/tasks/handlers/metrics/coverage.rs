@@ -40,6 +40,7 @@
 //! (a measured zero — the suite is instrumented but nothing is covered — never
 //! suppressed).
 
+use sensei_bootstrap::util::posix_shell;
 use std::path::{Path, PathBuf};
 
 use crate::db::pg_store::PgStore;
@@ -231,11 +232,11 @@ pub(super) async fn compute(
 const COVERAGE_COMMAND_KEY: &str = "metrics.coverage_command";
 
 /// Run the configured coverage command in the worktree `wt` (`sh -c <command>`, cwd
-/// = `wt`). Ok on a zero exit; Err otherwise (the caller writes no row for that
+/// = `wt`; Git for Windows' `sh.exe` on Windows, see [`posix_shell`]). Ok on a zero exit; Err otherwise (the caller writes no row for that
 /// commit). Runs an ARBITRARY user-configured command — only ever reached through the
 /// opt-in [`backfill`], never the default snapshot wave.
 fn run_coverage_command(wt: &Path, command: &str) -> Result<(), String> {
-    let status = std::process::Command::new("sh")
+    let status = std::process::Command::new(posix_shell()?)
         .arg("-c")
         .arg(command)
         .current_dir(wt)
@@ -346,6 +347,25 @@ pub(crate) async fn backfill(
 
     tracing::info!(workspace = %workspace_raw, rows = written, "coverage: backfill complete");
     Ok(written)
+}
+
+#[cfg(test)]
+mod run_command_tests {
+    use super::run_coverage_command;
+
+    #[test]
+    fn runs_in_the_worktree_and_succeeds_on_zero_exit() {
+        let wt = tempfile::tempdir().unwrap();
+        run_coverage_command(wt.path(), "echo ran > lcov.info").unwrap();
+        assert_eq!(std::fs::read_to_string(wt.path().join("lcov.info")).unwrap().trim(), "ran");
+    }
+
+    #[test]
+    fn a_non_zero_exit_is_an_error() {
+        let wt = tempfile::tempdir().unwrap();
+        let err = run_coverage_command(wt.path(), "exit 3").unwrap_err();
+        assert!(err.contains("non-zero"), "{err}");
+    }
 }
 
 #[cfg(test)]
