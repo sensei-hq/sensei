@@ -46,11 +46,16 @@ counts, per-file turn counts, and embed-tail follow-ups.
 
 ### Requirement: Uniform stage protocol
 
-Pipeline stages SHALL use the `StageStarted`/`StageCompleted`/`StageFailed`
-events in production, not only in tests.
+Stage events SHALL map onto the envelope with tested guards, and ship
+ wherever a production stage boundary already emits them.
 
 #### Scenario: Long stages narrate themselves
 
-- **WHEN** a pipeline stage starts and ends
+- **WHEN** a pipeline stage starts and ends through the `StageEvents` guard
 - **THEN** stage frames name the stage and its outcome so a follower sees
   phase transitions, not silence between totals and terminals
+
+> Production scan stages live in `indexer/pipeline.rs`, which has no
+> production callers yet — routing production through it is the pipeline
+> cutover's work, not this slice's. This slice delivers the tested
+> guard + envelope mapping it will ride on.

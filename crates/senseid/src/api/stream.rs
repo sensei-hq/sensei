@@ -141,6 +141,19 @@ impl StreamFrame {
                 serde_json::json!({ "stage": stage, "path": path }),
             )
             .failed(&error_code_for(error), error),
+            TaskEvent::WaveTotals { wave, key, total, repaired } => frame(
+                wave,
+                Action::Add,
+                key.clone(),
+                serde_json::json!({ "total": total, "repaired": repaired }),
+            ),
+            TaskEvent::WaveDone { wave, key, settled, total } => frame(
+                wave,
+                Action::Update,
+                key.clone(),
+                serde_json::json!({ "settled": settled, "total": total }),
+            )
+            .done(),
         }
     }
 
@@ -528,6 +541,41 @@ mod tests {
         assert_eq!(fq["data"]["files_total"], 10);
         let s = frame(5, &TaskEvent::StageStarted { stage: "scan_root".into(), path: "/c".into() });
         assert_eq!((s["entity"].as_str(), s["action"].as_str()), (Some("job"), Some("update")));
+    }
+
+    #[test]
+    fn wave_totals_map_onto_their_pipeline_entity() {
+        use crate::tasks::progress::TaskEvent;
+        let w = serde_json::to_value(StreamFrame::from_task_event(
+            6,
+            &TaskEvent::WaveTotals {
+                wave: "transcript".into(),
+                key: "9".into(),
+                total: 42,
+                repaired: Some(3),
+            },
+        ))
+        .unwrap();
+        assert_eq!(w["entity"], "transcript");
+        assert_eq!(w["action"], "add");
+        assert_eq!(w["key"], "9");
+        assert_eq!(w["data"]["total"], 42);
+        assert_eq!(w["data"]["repaired"], 3);
+        assert!(w.get("done").is_none());
+    }
+
+    #[test]
+    fn wave_done_maps_to_a_terminal_frame() {
+        use crate::tasks::progress::TaskEvent;
+        let w = serde_json::to_value(StreamFrame::from_task_event(
+            7,
+            &TaskEvent::WaveDone { wave: "metric".into(), key: "w1".into(), settled: 5, total: 5 },
+        ))
+        .unwrap();
+        assert_eq!(w["entity"], "metric");
+        assert_eq!(w["action"], "update");
+        assert_eq!(w["done"], true);
+        assert_eq!(w["data"]["settled"], 5);
     }
 
     /// The scan socket carries scan entities only — relay traffic stays out.

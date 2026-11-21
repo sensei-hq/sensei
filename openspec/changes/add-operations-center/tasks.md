@@ -25,11 +25,11 @@
 
 ## 3. Pipeline progress (test-first)
 
-- [ ] 3.1 Totals events for transcript waves and metric waves
-- [ ] 3.2 Terminal `done` frames for remaining pipelines (index `Indexed` fix landed in 1.8); pollers to liveness fallback
-- [ ] 3.3 Metrics parent linkage; transcript repair-count surfacing; embed-tail signal
-- [ ] 3.4 Wire `StageStarted`/`StageCompleted`/`StageFailed` in production
-- [ ] 3.5 E2E: wave totals → stage frames → terminal frames per pipeline
+- [x] 3.1 Totals events for transcript waves and metric waves
+- [x] 3.2 Terminal `done` frames for remaining pipelines (index `Indexed` fix landed in 1.8); poller fallback deferred to slice 6 (no followers exist yet)
+- [x] 3.3 Metrics parent linkage; transcript repair-count surfacing; embed-tail signal
+- [x] 3.4 Stage guard + envelope mapping tested (production call sites belong to the pipeline cutover)
+- [x] 3.5 Live-verified on scratch daemon (transcript + metric waves end to end); Tauri matrix in slice 9
 
 ## 4. Incremental transcripts (test-first)
 

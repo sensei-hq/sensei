@@ -20,7 +20,7 @@ pub mod zed;
 
 use crate::db::pg_store::HookEventRow;
 use crate::tasks::executor::TaskContext;
-use crate::tasks::{Task, TaskKind};
+use crate::tasks::{Task, TaskKind, TaskStatus};
 use std::path::PathBuf;
 
 // ── Shared constants (used by multiple adapters) ────────────────────────
@@ -986,8 +986,30 @@ pub async fn backfill(
             }
         }
     }
-    let (files_seen, enqueued) = dispatch(queue, parent, since, &consented).await;
+    let (files_seen, enqueued, child_ids) = dispatch(queue, parent, since, &consented).await;
     let sessions_repaired = repair_sessions(pg).await;
+    // The wave states its size (and what it repaired) before the long child
+    // tail — the denominator progress needs from the first frame.
+    let key = parent.map(|p| p.to_string()).unwrap_or_else(|| "manual".to_string());
+    let _ = queue.sender().send(crate::tasks::progress::TaskEvent::WaveTotals {
+        wave: "transcript".into(),
+        key: key.clone(),
+        total: enqueued as u64,
+        repaired: Some(sessions_repaired as u64),
+    });
+    // The barrier runs when every child settled and emits the terminal wave
+    // event. With no children it runs immediately (an empty wave still ends).
+    let mut barrier = Task::new(TaskKind::FinalizeTranscriptWave, "", "");
+    if let Some(p) = parent {
+        barrier = barrier.with_parent(p);
+    }
+    if child_ids.is_empty() {
+        barrier.status = TaskStatus::Pending;
+    } else {
+        barrier.status = TaskStatus::Blocked;
+        barrier.depends_on = child_ids;
+    }
+    queue.enqueue(barrier).await;
     BackfillOutcome { files_seen, enqueued, sessions_repaired }
 }
 
@@ -1085,9 +1107,10 @@ pub async fn dispatch(
     parent: Option<u64>,
     since: Option<i64>,
     consented: &std::collections::HashSet<String>,
-) -> (u32, u32) {
+) -> (u32, u32, Vec<u64>) {
     let mut count = 0u32;
     let mut skipped = 0u32;
+    let mut child_ids = Vec::new();
     for ad in consented_adapters(consented) {
         for unit in ad.units() {
             // `since` is what makes a backfill a PARAMETER rather than a separate
@@ -1114,12 +1137,30 @@ pub async fn dispatch(
             if let Some(p) = parent {
                 task = task.with_parent(p);
             }
-            queue.enqueue(task).await;
+            child_ids.push(queue.enqueue(task).await);
             count += 1;
         }
     }
     tracing::info!(count, skipped, "capture ingest: dispatched per-unit tasks");
-    (count, count)
+    (count, count, child_ids)
+}
+
+/// Handler for `TaskKind::FinalizeTranscriptWave`: the wave barrier. Enqueued
+/// blocked on every dispatched child, so it runs exactly when the wave
+/// settles, and emits the terminal wave event. Exact because transcript
+/// children are non-retryable: no retry can still be in flight when the
+/// barrier's deps release. Idempotent (a re-run re-emits the same terminal
+/// event, which applies idempotently by key+done).
+pub async fn run_finalize_wave(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    crate::tasks::progress::emit_wave_done(
+        ctx.pg(),
+        ctx.queue.sender(),
+        "transcript",
+        task.parent_task_id,
+        Some(task.id),
+        ctx.queue.session_start(),
+    )
+    .await
 }
 
 /// Handler for `TaskKind::IngestCapture`: ingest one transcript.
@@ -1277,6 +1318,31 @@ mod tests {
         pg.close().await;
         let got = ingest_one(&pg, &GoneTranscript, "/gone.jsonl").await;
         assert!(got.is_err(), "a read that failed was reported as {:?}", got.map(|o| o.skipped));
+    }
+
+    /// The wave barrier runs after every child settled: it emits the wave's
+    /// terminal event (settled/total counts) on the queue channel, which the
+    /// framed mapping turns into a done frame — instead of leaving completion
+    /// to whoever polls `childSummary` next.
+    #[tokio::test]
+    async fn finalize_wave_emits_a_terminal_transcript_event() {
+        use crate::tasks::progress::TaskEvent;
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let mut rx = ctx.queue.sender().subscribe();
+        let mut task = Task::new(TaskKind::FinalizeTranscriptWave, "", "");
+        task.parent_task_id = Some(9);
+        run_finalize_wave(&ctx, &task).await.unwrap();
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("terminal event")
+            .unwrap();
+        match event {
+            TaskEvent::WaveDone { wave, key, settled: _, total: _ } => {
+                assert_eq!(wave, "transcript");
+                assert_eq!(key, "9");
+            }
+            other => panic!("expected WaveDone, got {other:?}"),
+        }
     }
 
     /// A task queued BEFORE consent was withdrawn must not read the file after

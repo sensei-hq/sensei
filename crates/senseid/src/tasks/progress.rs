@@ -91,6 +91,58 @@ pub enum TaskEvent {
         path: String,
         error: String,
     },
+    /// A pipeline wave states its size when it starts: transcript backfills,
+    /// metric computations, any fan-out whose children settle later. `wave`
+    /// names the pipeline entity (`transcript`, `metric`), `key` the wave
+    /// (dispatcher task id), `total` the denominator progress needs from
+    /// the first frame. `repaired` rides along when the wave repaired
+    /// sessions as well as ingesting (transcript backfills only).
+    WaveTotals {
+        wave: String,
+        key: String,
+        total: u64,
+        repaired: Option<u64>,
+    },
+    /// A pipeline wave settled: every child reached a terminal row. Emitted
+    /// by the wave's barrier exactly once per wave.
+    WaveDone {
+        wave: String,
+        key: String,
+        settled: u64,
+        total: u64,
+    },
+}
+
+/// Emit a wave's terminal event: settled/total children of `parent` as of
+/// now. Shared by wave barriers (transcript finalize, metric health) so
+/// every wave ends the same way. Returns the settled count. A parentless
+/// wave ends 0/0 under the key "manual". `own_id` excludes the barrier's
+/// own execution row — without it the barrier counts itself as an
+/// unsettled child and no wave ever reads fully settled.
+pub async fn emit_wave_done(
+    pg: &crate::db::pg_store::PgStore,
+    sender: &broadcast::Sender<TaskEvent>,
+    wave: &str,
+    parent: Option<u64>,
+    own_id: Option<u64>,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<u32, String> {
+    let key = parent.map(|p| p.to_string()).unwrap_or_else(|| "manual".to_string());
+    let children = match parent {
+        Some(p) => pg.child_task_executions(p as i64, since).await?,
+        None => Vec::new(),
+    };
+    let children: Vec<_> = match own_id {
+        Some(me) => children.into_iter().filter(|c| c["taskId"].as_u64() != Some(me)).collect(),
+        None => children,
+    };
+    let settled = children
+        .iter()
+        .filter(|c| matches!(c["status"].as_str(), Some("completed" | "failed")))
+        .count() as u64;
+    let total = children.len() as u64;
+    let _ = sender.send(TaskEvent::WaveDone { wave: wave.into(), key, settled, total });
+    Ok(u32::try_from(settled).unwrap_or(u32::MAX))
 }
 
 /// Where a stage's progress goes.

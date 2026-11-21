@@ -360,7 +360,11 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     if exhausted && embedded > 0 {
         let leftover = ctx.pg().nodes_without_embeddings(&folder_id, 1).await?;
         if !leftover.is_empty() {
-            let follow = Task::new(super::super::TaskKind::EmbedNodes, &task.folder_path, "");
+            // Parented: the follow-up is a continuation of THIS task, so a
+            // follower sees one chain completing and continuing — not one
+            // task ending and another appearing from nowhere.
+            let follow = Task::new(super::super::TaskKind::EmbedNodes, &task.folder_path, "")
+                .with_parent(task.id);
             ctx.queue.enqueue(follow).await;
             tracing::info!(
                 "embed_nodes: {} — call budget spent after {embedded} nodes, follow-up queued",

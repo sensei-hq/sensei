@@ -171,6 +171,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ScanGitHistory => handlers::git_history::scan_git_history(ctx, task).await,
             TaskKind::IngestCaptures => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::IngestCapture => crate::transcript::run_ingest_capture(ctx, task).await,
+            TaskKind::FinalizeTranscriptWave => {
+                crate::transcript::run_finalize_wave(ctx, task).await
+            }
             TaskKind::BackfillCoverage => {
                 handlers::metrics::coverage::run_backfill(ctx, task).await
             }
