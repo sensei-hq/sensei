@@ -1,5 +1,5 @@
 // @sensei/state — domain state shared by the desktop app and the dōjō (#414).
-export type { StateEvent } from './events.js';
+export type { StateEvent, StreamFrame, StreamFrameError } from './events.js';
 export {
   sseEvents,
   realtimeEvents,
@@ -160,12 +160,12 @@ export type {
   ScanFolderEvent,
   ScanWorkspace,
   ActivityEvent,
-  ScanStreamEvent,
   ScanDaemonWorkspace,
   ScanDaemonRoot,
   QueueCounts,
   IndexQueueStatus,
 } from './scan/types.js';
+export { parseScanStreamEvent } from './scan/types.js';
 export { scanClient, scanEvents, type ScanApi } from './scan/client.js';
 export { scanSseSource, type ScanEventStream } from './scan/sources/sse.js';
 export {

@@ -4,11 +4,11 @@
 // the state reads on it: nothing before the socket opened is missed.
 import type { ScanApi } from '../client.js';
 import type { ScanSource } from '../scan-state.svelte.js';
-import type { ScanStreamEvent } from '../types.js';
+import type { StreamFrame } from '../../events.js';
 import { sseEvents, type EventStream } from '../../source.js';
 
-/** What the source needs of a socket: the EventManager's shape, carrying scan events. */
-export type ScanEventStream = EventStream<ScanStreamEvent>;
+/** What the source needs of a socket: the EventManager's shape, carrying scan frames. */
+export type ScanEventStream = EventStream<StreamFrame>;
 
 /** A ScanSource over the daemon: `api` for reads and triggers, `stream()` for a fresh socket per subscription. */
 export function scanSseSource(api: ScanApi, stream: () => ScanEventStream): ScanSource {

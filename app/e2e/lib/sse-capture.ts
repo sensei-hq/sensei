@@ -15,7 +15,7 @@ export interface SseCapture {
   close(): void;
 }
 
-export function captureSse(url: string): SseCapture {
+export function captureSse(url: string, init?: { headers?: Record<string, string> }): SseCapture {
   const events: CapturedSse[] = [];
   const errors: Error[] = [];
   const waiters: Array<{
@@ -47,7 +47,7 @@ export function captureSse(url: string): SseCapture {
 
   void (async () => {
     try {
-      const res = await fetch(url, { signal: abort.signal });
+      const res = await fetch(url, { signal: abort.signal, headers: init?.headers });
       const reader = res.body?.getReader();
       if (!reader) throw new Error('SSE response has no body');
       const decoder = new TextDecoder();

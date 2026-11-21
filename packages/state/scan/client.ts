@@ -3,12 +3,13 @@
 // client.spec.ts, so a route change is a loud one.
 import { EventManager } from '../event-manager.js';
 import { failureFrom, type ApiResult } from '../result.js';
+import type { StreamFrame } from '../events.js';
 import type {
   IndexQueueStatus,
   ScanDaemonRoot,
   ScanDaemonWorkspace,
-  ScanStreamEvent,
 } from './types.js';
+import { parseScanStreamEvent } from './types.js';
 
 // ─── The client ─────────────────────────────────────────────────────────────
 
@@ -47,8 +48,5 @@ export const scanClient = (base: string): ScanApi => {
 
 // ─── Stream ─────────────────────────────────────────────────────────────────
 
-export const scanEvents = (base: string): EventManager<ScanStreamEvent> =>
-  new EventManager<ScanStreamEvent>(
-    `${base}/api/scan/events`,
-    (data) => JSON.parse(data) as ScanStreamEvent,
-  );
+export const scanEvents = (base: string): EventManager<StreamFrame> =>
+  new EventManager<StreamFrame>(`${base}/api/scan/events`, parseScanStreamEvent);

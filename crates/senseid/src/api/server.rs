@@ -406,6 +406,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
         )),
         trackers: Default::default(),
+        streams: crate::api::stream::StreamHub::new(),
     });
 
     let task_logger = sensei_logger::Logger::new(
@@ -474,6 +475,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         task_queue.sender().subscribe(),
         state.event_tx.clone(),
         Arc::new(state.pg.clone()),
+    );
+
+    // Uniform SSE frames: stamp + ring + re-broadcast behind both channels.
+    crate::api::stream::spawn_frame_loggers(
+        &state.streams,
+        state.event_tx.subscribe(),
+        task_queue.sender().subscribe(),
     );
 
     // Version-change rebuild (D2): if this binary differs from the one that

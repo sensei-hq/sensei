@@ -1,12 +1,10 @@
 use crate::api::state::AppState;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{Json, Sse, sse::Event},
 };
 use serde::Deserialize;
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::BroadcastStream;
 
 // ── Repos CRUD ──────────────────────────────────────────────────────────────
 
@@ -1070,16 +1068,15 @@ pub(crate) async fn index_doctor(State(state): State<AppState>) -> Json<serde_js
 /// apply to the other.
 pub(crate) async fn task_progress_sse(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.task_queue.sender().subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(event) => {
-            let data = serde_json::to_string(&event).unwrap_or_default();
-            Some(Ok(Event::default().data(data)))
-        }
-        Err(_) => None,
-    });
-    Sse::new(stream)
+    let rx = state.streams.task_tx.subscribe();
+    let cursor = crate::api::stream::parse_cursor(&headers);
+    let stream =
+        crate::api::stream::framed_stream(rx, state.streams.task_log.clone(), cursor, |f| {
+            crate::api::stream::allows_entity(crate::api::stream::StreamKind::Tasks, f.entity())
+        });
+    crate::api::stream::heartbeat(stream)
 }
 
 // ── Index Errors ────────────────────────────────────────────────────────────

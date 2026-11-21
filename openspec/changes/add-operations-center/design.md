@@ -46,8 +46,11 @@ this change generalizes.
 - Every stream sends a snapshot head first (the `/api/tasks/{id}/events`
   pattern), then live frames; per-stream entity allowlists enforced
   daemon-side (fixes the unfiltered scan socket).
-- `keep_alive` + `retry:` + heartbeat frames on all handlers; lagged-receiver
-  drops surface as `{entity:stream, error}` instead of silent drops.
+- `keep_alive` + heartbeat comment frames on all handlers; SSE `id:`
+  mirrors the frame cursor so natively retrying sockets resume via
+  `Last-Event-ID` on their own (reconnect cadence stays client-owned —
+  `EventManager` already reconnects at 3s). Lagged-receiver drops surface
+  as `{entity:stream, error}` instead of silent drops.
 - `sseEvents` wires `onFault` through to `streamFault`/`daemonReachable`, so
   SSE faults render like realtime faults do today.
 

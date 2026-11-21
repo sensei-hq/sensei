@@ -28,17 +28,15 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{
         Json,
         sse::{Event, Sse},
     },
 };
 use tokio_stream::StreamExt;
-use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::state::AppState;
-use crate::tasks::progress::TaskEvent;
 
 /// The window `/api/tasks/abandoned` reads when none is asked for: a week.
 const ABANDONED_DEFAULT_DAYS: i32 = 7;
@@ -155,30 +153,15 @@ pub(crate) async fn get_task(
     })))
 }
 
-/// True when a broadcast event concerns the task being followed, or one of its
-/// children. Pure — the filtering rule is the part worth testing.
-pub(crate) fn event_task_id(event: &TaskEvent) -> Option<u64> {
-    match event {
-        TaskEvent::Queued { task_id }
-        | TaskEvent::Started { task_id, .. }
-        | TaskEvent::Completed { task_id, .. }
-        | TaskEvent::Failed { task_id, .. } => Some(*task_id),
-        // Folder-level rollups and pipeline-stage events carry no task id, so
-        // they cannot be attributed to one follower and are dropped rather than
-        // broadcast to everybody. A stage is not a queue task: it has no id by
-        // construction, and minting one to make it fit here would attribute it
-        // to a follower it has nothing to do with.
-        TaskEvent::FolderQueued { .. }
-        | TaskEvent::StageStarted { .. }
-        | TaskEvent::StageCompleted { .. }
-        | TaskEvent::StageFailed { .. } => None,
-    }
-}
-
 /// `GET /api/tasks/{id}/events` — SSE for ONE task and its children.
 ///
-/// Opens with a `snapshot` event carrying the same payload as [`get_task`], so a
-/// subscriber that attaches late (or after completion) is immediately correct
+/// Opens with a snapshot frame carrying the same payload as [`get_task`], so a
+/// subscriber that attaches late (or after completion) is immediately correct.
+/// Live frames follow only for the task and its snapshot-named children:
+/// folder rollups and stage events carry no task id, so they cannot be
+/// attributed to one follower — a stage is not a queue task, and minting an
+/// id to make it fit would attribute it to a follower it has nothing to do
+/// with. The frame key carries this rule now (`job` entity + numeric key).
 /// instead of waiting on events that already fired. Live `TaskEvent`s follow,
 /// filtered to this task and the children known at subscribe time.
 ///
@@ -187,9 +170,11 @@ pub(crate) fn event_task_id(event: &TaskEvent) -> Option<u64> {
 /// is lost.
 pub(crate) async fn task_events(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<u64>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.task_queue.sender().subscribe();
+    let rx = state.streams.task_tx.subscribe();
+    let cursor = crate::api::stream::parse_cursor(&headers);
     let since = state.task_queue.session_start();
 
     // One error path for the whole snapshot. Reading children separately and
@@ -205,21 +190,34 @@ pub(crate) async fn task_events(
 
     let (snapshot, children) = match snapshot_read {
         Ok((attempts, children)) => (
-            serde_json::json!({
-                "type": "snapshot",
-                "taskId": id,
-                "current": attempts.first(),
-                "attempts": attempts,
-                "children": children,
-                "childSummary": summarize_children(&children),
-            }),
+            crate::api::events::StateEvent::new(
+                crate::api::events::Action::Set,
+                "job",
+                id.to_string(),
+                serde_json::json!({
+                    "taskId": id,
+                    "current": attempts.first(),
+                    "attempts": attempts,
+                    "children": children,
+                    "childSummary": summarize_children(&children),
+                }),
+            ),
             children,
         ),
         Err(e) => {
             // Say so explicitly rather than sending an empty-looking snapshot: a
             // read failure and "nothing has happened yet" must not look alike.
             tracing::warn!(error = %e, task_id = id, "task_events: snapshot read failed");
-            (serde_json::json!({ "type": "error", "taskId": id, "error": e }), Vec::new())
+            (
+                crate::api::events::StateEvent::new(
+                    crate::api::events::Action::Set,
+                    "job",
+                    id.to_string(),
+                    serde_json::json!({ "taskId": id }),
+                )
+                .failed("snapshot-failed", &e),
+                Vec::new(),
+            )
         }
     };
 
@@ -231,17 +229,19 @@ pub(crate) async fn task_events(
         }
     }
 
-    let head = tokio_stream::once(Ok(Event::default().data(snapshot.to_string())));
-    let live = BroadcastStream::new(rx).filter_map(move |result| {
-        let event = result.ok()?;
-        let tid = event_task_id(&event)?;
-        if !followed.contains(&tid) {
-            return None;
-        }
-        Some(Ok(Event::default().data(serde_json::to_string(&event).ok()?)))
-    });
+    // Snapshot head first (cursor 0: the full state), then framed live
+    // frames for this task and the children the snapshot named.
+    let head_frame = crate::api::stream::StreamFrame::live(0, snapshot);
+    let head = tokio_stream::once(Ok(
+        Event::default().data(serde_json::to_string(&head_frame).unwrap_or_default())
+    ));
+    let live =
+        crate::api::stream::framed_stream(rx, state.streams.task_log.clone(), cursor, move |f| {
+            f.entity() == "job"
+                && f.key().parse::<u64>().map(|tid| followed.contains(&tid)).unwrap_or(false)
+        });
 
-    Sse::new(head.chain(live))
+    crate::api::stream::heartbeat(head.chain(live))
 }
 
 /// `GET /api/tasks/kinds` — the task catalogue, grouped by pipeline.
@@ -274,6 +274,7 @@ pub(crate) async fn list_kinds() -> Json<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tasks::progress::TaskEvent;
 
     fn child(status: &str) -> serde_json::Value {
         serde_json::json!({ "taskId": 1, "status": status })
@@ -308,40 +309,28 @@ mod tests {
         assert_eq!(s["total"], 0);
     }
 
+    /// The frame key carries the old `event_task_id` rule: job frames key
+    /// by task id (followable), folder rollups and stages do not (their
+    /// keys never parse as the followed task).
     #[test]
-    fn every_addressable_event_yields_its_task_id() {
-        assert_eq!(event_task_id(&TaskEvent::Queued { task_id: 7 }), Some(7));
-        assert_eq!(
-            event_task_id(&TaskEvent::Started {
-                task_id: 8,
-                folder_path: String::new(),
-                kind: String::new(),
-                path: String::new(),
-            }),
-            Some(8)
-        );
-        assert_eq!(
-            event_task_id(&TaskEvent::Failed {
-                task_id: 9,
-                folder_path: String::new(),
-                kind: String::new(),
-                error: String::new(),
-            }),
-            Some(9)
-        );
-    }
-
-    #[test]
-    fn a_folder_rollup_is_not_attributed_to_a_follower() {
-        // It carries no task id, so forwarding it would send every follower
-        // another follower's noise.
-        assert_eq!(
-            event_task_id(&TaskEvent::FolderQueued {
+    fn frame_keys_route_followers_and_exclude_rollups() {
+        use crate::api::stream::StreamFrame;
+        let job = StreamFrame::from_task_event(1, &TaskEvent::Queued { task_id: 7 });
+        assert_eq!(job.key().parse::<u64>().ok(), Some(7));
+        let rollup = StreamFrame::from_task_event(
+            2,
+            &TaskEvent::FolderQueued {
                 folder_path: "/x".into(),
                 files_total: 3,
                 files_expected: Some(9),
-            }),
-            None
+            },
         );
+        assert_eq!(rollup.entity(), "folder");
+        assert!(rollup.key().parse::<u64>().is_err());
+        let stage = StreamFrame::from_task_event(
+            3,
+            &TaskEvent::StageStarted { stage: "scan_root".into(), path: "/x".into() },
+        );
+        assert!(stage.key().parse::<u64>().is_err());
     }
 }

@@ -44,6 +44,30 @@ describe('captureSse', () => {
     }
   });
 
+  it('sends caller headers (Last-Event-ID resume)', async () => {
+    let seen: string | undefined;
+    const srv = createServer((req, res) => {
+      seen = req.headers['last-event-id'] as string | undefined;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('data: {"a":1}\n\n');
+    });
+    const url = await new Promise<string>((resolve) => {
+      srv.listen(0, '127.0.0.1', () => {
+        const addr = srv.address();
+        resolve(`http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}/e`);
+      });
+    });
+    const cap = captureSse(url, { headers: { 'Last-Event-ID': '41' } });
+    try {
+      await cap.waitFor(() => true, 5000);
+      expect(seen).toBe('41');
+    } finally {
+      cap.close();
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+      await stop();
+    }
+  });
+
   it('keeps undecodable payloads as raw text and times out cleanly', async () => {
     const url = await serve('data: not-json\n\n');
     const cap = captureSse(url);

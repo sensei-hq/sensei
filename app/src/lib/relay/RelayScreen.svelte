@@ -212,6 +212,19 @@
   glyphs={mode()}
   compose={composeBand}
 >
+  {#if state.streamFault}
+    <div class="px-4 pt-4">
+      <Notice
+        data-relay-stale
+        tone="fault"
+        size="inline"
+        expanded
+        title="Live updates interrupted"
+        detail={state.streamFault}
+        remedy="Reconnecting automatically — the view refreshes when the stream reopens."
+      />
+    </div>
+  {/if}
   {#if state.reading}
     <Loading />
   {:else if failure}

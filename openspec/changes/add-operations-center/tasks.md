@@ -6,13 +6,14 @@
 
 ## 1. Uniform eventing (test-first)
 
-- [ ] 1.1 One envelope type + entity/action vocab, daemon + client
-- [ ] 1.2 Per-stream daemon-side allowlists (incl. scan-socket filter fix)
-- [ ] 1.3 Snapshot heads + `Last-Event-ID` replay
-- [ ] 1.4 Keep-alive/heartbeat/retry + lag-drop surfacing
-- [ ] 1.5 `sseEvents` onFault wiring + fault rendering
-- [ ] 1.6 Validated scan parse; type-drift fixes (deferred/kind/id/stage/row)
-- [ ] 1.7 E2E: envelope shapes on scan + task streams; reconnect replay; fault render
+- [x] 1.1 One envelope type + entity/action vocab, daemon + client
+- [x] 1.2 Per-stream daemon-side allowlists (incl. scan-socket filter fix)
+- [x] 1.3 Snapshot heads + `Last-Event-ID` replay
+- [x] 1.4 Keep-alive/heartbeat + lag-drop surfacing (retry stays client-owned)
+- [x] 1.5 `sseEvents` onFault wiring + fault rendering
+- [x] 1.6 Validated scan parse; type-drift fixes (deferred/kind/id/stage/row)
+- [x] 1.7 Live-verified on scratch daemon (envelope/filter/replay/heartbeat/terminal/snapshot); Tauri matrix in slice 9
+- [x] 1.8 Dead `Indexed` emitter fixed (`build_connections` → `detect_communities`) with terminal `done` marking
 
 ## 2. Queue observability (test-first)
 
@@ -25,7 +26,7 @@
 ## 3. Pipeline progress (test-first)
 
 - [ ] 3.1 Totals events for transcript waves and metric waves
-- [ ] 3.2 Terminal `done` frames; fix dead `Indexed` emitter; pollers to liveness fallback
+- [ ] 3.2 Terminal `done` frames for remaining pipelines (index `Indexed` fix landed in 1.8); pollers to liveness fallback
 - [ ] 3.3 Metrics parent linkage; transcript repair-count surfacing; embed-tail signal
 - [ ] 3.4 Wire `StageStarted`/`StageCompleted`/`StageFailed` in production
 - [ ] 3.5 E2E: wave totals → stage frames → terminal frames per pipeline

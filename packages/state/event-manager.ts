@@ -14,6 +14,9 @@ export class EventManager<T> {
   /** Fires on every socket open, initial and reconnects (F8: routes re-read
    *  on reconnect — broadcast has no replay). Mirrors EventSource's shape. */
   onopen: (() => void) | null = null;
+  /** Fires when the socket errors (before the scheduled reconnect), so
+   *  states can hold the fault instead of freezing on stale data. */
+  onerror: (() => void) | null = null;
   private source: EventSource | null = null;
   private handlers: EventHandler<T>[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -90,6 +93,7 @@ export class EventManager<T> {
 
     this.source.onopen = () => this.onopen?.();
     this.source.onerror = () => {
+      this.onerror?.();
       this.disconnect();
       if (this.handlers.length > 0) {
         this.reconnectTimer = setTimeout(() => this.connect(), this.reconnectMs);

@@ -821,7 +821,8 @@ export interface RelayCancelledRun {
 export interface RelayStreamEvent {
   action: 'add' | 'update' | 'remove' | 'set';
   entity: string;
-  /** Run events carry `run_id` + `crew_id`; lane events `lane_id` + `crew_id` (queue cutover). */
+  /** Run events carry `run_id` + `crew_id`; lane events `lane_id` + `crew_id` (queue cutover).
+   *  Removals and row-carrying events name the row `id`; item events name their `stage`. */
   data: {
     op?: string;
     task_id?: string;
@@ -830,6 +831,8 @@ export interface RelayStreamEvent {
     crew_id?: string;
     lane_id?: string;
     reason?: string;
+    id?: string;
+    stage?: string;
   };
 }
 

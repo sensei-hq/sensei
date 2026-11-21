@@ -7,7 +7,7 @@
  */
 
 import { ReactiveStageContext } from '../stage.svelte.js';
-import type { StateEvent } from '../events.js';
+import type { StateEvent, StreamFrame } from '../events.js';
 import type { StateStream } from '../source.js';
 import { failureReason, type ApiResult } from '../result.js';
 import type {
@@ -17,7 +17,6 @@ import type {
   ScanDaemonRoot,
   ScanDaemonWorkspace,
   ScanFolderEvent,
-  ScanStreamEvent,
   ScanWorkspace,
   ScanWorkspaceFolder,
 } from './types.js';
@@ -28,7 +27,7 @@ export interface ScanSource {
   readRoots: () => Promise<ApiResult<ScanDaemonRoot[]>>;
   triggerScan: (root: string) => Promise<ApiResult<unknown>>;
   readIndexStatus: () => Promise<ApiResult<IndexQueueStatus>>;
-  events: StateStream<ScanStreamEvent>;
+  events: StateStream<StreamFrame>;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -385,7 +384,9 @@ export class ScanState {
     this.status = 'starting';
 
     // 1. Subscribe first; the first open is the initial subscription, not a
-    //    reconnect, so the handler skips it (attach hydrates below).
+    //    reconnect, so the handler skips it (attach hydrates below). A socket
+    //    fault reads as unreachable at once — the poller corrects it if the
+    //    daemon still answers, so the fault never outlives the outage.
     this.#unsub = this.source.events(
       (event) => this.#dispatch(event),
       () => {
@@ -398,6 +399,9 @@ export class ScanState {
           // stores: unreachable until the poller says otherwise (D83).
           this.daemonReachable = false;
         });
+      },
+      () => {
+        this.daemonReachable = false;
       },
     );
     this.#attached = true;
@@ -509,6 +513,7 @@ export class ScanState {
           id: f.id,
           name: f.name,
           path: f.abs_path ?? f.path ?? '',
+          kind: f.kind,
           stack: f.stack ?? [],
           filesTotal: 0,
           filesCompleted: 0,
@@ -519,13 +524,13 @@ export class ScanState {
     this.#hydrated = true;
   }
 
-  #dispatch(event: ScanStreamEvent): void {
+  #dispatch(event: StreamFrame): void {
     if (event.entity === 'workspace')
-      this.workspaces.apply(event as StateEvent<ScanWorkspace>);
+      this.workspaces.apply(event as unknown as StateEvent<ScanWorkspace>);
     else if (event.entity === 'folder')
-      this.workspaces.applyFolder(event as StateEvent<ScanFolderEvent>);
+      this.workspaces.applyFolder(event as unknown as StateEvent<ScanFolderEvent>);
     else if (event.entity === 'activity')
-      this.activities.apply(event as StateEvent<ActivityEvent>);
+      this.activities.apply(event as unknown as StateEvent<ActivityEvent>);
   }
 
   #teardown(): void {

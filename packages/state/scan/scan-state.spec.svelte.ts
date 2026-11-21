@@ -8,12 +8,12 @@ import {
   triggerScans,
   miniSummary,
   type ScanSource,
-  type ScanStreamEvent,
   type IndexQueueStatus,
   type QueueCounts,
 } from './scan-state.svelte.js';
 import type { ScanWorkspace, ScanWorkspaceFolder, ActivityEvent } from './types.js';
 import type { StateStream } from '../source.js';
+import type { StreamFrame } from '../events.js';
 import type { ApiResult } from '../result.js';
 
 // ── Factories ────────────────────────────────────────────────────────────────
@@ -459,11 +459,12 @@ function cannedSource(script: { queues?: (Queue | 'down')[]; roots?: { path: str
   const queues = script.queues ?? [IDLE];
   let qi = 0;
   const stream: {
-    on: ((e: ScanStreamEvent) => void) | null;
+    on: ((e: StreamFrame) => void) | null;
     onOpen: (() => void) | null;
+    onFault: ((reason: string) => void) | null;
     subscribes: number;
     teardowns: number;
-  } = { on: null, onOpen: null, subscribes: 0, teardowns: 0 };
+  } = { on: null, onOpen: null, onFault: null, subscribes: 0, teardowns: 0 };
   const read = (q: Queue | 'down'): ApiResult<IndexQueueStatus> =>
     q === 'down'
       ? { ok: false, error: { status: 0, message: 'ECONNREFUSED' } }
@@ -473,15 +474,16 @@ function cannedSource(script: { queues?: (Queue | 'down')[]; roots?: { path: str
     readRoots: vi.fn(async () => ({ ok: true as const, data: script.roots ?? [] })),
     triggerScan: vi.fn(async (_root: string) => ({ ok: true as const, data: { ok: true, scanning: true } })),
     readIndexStatus: vi.fn(async () => read(queues[Math.min(qi++, queues.length - 1)]!)),
-    events: ((on: (e: ScanStreamEvent) => void, onOpen: () => void) => {
+    events: ((on: (e: StreamFrame) => void, onOpen: () => void, onFault?: (reason: string) => void) => {
       stream.subscribes += 1;
       stream.on = on;
       stream.onOpen = onOpen;
+      stream.onFault = onFault ?? null;
       onOpen();
       return () => {
         stream.teardowns += 1;
       };
-    }) as StateStream<ScanStreamEvent>,
+    }) as StateStream<StreamFrame>,
   };
   return { source, stream };
 }
@@ -566,10 +568,32 @@ describe('ScanState.attach — passive observation', () => {
     const hydrateCalls = (source.readWorkspaces as ReturnType<typeof vi.fn>).mock.calls.length;
     stream.onOpen!();
     expect((source.readWorkspaces as ReturnType<typeof vi.fn>).mock.calls.length).toBe(hydrateCalls + 1);
-    stream.on!({ action: 'add', entity: 'activity', data: activity('a1', 'discover', 'found root', 0.1) });
+    const frame = (
+      entity: string,
+      data: unknown,
+    ): StreamFrame => ({
+      v: 1,
+      id: 1,
+      ts: '2026-11-21T10:00:00.000Z',
+      entity,
+      action: 'add',
+      key: 'k1',
+      data: data as Record<string, unknown>,
+    });
+    stream.on!(frame('activity', activity('a1', 'discover', 'found root', 0.1)));
     expect(st.activities.items).toHaveLength(1);
-    stream.on!({ action: 'add', entity: 'workspace', data: workspace('p1', 'Lumen', [folder('f1', 'app')]) });
+    stream.on!(frame('workspace', workspace('p1', 'Lumen', [folder('f1', 'app')])));
     expect(st.workspaces.items).toHaveLength(1);
+    st.reset();
+  });
+
+  it('a socket fault reads as unreachable at once', async () => {
+    const { source, stream } = cannedSource({ queues: [BUSY] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.daemonReachable).toBe(true);
+    stream.onFault!('the live stream dropped; reconnecting');
+    expect(st.daemonReachable).toBe(false);
     st.reset();
   });
 

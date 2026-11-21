@@ -840,6 +840,7 @@ mod tests {
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
             trackers: Default::default(),
+            streams: crate::api::stream::StreamHub::new(),
         });
         Arc::new(TaskContext {
             queue,
@@ -865,6 +866,7 @@ mod tests {
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
             trackers: Default::default(),
+            streams: crate::api::stream::StreamHub::new(),
         });
         let ctx = Arc::new(TaskContext {
             queue,
