@@ -29,7 +29,12 @@ import type {
   ScanBaseline, WizardLoadData,
   DaemonChain, SenseiRole,
 } from './setup/contracts.js';
-import type { AssistantPartEvent, AssistantPartStatus } from './types.js';
+import type {
+  AbsorbedWatchRoot,
+  AssistantPartEvent,
+  AssistantPartStatus,
+  RootConsolidation,
+} from './types.js';
 
 // ── Slice interfaces ────────────────────────────────────────
 
@@ -448,6 +453,8 @@ export class WizardState {
   preferences = $state<PreferencesData>({ ...DEFAULT_PREFERENCES });
   assistants  = $state<AssistantsSlice>({ assistants: [], partStatus: {}, partErrors: {} });
   roots       = $state<RootsSlice>({ roots: [], newPath: '' });
+  /** What the last parent add consolidated, for the notice that says so. */
+  lastConsolidation = $state<RootConsolidation | null>(null);
   scan        = $state<ScanSlice>({ baseline: null, started: false, done: false });
   workspaces    = $state<WorkspacesSlice>({ workspaces: [], confirmed: {} });
   libraries   = $state<LibrariesSlice>({ libs: [] });
@@ -805,7 +812,9 @@ export class WizardState {
    * TYPED PATH AND THE LIST ARE KEPT, so the user can correct and retry (#304).
    */
   async addRoot(api: {
-    tryAddWatchRoot: (path: string) => Promise<ApiResult<{ ok: boolean; id: string; path: string }>>;
+    tryAddWatchRoot: (
+      path: string,
+    ) => Promise<ApiResult<{ ok: boolean; id: string; path: string; absorbed?: AbsorbedWatchRoot[] }>>;
   }): Promise<string | null> {
     const path = this.roots.newPath.trim();
     if (!path || this.roots.roots.some((r) => r.path === path)) return null;
@@ -821,7 +830,13 @@ export class WizardState {
       scanned: false,
       modified_at: new Date().toISOString(),
     };
-    this.roots = { roots: [...this.roots.roots, added], newPath: '' };
+    // A parent add absorbs the roots it encloses server-side: drop them
+    // locally too, and record the consolidation for the notice that says so.
+    // `absorbed` is optional for old daemons, which never send it.
+    const absorbed = res.data.absorbed ?? [];
+    const gone = new Set(absorbed.map((a) => a.id));
+    this.roots = { roots: [...this.roots.roots.filter((r) => !gone.has(r.id)), added], newPath: '' };
+    this.lastConsolidation = absorbed.length > 0 ? { parent: res.data.path, absorbed } : null;
     return null;
   }
 

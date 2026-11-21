@@ -611,6 +611,8 @@ mod workspaces;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 
 #[cfg(test)]
+mod consolidation_tests;
+#[cfg(test)]
 pub(crate) mod graph_seed;
 #[cfg(test)]
 mod knowledge_tests;

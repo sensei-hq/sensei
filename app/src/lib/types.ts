@@ -1748,6 +1748,20 @@ export interface PruneResult {
   pruned: PruneReport;
 }
 
+/** A watch root absorbed by a newly added parent: the row is gone, its
+ *  folders and exclusions moved to the parent. */
+export interface AbsorbedWatchRoot {
+  id: string;
+  path: string;
+  status: string;
+}
+
+/** What a parent add consolidated, for the notice that says so. */
+export interface RootConsolidation {
+  parent: string;
+  absorbed: AbsorbedWatchRoot[];
+}
+
 // ── Issue trackers (docs/spec/daemon/tracker-jira-linkage.md R8, R9) ─────────
 
 /** A workspace's tracker connection as `GET /api/workspaces/{id}/trackers` returns

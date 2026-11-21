@@ -23,7 +23,7 @@ import type {
   SyncStateResponse,
   ProvisionModel, ProvisionPhase,
   SchemaPayload,
-  RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
+  RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult, AbsorbedWatchRoot,
   TranscriptSourceConsent,
   TrackerConnection, TrackerLevel, TrackerSyncCounts,
   SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
@@ -665,7 +665,10 @@ export function senseiApi(port: number) {
     /** Add a root to the DB immediately (synchronous). Does not start scanning.
      *  The stored root, or why it was not added (#304). */
     tryAddWatchRoot: (path: string) =>
-      tryPost<{ ok: boolean; id: string; path: string }>('/api/scan/roots', { path }),
+      tryPost<{ ok: boolean; id: string; path: string; absorbed: AbsorbedWatchRoot[] }>(
+        '/api/scan/roots',
+        { path },
+      ),
 
     /** Remove a watch root (#247). The decision is REQUIRED: `keep` pauses it
      *  and leaves its data readable, `remove` prunes everything it held. Result-

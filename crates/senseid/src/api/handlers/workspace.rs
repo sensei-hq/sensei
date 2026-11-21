@@ -38,11 +38,14 @@ pub(crate) async fn create_repo(
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| body.path.clone());
-    let root_id = state
+    let (root_id, absorbed) = state
         .pg
-        .add_watch_root(&parent_path, "auto", &serde_json::json!([]))
+        .add_watch_root_consolidated(&parent_path, "auto", &serde_json::json!([]))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    for a in &absorbed {
+        unregister_root_watcher(&state, &a.path);
+    }
 
     let folder_id = state
         .pg
@@ -444,13 +447,35 @@ pub(crate) async fn add_watch_root(
     let excluded_json = serde_json::Value::Array(
         body.excluded.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
     );
-    let id = state.pg.add_watch_root(&expanded, &name, &excluded_json).await.map_err(|e| {
-        tracing::error!("add_watch_root: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let (id, absorbed) =
+        state.pg.add_watch_root_consolidated(&expanded, &name, &excluded_json).await.map_err(
+            |e| {
+                tracing::error!("add_watch_root: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+        )?;
+    if !absorbed.is_empty() {
+        tracing::info!(
+            parent = %expanded,
+            absorbed = ?absorbed.iter().map(|a| &a.path).collect::<Vec<_>>(),
+            "add_watch_root: consolidated enclosed roots into the new parent"
+        );
+    }
+    for a in &absorbed {
+        unregister_root_watcher(&state, &a.path);
+    }
 
     // Register the new root with the live watcher singleton and (re)start it.
     // The mutex is std, so the lock scope must not span an await.
+    //
+    // The prefixes come from the DATABASE, read AFTER consolidation — a re-POST
+    // passes `[]` while the row keeps its exclusions, and consolidation may
+    // just have migrated inner roots' entries here. Registering the request's
+    // list instead would watch content the user excluded. Fail closed.
+    let prefixes = state.pg.root_exclusion_prefixes(&expanded).await.map_err(|e| {
+        tracing::error!(error = %e, %id, "add_watch_root: exclusion prefixes unreadable");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let watching = {
         let queue = state.task_queue.clone();
         let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(queue);
@@ -461,10 +486,7 @@ pub(crate) async fn add_watch_root(
                 // raw relative form here meant the watcher saw a different shape
                 // depending on which path registered it — the reason it had
                 // grown its own two-form matcher.
-                w.register(
-                    std::path::PathBuf::from(&expanded),
-                    checks.iter().map(|c| c.resolved.clone()).collect(),
-                );
+                w.register(std::path::PathBuf::from(&expanded), prefixes);
                 w.start().is_ok()
                     && *w.status() == crate::watcher::root_watcher::WatcherStatus::Watching
             }
@@ -518,6 +540,9 @@ pub(crate) async fn add_watch_root(
         // directory — so a typo is visible at the moment it is made rather than
         // discovered later as unexpectedly-indexed content.
         "exclusionChecks": checks,
+        // Inner roots this add absorbed (rows gone, data moved here) — so the
+        // caller can say what happened instead of discovering it on reload.
+        "absorbed": absorbed,
     })))
 }
 
@@ -800,7 +825,7 @@ pub(crate) async fn delete_watch_root(
 /// `scan_root` re-creates a missing root row, so a deleted root would come back.
 ///
 /// The std Mutex must not be held across an await, so this is synchronous.
-fn unregister_root_watcher(state: &AppState, path: &str) {
+pub(crate) fn unregister_root_watcher(state: &AppState, path: &str) {
     let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
     match w_mutex.lock() {
         Ok(mut w) => {
