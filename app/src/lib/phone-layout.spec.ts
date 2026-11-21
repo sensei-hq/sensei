@@ -34,7 +34,7 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
   'lib/preview/PreviewComponent.svelte': { count: 2, why: 'dev-only /preview bench chrome (not shipped)' },
   'routes/(config)/+layout.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
   'routes/(config)/setup/done/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
-  'routes/(config)/setup/scan/+page.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
+  'lib/components/indexer/ScanFull.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4) — moved verbatim from the setup scan route' },
   'routes/(config)/setup/welcome/+page.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
   'routes/(health)/logs/+page.svelte': { count: 2, why: 'to fix: #420 screens slice (update-phone-layout §4)' },
   'routes/(observatory)/RecentSessions.svelte': { count: 1, why: 'to fix: #420 screens slice (update-phone-layout §4)' },

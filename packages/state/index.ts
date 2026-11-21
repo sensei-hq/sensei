@@ -150,3 +150,32 @@ export {
   type RelayTaskHeaderView,
   type RelayTaskPartsView,
 } from './relay/task-selectors.js';
+
+// The scan domain (#496): the wire shapes, the daemon client, and the state.
+export type {
+  FolderStatus,
+  WorkspaceStatus,
+  ActivityLevel,
+  ScanWorkspaceFolder,
+  ScanFolderEvent,
+  ScanWorkspace,
+  ActivityEvent,
+  ScanStreamEvent,
+  ScanDaemonWorkspace,
+  ScanDaemonRoot,
+  QueueCounts,
+  IndexQueueStatus,
+} from './scan/types.js';
+export { scanClient, scanEvents, type ScanApi } from './scan/client.js';
+export { scanSseSource, type ScanEventStream } from './scan/sources/sse.js';
+export {
+  ScanWorkspaceState,
+  ScanActivityState,
+  ScanState,
+  commonParent,
+  pollStep,
+  triggerScans,
+  miniSummary,
+  type ScanSource,
+  type ScanRunStatus,
+} from './scan/scan-state.svelte.js';

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WizardState, routerKeyStatus, saveRouterKey } from './wizard-state.svelte.js';
-import { scanState } from './scan-state.svelte.js';
+import { scanState } from './scan.js';
 import { mockWizardLoadData, mockWatchRoot, mockRouter, mockWorkspace, mockLibEntry } from './setup/mock-contracts.js';
 
 describe('WizardState', () => {

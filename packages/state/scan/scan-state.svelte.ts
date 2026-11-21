@@ -1,15 +1,35 @@
 /**
- * Scan state classes — workspace state + activity state for the scan page,
- * plus the ScanState orchestrator singleton that owns the SSE subscription
- * and survives stage navigation.
+ * Scan state — workspace state + activity state for scan progress, plus the
+ * ScanState orchestrator that owns the SSE subscription and survives
+ * navigation. Moved from the app (#496): a state never fetches, so it is
+ * built with a source, and the app holds one module-level instance every
+ * progress surface shares.
  */
 
-import { failureNotice } from '@sensei/ui';
-import { ReactiveStageContext } from '@sensei/state';
-import { EventManager } from './events.js';
-import { senseiApi, dataOrThrow, failureReason, type ApiResult } from './api.js';
-import { appState } from './appstate.svelte.js';
-import type { ScanWorkspace, ScanWorkspaceFolder, ScanFolderEvent, ActivityEvent, StateEvent } from './types.js';
+import { ReactiveStageContext } from '../stage.svelte.js';
+import type { StateEvent } from '../events.js';
+import type { StateStream } from '../source.js';
+import { failureReason, type ApiResult } from '../result.js';
+import type {
+  ActivityEvent,
+  IndexQueueStatus,
+  QueueCounts,
+  ScanDaemonRoot,
+  ScanDaemonWorkspace,
+  ScanFolderEvent,
+  ScanStreamEvent,
+  ScanWorkspace,
+  ScanWorkspaceFolder,
+} from './types.js';
+
+/** What ScanState needs of its source: the reads, the trigger, and the stream. */
+export interface ScanSource {
+  readWorkspaces: () => Promise<ApiResult<ScanDaemonWorkspace[]>>;
+  readRoots: () => Promise<ApiResult<ScanDaemonRoot[]>>;
+  triggerScan: (root: string) => Promise<ApiResult<unknown>>;
+  readIndexStatus: () => Promise<ApiResult<IndexQueueStatus>>;
+  events: StateStream<ScanStreamEvent>;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -31,6 +51,11 @@ export function commonParent(paths: string[]): string {
   }
 
   return common.join('/') || '/';
+}
+
+function dataOrThrow<T>(read: ApiResult<T>, what: string): T {
+  if (!read.ok) throw new Error(`${what}: ${failureReason(read.error)}`);
+  return read.data;
 }
 
 // ── ScanWorkspaceState ─────────────────────────────────────────────────────────
@@ -201,9 +226,9 @@ export class ScanWorkspaceState extends ReactiveStageContext<ScanWorkspace> {
    * Every workspace has reached a terminal state (active or failed).
    *
    * NOTE: This is NOT the canonical "scan complete" signal — that lives on
-   * `wizardState.scan.done`, set by the task-queue idle poller in the scan
-   * page. Use this getter only for per-workspace UI ("3 of 5 workspaces ready"),
-   * never to gate stage advancement.
+   * the run status, set by the task-queue idle poller. Use this getter only
+   * for per-workspace UI ("3 of 5 workspaces ready"), never to gate stage
+   * advancement.
    */
   get allWorkspacesResolved() {
     return this.items.length > 0 && this.items.every(p => p.status === 'active' || p.status === 'failed');
@@ -251,137 +276,227 @@ export class ScanActivityState extends ReactiveStageContext<ActivityEvent> {
   }
 }
 
-// ── ScanState (orchestrator singleton) ──────────────────────────────────────
+// ── ScanState (orchestrator) ──────────────────────────────────────────────
 
 export type ScanRunStatus = 'idle' | 'starting' | 'scanning' | 'done' | 'error';
 
+/** Queue poll cadence: fast while a run is live, slow while passively idle —
+ *  the footer watches forever, but an idle daemon earns no chatter. */
+const POLL_FAST_MS = 1500;
+const POLL_SLOW_MS = 15000;
+
 /**
- * Owns the live scan: SSE subscription, workspaces/activities state, and the
- * task-queue idle poller. Singleton-scoped because a scan runs for minutes
- * and the user can navigate between wizard stages while it runs. Component-
- * local state would tear down on unmount, lose the SSE stream, and leave
- * the user staring at "Begin scan" while the daemon is still indexing.
+ * Owns the live scan: source subscription, workspace/activity state, the
+ * queue snapshot, and the queue-idle poller. Singleton-scoped in the app
+ * because a scan runs for minutes and the user can navigate while it runs.
+ * Component-local state would tear down on unmount, lose the stream, and
+ * leave the user staring at stale progress while the daemon keeps indexing.
+ *
+ * Two modes share one subscription:
+ *   - attach() observes passively (the footer): never triggers scans, and
+ *     oscillates `idle ↔ scanning` on queue busyness. It never writes
+ *     `done` — done gates the wizard Continue button, and a footer must not
+ *     trip it.
+ *   - start() owns a run (the setup scan page): attaches, then triggers
+ *     unscanned roots, and reaches `done` (or `error`) as today.
  *
  * Lifecycle:
- *   - reset() is called once per wizard session from WizardState.hydrate().
- *   - start() opens the SSE, kicks scans, starts the idle poller. Idempotent
- *     while already scanning.
- *   - SSE is held open until reset() — page mount/unmount does not touch it.
+ *   - reset() is called once per wizard session; it clears the run but keeps
+ *     the footer's `expanded` UI state.
+ *   - attach() is idempotent — calls while attached are no-ops. Safe to call
+ *     from a mount effect so any surface can observe without coordinating.
  */
 export class ScanState {
+  readonly source: ScanSource;
   readonly workspaces = new ScanWorkspaceState();
   readonly activities = new ScanActivityState();
 
   status = $state<ScanRunStatus>('idle');
   rootCount = $state(0);
   error = $state<string | null>(null);
-
-  /** Notice props for a scan that failed (packages/ui/notice.js). */
-  get notice() {
-    return failureNotice('The scan failed', this.error);
-  }
   daemonReachable = $state(true);
+  /** Latest queue counts from the poller — the mini band's numbers. */
+  queueSnapshot = $state<QueueCounts | null>(null);
+  /** Mini ↔ band: the footer's own UI state, session-scoped. */
+  expanded = $state(false);
 
-  #events: EventManager<StateEvent<{ id: string }>> | null = null;
   #unsub: (() => void) | null = null;
-  #pollTimer: ReturnType<typeof setInterval> | null = null;
   #pollTimeout: ReturnType<typeof setTimeout> | null = null;
+  #attached = false;
+  #owning = false;
+  #hydrated = false;
+  #openedOnce = false;
+  // Joinable in-flight work: the footer effect and the setup page attach
+  // simultaneously on boot, so concurrent callers join one run instead of
+  // racing past the status guard and double-subscribing (or dropping the
+  // setup trigger). `#gen` retires a run a reset() overtook.
+  #attaching: Promise<void> | null = null;
+  #starting: Promise<void> | null = null;
+  #gen = 0;
+
+  constructor(source: ScanSource) {
+    this.source = source;
+  }
 
   get started(): boolean { return this.status !== 'idle'; }
   /**
-   * True when the scan reached terminal idle (queue empty for two
+   * True when the OWNED run reached terminal idle (queue empty for two
    * consecutive polls). Exposed as both `isDone` (legacy) and `completed`
-   * (new) — gates the wizard's Continue button via
-   * `wizardState.canAdvance('scan')`.
+   * (new) — gates the wizard's Continue button. Passive observation never
+   * sets it.
    */
   get isDone(): boolean    { return this.status === 'done'; }
   get completed(): boolean { return this.status === 'done'; }
 
   /**
-   * Engage the scan stage. Idempotent — calls while already in flight or
-   * already done are no-ops. Safe to call from onMount so the page can
-   * resume an in-flight scan after navigation without a manual button.
+   * Observe the daemon's indexing without triggering anything. Idempotent:
+   * calls while attached are no-ops, so every surface can attach from its
+   * mount effect without coordinating.
    *
    * Sequence (ordering is load-bearing):
-   *   1. Open SSE and await the handshake. Without the await the
-   *      subsequent scan POST can race the connection and the
-   *      first wave of events fans out to zero subscribers.
-   *   2. Hydrate already-known workspaces/folders from /api/workspaces.
-   *      Covers the case where the scan finished (or partly finished)
-   *      before this page was mounted.
-   *   3. Trigger a scan of any roots still flagged unscanned.
-   *   4. Start the queue-idle poller — the authoritative "done" signal.
+   *   1. Subscribe first so the broadcast channel has a listener before any
+   *      work emits. The initial open is NOT awaited — some webviews
+   *      (notably WebKit) don't fire `open` until the first message arrives,
+   *      which would deadlock when the queue is idle.
+   *   2. Hydrate already-known workspaces from the source's read. Covers a
+   *      scan that finished (or partly finished) before this surface
+   *      mounted. A reconnect open re-hydrates (broadcast has no replay).
+   *   3. Read the queue once: busy reads as `scanning`, idle stays `idle`.
+   *   4. Start the poller — the authoritative activity signal, and the
+   *      recovery path when the daemon was down at attach time.
    */
-  async start(): Promise<void> {
-    if (this.status === 'starting' || this.status === 'scanning' || this.status === 'done') return;
+  attach(): Promise<void> {
+    if (this.#attached) return Promise.resolve();
+    if (this.#attaching) return this.#attaching;
+    this.#attaching = this.#doAttach().finally(() => {
+      this.#attaching = null;
+    });
+    return this.#attaching;
+  }
 
-    const port = appState.port;
-    const api = senseiApi(port);
-
+  async #doAttach(): Promise<void> {
+    const gen = this.#gen;
     this.#teardown();
-    this.workspaces.items = [];
-    this.activities.items = [];
+    this.workspaces.set([]);
+    this.activities.set([]);
     this.error = null;
     this.daemonReachable = true;
+    this.queueSnapshot = null;
     this.status = 'starting';
 
-    try {
-      // 1. Subscribe to SSE first so the broadcast channel has a listener
-      //    before any new work emits. We don't await ready() — some
-      //    webviews (notably WebKit) don't fire the `open` event until the
-      //    first message arrives, which would deadlock when the queue is
-      //    idle. Hydrate() below makes its own API roundtrip which gives
-      //    the SSE handshake plenty of time to complete in practice.
-      const events = new EventManager<StateEvent<{ id: string }>>(
-        `http://127.0.0.1:${port}/api/scan/events`,
-        (data) => JSON.parse(data) as StateEvent<{ id: string }>,
-      );
-      this.#unsub = events.subscribe((event) => this.#dispatch(event));
-      this.#events = events;
+    // 1. Subscribe first; the first open is the initial subscription, not a
+    //    reconnect, so the handler skips it (attach hydrates below).
+    this.#unsub = this.source.events(
+      (event) => this.#dispatch(event),
+      () => {
+        if (!this.#openedOnce) {
+          this.#openedOnce = true;
+          return;
+        }
+        void this.#hydrate().catch(() => {
+          // A reconnect read that fails must read as a fault, not stale
+          // stores: unreachable until the poller says otherwise (D83).
+          this.daemonReachable = false;
+        });
+      },
+    );
+    this.#attached = true;
 
-      // 2. Hydrate from DB so a completed-or-partly-completed scan is
+    try {
+      // 2. Hydrate from the DB so a completed-or-partly-completed scan is
       //    visible immediately instead of waiting for an event that may
       //    never arrive (already happened).
-      await this.#hydrate(api);
+      await this.#hydrate();
+      if (gen !== this.#gen) return;
 
-      this.status = 'scanning';
-
-      // 3. Scan the roots that haven't produced any repos yet. A failed read
-      //    (#288) or a refused scan (#304) throws into this.error — either
-      //    left nothing scanning, and the poller would have called it done.
-      const roots = dataOrThrow(await api.tryGetScanRoots(), 'roots');
-      this.rootCount = roots.length;
-      await triggerScans(api, roots);
-
-      // 4. Done poller — long-running, marks status='done' on queue idle.
-      this.#startDonePoller(api);
-    } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
-      this.status = 'error';
+      // 3. The queue decides the passive status — observed, never owned.
+      const first = await this.source.readIndexStatus();
+      if (gen !== this.#gen) return;
+      this.daemonReachable = first.ok;
+      if (first.ok) {
+        const { pending, running, completed } = first.data.queue;
+        this.queueSnapshot = { pending, running, completed };
+        this.status = pending === 0 && running === 0 ? 'idle' : 'scanning';
+      } else {
+        this.status = 'idle';
+      }
+    } catch {
+      // A daemon that is down at attach time reads as unreachable and idle,
+      // never as failed: the poller below is the recovery path.
+      this.daemonReachable = false;
+      this.status = 'idle';
     }
+    this.#ensurePoller();
   }
 
   /**
-   * Pull current workspace + folder state from the daemon and seed the
+   * Own a scan run: attach, then trigger every unscanned root. Idempotent
+   * while an owned run is in flight or done; upgrades a passive observation
+   * (the footer's) to an owned run without resubscribing. A refused trigger
+   * fails the run and stops the poller — an idle queue over a scan that
+   * never started must not read as done (#304).
+   */
+  start(): Promise<void> {
+    if (this.status === 'done') return Promise.resolve();
+    if (this.status === 'scanning' && this.#owning && !this.#starting) return Promise.resolve();
+    if (this.#starting) return this.#starting;
+    this.#starting = this.#doStart().finally(() => {
+      this.#starting = null;
+    });
+    return this.#starting;
+  }
+
+  async #doStart(): Promise<void> {
+    const gen = this.#gen;
+    this.#owning = true;
+    await this.attach();
+    if (gen !== this.#gen) return;
+    this.status = 'scanning';
+
+    try {
+      const roots = dataOrThrow(await this.source.readRoots(), 'roots');
+      this.rootCount = roots.length;
+      await triggerScans(this.source, roots);
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      this.status = 'error';
+      this.#stopPoller();
+      return;
+    }
+    this.#ensurePoller();
+  }
+
+  /**
+   * Full teardown — closes the stream, clears the run. Called once per
+   * wizard session so a fresh wizard starts clean, and re-callable to
+   * abandon the current run. `expanded` survives: it is the footer's UI
+   * state, not the run's.
+   */
+  reset(): void {
+    this.#gen += 1;
+    this.#teardown();
+    this.workspaces.set([]);
+    this.activities.set([]);
+    this.rootCount = 0;
+    this.error = null;
+    this.daemonReachable = true;
+    this.queueSnapshot = null;
+    this.status = 'idle';
+    this.#attached = false;
+    this.#owning = false;
+    this.#hydrated = false;
+    this.#openedOnce = false;
+  }
+
+  /**
+   * Pull current workspace + folder state from the source and seed the
    * reactive stores. Status flags default to 'indexed' for hydrated
    * folders — if a folder is in DB it has at least been registered, and
    * any in-flight folder will have its status corrected by the next
-   * folder_update SSE event.
+   * folder_update event.
    */
-  async #hydrate(api: ReturnType<typeof senseiApi>): Promise<void> {
-    const workspaces = dataOrThrow(await api.tryListWorkspaces(), 'workspaces') as unknown as Array<{
-      id: string;
-      name: string;
-      folders?: Array<{
-        id: string;
-        name: string;
-        abs_path?: string;
-        path?: string;
-        kind?: string;
-        status?: string;
-        stack?: string[];
-      }>;
-    }>;
+  async #hydrate(): Promise<void> {
+    const workspaces = dataOrThrow(await this.source.readWorkspaces(), 'workspaces');
     const items: ScanWorkspace[] = workspaces
       .filter((p) => (p.folders ?? []).length > 0)
       .map((p) => ({
@@ -401,24 +516,10 @@ export class ScanState {
         })),
       }));
     this.workspaces.set(items);
+    this.#hydrated = true;
   }
 
-  /**
-   * Full teardown — closes SSE, clears state. Called from WizardState.hydrate()
-   * so a fresh wizard session starts clean, and re-callable if the user wants
-   * to abandon the current run.
-   */
-  reset(): void {
-    this.#teardown();
-    this.workspaces.items = [];
-    this.activities.items = [];
-    this.rootCount = 0;
-    this.error = null;
-    this.daemonReachable = true;
-    this.status = 'idle';
-  }
-
-  #dispatch(event: StateEvent<{ id: string }>): void {
+  #dispatch(event: ScanStreamEvent): void {
     if (event.entity === 'workspace')
       this.workspaces.apply(event as StateEvent<ScanWorkspace>);
     else if (event.entity === 'folder')
@@ -430,38 +531,54 @@ export class ScanState {
   #teardown(): void {
     this.#unsub?.();
     this.#unsub = null;
-    this.#events?.destroy();
-    this.#events = null;
-    if (this.#pollTimer) { clearInterval(this.#pollTimer); this.#pollTimer = null; }
-    if (this.#pollTimeout) { clearTimeout(this.#pollTimeout); this.#pollTimeout = null; }
+    this.#stopPoller();
   }
 
-  /**
-   * Poll /api/index/status until the task queue is idle. SSE gives per-item
-   * progress but no "queue idle" event, so polling is the authoritative
-   * completion signal. Two consecutive idle polls debounce transient empty
-   * queues between barrier tasks. No upper time limit — large codebases
-   * legitimately take hours.
-   */
-  #startDonePoller(api: ReturnType<typeof senseiApi>): void {
+  #stopPoller(): void {
+    if (this.#pollTimeout) {
+      clearTimeout(this.#pollTimeout);
+      this.#pollTimeout = null;
+    }
+  }
+
+  #ensurePoller(): void {
+    if (this.#pollTimeout) return;
     let idlePolls = 0;
-    this.#pollTimeout = setTimeout(() => {
-      this.#pollTimer = setInterval(async () => {
-        const step = pollStep(await api.tryGetIndexStatus(), idlePolls);
-        this.daemonReachable = step.reachable;
-        idlePolls = step.idlePolls;
-        if (step.done) {
-          this.status = 'done';
-          if (this.#pollTimer) { clearInterval(this.#pollTimer); this.#pollTimer = null; }
+    const tick = async (): Promise<void> => {
+      this.#pollTimeout = null;
+      const read = await this.source.readIndexStatus();
+      const step = pollStep(read, idlePolls);
+      this.daemonReachable = step.reachable;
+      idlePolls = step.idlePolls;
+      if (read.ok) {
+        const { pending, running, completed } = read.data.queue;
+        this.queueSnapshot = { pending, running, completed };
+        if (!this.#hydrated) {
+          // Recovery: the attach-time read failed, so the stores are empty.
+          // A failure here reads as unreachable and retries next tick (D83).
+          await this.#hydrate().catch(() => {
+            this.daemonReachable = false;
+          });
         }
-      }, 1500);
-    }, 1500);
+        if (pending === 0 && running === 0) {
+          if (step.done) {
+            // Two consecutive idle polls end an OWNED run; a passive
+            // observation just goes quiet — and keeps watching.
+            this.status = this.#owning ? 'done' : 'idle';
+            if (this.#owning) return;
+          }
+        } else {
+          this.status = 'scanning';
+        }
+      }
+      // A timeout chain, not an interval, so the cadence follows the state:
+      // fast while a run is live, slow while passively idle.
+      const slow = !this.#owning && this.status === 'idle' && idlePolls >= 2;
+      this.#pollTimeout = setTimeout(() => void tick(), slow ? POLL_SLOW_MS : POLL_FAST_MS);
+    };
+    this.#pollTimeout = setTimeout(() => void tick(), POLL_FAST_MS);
   }
 }
-
-export const scanState = new ScanState();
-
-type IndexStatus = { queue: { pending: number; running: number } };
 
 /**
  * Start a scan of every root not yet scanned — in parallel, so a slow root does
@@ -469,23 +586,23 @@ type IndexStatus = { queue: { pending: number; running: number } };
  * and why (#304: a refusal was ignored, and an idle queue then read as done).
  */
 export async function triggerScans(
-  api: { tryScanFolder: (root: string) => Promise<ApiResult<unknown>> },
+  api: { triggerScan: (root: string) => Promise<ApiResult<unknown>> },
   roots: Array<{ path: string; scanned: boolean }>,
 ): Promise<void> {
   const pending = roots.filter((r) => !r.scanned);
-  const results = await Promise.all(pending.map(async (r) => ({ path: r.path, res: await api.tryScanFolder(r.path) })));
+  const results = await Promise.all(pending.map(async (r) => ({ path: r.path, res: await api.triggerScan(r.path) })));
   const refused = results.flatMap(({ path, res }) => (res.ok ? [] : [`${path}: ${failureReason(res.error)}`]));
   if (refused.length > 0) throw new Error(`The scan did not start for ${refused.join('; ')}`);
 }
 
 /**
- * One tick of the scan's done poller. Two consecutive idle reads mean done; a
+ * One tick of the scan's queue poller. Two consecutive idle reads mean done; a
  * busy queue resets the count; a failed read is the daemon unreachable — never
  * idle, never done. (It used to fall back to an empty queue, so a daemon that
  * stopped answering mid-scan read as reachable AND idle, #288.)
  */
 export function pollStep(
-  read: ApiResult<IndexStatus>,
+  read: ApiResult<IndexQueueStatus>,
   idlePolls: number,
 ): { reachable: boolean; idlePolls: number; done: boolean } {
   if (!read.ok) return { reachable: false, idlePolls: 0, done: false };
@@ -493,3 +610,29 @@ export function pollStep(
   const count = idle ? idlePolls + 1 : 0;
   return { reachable: true, idlePolls: count, done: count >= 2 };
 }
+
+/**
+ * The mini band's one line: file counts when the stream has delivered any,
+ * queue counts when the poller has read any. "Queued" is pending + running
+ * — everything still in the queue, whatever its phase. No snapshot, no
+ * queue claim: unknown is not zero (D83).
+ */
+export function miniSummary(
+  snapshot: QueueCounts | null,
+  filesCompleted: number,
+  filesTotal: number,
+): string {
+  if (snapshot === null) {
+    if (filesTotal > 0) {
+      return `Indexing ${filesCompleted.toLocaleString()}/${filesTotal.toLocaleString()} files`;
+    }
+    return 'Indexing…';
+  }
+  const queued = snapshot.pending + snapshot.running;
+  if (filesTotal > 0) {
+    return `Indexing ${filesCompleted.toLocaleString()}/${filesTotal.toLocaleString()} files · ${queued} queued`;
+  }
+  if (queued > 0) return `Indexing · ${queued} queued`;
+  return 'Indexing…';
+}
+

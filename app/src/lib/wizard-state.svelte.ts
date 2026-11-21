@@ -18,7 +18,7 @@ import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
 import { healthState } from './health-state.svelte.js';
-import { scanState } from './scan-state.svelte.js';
+import { scanState } from './scan.js';
 import { loadWizardData } from './setup/loaders.js';
 import { STORAGE_KEYS } from './storage-keys.js';
 import { guessUserName } from './setup/user-name.js';

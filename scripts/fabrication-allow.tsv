@@ -6,10 +6,10 @@ app/src/lib/impact-load.ts	T3	impactLog: l.data?.verdicts ?? [],	GENUINE-EMPTY	?
 app/src/lib/logger.ts	T3	cpu_cores: navigator.hardwareConcurrency ?? 0,	PARSE-DEFAULT	?? 0 — optional wire/display field	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/personas.svelte.ts	T1	const res = await this.#deps.fetchPersonas().catch(() => null);	GENUINE-EMPTY	.catch( — surfaced: catch sets error/rejects	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/personas.svelte.ts	T1	const url = await this.#deps.startSignIn(slot, id.githubLogin).catch(() => null);	GENUINE-EMPTY	.catch( — surfaced: catch sets error/rejects	audit 2026-11-03 App. C	2026-11-03
-app/src/lib/scan-state.svelte.ts	T3	(b.lastUpdated ?? 0) - (a.lastUpdated ?? 0)	GENUINE-EMPTY	?? 0 — arithmetic/sort identity	audit 2026-11-03 App. C	2026-11-03
-app/src/lib/scan-state.svelte.ts	T3	.filter((p) => (p.folders ?? []).length > 0)	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
-app/src/lib/scan-state.svelte.ts	T3	folders: (p.folders ?? []).map((f) => ({	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
-app/src/lib/scan-state.svelte.ts	T3	stack: f.stack ?? [],	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+packages/state/scan/scan-state.svelte.ts	T3	(b.lastUpdated ?? 0) - (a.lastUpdated ?? 0)	GENUINE-EMPTY	?? 0 — arithmetic/sort identity	audit 2026-11-03 App. C	2026-11-03
+packages/state/scan/scan-state.svelte.ts	T3	.filter((p) => (p.folders ?? []).length > 0)	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+packages/state/scan/scan-state.svelte.ts	T3	folders: (p.folders ?? []).map((f) => ({	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+packages/state/scan/scan-state.svelte.ts	T3	stack: f.stack ?? [],	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/sessions-digest.svelte.ts	T3	this.hours = initialHours ?? [];	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/sessions-digest.svelte.ts	T3	this.sessions = initialSessions ?? [];	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/setup/loaders.ts	T3	(parsed.disabled ?? []).forEach(n => disabled.add(n));	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03

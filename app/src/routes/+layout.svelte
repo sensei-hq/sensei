@@ -16,6 +16,8 @@
     import { openSettingsWindow } from "$lib/stores/windows.svelte.js";
     import { AlertList } from "@rokkit/ui";
     import { alerts } from "@rokkit/states";
+    import ScanProgress from "$lib/components/indexer/ScanProgress.svelte";
+    import { scanState } from "$lib/scan.js";
 
     let { children } = $props();
 
@@ -33,6 +35,13 @@
     // map, and `loaded` is also true when the read failed.
     $effect(() => {
         if (appState.loaded && !appState.configError) void appState.migrateLegacyViews(DIAGRAM_VIEW_IDS);
+    });
+    // The global scan footer observes passively from app boot — and
+    // re-attaches after a wizard reset() drops the subscription. attach()
+    // is idempotent, so the idle → starting → idle transitions settle
+    // without looping.
+    $effect(() => {
+        if (scanState.status === "idle") void scanState.attach();
     });
     // Every screen's failure names the daemon — the one thing every sensei screen depends on.
     setStateDefaults({
@@ -155,3 +164,4 @@
     <AlertList position="bottom-right" />
 {/if}
 {@render children()}
+<ScanProgress variant="band" />

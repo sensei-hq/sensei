@@ -1,6 +1,7 @@
 <script lang="ts">
     import { page } from '$app/state';
     import { Eyebrow, Rail } from '$lib/components';
+    import ScanProgress from '$lib/components/indexer/ScanProgress.svelte';
     import type { GlyphMode } from '$lib/glyphs';
     import { ftrReadLabel } from '$lib/ftr.js';
     import MetricSparkline from '$lib/components/MetricSparkline.svelte';
@@ -86,6 +87,7 @@
         </div>
     {/snippet}
     {#snippet footer()}
+        <ScanProgress variant="mini" />
         <!-- Health readout: FTR·14d headline + delta + spark, then Sessions·7d -->
         <div data-component="workspace-health" class="px-2 pt-3 flex flex-col gap-2 border-t border-paper-edge">
             <div class="flex items-baseline justify-between">
