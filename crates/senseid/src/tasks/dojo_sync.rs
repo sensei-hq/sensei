@@ -172,6 +172,7 @@ const PLAN_ENTITY: &str = "dojo_sync_plan";
 pub async fn tick(
     pg: Arc<PgStore>,
     trackers: Arc<crate::tracker::runtime::TrackerRuntime>,
+    tx: &tokio::sync::broadcast::Sender<crate::tasks::progress::TaskEvent>,
 ) -> Result<(), String> {
     // Once: backfill props.authored_at onto per-commit user rows pushed before
     // the key existed, so the next pushes carry it. A failure retries on the
@@ -182,37 +183,73 @@ pub async fn tick(
         Err(e) => tracing::warn!(error = %e, "dojo_sync: authored_at backfill failed"),
     }
     let personas = pg.signed_in_personas().await?;
+    run_pass(&pg, &trackers, tx, personas).await
+}
+
+/// One sync pass over an explicit persona list: wave totals up front, one
+/// stage per persona per phase, and a terminal wave event at the end — so a
+/// follower sees the pass live instead of polling sync rows. Split from
+/// `tick` so tests drive it with fake personas (no Keychain entries, so
+/// token lookup fails deterministically and each persona is skipped, never
+/// run).
+async fn run_pass(
+    pg: &Arc<PgStore>,
+    trackers: &Arc<crate::tracker::runtime::TrackerRuntime>,
+    tx: &tokio::sync::broadcast::Sender<crate::tasks::progress::TaskEvent>,
+    personas: Vec<String>,
+) -> Result<(), String> {
+    use crate::tasks::progress::{StageEvents, TaskEvent};
+    let events = StageEvents::to(tx);
+    let pass = uuid::Uuid::new_v4().to_string();
+    let total = personas.len();
+    let _ = tx.send(TaskEvent::WaveTotals {
+        wave: "sync".into(),
+        key: pass.clone(),
+        total: total as u64,
+        repaired: None,
+    });
     if personas.is_empty() {
         tracing::debug!("dojo_sync: no signed-in personas");
+        let _ =
+            tx.send(TaskEvent::WaveDone { wave: "sync".into(), key: pass, settled: 0, total: 0 });
         return Ok(());
     }
 
     let plane = HttpUserPlane { dojo_url: dojo_url() };
-    let total = personas.len();
     let mut failures = Vec::new();
 
     // Plan EVERY persona before pushing any: a row with no identity is the
     // machine's own session metric, and it is a persona's only when no other
     // signed-in persona elected the same repository (#240).
     let mut planned = Vec::new();
-    for persona in personas {
-        let outcome = match persona_token(&persona).await {
+    for persona in &personas {
+        // The plan stage covers token resolution too: without a token there
+        // is nothing to plan, and a separate token stage would double the
+        // frames for a distinction no follower acts on.
+        let stage = events.begin("sync_plan", persona);
+        let outcome = match persona_token(persona).await {
             Ok(token) => {
                 // The glyph choice (#133) syncs for every persona with a
                 // session, with repositories or without; a failure is logged,
                 // never a failed persona.
-                if let Err(e) = crate::dojo_client::glyph_sync::sync(&pg, &token, &plane).await {
+                if let Err(e) = crate::dojo_client::glyph_sync::sync(pg, &token, &plane).await {
                     tracing::warn!(persona, error = %e, "dojo_sync: glyph choice not synced");
                 }
-                plan_persona(&pg, &persona, &token, &plane).await.map(|p| p.map(|p| (token, p)))
+                plan_persona(pg, persona, &token, &plane).await.map(|p| p.map(|p| (token, p)))
             }
             Err(e) => Err(e),
         };
         match outcome {
-            Ok(Some((token, p))) => planned.push((persona, token, p)),
-            Ok(None) => {}
+            Ok(Some((token, p))) => {
+                stage.completed(1);
+                planned.push((persona.clone(), token, p));
+            }
+            Ok(None) => {
+                stage.completed(0);
+            }
             Err(e) => {
                 tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
+                stage.failed(&e);
                 failures.push(format!("{persona}: {e}"));
             }
         }
@@ -225,15 +262,27 @@ pub async fn tick(
     let boards = if planned.is_empty() {
         Ok(super::dojo_delivery::Boards::default())
     } else {
-        super::dojo_delivery::build_boards(&pg, &trackers.locks, chrono::Utc::now()).await
+        super::dojo_delivery::build_boards(pg, &trackers.locks, chrono::Utc::now()).await
     };
     for (persona, token, p) in &planned {
+        let stage = events.begin("sync_push", persona);
         let mine = exclusive.remove(persona).unwrap_or_default();
-        if let Err(e) = push_planned(&pg, persona, token, &plane, p, &mine, &boards).await {
-            tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
-            failures.push(format!("{persona}: {e}"));
+        match push_planned(pg, persona, token, &plane, p, &mine, &boards).await {
+            Ok(()) => stage.completed(1),
+            Err(e) => {
+                tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
+                stage.failed(&e);
+                failures.push(format!("{persona}: {e}"));
+            }
         }
     }
+    let settled = (total - failures.len()) as u64;
+    let _ = tx.send(TaskEvent::WaveDone {
+        wave: "sync".into(),
+        key: pass,
+        settled,
+        total: total as u64,
+    });
     // A pass where EVERY persona failed is not a success. `run_scheduled` records
     // this return value as the schedule's `last_ok`, so swallowing it printed a
     // green worker over a cycle that moved nothing — the exact false report
@@ -1281,13 +1330,18 @@ async fn push_allowed(
 /// No interval argument and no config key: `run_scheduled` reads the cadence
 /// from `sensei.schedules` (name `dojo_sync`) on every poll, so changing it is a
 /// PATCH rather than a restart.
-pub fn spawn(pg: Arc<PgStore>, trackers: Arc<crate::tracker::runtime::TrackerRuntime>) {
+pub fn spawn(
+    pg: Arc<PgStore>,
+    trackers: Arc<crate::tracker::runtime::TrackerRuntime>,
+    queue: Arc<crate::tasks::queue::TaskQueue>,
+) {
     tokio::spawn(async move {
         let store = pg.clone();
         crate::tasks::ticker::run_scheduled(pg, "dojo_sync", move || {
             let pg = store.clone();
             let trackers = trackers.clone();
-            async move { tick(pg, trackers).await }
+            let queue = queue.clone();
+            async move { tick(pg, trackers, queue.sender()).await }
         })
         .await;
     });
@@ -3590,7 +3644,12 @@ mod tests {
         // error for an EMPTY persona set.
         let pg = Arc::new(PgStore::connect_test().await.unwrap());
         let personas = pg.signed_in_personas().await.expect("persona read works");
-        let out = tick(pg, Arc::new(crate::tracker::runtime::TrackerRuntime::default())).await;
+        let out = tick(
+            pg,
+            Arc::new(crate::tracker::runtime::TrackerRuntime::default()),
+            &tokio::sync::broadcast::channel(16).0,
+        )
+        .await;
         if personas.is_empty() {
             assert!(out.is_ok(), "an empty install must be a no-op, got {out:?}");
         } else {
@@ -3600,6 +3659,48 @@ mod tests {
                  reported all-failed, got {out:?}"
             );
         }
+    }
+
+    /// A pass states its size up front and ends on the stream: totals, one
+    /// stage per persona, and a terminal wave event — even when every
+    /// persona fails (fake slots have no Keychain entries, so token lookup
+    /// fails deterministically and each persona is skipped, never run).
+    #[tokio::test]
+    async fn a_pass_states_its_size_and_ends_on_the_stream() {
+        use crate::tasks::progress::TaskEvent;
+        let pg = Arc::new(PgStore::connect_test().await.unwrap());
+        let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+        let out = run_pass(
+            &pg,
+            &Arc::new(crate::tracker::runtime::TrackerRuntime::default()),
+            &tx,
+            vec!["ghost-a".to_string(), "ghost-b".to_string()],
+        )
+        .await;
+        assert!(out.is_err(), "all-failed must report, got {out:?}");
+        let mut frames = Vec::new();
+        loop {
+            if frames.len() >= 8 {
+                break;
+            }
+            match tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {
+                Ok(Ok(ev)) => frames.push(ev),
+                _ => break,
+            }
+        }
+        let totals = frames.iter().find_map(|e| match e {
+            TaskEvent::WaveTotals { total, .. } => Some(*total),
+            _ => None,
+        });
+        assert_eq!(totals, Some(2), "the wave states its size up front");
+        let failed_stages =
+            frames.iter().filter(|e| matches!(e, TaskEvent::StageFailed { .. })).count();
+        assert_eq!(failed_stages, 2, "one failed stage per skipped persona");
+        let done = frames.iter().find_map(|e| match e {
+            TaskEvent::WaveDone { settled, total, .. } => Some((*settled, *total)),
+            _ => None,
+        });
+        assert_eq!(done, Some((0, 2)), "the terminal names the all-failed outcome");
     }
 
     #[tokio::test]

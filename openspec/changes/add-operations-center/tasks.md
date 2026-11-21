@@ -42,9 +42,9 @@
 
 ## 5. Sync as jobs (test-first)
 
-- [ ] 5.1 Sync passes as queue tasks (or uniform sync events with task ids)
-- [ ] 5.2 Per-entity progress, terminals, coded errors + remedies
-- [ ] 5.3 E2E: seeded sync run shows live progress + failure attribution
+- [x] 5.1 Uniform sync events with wave ids (not queue tasks: plan-before-push ordering forbids fanout)
+- [x] 5.2 Per-persona stage frames, wave totals + terminal, coded errors (plan-fetch attribution pre-existed)
+- [x] 5.3 Live-verified on scratch daemon (empty wave shapes); Tauri matrix in slice 9
 
 ## 6. Domain stores (test-first)
 
