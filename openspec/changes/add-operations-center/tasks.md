@@ -1,0 +1,75 @@
+## 0. Harness unblocks (test-first)
+
+- [x] 0.1 Test-mode harness flag pointing transcript adapters at fixture dirs
+- [x] 0.2 Shared fs-fixture helper for watched-root specs (create/modify/delete + cleanup)
+- [x] 0.3 SSE capture helper for e2e (subscribe, collect frames, assert shapes)
+
+## 1. Uniform eventing (test-first)
+
+- [ ] 1.1 One envelope type + entity/action vocab, daemon + client
+- [ ] 1.2 Per-stream daemon-side allowlists (incl. scan-socket filter fix)
+- [ ] 1.3 Snapshot heads + `Last-Event-ID` replay
+- [ ] 1.4 Keep-alive/heartbeat/retry + lag-drop surfacing
+- [ ] 1.5 `sseEvents` onFault wiring + fault rendering
+- [ ] 1.6 Validated scan parse; type-drift fixes (deferred/kind/id/stage/row)
+- [ ] 1.7 E2E: envelope shapes on scan + task streams; reconnect replay; fault render
+
+## 2. Queue observability (test-first)
+
+- [ ] 2.1 List pending/running/blocked (kind/path/wait/blocked-by) + per-kind depth
+- [ ] 2.2 Failed-task list with reasons; fix per-repo completed/failed counts
+- [ ] 2.3 Backoff-pending visibility + nearing-budget signal + per-task abandonments
+- [ ] 2.4 Schedule skip reasons + pass progress exposure
+- [ ] 2.5 E2E: queue listings during a live index; backoff + abandonment rows
+
+## 3. Pipeline progress (test-first)
+
+- [ ] 3.1 Totals events for transcript waves and metric waves
+- [ ] 3.2 Terminal `done` frames; fix dead `Indexed` emitter; pollers to liveness fallback
+- [ ] 3.3 Metrics parent linkage; transcript repair-count surfacing; embed-tail signal
+- [ ] 3.4 Wire `StageStarted`/`StageCompleted`/`StageFailed` in production
+- [ ] 3.5 E2E: wave totals → stage frames → terminal frames per pipeline
+
+## 4. Incremental transcripts (test-first)
+
+- [ ] 4.1 Watch transcript source dirs; narrowed `IngestCapture` on change
+- [ ] 4.2 Consent gating + debounce/coalesce across rapid appends
+- [ ] 4.3 Progress + totals + terminals on the uniform stream
+- [ ] 4.4 Isolation: never watch real dirs on isolated instances
+- [ ] 4.5 E2E: new/edited transcript file ingests incrementally (fixture dirs)
+
+## 5. Sync as jobs (test-first)
+
+- [ ] 5.1 Sync passes as queue tasks (or uniform sync events with task ids)
+- [ ] 5.2 Per-entity progress, terminals, coded errors + remedies
+- [ ] 5.3 E2E: seeded sync run shows live progress + failure attribution
+
+## 6. Domain stores (test-first)
+
+- [ ] 6.1 Jobs, schedules, sync stores per the `{source, state, selectors, ui, fault}` contract
+- [ ] 6.2 State specs drive `apply` with canned events, no DOM
+- [ ] 6.3 Singleton/page-local audit: fix nav-losing state (consolidation et al.)
+
+## 7. Operations center surface
+
+- [ ] 7.1 Now / Queue / Failures / Schedules / Sync sections on the stores
+- [ ] 7.2 Drill-down (children/attempts), retry, schedule PATCH controls
+- [ ] 7.3 Rendered specs per section; hardcoded liveness claims wired or removed
+- [ ] 7.4 E2E: full-cycle run live in the center (root-add → queue → progress → done)
+
+## 8. Unified alerting (test-first)
+
+- [ ] 8.1 Severity mapping + reason codes for every failure class
+- [ ] 8.2 Dedupe store with success-clear; ack/silence/escalation
+- [ ] 8.3 Proactive notify beyond assistant-capture
+- [ ] 8.4 Daemon-down + provisioning banners
+- [ ] 8.5 E2E: forced failures alert, aggregate, ack, and clear
+
+## 9. E2E matrix completion (Tauri Playwright, live)
+
+- [ ] 9.1 Root-add initiates scan; indexing status updates live
+- [ ] 9.2 Parent-add consolidates; coverage continues under the parent
+- [ ] 9.3 File add/modify/delete detected, queued, processed, shown
+- [ ] 9.4 Transcript/metric/sync progress live end to end
+- [ ] 9.5 Job-error alert fires with reason and a way back
+- [ ] 9.6 Full unit + e2e suites green; fabrication/error-surfaces/phone gates clean

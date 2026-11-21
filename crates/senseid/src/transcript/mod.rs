@@ -501,24 +501,45 @@ impl IngestOutcome {
     }
 }
 
+/// Test-mode transcript root. When `SENSEI_TRANSCRIPT_TEST_ROOT` names a
+/// directory, every adapter resolves its source paths under it instead of the
+/// real home — the e2e harness flag that lets transcript scenarios run
+/// against fixtures. Production never sets it.
+pub(crate) fn transcript_test_root() -> Option<PathBuf> {
+    std::env::var("SENSEI_TRANSCRIPT_TEST_ROOT")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
+/// Home for transcript source resolution: the test root in test mode, the
+/// real home otherwise. Every adapter root below joins onto this, so test
+/// mode redirects ALL sources with one switch.
+fn transcript_home() -> PathBuf {
+    transcript_test_root().unwrap_or_else(crate::paths::home)
+}
+
 fn claude_root() -> PathBuf {
-    crate::paths::home().join(".claude/projects")
+    transcript_home().join(".claude/projects")
 }
 
 fn zed_db_path() -> PathBuf {
-    crate::paths::home().join("Library/Application Support/Zed/threads/threads.db")
+    transcript_home().join("Library/Application Support/Zed/threads/threads.db")
 }
 
 fn opencode_db_path() -> PathBuf {
-    crate::paths::home().join(".local/share/opencode/opencode.db")
+    transcript_home().join(".local/share/opencode/opencode.db")
 }
 
 fn cursor_transcript_root() -> PathBuf {
-    crate::paths::home().join(".cursor/projects")
+    transcript_home().join(".cursor/projects")
 }
 
 fn vscode_user_root(variant: &str) -> Option<PathBuf> {
     // variant = "Code" | "Code - Insiders" | "VSCodium" | "Code - OSS"
+    if let Some(t) = transcript_test_root() {
+        return Some(t.join(format!("{variant}/User")));
+    }
     #[cfg(target_os = "macos")]
     {
         Some(crate::paths::home().join(format!("Library/Application Support/{variant}/User")))
@@ -534,6 +555,11 @@ fn vscode_user_root(variant: &str) -> Option<PathBuf> {
 }
 
 fn copilot_home() -> PathBuf {
+    // Test mode wins over even an explicit COPILOT_HOME: hermeticity is the
+    // stronger claim, and test mode is only ever set by the harness.
+    if let Some(t) = transcript_test_root() {
+        return t.join(".copilot");
+    }
     std::env::var("COPILOT_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| crate::paths::home().join(".copilot"))
@@ -1134,6 +1160,26 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test mode redirects EVERY adapter root under `SENSEI_TRANSCRIPT_TEST_ROOT`
+    /// — the e2e harness flag that lets transcript scenarios run against
+    /// fixtures. The only test touching this var, so no parallel-serial
+    /// hazard: nothing else reads it.
+    #[test]
+    fn test_root_redirects_all_adapter_roots() {
+        // SAFETY: the only test touching this var — nothing else reads it.
+        unsafe { std::env::set_var("SENSEI_TRANSCRIPT_TEST_ROOT", "/tmp/tx-test-root") };
+        let t = PathBuf::from("/tmp/tx-test-root");
+        assert_eq!(claude_root(), t.join(".claude/projects"));
+        assert_eq!(zed_db_path(), t.join("Library/Application Support/Zed/threads/threads.db"));
+        assert_eq!(opencode_db_path(), t.join(".local/share/opencode/opencode.db"));
+        assert_eq!(cursor_transcript_root(), t.join(".cursor/projects"));
+        assert_eq!(copilot_home(), t.join(".copilot"));
+        assert_eq!(vscode_user_root("Code"), Some(t.join("Code/User")));
+        // SAFETY: same single-touch guarantee as above.
+        unsafe { std::env::remove_var("SENSEI_TRANSCRIPT_TEST_ROOT") };
+        assert_eq!(claude_root(), crate::paths::home().join(".claude/projects"));
+    }
 
     /// Claude Code transcripts read before automated prompts were turns are read once
     /// more, so their scheduled, peer and task-notification turns — and tokens — land.
