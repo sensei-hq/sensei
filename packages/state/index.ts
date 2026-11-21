@@ -179,3 +179,49 @@ export {
   type ScanSource,
   type ScanRunStatus,
 } from './scan/scan-state.svelte.js';
+
+// The ops domain (operations center): the wire shapes, the daemon client,
+// the per-domain sources, and the states.
+export type {
+  OpsTaskView,
+  OpsBackoffView,
+  OpsKindDepth,
+  OpsQueueListing,
+  OpsFailedTask,
+  OpsAbandonedFeed,
+  OpsIndexError,
+  OpsScheduledTask,
+  OpsSchedulePatch,
+  OpsScheduleLog,
+  OpsSyncStateRow,
+  OpsSyncStateFeed,
+  OpsWave,
+} from './ops/types.js';
+export { opsClient, opsEvents, parseOpsFrame, type OpsApi } from './ops/client.js';
+export {
+  jobsSseSource,
+  schedulesSseSource,
+  syncSseSource,
+  type OpsEventStream,
+} from './ops/sources/sse.js';
+export { WaveState, waveProgress, type WaveRow } from './ops/wave-state.svelte.js';
+export {
+  JobsState,
+  classifyJobFrame,
+  JOBS_POLL_MS,
+  type JobsSource,
+} from './ops/jobs-state.svelte.js';
+export {
+  SchedulesState,
+  pausedSchedules,
+  failingSchedules,
+  SCHEDULES_POLL_MS,
+  type SchedulesSource,
+} from './ops/schedules-state.svelte.js';
+export {
+  SyncState,
+  classifySyncStage,
+  SYNC_POLL_MS,
+  type SyncSource,
+  type SyncStageActivity,
+} from './ops/sync-state.svelte.js';

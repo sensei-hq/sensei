@@ -381,7 +381,15 @@ mod tests {
     #[test]
     fn frame_keys_route_followers_and_exclude_rollups() {
         use crate::api::stream::StreamFrame;
-        let job = StreamFrame::from_task_event(1, &TaskEvent::Queued { task_id: 7 });
+        let job = StreamFrame::from_task_event(
+            1,
+            &TaskEvent::Queued {
+                task_id: 7,
+                kind: "process_file".into(),
+                folder_path: "/r".into(),
+                path: "/r/a".into(),
+            },
+        );
         assert_eq!(job.key().parse::<u64>().ok(), Some(7));
         let rollup = StreamFrame::from_task_event(
             2,

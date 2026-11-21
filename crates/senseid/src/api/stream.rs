@@ -76,11 +76,14 @@ impl StreamFrame {
             error: None,
         };
         match event {
-            TaskEvent::Queued { task_id } => frame(
+            TaskEvent::Queued { task_id, kind, folder_path, path } => frame(
                 "job",
                 Action::Add,
                 task_id.to_string(),
-                serde_json::json!({ "task_id": task_id }),
+                serde_json::json!({
+                    "task_id": task_id, "kind": kind,
+                    "folder_path": folder_path, "path": path,
+                }),
             ),
             TaskEvent::Started { task_id, folder_path, kind, path } => frame(
                 "job",
@@ -499,11 +502,21 @@ mod tests {
         use crate::tasks::progress::TaskEvent;
         let frame =
             |id, e: &TaskEvent| serde_json::to_value(StreamFrame::from_task_event(id, e)).unwrap();
-        let q = frame(1, &TaskEvent::Queued { task_id: 7 });
+        let q = frame(
+            1,
+            &TaskEvent::Queued {
+                task_id: 7,
+                kind: "process_file".into(),
+                folder_path: "/r".into(),
+                path: "/r/a.ts".into(),
+            },
+        );
         assert_eq!(
             (q["entity"].as_str(), q["action"].as_str(), q["key"].as_str()),
             (Some("job"), Some("add"), Some("7"))
         );
+        assert_eq!(q["data"]["kind"], "process_file");
+        assert_eq!(q["data"]["path"], "/r/a.ts");
         assert!(q.get("done").is_none());
         let c = frame(
             2,

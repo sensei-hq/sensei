@@ -7,8 +7,15 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TaskEvent {
+    /// A task arrived and can start — this event and only this event both
+    /// wakes the run loop and announces the wait is over. Carries identity
+    /// (kind, paths) so stream followers can render the row without a
+    /// re-read.
     Queued {
         task_id: u64,
+        kind: String,
+        folder_path: String,
+        path: String,
     },
     Started {
         task_id: u64,

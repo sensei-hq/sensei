@@ -48,9 +48,9 @@
 
 ## 6. Domain stores (test-first)
 
-- [ ] 6.1 Jobs, schedules, sync stores per the `{source, state, selectors, ui, fault}` contract
-- [ ] 6.2 State specs drive `apply` with canned events, no DOM
-- [ ] 6.3 Singleton/page-local audit: fix nav-losing state (consolidation et al.)
+- [x] 6.1 Jobs, schedules, sync stores per the `{source, state, selectors, ui, fault}` contract
+- [x] 6.2 State specs drive `apply` with canned events, no DOM
+- [x] 6.3 Singleton/page-local audit: fix nav-losing state (consolidation et al.)
 
 ## 7. Operations center surface
 

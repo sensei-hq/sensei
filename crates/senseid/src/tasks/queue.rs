@@ -250,6 +250,10 @@ impl TaskQueue {
     fn enqueue_locked(&self, state: &mut QueueState, mut task: Task) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         task.id = id;
+        // Identity for the Queued event, captured before the task moves into
+        // a list — followers render the row from the event alone.
+        let (kind, folder_path, path) =
+            (task.kind.to_string(), task.folder_path.clone(), task.path.clone());
 
         // Register dependency tracking
         for dep_id in &task.depends_on {
@@ -292,7 +296,7 @@ impl TaskQueue {
             state.pending.push_back(task);
         }
 
-        let _ = self.tx.send(TaskEvent::Queued { task_id: id });
+        let _ = self.tx.send(TaskEvent::Queued { task_id: id, kind, folder_path, path });
         id
     }
 
@@ -1110,7 +1114,10 @@ mod tests {
 
         let id = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
         let evt = rx.recv().await.unwrap();
-        assert!(matches!(evt, TaskEvent::Queued { task_id } if task_id == id));
+        assert!(
+            matches!(evt, TaskEvent::Queued { task_id, ref kind, ref path, .. } if task_id == id && kind == "process_file" && path == "a.ts"),
+            "queued frames carry identity"
+        );
 
         let task = q.next_task().await;
         let evt = rx.recv().await.unwrap();
