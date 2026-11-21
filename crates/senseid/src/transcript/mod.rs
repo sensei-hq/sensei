@@ -21,6 +21,7 @@ pub mod zed;
 use crate::db::pg_store::HookEventRow;
 use crate::tasks::executor::TaskContext;
 use crate::tasks::{Task, TaskKind, TaskStatus};
+use crate::watcher::root_watcher::TranscriptGranularity;
 use std::path::PathBuf;
 
 // ── Shared constants (used by multiple adapters) ────────────────────────
@@ -563,6 +564,99 @@ fn copilot_home() -> PathBuf {
     std::env::var("COPILOT_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| crate::paths::home().join(".copilot"))
+}
+
+/// Transcript watch targets for the consented sources: (path, source,
+/// granularity), existing paths only. Unconsented sources are never even
+/// listed; missing adapter dirs are not watched. Roots resolve under the
+/// transcript home, so test mode watches fixtures and never real dirs.
+pub(crate) fn transcript_watch_targets(
+    consented: &std::collections::HashSet<String>,
+) -> Vec<(PathBuf, &'static str, TranscriptGranularity)> {
+    let mut out = Vec::new();
+    let mut consider = |source: &'static str, path: PathBuf, granularity: TranscriptGranularity| {
+        if consented.contains(source) && path.exists() {
+            out.push((path, source, granularity));
+        }
+    };
+    consider("claude_code", claude_root(), TranscriptGranularity::PerFile);
+    consider("cursor", cursor_transcript_root(), TranscriptGranularity::PerFile);
+    consider("copilot_cli", copilot_home(), TranscriptGranularity::PerFile);
+    consider("zed", zed_db_path(), TranscriptGranularity::WholeDb);
+    consider("opencode", opencode_db_path(), TranscriptGranularity::WholeDb);
+    for user in vscode::VARIANTS.iter().filter_map(|v| vscode_user_root(v)) {
+        if !consented.contains("vscode") {
+            break;
+        }
+        if user.is_dir() {
+            out.push((user.clone(), "vscode", TranscriptGranularity::PerFile));
+        }
+        if let Some(db) = vscode::otel_db_path(&user) {
+            out.push((db, "vscode", TranscriptGranularity::WholeDb));
+        }
+    }
+    out
+}
+
+/// Whether this daemon watches transcript dirs at all: the real install
+/// always may (consent still gates per source); an isolated instance only
+/// in transcript test mode, when every root redirects at fixtures.
+fn watches_transcripts() -> bool {
+    !sensei_bootstrap::SenseiConfig::from_env().is_isolated_instance()
+        || transcript_test_root().is_some()
+}
+
+/// Reconcile transcript watches with consent: register watcher entries for
+/// consented sources, drop the rest (and everything on an isolated
+/// instance outside test mode), restarting the watcher iff the set
+/// changed. Called at boot, after every consent change, and on every
+/// scheduler tick (so an adapter dir created later is picked up).
+pub async fn sync_transcript_watches(
+    pg: &crate::db::pg_store::PgStore,
+    queue: &std::sync::Arc<crate::tasks::queue::TaskQueue>,
+) {
+    use crate::watcher::root_watcher::{RootWatcher, WatchKind};
+    let desired: std::collections::HashMap<PathBuf, (&'static str, TranscriptGranularity)> =
+        if !watches_transcripts() {
+            std::collections::HashMap::new()
+        } else {
+            let consented =
+                consent::consented(pg).await.unwrap_or_else(|_| std::collections::HashSet::new());
+            transcript_watch_targets(&consented).into_iter().map(|(p, s, g)| (p, (s, g))).collect()
+        };
+    let mutex = RootWatcher::instance(queue.clone());
+    let Ok(mut watcher) = mutex.lock() else {
+        tracing::warn!(
+            "sync_transcript_watches: watcher mutex poisoned; transcript watches unchanged"
+        );
+        return;
+    };
+    let current: Vec<PathBuf> = watcher
+        .roots()
+        .iter()
+        .filter(|(_, r)| matches!(r.kind, WatchKind::Transcript { .. }))
+        .map(|(p, _)| p.clone())
+        .collect();
+    let mut changed = false;
+    for path in &current {
+        if !desired.contains_key(path) {
+            watcher.unregister(path);
+            changed = true;
+        }
+    }
+    for (path, (source, granularity)) in &desired {
+        if !current.iter().any(|p| p == path) {
+            watcher.register_transcript(path.clone(), source, *granularity);
+            changed = true;
+        }
+    }
+    if changed {
+        // Same restart the roots API performs after membership changes; a
+        // transcript-only install starts its thread here too.
+        if let Err(e) = watcher.start() {
+            tracing::warn!(error = %e, "sync_transcript_watches: watcher restart failed");
+        }
+    }
 }
 
 /// All configured transcript adapters.
@@ -1202,13 +1296,17 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 mod tests {
     use super::*;
 
+    /// Env guard: the tests below mutate `SENSEI_TRANSCRIPT_TEST_ROOT`, and
+    /// cargo runs tests in parallel threads — both hold this while they do.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Test mode redirects EVERY adapter root under `SENSEI_TRANSCRIPT_TEST_ROOT`
     /// — the e2e harness flag that lets transcript scenarios run against
-    /// fixtures. The only test touching this var, so no parallel-serial
-    /// hazard: nothing else reads it.
+    /// fixtures.
     #[test]
     fn test_root_redirects_all_adapter_roots() {
-        // SAFETY: the only test touching this var — nothing else reads it.
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: guarded — the only two tests touching this var hold the lock.
         unsafe { std::env::set_var("SENSEI_TRANSCRIPT_TEST_ROOT", "/tmp/tx-test-root") };
         let t = PathBuf::from("/tmp/tx-test-root");
         assert_eq!(claude_root(), t.join(".claude/projects"));
@@ -1217,9 +1315,40 @@ mod tests {
         assert_eq!(cursor_transcript_root(), t.join(".cursor/projects"));
         assert_eq!(copilot_home(), t.join(".copilot"));
         assert_eq!(vscode_user_root("Code"), Some(t.join("Code/User")));
-        // SAFETY: same single-touch guarantee as above.
+        // SAFETY: guarded (see above).
         unsafe { std::env::remove_var("SENSEI_TRANSCRIPT_TEST_ROOT") };
         assert_eq!(claude_root(), crate::paths::home().join(".claude/projects"));
+    }
+
+    /// Watch targets: consented sources with existing paths only — an
+    /// unconsented source is never even listed, a missing adapter dir is
+    /// not watched. Db-backed sources watch the db file (whole-db
+    /// granularity); file sources watch their dirs.
+    #[test]
+    fn watch_targets_cover_consented_existing_sources_only() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("sensei-tx-watch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".claude/projects")).unwrap();
+        std::fs::create_dir_all(root.join(".local/share/opencode")).unwrap();
+        std::fs::write(root.join(".local/share/opencode/opencode.db"), b"sqlite").unwrap();
+        // SAFETY: guarded (see above).
+        unsafe {
+            std::env::set_var("SENSEI_TRANSCRIPT_TEST_ROOT", root.to_string_lossy().to_string())
+        };
+
+        let consented: std::collections::HashSet<String> =
+            ["claude_code", "opencode", "cursor"].into_iter().map(str::to_string).collect();
+        let targets = transcript_watch_targets(&consented);
+        let by_source: std::collections::HashMap<_, _> =
+            targets.iter().map(|(_, s, g)| (*s, *g)).collect();
+        use crate::watcher::root_watcher::TranscriptGranularity;
+        assert_eq!(by_source.get("claude_code"), Some(&TranscriptGranularity::PerFile));
+        assert_eq!(by_source.get("opencode"), Some(&TranscriptGranularity::WholeDb));
+        assert!(!by_source.contains_key("cursor"), "missing dir is not watched");
+        assert!(!by_source.contains_key("zed"), "unconsented is never listed");
+
+        unsafe { std::env::remove_var("SENSEI_TRANSCRIPT_TEST_ROOT") };
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// Claude Code transcripts read before automated prompts were turns are read once

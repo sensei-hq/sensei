@@ -33,11 +33,12 @@
 
 ## 4. Incremental transcripts (test-first)
 
-- [ ] 4.1 Watch transcript source dirs; narrowed `IngestCapture` on change
-- [ ] 4.2 Consent gating + debounce/coalesce across rapid appends
-- [ ] 4.3 Progress + totals + terminals on the uniform stream
-- [ ] 4.4 Isolation: never watch real dirs on isolated instances
-- [ ] 4.5 E2E: new/edited transcript file ingests incrementally (fixture dirs)
+- [x] 4.1 Watch transcript source dirs; narrowed `IngestCapture` on change
+- [x] 4.2 Consent gating + debounce/coalesce across rapid appends
+- [x] 4.3 Progress + totals + terminals on the uniform stream (job lifecycle per ingest; wave frames per backfill)
+- [x] 4.4 Isolation: never watch real dirs on isolated instances
+- [x] 4.5 Live-verified on scratch daemon (incremental/append/consent/isolation); Tauri matrix in slice 9
+- [x] 4.6 Symlink-tolerant event→root resolution (FSEvents reports resolved paths)
 
 ## 5. Sync as jobs (test-first)
 

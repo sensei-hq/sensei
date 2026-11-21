@@ -43,7 +43,7 @@ use crate::tasks::{Task, TaskKind};
 ///
 /// Returns whether one was enqueued, so a caller can say which happened
 /// instead of logging an unconditional success.
-async fn enqueue_backfill(queue: &TaskQueue) -> bool {
+pub(crate) async fn enqueue_backfill(queue: &TaskQueue) -> bool {
     if queue.has_pending_kind(TaskKind::IngestCaptures).await {
         tracing::debug!("transcript_scheduler: a backfill is already in flight — skipping");
         return false;
@@ -93,9 +93,15 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     }
 
     // From here the schedule owns the cadence (name `ingest_captures`).
-    ticker::run_scheduled(pg, "ingest_captures", move || {
+    // Each tick also re-syncs the transcript watches, so an adapter dir
+    // created after boot (a newly installed assistant) is picked up without
+    // a restart or a consent toggle. The sync diffs and restarts only on
+    // change, so steady-state ticks cost one consent read.
+    ticker::run_scheduled(pg.clone(), "ingest_captures", move || {
         let queue = queue.clone();
+        let pg = pg.clone();
         async move {
+            crate::transcript::sync_transcript_watches(&pg, &queue).await;
             enqueue_backfill(&queue).await;
             Ok(())
         }

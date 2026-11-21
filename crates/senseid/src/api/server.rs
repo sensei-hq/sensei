@@ -825,6 +825,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 
 /// Start root watchers for persisted scanned roots.
 async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
+    // Transcript watches first: consent-gated, independent of code roots, so
+    // a transcript-only install still starts its thread below.
+    crate::transcript::sync_transcript_watches(&state.pg, &state.task_queue).await;
     // Get all watch roots from PgStore — (id, path) for roots that still exist
     // on disk (skip stale rows pointing at deleted dirs).
     let roots = state.pg.list_watch_roots_to_sync().await.unwrap_or_else(|e| {
