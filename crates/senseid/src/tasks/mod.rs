@@ -845,7 +845,7 @@ pub struct Task {
     pub scope: Scope,
     pub error: Option<String>,
     pub retry_number: u32, // 0 = first attempt; bumped per bounded retry (D6c)
-    pub _created_at: Instant,
+    pub created_at: Instant,
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
 }
@@ -868,7 +868,7 @@ impl Task {
             scope: Scope::default(),
             error: None,
             retry_number: 0,
-            _created_at: Instant::now(),
+            created_at: Instant::now(),
             started_at: None,
             completed_at: None,
         }
@@ -1001,7 +1001,7 @@ impl Task {
             scope: Scope::default(),
             error: None,
             retry_number: self.retry_number + 1,
-            _created_at: Instant::now(),
+            created_at: Instant::now(),
             started_at: None,
             completed_at: None,
         }

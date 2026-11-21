@@ -139,12 +139,17 @@ async fn run_scheduled_inner<F, Fut>(
     }
     let initial = pg.load_schedule(name).await.ok().flatten();
     let mut poll = Poll::new(initial.as_ref().map_or(60, |s| poll_secs(s.interval_secs)));
+    // Last skip reason written to the row: skips are recorded only when the
+    // reason CHANGES, so a worker skipping every minute does not write its
+    // row every minute.
+    let mut last_skip: Option<String> = initial.as_ref().and_then(|s| s.last_skip_reason.clone());
 
     loop {
         poll.tick().await;
 
         let Some(stored) = pg.load_schedule(name).await.ok().flatten() else {
             tracing::debug!(worker = name, reason = ?Skip::Unscheduled, "scheduled: skipped");
+            // No row to write to — the Unscheduled reason names exactly that.
             continue;
         };
         // Before the due-check, so a shortened cadence starts applying on the
@@ -162,6 +167,15 @@ async fn run_scheduled_inner<F, Fut>(
 
         if let Err(skip) = should_run(&stored.rules(), now_local, now_utc, stored.last_run_at) {
             tracing::debug!(worker = name, reason = ?skip, "scheduled: skipped");
+            if last_skip.as_deref() != Some(skip.as_str()) {
+                match pg.mark_schedule_skip(name, skip.as_str()).await {
+                    Ok(()) => last_skip = Some(skip.as_str().to_string()),
+                    Err(e) => tracing::warn!(
+                        worker = name, error = %e,
+                        "scheduled: could not record the skip"
+                    ),
+                }
+            }
             continue;
         }
 

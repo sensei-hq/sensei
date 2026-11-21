@@ -47,25 +47,91 @@ const ABANDONED_WORST: i64 = 10;
 #[derive(serde::Deserialize)]
 pub struct AbandonedQuery {
     days: Option<i32>,
+    limit: Option<i64>,
 }
 
-/// `GET /api/tasks/abandoned?days=N` — the tasks the watchdog abandoned (#188),
-/// per day and kind, with the worst offenders named. A task that times out
-/// stops existing; this is where "slow" becomes visible before it is "missing".
+/// How many per-task abandonment rows `GET /api/tasks/abandoned` names.
+const ABANDONED_TASK_LIMIT: i64 = 50;
+
+/// `GET /api/tasks/abandoned?days=N&limit=M` — the tasks the watchdog abandoned
+/// (#188), per day and kind, with the worst offenders named AND the per-task
+/// rows behind them. A task that times out stops existing; this is where
+/// "slow" becomes visible before it is "missing".
 pub async fn abandoned(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<AbandonedQuery>,
 ) -> Result<Json<crate::db::pg_store::Abandonments>, (StatusCode, Json<serde_json::Value>)> {
     let days = q.days.unwrap_or(ABANDONED_DEFAULT_DAYS);
+    let limit = q.limit.unwrap_or(ABANDONED_TASK_LIMIT);
     if days < 1 {
         return Err(super::err(StatusCode::BAD_REQUEST, "days must be a positive number of days"));
     }
-    state
+    if !(1..=500).contains(&limit) {
+        return Err(super::err(StatusCode::BAD_REQUEST, "limit must be between 1 and 500"));
+    }
+    let mut out = state
         .pg
         .watchdog_abandonments(days, ABANDONED_WORST)
         .await
-        .map(Json)
-        .map_err(|e| super::err(StatusCode::INTERNAL_SERVER_ERROR, e))
+        .map_err(|e| super::err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    out.tasks = state
+        .pg
+        .abandoned_task_list(days, limit)
+        .await
+        .map_err(|e| super::err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(out))
+}
+
+#[derive(serde::Deserialize)]
+pub struct FailedQuery {
+    days: Option<i32>,
+    limit: Option<i64>,
+}
+
+/// How many failures `GET /api/tasks/failed` names by default.
+const FAILED_DEFAULT_LIMIT: i64 = 100;
+
+/// `GET /api/tasks/failed?days=N&limit=M` — terminal failures newest-first
+/// with kind, path, and reason: the failures feed. Completed and
+/// still-running rows are never failures.
+pub async fn failed(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<FailedQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let days = q.days.unwrap_or(ABANDONED_DEFAULT_DAYS);
+    let limit = q.limit.unwrap_or(FAILED_DEFAULT_LIMIT);
+    if days < 1 {
+        return Err(super::err(StatusCode::BAD_REQUEST, "days must be a positive number of days"));
+    }
+    if !(1..=500).contains(&limit) {
+        return Err(super::err(StatusCode::BAD_REQUEST, "limit must be between 1 and 500"));
+    }
+    let tasks = state
+        .pg
+        .failed_tasks(days, limit)
+        .await
+        .map_err(|e| super::err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(serde_json::json!({ "tasks": tasks })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct QueueQuery {
+    limit: Option<usize>,
+}
+
+/// `GET /api/tasks/queue?limit=N` — the queue listing: named pending,
+/// blocked, and running tasks with waits, backoff-pending retries, exact
+/// totals, and per-kind depth. Lists cap (default 200 each); totals never
+/// lie and `truncated` says when a list was cut.
+pub async fn queue_listing(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<QueueQuery>,
+) -> Result<Json<crate::tasks::queue::QueueListing>, (StatusCode, Json<serde_json::Value>)> {
+    let limit = q.limit.unwrap_or(crate::tasks::queue::QUEUE_LIST_LIMIT);
+    if limit < 1 {
+        return Err(super::err(StatusCode::BAD_REQUEST, "limit must be a positive number"));
+    }
+    Ok(Json(state.task_queue.list_queue(limit).await))
 }
 
 /// Roll the children of a dispatcher into the counts a follower actually wants.

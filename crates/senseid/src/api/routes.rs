@@ -366,7 +366,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/keychain/approve", post(crate::api::handlers::auth::approve_keychain))
         .route("/api/auth/orgs", get(crate::api::handlers::auth::orgs))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
+        .route("/api/tasks/queue", get(crate::api::handlers::tasks::queue_listing))
         .route("/api/tasks/abandoned", get(crate::api::handlers::tasks::abandoned))
+        .route("/api/tasks/failed", get(crate::api::handlers::tasks::failed))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
         // Background-task visibility (#96): the sensei.schedules table — what each

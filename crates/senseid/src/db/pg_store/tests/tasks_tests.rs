@@ -485,6 +485,32 @@ async fn marking_a_run_records_the_outcome_and_clears_a_stale_error() {
         .ok();
 }
 
+/// A skipped tick records WHY it skipped: "disabled" and "outside its
+/// window" are different answers to "why has this not run", and the UI
+/// reads them from the row.
+#[tokio::test]
+async fn marking_a_skip_records_the_reason_and_when() {
+    let s = pg_store().await;
+    let name = test_schedule_name();
+    sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(s.load_schedule(&name).await.unwrap().unwrap().last_skip_reason, None);
+
+    s.mark_schedule_skip(&name, "outside_window").await.unwrap();
+    let after = s.load_schedule(&name).await.unwrap().unwrap();
+    assert_eq!(after.last_skip_reason.as_deref(), Some("outside_window"));
+    assert!(after.last_skip_at.is_some());
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
 /// #96: how long a scheduled pass takes, on average. `None` until a pass has
 /// been timed — runs from before durations were recorded are not invented.
 #[tokio::test]
@@ -966,4 +992,88 @@ async fn watchdog_abandonments_count_per_day_and_name_the_worst_offenders() {
     );
     assert!(a.worst.iter().all(|w| w.path != "src/broken.rs"), "{:?}", a.worst);
     assert_eq!(s.watchdog_abandonments(7, 1).await.unwrap().worst.len(), 1, "the limit holds");
+}
+
+/// The failures feed: terminal failures newest-first with kind, path, and
+/// reason. Completed and still-running rows are not failures.
+#[tokio::test]
+async fn failed_tasks_lists_terminal_failures_with_reasons() {
+    let s = pg_store().await;
+    let fp = format!("/_test/failed/{}/repo", uuid::Uuid::new_v4());
+    let start = async |kind: &str, path: &str| {
+        s.start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 11,
+            parent_task_id: None,
+            task_kind: kind,
+            folder_path: &fp,
+            path,
+            retry_number: 0,
+        })
+        .await
+        .unwrap()
+    };
+    let bad = start("process_file", "src/broken.rs").await;
+    s.fail_task_execution(&bad, 120, "parse error: unexpected token").await.unwrap();
+    let gone = start("process_file", "src/gone.rs").await;
+    s.fail_task_execution(
+        &gone,
+        200_000,
+        &crate::tasks::executor::watchdog_message(
+            &crate::tasks::TaskKind::ProcessFile,
+            11,
+            crate::tasks::TaskKind::ProcessFile.watchdog_timeout(),
+        ),
+    )
+    .await
+    .unwrap();
+    let ok = start("process_file", "src/fine.rs").await;
+    s.complete_task_execution(&ok, 10, 50).await.unwrap();
+    let _running = start("process_file", "src/slow.rs").await;
+
+    let rows = s.failed_tasks(7, 100).await.unwrap();
+    let paths: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"src/broken.rs") && paths.contains(&"src/gone.rs"), "{paths:?}");
+    assert!(!paths.contains(&"src/fine.rs") && !paths.contains(&"src/slow.rs"), "{paths:?}");
+    let broken = rows.iter().find(|r| r["path"] == "src/broken.rs").unwrap();
+    assert_eq!(broken["kind"], "process_file");
+    assert_eq!(broken["error"], "parse error: unexpected token");
+    assert_eq!(s.failed_tasks(7, 1).await.unwrap().len(), 1, "the limit holds");
+}
+
+/// Abandonments as per-task rows, not just aggregates: which task, where,
+// when, and the watchdog reason.
+#[tokio::test]
+async fn abandoned_task_list_names_per_task_rows() {
+    let s = pg_store().await;
+    let fp = format!("/_test/abandoned-list/{}/repo", uuid::Uuid::new_v4());
+    let fail = async |path: &str, message: String| {
+        let id = s
+            .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                task_id: 13,
+                parent_task_id: None,
+                task_kind: "process_file",
+                folder_path: &fp,
+                path,
+                retry_number: 0,
+            })
+            .await
+            .unwrap();
+        s.fail_task_execution(&id, 180_000, &message).await.unwrap();
+    };
+    fail(
+        "src/huge.rs",
+        crate::tasks::executor::watchdog_message(
+            &crate::tasks::TaskKind::ProcessFile,
+            13,
+            crate::tasks::TaskKind::ProcessFile.watchdog_timeout(),
+        ),
+    )
+    .await;
+    fail("src/broken.rs", "parse error: unexpected token".to_string()).await;
+
+    let rows = s.abandoned_task_list(7, 10).await.unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["path"], "src/huge.rs");
+    assert_eq!(rows[0]["kind"], "process_file");
+    assert!(rows[0]["error"].as_str().unwrap().starts_with("watchdog:"));
 }

@@ -58,13 +58,31 @@ pub fn failure_is_terminal(task: &Task) -> bool {
 /// Schedule a backed-off re-enqueue of `next` on a detached task — sleeps
 /// `delay`, then `enqueue_unique` (single-writer safe, D6e). Never blocks the
 /// caller's worker. Returns the join handle (ignored in production; awaited in
-/// tests).
-pub fn spawn_retry(queue: Arc<TaskQueue>, next: Task, delay: Duration) -> JoinHandle<Option<u64>> {
+/// tests). The wait is registered on the queue under the failed task id, so
+/// the listing shows it instead of a gap between failure and re-enqueue.
+pub fn spawn_retry(
+    queue: Arc<TaskQueue>,
+    failed_id: u64,
+    next: Task,
+    delay: Duration,
+) -> JoinHandle<Option<u64>> {
     tokio::spawn(async move {
+        queue
+            .register_backoff(
+                failed_id,
+                next.kind.clone(),
+                &next.folder_path,
+                &next.path,
+                next.retry_number,
+                delay,
+            )
+            .await;
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        queue.enqueue_unique(next).await
+        let out = queue.enqueue_unique(next).await;
+        queue.clear_backoff(failed_id).await;
+        out
     })
 }
 
@@ -79,7 +97,7 @@ pub fn schedule_if_retryable(
 ) -> Option<JoinHandle<Option<u64>>> {
     let next = plan_retry(task)?;
     let delay = backoff(next.retry_number);
-    Some(spawn_retry(queue, next, delay))
+    Some(spawn_retry(queue, task.id, next, delay))
 }
 
 #[cfg(test)]
@@ -171,7 +189,7 @@ mod tests {
         let next = failed.retry(); // retry_number 1
 
         // ZERO delay → deterministic; await the handle for the enqueue result.
-        let id = spawn_retry(queue.clone(), next, Duration::ZERO).await.unwrap();
+        let id = spawn_retry(queue.clone(), failed.id, next, Duration::ZERO).await.unwrap();
         assert!(id.is_some(), "spawn_retry enqueues the retry");
 
         let task = queue.next_task().await;
@@ -214,7 +232,8 @@ mod tests {
         queue.enqueue(Task::new(TaskKind::ProcessGitFolder, "repo", "repo")).await;
         let mut failed = Task::new(TaskKind::ProcessGitFolder, "repo", "repo");
         failed.id = 9;
-        let id = spawn_retry(queue.clone(), failed.retry(), Duration::ZERO).await.unwrap();
+        let id =
+            spawn_retry(queue.clone(), failed.id, failed.retry(), Duration::ZERO).await.unwrap();
         assert!(id.is_none(), "a retry of an already-pending scope is deduped");
     }
 }

@@ -24,6 +24,11 @@ pub struct Abandonments {
     pub days: i32,
     pub by_day: Vec<AbandonedDay>,
     pub worst: Vec<AbandonedTask>,
+    /// Per-task rows, newest first — which task, where, when, and why.
+    /// Populated separately (the aggregates answer "how much", these
+    /// answer "which").
+    #[serde(default)]
+    pub tasks: Vec<serde_json::Value>,
 }
 
 /// Abandonments of one kind on one day.
@@ -653,7 +658,56 @@ impl PgStore {
                     last_at,
                 })
                 .collect(),
+            tasks: Vec::new(),
         })
+    }
+
+    /// Terminal failures in the last `days`, newest first, with kind, path,
+    /// and reason — the failures feed. Completed and still-running rows are
+    /// not failures.
+    pub async fn failed_tasks(
+        &self,
+        days: i32,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let sql = format!(
+            "SELECT {TASK_EXECUTION_COLUMNS} FROM activity.task_executions
+              WHERE status = 'failed' AND started_at >= now() - (interval '1 day' * $1)
+              ORDER BY started_at DESC LIMIT $2"
+        );
+        let rows: Vec<TaskExecutionRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("failed_tasks: {e}"))?;
+        Ok(rows.into_iter().map(task_execution_json).collect())
+    }
+
+    /// Watchdog abandonments as per-task rows, newest first — the aggregate
+    /// queries answer "how much", these answer "which task, where, when".
+    /// Same watchdog-prefix rule as [`Self::watchdog_abandonments`], so the
+    /// two cannot disagree about what an abandonment is.
+    pub async fn abandoned_task_list(
+        &self,
+        days: i32,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let prefix = format!("{}%", crate::tasks::executor::WATCHDOG_ABANDONED);
+        let sql = format!(
+            "SELECT {TASK_EXECUTION_COLUMNS} FROM activity.task_executions
+              WHERE status = 'failed' AND error_message LIKE $1
+                AND started_at >= now() - (interval '1 day' * $2)
+              ORDER BY started_at DESC LIMIT $3"
+        );
+        let rows: Vec<TaskExecutionRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(&prefix)
+            .bind(days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("abandoned_task_list: {e}"))?;
+        Ok(rows.into_iter().map(task_execution_json).collect())
     }
 
     /// Roll up task executions older than `days` into `task_execution_daily`,

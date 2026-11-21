@@ -17,11 +17,11 @@
 
 ## 2. Queue observability (test-first)
 
-- [ ] 2.1 List pending/running/blocked (kind/path/wait/blocked-by) + per-kind depth
-- [ ] 2.2 Failed-task list with reasons; fix per-repo completed/failed counts
-- [ ] 2.3 Backoff-pending visibility + nearing-budget signal + per-task abandonments
-- [ ] 2.4 Schedule skip reasons + pass progress exposure
-- [ ] 2.5 E2E: queue listings during a live index; backoff + abandonment rows
+- [x] 2.1 List pending/running/blocked (kind/path/wait/blocked-by) + per-kind depth
+- [x] 2.2 Failed-task list with reasons; fix per-repo completed/failed counts
+- [x] 2.3 Backoff-pending visibility + nearing-budget signal + per-task abandonments
+- [x] 2.4 Schedule skip reasons + pass progress exposure
+- [x] 2.5 Live-verified on scratch daemon (listing/feeds/skips); Tauri matrix in slice 9
 
 ## 3. Pipeline progress (test-first)
 

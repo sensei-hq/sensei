@@ -4639,7 +4639,10 @@ mod tests {
             .cloned()
             .unwrap_or_else(|| panic!("decision not on Now: {now}"));
         row["op"] = json!("asked");
-        assert_eq!(asked, json!({"action": "add", "entity": "decision", "key": decision_id, "data": row}));
+        assert_eq!(
+            asked,
+            json!({"action": "add", "entity": "decision", "key": decision_id, "data": row})
+        );
         let (status, body) = call(
             &h,
             "POST",
@@ -4741,7 +4744,10 @@ mod tests {
         assert_eq!(row["response"], stored);
         assert_eq!(row["options"], json!([]));
         row["op"] = json!("asked");
-        assert_eq!(asked, json!({"action": "add", "entity": "decision", "key": decision_id, "data": row}));
+        assert_eq!(
+            asked,
+            json!({"action": "add", "entity": "decision", "key": decision_id, "data": row})
+        );
         let (status, body) = call(
             &h,
             "POST",
