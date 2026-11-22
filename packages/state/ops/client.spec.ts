@@ -119,6 +119,25 @@ describe('opsClient — the paths', () => {
     const res = await api().tryStartBackfill();
     expect(res).toEqual({ ok: true, data: { ok: true, queued: false, running: true } });
   });
+
+  it('reads alert dispositions', async () => {
+    const acks = { acks: [{ class: 'task', key: '7', acked: true, seen_clears: 0 }] };
+    const fetch = stub(200, acks);
+    const res = await api().tryGetAlertAcks();
+    expect(calledWith(fetch).url).toBe(`${BASE}/api/ops/alerts/acks`);
+    expect(res).toEqual({ ok: true, data: acks });
+  });
+
+  it('writes an ack disposition', async () => {
+    const row = { class: 'task', key: '7', acked: true, seen_clears: 0 };
+    const fetch = stub(200, row);
+    const res = await api().tryPutAlertAck('task', '7', true);
+    const call = calledWith(fetch);
+    expect(call.url).toBe(`${BASE}/api/ops/alerts/acks`);
+    expect(call.method).toBe('PUT');
+    expect(JSON.parse(call.body as string)).toEqual({ class: 'task', key: '7', acked: true });
+    expect(res).toEqual({ ok: true, data: row });
+  });
 });
 
 describe('opsClient — failures', () => {

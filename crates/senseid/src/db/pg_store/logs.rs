@@ -688,6 +688,71 @@ impl PgStore {
     /// queries answer "how much", these answer "which task, where, when".
     /// Same watchdog-prefix rule as [`Self::watchdog_abandonments`], so the
     /// two cannot disagree about what an abandonment is.
+    /// Every alert disposition: what the reader acked, and what cleared
+    /// before (recurrence memory for escalation). Alerts themselves
+    /// re-derive from the feeds; this table holds only dispositions.
+    pub async fn list_alert_acks(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, bool, i32, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT class, alert_key, acked, seen_clears, updated_at
+                   FROM activity.alert_acks ORDER BY updated_at DESC",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("list_alert_acks: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(class, key, acked, seen_clears, updated_at)| {
+                serde_json::json!({
+                    "class": class, "key": key, "acked": acked,
+                    "seen_clears": seen_clears,
+                    "updated_at": updated_at.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    /// Write one disposition. `acked=true` acks; `acked=false` records a
+    /// client-observed clear: un-acks AND bumps `seen_clears` — but only on
+    /// the acked→cleared transition (or a first-seen clear), so a duplicate
+    /// clear call never double-counts a recurrence. Piggybacks the stale
+    /// prune: cleared rows untouched for 90+ days go, so recurrence memory
+    /// fades instead of growing forever. No new worker.
+    pub async fn set_alert_ack(
+        &self,
+        class: &str,
+        key: &str,
+        acked: bool,
+    ) -> Result<serde_json::Value, String> {
+        let row: (String, String, bool, i32, chrono::DateTime<chrono::Utc>) =
+            sqlx_core::query_as::query_as(
+                "INSERT INTO activity.alert_acks(class, alert_key, acked, seen_clears, updated_at)
+                 VALUES ($1, $2, $3, CASE WHEN $3 THEN 0 ELSE 1 END, now())
+                 ON CONFLICT(class, alert_key) DO UPDATE SET
+                   acked = EXCLUDED.acked,
+                   seen_clears = activity.alert_acks.seen_clears
+                     + CASE WHEN NOT EXCLUDED.acked AND activity.alert_acks.acked THEN 1 ELSE 0 END,
+                   updated_at = now()
+                 RETURNING class, alert_key, acked, seen_clears, updated_at",
+            )
+            .bind(class)
+            .bind(key)
+            .bind(acked)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| format!("set_alert_ack: {e}"))?;
+        sqlx_core::query::query(
+            "DELETE FROM activity.alert_acks WHERE NOT acked AND updated_at < now() - interval '90 days'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_alert_ack prune: {e}"))?;
+        Ok(serde_json::json!({
+            "class": row.0, "key": row.1, "acked": row.2,
+            "seen_clears": row.3, "updated_at": row.4.to_rfc3339(),
+        }))
+    }
+
     pub async fn abandoned_task_list(
         &self,
         days: i32,

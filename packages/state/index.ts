@@ -199,9 +199,11 @@ export type {
   OpsTaskDetail,
   OpsQueuedTaskDetail,
   OpsBackfillResult,
+  OpsAlertAck,
 } from './ops/types.js';
 export { opsClient, opsEvents, parseOpsFrame, type OpsApi } from './ops/client.js';
 export {
+  alertsSource,
   jobsSseSource,
   schedulesSseSource,
   syncSseSource,
@@ -217,7 +219,7 @@ export {
   type AlertSeverity,
   type OpsAlert,
 } from './ops/alerts.js';
-export { AlertsState, type AlertsDeps } from './ops/alerts-state.svelte.js';
+export { AlertsState, type AlertsDeps, type AlertsSource } from './ops/alerts-state.svelte.js';
 export {
   JobsState,
   classifyJobFrame,

@@ -154,6 +154,18 @@ export interface OpsQueuedTaskDetail {
 }
 
 /**
+ * One row of `activity.alert_acks`: whether a standing alert is acked, and
+ * how many times its condition cleared (recurrence memory for escalation).
+ */
+export interface OpsAlertAck {
+  class: string;
+  key: string;
+  acked: boolean;
+  seen_clears: number;
+  updated_at: string;
+}
+
+/**
  * `POST /api/transcripts/backfill`: either a fresh wave (`queued` with its
  * `taskId`) or the already-running one (`running`, no id to name).
  */

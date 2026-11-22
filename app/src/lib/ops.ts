@@ -11,6 +11,7 @@ import {
   JobsState,
   SchedulesState,
   SyncState,
+  alertsSource,
   jobsSseSource,
   opsClient,
   opsEvents,
@@ -26,8 +27,11 @@ export const jobsState = new JobsState(jobsSseSource(api, () => opsEvents(base))
 export const schedulesState = new SchedulesState(schedulesSseSource(api, () => opsEvents(base)));
 export const syncState = new SyncState(syncSseSource(api, () => opsEvents(base)));
 
-/** The one alert store, derived from the three domain states above. */
-export const alertsState = new AlertsState({ jobs: jobsState, schedules: schedulesState, sync: syncState });
+/** The one alert store, derived from the three domain states above, dispositions persisted. */
+export const alertsState = new AlertsState(
+  { jobs: jobsState, schedules: schedulesState, sync: syncState },
+  alertsSource(api),
+);
 
 /** The raw ops client for one-shot reads the states don't own (drill-down, retry, backfill). */
 export const opsApi = api;

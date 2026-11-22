@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { jobsSseSource, schedulesSseSource, syncSseSource } from './sse.js';
+import { alertsSource, jobsSseSource, schedulesSseSource, syncSseSource } from './sse.js';
 import type { OpsApi } from '../client.js';
 import type {
   OpsQueueListing,
@@ -53,6 +53,18 @@ describe('ops SSE sources', () => {
     const a = api({ tryGetSyncState: vi.fn(async () => ({ ok: true as const, data: feed })) });
     const res = await syncSseSource(a, stream).readSyncState();
     expect(res).toEqual({ ok: true, data: entities });
+  });
+
+  it('alerts delegates disposition reads and writes', async () => {
+    const a = api({
+      tryGetAlertAcks: vi.fn(async () => ({ ok: true as const, data: { acks: [] } })),
+      tryPutAlertAck: vi.fn(async () => ({ ok: true as const, data: {} })),
+    });
+    const source = alertsSource(a);
+    await source.readAcks();
+    await source.writeAck('task', '7', true);
+    expect(a.tryGetAlertAcks).toHaveBeenCalledOnce();
+    expect(a.tryPutAlertAck).toHaveBeenCalledWith('task', '7', true);
   });
 
   it('a failed read passes through untouched', async () => {

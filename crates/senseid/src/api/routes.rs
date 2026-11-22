@@ -372,6 +372,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
         .route("/api/tasks/{id}/retry", post(crate::api::handlers::tasks::retry_task))
+        // Operations alert dispositions: ack state that survives reloads.
+        .route(
+            "/api/ops/alerts/acks",
+            get(crate::api::handlers::ops::list_alert_acks)
+                .put(crate::api::handlers::ops::put_alert_ack),
+        )
         // Background-task visibility (#96): the sensei.schedules table — what each
         // worker is, when it runs, and how its last pass went — plus editing it.
         .route("/api/tasks/scheduled", get(crate::api::handlers::scheduled_tasks::scheduled))

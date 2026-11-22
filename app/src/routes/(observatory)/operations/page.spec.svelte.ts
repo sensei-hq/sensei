@@ -25,12 +25,14 @@ describe('Operations page', () => {
     const sync = vi.spyOn(syncState, 'attach').mockResolvedValue(undefined);
     const alerts = vi.spyOn(alertsState, 'refresh');
     const failures = vi.spyOn(jobsState, 'refreshFailures').mockResolvedValue(undefined);
+    const dispositions = vi.spyOn(alertsState, 'loadDispositions').mockResolvedValue(undefined);
     const m = mountComponent(OperationsPage, {});
     cleanup.push(m.destroy);
     await vi.waitFor(() => expect(jobs).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(schedules).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(failures).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(dispositions).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(alerts).toHaveBeenCalled());
     for (const section of ['ops-alerts', 'ops-now', 'ops-queue', 'ops-failures', 'ops-schedules', 'ops-pipelines', 'ops-sync']) {
       expect(m.container.querySelector(`[data-component="${section}"]`), section).not.toBeNull();

@@ -1077,3 +1077,60 @@ async fn abandoned_task_list_names_per_task_rows() {
     assert_eq!(rows[0]["kind"], "process_file");
     assert!(rows[0]["error"].as_str().unwrap().starts_with("watchdog:"));
 }
+
+// ── activity.alert_acks — ack dispositions ────────────────────────────
+
+#[tokio::test]
+async fn alert_acks_round_trip_and_clear_bumps_seen_clears() {
+    let s = pg_store().await;
+    let key = format!("ack-test-{}", uuid::Uuid::new_v4());
+    // Fresh: no row.
+    let rows = s.list_alert_acks().await.unwrap();
+    assert!(!rows.iter().any(|r| r["key"] == key));
+    // Ack writes through.
+    let row = s.set_alert_ack("task", &key, true).await.unwrap();
+    assert_eq!(row["acked"], true);
+    assert_eq!(row["seen_clears"], 0);
+    let rows = s.list_alert_acks().await.unwrap();
+    assert!(rows.iter().any(|r| r["key"] == key && r["acked"] == true));
+    // A client-observed clear un-acks AND records the clear (recurrence
+    // memory) — it must not delete the row outright.
+    let row = s.set_alert_ack("task", &key, false).await.unwrap();
+    assert_eq!(row["acked"], false);
+    assert_eq!(row["seen_clears"], 1);
+    // Cleanup: this table has no TTL for acked rows.
+    sqlx_core::query::query("DELETE FROM activity.alert_acks WHERE alert_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn alert_ack_write_prunes_stale_cleared_rows() {
+    let s = pg_store().await;
+    let stale = format!("ack-stale-{}", uuid::Uuid::new_v4());
+    let fresh = format!("ack-fresh-{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query(
+        "INSERT INTO activity.alert_acks(class, alert_key, acked, seen_clears, updated_at) VALUES
+         ('task', $1, false, 2, now() - interval '100 days'),
+         ('task', $2, false, 1, now())",
+    )
+    .bind(&stale)
+    .bind(&fresh)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    // Any write prunes cleared rows untouched for 90+ days.
+    s.set_alert_ack("task", &format!("ack-trigger-{}", uuid::Uuid::new_v4()), true).await.unwrap();
+    let rows = s.list_alert_acks().await.unwrap();
+    assert!(!rows.iter().any(|r| r["key"] == stale), "stale cleared row pruned");
+    assert!(rows.iter().any(|r| r["key"] == fresh), "fresh cleared row kept");
+    sqlx_core::query::query(
+        "DELETE FROM activity.alert_acks WHERE alert_key = $1 OR alert_key LIKE 'ack-trigger-%'",
+    )
+    .bind(&fresh)
+    .execute(s.pool())
+    .await
+    .unwrap();
+}

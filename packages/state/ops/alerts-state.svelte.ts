@@ -2,17 +2,29 @@ import { classifyAlert, sortAlerts, type AlertClass, type OpsAlert } from './ale
 import type { JobsState } from './jobs-state.svelte.js';
 import { failingSchedules, type SchedulesState } from './schedules-state.svelte.js';
 import type { SyncState } from './sync-state.svelte.js';
+import { failureReason, type ApiResult } from '../result.js';
+import type { OpsAlertAck } from './types.js';
 
 // AlertsState derives standing alerts from the three domain states — never
 // from its own fetch. Repeats dedupe by (class, key): one entry with a
 // count, toasting once. A cleared condition drops its entry (and its ack);
 // a recurrence escalates one level. The poller toasts new warnings and
 // criticals; info-level refusals land in the section silently.
+//
+// Dispositions persist: acks and clears write through to the source, and a
+// hydrate restores them, so reloads keep ack flags and recurrence memory.
+// Derivation stays authoritative for STANDING — the source only annotates.
 
 export interface AlertsDeps {
   jobs: JobsState;
   schedules: SchedulesState;
   sync: SyncState;
+}
+
+/** What AlertsState needs of its source: disposition reads and writes. */
+export interface AlertsSource {
+  readAcks: () => Promise<ApiResult<{ acks: OpsAlertAck[] }>>;
+  writeAck: (cls: string, key: string, acked: boolean) => Promise<ApiResult<OpsAlertAck>>;
 }
 
 /** Cleared keys remembered for recurrence, FIFO-capped — a session's memory, not a log. */
@@ -32,14 +44,34 @@ function escalate(level: OpsAlert['level']): OpsAlert['level'] {
 
 export class AlertsState {
   private readonly deps: AlertsDeps;
+  private readonly source: AlertsSource;
   private history: string[] = [];
+  private dispositions = new Map<string, OpsAlertAck>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private onAlert: ((alert: OpsAlert) => void) | null = null;
 
   alerts = $state<OpsAlert[]>([]);
+  /** The dispositions read/write fault, when the source refuses — named, never silent. */
+  dispositionsError = $state<string | null>(null);
 
-  constructor(deps: AlertsDeps) {
+  constructor(deps: AlertsDeps, source: AlertsSource) {
     this.deps = deps;
+    this.source = source;
+  }
+
+  /**
+   * Hydrates persisted dispositions: acked flags and recurrence memory from
+   * before this session. Runs before the first derive (start does it);
+   * re-runnable to pick up dispositions written elsewhere.
+   */
+  async loadDispositions(): Promise<void> {
+    const read = await this.source.readAcks();
+    if (!read.ok) {
+      this.dispositionsError = `alert dispositions unreadable (${failureReason(read.error)})`;
+      return;
+    }
+    this.dispositionsError = null;
+    this.dispositions = new Map(read.data.acks.map((a) => [`${a.class}:${a.key}`, a]));
   }
 
   /**
@@ -65,7 +97,10 @@ export class AlertsState {
         next.push(prior);
       } else {
         const severity = classifyAlert(draft.class, draft.fields);
-        const recurred = this.history.includes(id);
+        const disp = this.dispositions.get(id);
+        // Recurrence is session memory OR durable memory: a key cleared
+        // before this session escalates on sight, no re-learning needed.
+        const recurred = this.history.includes(id) || (disp?.seen_clears ?? 0) > 0;
         const level = recurred ? escalate(severity.level) : severity.level;
         const alert: OpsAlert = {
           ...severity,
@@ -77,7 +112,7 @@ export class AlertsState {
           count: 1,
           firstSeen: now,
           lastSeen: now,
-          acked: false,
+          acked: disp?.acked ?? false,
           escalated: recurred,
         };
         created.push(alert);
@@ -86,30 +121,69 @@ export class AlertsState {
       standing.delete(id);
     }
     // Whatever remains stood for a condition that cleared: drop it (ack with
-    // it) and remember the key, so a recurrence escalates instead of
-    // re-alerting flat.
-    for (const id of standing.keys()) {
+    // it), remember the key, and write the clear through — the write is what
+    // makes the recurrence memory survive this session.
+    const cleared = [...standing.keys()];
+    for (const id of cleared) {
       this.remember(id);
+    }
+    if (cleared.length > 0) {
+      // flushClears faults by slot; this catch is for a source that throws
+      // instead of answering — it faults the same slot, never silent.
+      void this.flushClears(cleared).catch((e: unknown) => {
+        this.dispositionsError = `alert dispositions unwritable (${e instanceof Error ? e.message : 'write threw'})`;
+      });
     }
     this.alerts = sortAlerts(next);
     return created;
   }
 
-  /** Silences one standing alert until its condition clears or recurs. */
-  ack(class_: AlertClass, key: string): void {
+  /**
+   * Silences one standing alert until its condition clears or recurs. Writes
+   * through first: a refused write leaves the alert unacked and returns the
+   * reason, so the control can say so instead of lying.
+   */
+  async ack(class_: AlertClass, key: string): Promise<ApiResult<OpsAlertAck>> {
+    const res = await this.source.writeAck(class_, key, true);
+    if (!res.ok) {
+      this.dispositionsError = `alert dispositions unwritable (${failureReason(res.error)})`;
+      return res;
+    }
+    this.dispositionsError = null;
+    this.dispositions.set(`${class_}:${key}`, res.data);
     const found = this.alerts.find((a) => a.class === class_ && a.key === key);
     if (found) found.acked = true;
+    return res;
+  }
+
+  /** Records client-observed clears; a refusal faults the slot, never vanishes. */
+  private async flushClears(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      const sep = id.indexOf(':');
+      const res = await this.source.writeAck(id.slice(0, sep), id.slice(sep + 1), false);
+      if (!res.ok) {
+        this.dispositionsError = `alert dispositions unwritable (${failureReason(res.error)})`;
+        return;
+      }
+      this.dispositions.set(id, res.data);
+    }
+    this.dispositionsError = null;
   }
 
   /**
-   * Polls the domains, toasting new warnings and criticals. Toasts immediately
-   * on start (a standing failure is news on arrival), then every `intervalMs`.
-   * Info-level refusals never toast — they wait in the section.
+   * Polls the domains, toasting new warnings and criticals. Hydrates first:
+   * the opening derive must see persisted acks, or a reloaded ack re-toasts.
+   * Toasts immediately on start (a standing failure is news on arrival),
+   * then every `intervalMs`. Info-level refusals never toast — they wait in
+   * the section.
    */
   start(onAlert: (alert: OpsAlert) => void, intervalMs = 30000): void {
     this.stop();
     this.onAlert = onAlert;
-    this.toast(this.refresh());
+    void (async () => {
+      await this.loadDispositions();
+      if (this.onAlert) this.toast(this.refresh());
+    })();
     this.timer = setInterval(() => {
       if (this.onAlert) this.toast(this.refresh());
     }, intervalMs);
@@ -128,6 +202,8 @@ export class AlertsState {
     this.stop();
     this.alerts = [];
     this.history = [];
+    this.dispositions = new Map();
+    this.dispositionsError = null;
   }
 
   private toast(created: OpsAlert[]): void {

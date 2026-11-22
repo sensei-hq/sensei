@@ -4,6 +4,7 @@
 // independent. The schedules list unwraps `{ tasks }`, the sync rows
 // `{ entities }` — the endpoints' envelopes, not the stores' rows.
 import type { OpsApi } from '../client.js';
+import type { AlertsSource } from '../alerts-state.svelte.js';
 import type { JobsSource } from '../jobs-state.svelte.js';
 import type { SchedulesSource } from '../schedules-state.svelte.js';
 import type { SyncSource } from '../sync-state.svelte.js';
@@ -37,6 +38,14 @@ export function schedulesSseSource(api: OpsApi, stream: () => OpsEventStream): S
     patchSchedule: (name, patch) => api.tryPatchSchedule(name, patch),
     readScheduleLog: (name) => api.tryGetScheduleLog(name),
     events: sseEvents(stream),
+  };
+}
+
+/** An AlertsSource over the daemon: disposition reads and writes, no stream (alerts derive). */
+export function alertsSource(api: OpsApi): AlertsSource {
+  return {
+    readAcks: () => api.tryGetAlertAcks(),
+    writeAck: (cls, key, acked) => api.tryPutAlertAck(cls, key, acked),
   };
 }
 

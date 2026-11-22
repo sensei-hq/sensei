@@ -23,9 +23,11 @@
       await schedulesState.attach();
       await syncState.attach();
       // The jobs state attaches globally from boot, so its failures feed is
-      // stale on arrival — re-read it (and only it; the queue stays live),
-      // then re-derive alerts from the fresh rows.
+      // stale on arrival — re-read it (and only it; the queue stays live).
+      // Dispositions hydrate before the derive so reloaded acks apply at
+      // once instead of flashing unacked.
       await jobsState.refreshFailures();
+      await alertsState.loadDispositions();
       alertsState.refresh();
     })();
   });

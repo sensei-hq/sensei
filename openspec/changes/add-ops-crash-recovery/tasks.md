@@ -1,9 +1,9 @@
 ## 1. Ack dispositions (test-first)
 
-- [ ] 1.1 DDL `activity.alert_acks` (full-table file, `dbd` deploy, test-template rebuild)
-- [ ] 1.2 `GET`/`PUT /api/ops/alerts/acks` incl. 90-day stale prune in PUT
-- [ ] 1.3 Alerts store hydrates on attach, writes through on ack/clear
-- [ ] 1.4 State + endpoint specs; live-verified on scratch daemon
+- [x] 1.1 DDL `activity.alert_acks` (full-table file, `dbd` deploy, test-template rebuild)
+- [x] 1.2 `GET`/`PUT /api/ops/alerts/acks` incl. 90-day stale prune in PUT
+- [x] 1.3 Alerts store hydrates on attach, writes through on ack/clear
+- [x] 1.4 State + endpoint specs; live-verified on scratch daemon
 
 ## 2. Wave history (test-first)
 

@@ -22,6 +22,7 @@ pub(crate) mod metric_settings;
 pub(crate) mod metrics;
 pub(crate) mod model_provisioning;
 pub(crate) mod observatory;
+pub(crate) mod ops;
 pub(crate) mod planner;
 pub(crate) mod playbook;
 pub(crate) mod preferences;

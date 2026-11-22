@@ -6,6 +6,7 @@ import { failureFrom, type ApiResult } from '../result.js';
 import type { StreamFrame } from '../events.js';
 import type {
   OpsAbandonedFeed,
+  OpsAlertAck,
   OpsBackfillResult,
   OpsFailedTask,
   OpsIndexError,
@@ -32,13 +33,15 @@ export interface OpsApi {
   tryGetTask: (id: number) => Promise<ApiResult<OpsTaskDetail | OpsQueuedTaskDetail>>;
   tryRetryTask: (id: number) => Promise<ApiResult<{ taskId: number }>>;
   tryStartBackfill: () => Promise<ApiResult<OpsBackfillResult>>;
+  tryGetAlertAcks: () => Promise<ApiResult<{ acks: OpsAlertAck[] }>>;
+  tryPutAlertAck: (cls: string, key: string, acked: boolean) => Promise<ApiResult<OpsAlertAck>>;
 }
 
 /** The ops client: every call the daemon's answer or an `ApiResult` error,
  *  the daemon's own refusal text when it sends one. */
 export const opsClient = (base: string): OpsApi => {
   async function call<T>(
-    method: 'GET' | 'PATCH' | 'POST',
+    method: 'GET' | 'PATCH' | 'POST' | 'PUT',
     path: string,
     body?: unknown,
   ): Promise<ApiResult<T>> {
@@ -76,6 +79,9 @@ export const opsClient = (base: string): OpsApi => {
     tryGetTask: (id) => call<OpsTaskDetail | OpsQueuedTaskDetail>('GET', `/api/tasks/${id}`),
     tryRetryTask: (id) => call<{ taskId: number }>('POST', `/api/tasks/${id}/retry`),
     tryStartBackfill: () => call<OpsBackfillResult>('POST', '/api/transcripts/backfill'),
+    tryGetAlertAcks: () => call<{ acks: OpsAlertAck[] }>('GET', '/api/ops/alerts/acks'),
+    tryPutAlertAck: (cls, key, acked) =>
+      call<OpsAlertAck>('PUT', '/api/ops/alerts/acks', { class: cls, key, acked }),
   };
 };
 
