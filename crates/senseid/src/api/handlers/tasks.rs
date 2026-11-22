@@ -310,6 +310,55 @@ pub(crate) async fn task_events(
     crate::api::stream::heartbeat(head.chain(live))
 }
 
+/// `POST /api/tasks/{id}/retry` — re-queue a failed task as a new task id.
+///
+/// Reads the latest attempt from the durable log and enqueues a fresh task
+/// with its kind, paths, and parent (so the retry rejoins its wave's
+/// barrier). Plain [`enqueue`](crate::tasks::queue::TaskQueue::enqueue), never
+/// `enqueue_unique` — a manual retry is explicit and must not be deduped away.
+///
+/// 404 when the id never ran in this session; 409 when the latest attempt did
+/// not fail, or the kind is not retryable (the same
+/// [`is_retryable`](crate::tasks::TaskKind::is_retryable) rule the workers
+/// apply, so the button and the log agree). Fail-closed 500 on a read error.
+///
+/// Fidelity: the log carries kind, paths, and parent only, so the retry runs
+/// with default extras (`Scope::Full`, no `as_of`/`url`/`branch`/`force`) —
+/// a superset re-walk, never less than the failed work. The url-carrying
+/// library kinds are `retryable: false`, so no retry can enqueue a task whose
+/// inputs the log cannot reconstruct.
+pub(crate) async fn retry_task(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let since = state.task_queue.session_start();
+    let attempts = state.pg.task_execution_attempts(id as i64, since).await.map_err(|e| {
+        tracing::warn!(error = %e, task_id = id, "retry_task: attempts read failed");
+        super::err(StatusCode::INTERNAL_SERVER_ERROR, "attempts read failed")
+    })?;
+    let latest =
+        attempts.first().ok_or_else(|| super::err(StatusCode::NOT_FOUND, "unknown task"))?;
+    if latest["status"].as_str() != Some("failed") {
+        return Err(super::err(StatusCode::CONFLICT, "only a failed task can be retried"));
+    }
+    let kind_name = latest["kind"].as_str().unwrap_or_default();
+    let kind = crate::tasks::TaskKind::from_name(kind_name).ok_or_else(|| {
+        tracing::warn!(task_id = id, kind = kind_name, "retry_task: log names an unknown kind");
+        super::err(StatusCode::INTERNAL_SERVER_ERROR, "unknown task kind")
+    })?;
+    if !kind.is_retryable() {
+        return Err(super::err(StatusCode::CONFLICT, format!("{kind_name} must not be re-run")));
+    }
+    let mut task = crate::tasks::Task::new(
+        kind,
+        latest["folderPath"].as_str().unwrap_or_default(),
+        latest["path"].as_str().unwrap_or_default(),
+    );
+    task.parent_task_id = latest["parentTaskId"].as_u64();
+    let new_id = state.task_queue.enqueue(task).await;
+    Ok(Json(serde_json::json!({ "taskId": new_id })))
+}
+
 /// `GET /api/tasks/kinds` — the task catalogue, grouped by pipeline.
 ///
 /// Exists because the pipelines were previously convention only: which stage a
@@ -378,6 +427,81 @@ mod tests {
     /// The frame key carries the old `event_task_id` rule: job frames key
     /// by task id (followable), folder rollups and stages do not (their
     /// keys never parse as the followed task).
+    /// The shared `AppState` fixture. DB-backed: `make_ctx` connects to
+    /// `sensei_test` and panics if it cannot, so every async test below
+    /// needs the daemon database running — there is no graceful skip.
+    async fn state() -> crate::api::state::AppState {
+        crate::tasks::test_support::make_ctx().await.app_state.clone()
+    }
+
+    /// Throwaway execution-row ids. Queue ids restart at 1 per context, so
+    /// seeded rows sit far above any real id; each test takes its own.
+    static RETRY_TEST_ID: std::sync::atomic::AtomicI64 =
+        std::sync::atomic::AtomicI64::new(1_000_000_000);
+
+    fn retry_test_id() -> i64 {
+        RETRY_TEST_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    async fn seed_execution(
+        state: &crate::api::state::AppState,
+        task_id: i64,
+        kind: &str,
+        status: &str,
+    ) {
+        sqlx_core::query::query(
+            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, error_message) \
+             VALUES ($1, 4242, $2::sensei.task_execution_kind, '/r', '/r/a.ts', $3, 'boom')",
+        )
+        .bind(task_id)
+        .bind(kind)
+        .bind(status)
+        .execute(state.pg.pool())
+        .await
+        .expect("seed execution row");
+    }
+
+    #[tokio::test]
+    async fn retry_requeues_a_failed_task_with_its_identity() {
+        let state = state().await;
+        let id = retry_test_id();
+        seed_execution(&state, id, "process_file", "failed").await;
+        let body = retry_task(State(state.clone()), Path(id as u64))
+            .await
+            .expect("a failed retryable task re-queues");
+        let new_id = body.0["taskId"].as_u64().expect("the new task id");
+        assert_ne!(new_id, id as u64, "a retry is a new task, not the old id");
+        let task = state.task_queue.find_task(new_id).await.expect("the re-queued task");
+        assert_eq!(task.kind.to_string(), "process_file");
+        assert_eq!(task.path, "/r/a.ts");
+        assert_eq!(task.parent_task_id, Some(4242), "the retry rejoins its wave");
+    }
+
+    #[tokio::test]
+    async fn retry_refuses_a_task_that_never_ran() {
+        let state = state().await;
+        let err = retry_task(State(state), Path(retry_test_id() as u64)).await.expect_err("404");
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn retry_refuses_a_task_that_did_not_fail() {
+        let state = state().await;
+        let id = retry_test_id();
+        seed_execution(&state, id, "process_file", "completed").await;
+        let err = retry_task(State(state), Path(id as u64)).await.expect_err("409");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn retry_refuses_a_kind_that_must_not_rerun() {
+        let state = state().await;
+        let id = retry_test_id();
+        seed_execution(&state, id, "import_lib", "failed").await;
+        let err = retry_task(State(state), Path(id as u64)).await.expect_err("409");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+    }
+
     #[test]
     fn frame_keys_route_followers_and_exclude_rollups() {
         use crate::api::stream::StreamFrame;

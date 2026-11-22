@@ -132,3 +132,35 @@ export interface OpsWave {
   settled: number;
   done: boolean;
 }
+
+/** `GET /api/tasks/{id}` for a task with execution rows: newest attempt first, children, and their rollup. */
+export interface OpsTaskDetail {
+  taskId: number;
+  current: OpsFailedTask | null;
+  attempts: OpsFailedTask[];
+  children: OpsFailedTask[];
+  childSummary: { total: number; completed: number; failed: number; running: number; settled: boolean };
+}
+
+/** `GET /api/tasks/{id}` for a task still queued: no execution row yet, from the live queue. */
+export interface OpsQueuedTaskDetail {
+  taskId: number;
+  kind: string;
+  pipeline: string;
+  stage: string;
+  folderPath: string;
+  path: string;
+  status: 'queued';
+}
+
+/**
+ * `POST /api/transcripts/backfill`: either a fresh wave (`queued` with its
+ * `taskId`) or the already-running one (`running`, no id to name).
+ */
+export interface OpsBackfillResult {
+  ok: boolean;
+  queued: boolean;
+  taskId?: number;
+  from?: string | null;
+  running?: boolean;
+}

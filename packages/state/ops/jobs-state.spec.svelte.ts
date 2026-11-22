@@ -5,7 +5,14 @@ import {
   waveProgress,
   type JobsSource,
 } from './jobs-state.svelte.js';
-import type { OpsBackoffView, OpsQueueListing, OpsTaskView } from './types.js';
+import type {
+  OpsAbandonedFeed,
+  OpsBackoffView,
+  OpsFailedTask,
+  OpsIndexError,
+  OpsQueueListing,
+  OpsTaskView,
+} from './types.js';
 import type { StateStream, StreamFrame } from '../index.js';
 import type { ApiResult } from '../result.js';
 
@@ -52,14 +59,36 @@ function frame(
   return { v: 1, id: ++frameId, ts: '2026-11-21T10:00:00.000Z', entity, action, key, data, ...(done ? { done: true as const } : {}) };
 }
 
+function failedTask(id: number, overrides: Partial<OpsFailedTask> = {}): OpsFailedTask {
+  return {
+    taskId: id,
+    parentTaskId: null,
+    kind: 'process_file',
+    folderPath: '/r',
+    path: `/r/f${id}.ts`,
+    status: 'failed',
+    itemsProcessed: 0,
+    durationMs: null,
+    retryNumber: 0,
+    error: 'boom',
+    startedAt: '2026-11-21T10:00:00.000Z',
+    completedAt: null,
+    ...overrides,
+  };
+}
+
 function cannedJobs(opts: { queue?: OpsQueueListing } = {}) {
   const stream: {
     on: ((e: StreamFrame) => void) | null;
     onOpen: (() => void) | null;
     onFault: ((reason: string) => void) | null;
   } = { on: null, onOpen: null, onFault: null };
+  const abandoned: OpsAbandonedFeed = { days: 7, by_day: [], worst: [], tasks: [] };
   const source: JobsSource = {
     readQueue: vi.fn(async () => ({ ok: true as const, data: opts.queue ?? listing() })),
+    readFailed: vi.fn(async () => ({ ok: true as const, data: { tasks: [] as OpsFailedTask[] } })),
+    readAbandoned: vi.fn(async () => ({ ok: true as const, data: abandoned })),
+    readIndexErrors: vi.fn(async () => ({ ok: true as const, data: [] as OpsIndexError[] })),
     events: ((on, onOpen, onFault) => {
       stream.on = on;
       stream.onOpen = onOpen;
@@ -107,11 +136,19 @@ describe('JobsState', () => {
 
   it('attach hydrates the listing and stays live on frames', async () => {
     const { source, stream } = cannedJobs({
-      queue: listing({ pending: [row(1)], totals: { pending: 1, blocked: 0, running: 0 } }),
+      queue: listing({
+        pending: [row(1)],
+        totals: { pending: 1, blocked: 0, running: 0 },
+        by_kind: { process_file: { pending: 1, blocked: 0, running: 0 } },
+        truncated: true,
+      }),
     });
     const st = new JobsState(source);
     await st.attach();
     expect(st.pending.map((r) => r.id)).toEqual([1]);
+    expect(st.totals).toEqual({ pending: 1, blocked: 0, running: 0 });
+    expect(st.byKind).toEqual({ process_file: { pending: 1, blocked: 0, running: 0 } });
+    expect(st.truncated).toBe(true);
     expect(st.daemonReachable).toBe(true);
     // A queued frame adds a row without a re-read.
     stream.on!(frame('job', 'add', '2', { kind: 'process_file', path: '/r/f2.ts', folder_path: '/r' }));
@@ -179,6 +216,37 @@ describe('JobsState', () => {
     stream.onOpen!();
     expect(st.streamFault).toBeNull();
     expect(source.readQueue).toHaveBeenCalledTimes(2);
+    st.reset();
+  });
+
+  it('attach loads the failures feed; refresh replaces it', async () => {
+    const { source } = cannedJobs();
+    const st = new JobsState(source);
+    await st.attach();
+    expect(st.failuresLoaded).toBe(true);
+    expect(st.failed).toEqual([]);
+    source.readFailed = vi.fn(async () => ({ ok: true as const, data: { tasks: [failedTask(7)] } }));
+    await st.refreshFailures();
+    expect(st.failed.map((t) => t.taskId)).toEqual([7]);
+    expect(st.failuresError).toBeNull();
+    st.reset();
+    expect(st.failuresLoaded).toBe(false);
+  });
+
+  it('a failed feed read keeps last good and names the feed, not the daemon', async () => {
+    const { source } = cannedJobs();
+    source.readFailed = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: { tasks: [failedTask(7)] } })
+      .mockResolvedValue({ ok: false, error: { status: 500, message: 'feed failed closed' } });
+    const st = new JobsState(source);
+    await st.attach();
+    await st.refreshFailures();
+    // Last good rows stand; the fault names the feed; reachability is the
+    // queue poller's verdict, untouched by a feed that failed closed.
+    expect(st.failed.map((t) => t.taskId)).toEqual([7]);
+    expect(st.failuresError).toMatch(/failed tasks/);
+    expect(st.daemonReachable).toBe(true);
     st.reset();
   });
 

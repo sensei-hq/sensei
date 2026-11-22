@@ -767,6 +767,12 @@ impl TaskKind {
     pub const fn watchdog_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.info().budget_secs)
     }
+
+    /// The kind for a wire/log name, or `None` when nothing declares it.
+    /// Linear scan over [`Self::ALL`] — kinds are few and retries are rare.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().find(|k| k.info().name == name).cloned()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

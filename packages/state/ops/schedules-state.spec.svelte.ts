@@ -41,6 +41,14 @@ function cannedSchedules(items: OpsScheduledTask[] = []) {
   };
   const source: SchedulesSource = {
     readSchedules: vi.fn(async () => ({ ok: true as const, data: items })),
+    patchSchedule: vi.fn(async (name: string) => ({
+      ok: true as const,
+      data: items.find((s) => s.name === name) ?? schedule(name),
+    })),
+    readScheduleLog: vi.fn(async (name: string) => ({
+      ok: true as const,
+      data: { worker: name, file: `${name}.log`, lines: [] as string[] },
+    })),
     events: ((on, onOpen) => {
       stream.on = on;
       stream.onOpen = onOpen;
@@ -100,6 +108,56 @@ describe('SchedulesState', () => {
     st.apply(frame('schedule', 'tick'));
     expect(source.readSchedules).toHaveBeenCalledTimes(2);
     st.reset();
+  });
+
+  it('a patch applies the returned row in place', async () => {
+    const { source } = cannedSchedules([schedule('metrics', { interval_secs: 300 })]);
+    const st = new SchedulesState(source);
+    await st.attach();
+    source.patchSchedule = vi.fn(async () => ({
+      ok: true as const,
+      data: schedule('metrics', { interval_secs: 60 }),
+    }));
+    const res = await st.patch('metrics', { interval_secs: 60 });
+    expect(res.ok).toBe(true);
+    expect(st.items.find((s) => s.name === 'metrics')?.interval_secs).toBe(60);
+    st.reset();
+  });
+
+  it('a refused patch leaves the row and returns the reason', async () => {
+    const { source } = cannedSchedules([schedule('metrics', { interval_secs: 300 })]);
+    const st = new SchedulesState(source);
+    await st.attach();
+    source.patchSchedule = vi.fn(async () => ({
+      ok: false as const,
+      error: { status: 400, message: 'interval_secs must be positive' },
+    }));
+    const res = await st.patch('metrics', { interval_secs: -1 });
+    expect(res.ok).toBe(false);
+    expect(st.items.find((s) => s.name === 'metrics')?.interval_secs).toBe(300);
+    st.reset();
+  });
+
+  it('a log tail loads on demand; a refusal caches nothing', async () => {
+    const { source } = cannedSchedules([schedule('metrics')]);
+    const st = new SchedulesState(source);
+    await st.attach();
+    source.readScheduleLog = vi.fn(async () => ({
+      ok: true as const,
+      data: { worker: 'metrics', file: 'metrics.log', lines: ['ran ok'] },
+    }));
+    const res = await st.loadLog('metrics');
+    expect(res.ok).toBe(true);
+    expect(st.logs.metrics?.lines).toEqual(['ran ok']);
+    source.readScheduleLog = vi.fn(async () => ({
+      ok: false as const,
+      error: { status: 404, message: 'no log yet' },
+    }));
+    const failed = await st.loadLog('other');
+    expect(failed.ok).toBe(false);
+    expect(st.logs.other).toBeUndefined();
+    st.reset();
+    expect(st.logs).toEqual({});
   });
 
   it('the poller re-reads rows; a failed read keeps last good', async () => {

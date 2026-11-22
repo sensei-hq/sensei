@@ -15,10 +15,13 @@ import type { ApiResult } from '../../result.js';
 /** What a source needs of a socket: the EventManager's shape, carrying ops frames. */
 export type OpsEventStream = EventStream<StreamFrame>;
 
-/** A JobsSource over the daemon: `api` for the queue read, `stream()` for a fresh socket per subscription. */
+/** A JobsSource over the daemon: `api` for the queue + failures reads, `stream()` for a fresh socket per subscription. */
 export function jobsSseSource(api: OpsApi, stream: () => OpsEventStream): JobsSource {
   return {
     readQueue: () => api.tryGetQueue(),
+    readFailed: () => api.tryGetFailed(),
+    readAbandoned: () => api.tryGetAbandoned(),
+    readIndexErrors: () => api.tryGetIndexErrors(),
     events: sseEvents(stream),
   };
 }
@@ -31,6 +34,8 @@ export function schedulesSseSource(api: OpsApi, stream: () => OpsEventStream): S
       if (!read.ok) return read;
       return { ok: true, data: read.data.tasks };
     },
+    patchSchedule: (name, patch) => api.tryPatchSchedule(name, patch),
+    readScheduleLog: (name) => api.tryGetScheduleLog(name),
     events: sseEvents(stream),
   };
 }

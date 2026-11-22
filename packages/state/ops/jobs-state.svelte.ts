@@ -1,7 +1,15 @@
 import type { StreamFrame } from '../index.js';
 import type { StateStream } from '../source.js';
-import type { ApiResult } from '../result.js';
-import type { OpsBackoffView, OpsQueueListing, OpsTaskView } from './types.js';
+import { failureReason, type ApiResult } from '../result.js';
+import type {
+  OpsAbandonedFeed,
+  OpsBackoffView,
+  OpsFailedTask,
+  OpsIndexError,
+  OpsKindDepth,
+  OpsQueueListing,
+  OpsTaskView,
+} from './types.js';
 import { WaveState, waveProgress, type WaveRow } from './wave-state.svelte.js';
 
 export type { WaveRow };
@@ -11,11 +19,16 @@ export { waveProgress };
 // live deltas from job frames. The streams stay authoritative for membership
 // (queued/started/terminal); a 15s poller refreshes waits and blocked-on
 // edges the streams never re-emit, and is the recovery path when the daemon
-// was down at attach time.
+// was down at attach time. The failures feed (failed tasks, abandonments,
+// index errors) loads on attach and on explicit refresh only — failures are
+// history, and a feed that fails closed must fault itself, never the daemon.
 
-/** What JobsState needs of its source: the queue read and the stream. */
+/** What JobsState needs of its source: the queue read, the failures reads, and the stream. */
 export interface JobsSource {
   readQueue: () => Promise<ApiResult<OpsQueueListing>>;
+  readFailed: () => Promise<ApiResult<{ tasks: OpsFailedTask[] }>>;
+  readAbandoned: () => Promise<ApiResult<OpsAbandonedFeed>>;
+  readIndexErrors: () => Promise<ApiResult<OpsIndexError[]>>;
   events: StateStream<StreamFrame>;
 }
 
@@ -65,6 +78,23 @@ export class JobsState {
   blocked = $state<OpsTaskView[]>([]);
   running = $state<OpsTaskView[]>([]);
   backoff = $state<OpsBackoffView[]>([]);
+  failed = $state<OpsFailedTask[]>([]);
+  abandoned = $state<OpsAbandonedFeed | null>(null);
+  indexErrors = $state<OpsIndexError[]>([]);
+  /** Exact queue totals — the lists cap, these never lie. */
+  totals = $state<{ pending: number; blocked: number; running: number }>({
+    pending: 0,
+    blocked: 0,
+    running: 0,
+  });
+  /** Per-kind depth for the queue section. */
+  byKind = $state<Record<string, OpsKindDepth>>({});
+  /** True when the daemon capped a list the totals still count. */
+  truncated = $state(false);
+  /** True once the failures feed has loaded — distinguishes "none" from "never read". */
+  failuresLoaded = $state(false);
+  /** Which failures feed refused, when one did — the feed's fault, never the daemon's. */
+  failuresError = $state<string | null>(null);
   daemonReachable = $state(true);
   /** The live stream's own fault, held until the next open re-reads. */
   streamFault = $state<string | null>(null);
@@ -114,6 +144,14 @@ export class JobsState {
     this.blocked = [];
     this.running = [];
     this.backoff = [];
+    this.failed = [];
+    this.abandoned = null;
+    this.indexErrors = [];
+    this.totals = { pending: 0, blocked: 0, running: 0 };
+    this.byKind = {};
+    this.truncated = false;
+    this.failuresLoaded = false;
+    this.failuresError = null;
     this.streamFault = null;
     this.daemonReachable = true;
 
@@ -140,12 +178,36 @@ export class JobsState {
     try {
       await this.#hydrate();
       if (gen !== this.#gen) return;
+      await this.refreshFailures();
+      if (gen !== this.#gen) return;
     } catch {
       // A daemon that is down at attach time reads as unreachable, never as
       // failed: the poller below is the recovery path.
       this.daemonReachable = false;
     }
     this.#ensurePoller();
+  }
+
+  /**
+   * (Re)reads the failures feed: failed tasks, abandonments, index errors.
+   * Each feed lands independently — one refusal keeps the other two and
+   * faults itself by name, never the daemon.
+   */
+  async refreshFailures(): Promise<void> {
+    const [failed, abandoned, indexErrors] = await Promise.all([
+      this.source.readFailed(),
+      this.source.readAbandoned(),
+      this.source.readIndexErrors(),
+    ]);
+    const refused: string[] = [];
+    if (failed.ok) this.failed = failed.data.tasks;
+    else refused.push(`failed tasks (${failureReason(failed.error)})`);
+    if (abandoned.ok) this.abandoned = abandoned.data;
+    else refused.push(`abandonments (${failureReason(abandoned.error)})`);
+    if (indexErrors.ok) this.indexErrors = indexErrors.data;
+    else refused.push(`index errors (${failureReason(indexErrors.error)})`);
+    this.failuresError = refused.length > 0 ? refused.join('; ') : null;
+    this.failuresLoaded = true;
   }
 
   /** Full teardown — closes the stream, clears the lists. */
@@ -156,6 +218,14 @@ export class JobsState {
     this.blocked = [];
     this.running = [];
     this.backoff = [];
+    this.failed = [];
+    this.abandoned = null;
+    this.indexErrors = [];
+    this.totals = { pending: 0, blocked: 0, running: 0 };
+    this.byKind = {};
+    this.truncated = false;
+    this.failuresLoaded = false;
+    this.failuresError = null;
     this.daemonReachable = true;
     this.streamFault = null;
     this.#attached = false;
@@ -170,6 +240,9 @@ export class JobsState {
       this.blocked = read.data.blocked;
       this.running = read.data.running;
       this.backoff = read.data.backoff;
+      this.totals = read.data.totals;
+      this.byKind = read.data.by_kind;
+      this.truncated = read.data.truncated;
     }
     // A failed read keeps the last good lists — staleness reads as
     // unreachable, never as an empty queue.

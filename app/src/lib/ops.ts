@@ -24,3 +24,6 @@ const api = opsClient(base);
 export const jobsState = new JobsState(jobsSseSource(api, () => opsEvents(base)));
 export const schedulesState = new SchedulesState(schedulesSseSource(api, () => opsEvents(base)));
 export const syncState = new SyncState(syncSseSource(api, () => opsEvents(base)));
+
+/** The raw ops client for one-shot reads the states don't own (drill-down, retry, backfill). */
+export const opsApi = api;

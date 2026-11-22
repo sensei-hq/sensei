@@ -25,6 +25,21 @@ describe('ops SSE sources', () => {
     expect(res).toEqual({ ok: true, data: listing });
   });
 
+  it('jobs delegates the failures reads', async () => {
+    const a = api({
+      tryGetFailed: vi.fn(async () => ({ ok: true as const, data: { tasks: [] } })),
+      tryGetAbandoned: vi.fn(async () => ({ ok: true as const, data: { days: 7 } })),
+      tryGetIndexErrors: vi.fn(async () => ({ ok: true as const, data: [] })),
+    });
+    const source = jobsSseSource(a, stream);
+    await source.readFailed();
+    await source.readAbandoned();
+    await source.readIndexErrors();
+    expect(a.tryGetFailed).toHaveBeenCalledOnce();
+    expect(a.tryGetAbandoned).toHaveBeenCalledOnce();
+    expect(a.tryGetIndexErrors).toHaveBeenCalledOnce();
+  });
+
   it('schedules unwraps the { tasks } envelope', async () => {
     const tasks = [{ name: 'metrics' }] as OpsScheduledTask[];
     const a = api({ tryGetSchedules: vi.fn(async () => ({ ok: true as const, data: { tasks } })) });

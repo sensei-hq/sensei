@@ -196,6 +196,9 @@ export type {
   OpsSyncStateRow,
   OpsSyncStateFeed,
   OpsWave,
+  OpsTaskDetail,
+  OpsQueuedTaskDetail,
+  OpsBackfillResult,
 } from './ops/types.js';
 export { opsClient, opsEvents, parseOpsFrame, type OpsApi } from './ops/client.js';
 export {

@@ -112,6 +112,15 @@ describe("buildNavItems", () => {
       (g.children ?? []).some((c) => "href" in c && c.href === href),
     )?.text;
 
+  it("surfaces Operations (the jobs center) in the Review group", () => {
+    const o = byHref(buildNavItems(), "/operations");
+    expect(groupOf("/operations")).toBe("Review");
+    expect(o?.text).toBe("Operations");
+    expect(o?.kanji).toBe("運");
+    expect(o?.value).toBe("/operations");
+    expect(railIcon("/operations")).toBe(o?.icon);
+  });
+
   it("surfaces Consolidation (Tier-2 ruleset review) in the Review group", () => {
     const c = byHref(buildNavItems(), "/consolidation");
     expect(groupOf("/consolidation")).toBe("Review");

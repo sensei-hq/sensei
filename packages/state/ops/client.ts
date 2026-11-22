@@ -6,13 +6,16 @@ import { failureFrom, type ApiResult } from '../result.js';
 import type { StreamFrame } from '../events.js';
 import type {
   OpsAbandonedFeed,
+  OpsBackfillResult,
   OpsFailedTask,
   OpsIndexError,
+  OpsQueuedTaskDetail,
   OpsQueueListing,
   OpsScheduleLog,
   OpsSchedulePatch,
   OpsScheduledTask,
   OpsSyncStateFeed,
+  OpsTaskDetail,
 } from './types.js';
 
 // ─── The client ─────────────────────────────────────────────────────────────
@@ -26,13 +29,16 @@ export interface OpsApi {
   tryPatchSchedule: (name: string, patch: OpsSchedulePatch) => Promise<ApiResult<OpsScheduledTask>>;
   tryGetScheduleLog: (name: string, lines?: number) => Promise<ApiResult<OpsScheduleLog>>;
   tryGetSyncState: () => Promise<ApiResult<OpsSyncStateFeed>>;
+  tryGetTask: (id: number) => Promise<ApiResult<OpsTaskDetail | OpsQueuedTaskDetail>>;
+  tryRetryTask: (id: number) => Promise<ApiResult<{ taskId: number }>>;
+  tryStartBackfill: () => Promise<ApiResult<OpsBackfillResult>>;
 }
 
 /** The ops client: every call the daemon's answer or an `ApiResult` error,
  *  the daemon's own refusal text when it sends one. */
 export const opsClient = (base: string): OpsApi => {
   async function call<T>(
-    method: 'GET' | 'PATCH',
+    method: 'GET' | 'PATCH' | 'POST',
     path: string,
     body?: unknown,
   ): Promise<ApiResult<T>> {
@@ -67,6 +73,9 @@ export const opsClient = (base: string): OpsApi => {
         `/api/tasks/scheduled/${encodeURIComponent(name)}/log?lines=${lines}`,
       ),
     tryGetSyncState: () => call<OpsSyncStateFeed>('GET', '/api/dojo/sync-state'),
+    tryGetTask: (id) => call<OpsTaskDetail | OpsQueuedTaskDetail>('GET', `/api/tasks/${id}`),
+    tryRetryTask: (id) => call<{ taskId: number }>('POST', `/api/tasks/${id}/retry`),
+    tryStartBackfill: () => call<OpsBackfillResult>('POST', '/api/transcripts/backfill'),
   };
 };
 

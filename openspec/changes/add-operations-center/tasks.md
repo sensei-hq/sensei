@@ -54,10 +54,10 @@
 
 ## 7. Operations center surface
 
-- [ ] 7.1 Now / Queue / Failures / Schedules / Sync sections on the stores
-- [ ] 7.2 Drill-down (children/attempts), retry, schedule PATCH controls
-- [ ] 7.3 Rendered specs per section; hardcoded liveness claims wired or removed
-- [ ] 7.4 E2E: full-cycle run live in the center (root-add → queue → progress → done)
+- [x] 7.1 Now / Queue / Failures / Schedules / Sync sections on the stores
+- [x] 7.2 Drill-down (children/attempts), retry, schedule PATCH controls
+- [x] 7.3 Rendered specs per section; hardcoded liveness claims wired or removed
+- [ ] 7.4 E2E: full-cycle run live in the center (root-add → queue → progress → done) — folds into the slice 9 Tauri matrix (browser e2e is boot-gated)
 
 ## 8. Unified alerting (test-first)
 

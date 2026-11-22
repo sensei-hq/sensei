@@ -1,7 +1,7 @@
 import type { StreamFrame } from '../index.js';
 import type { StateStream } from '../source.js';
 import type { ApiResult } from '../result.js';
-import type { OpsScheduledTask } from './types.js';
+import type { OpsScheduleLog, OpsSchedulePatch, OpsScheduledTask } from './types.js';
 
 // SchedulesState observes the daemon's scheduled workers: one hydrate at
 // attach, then a 60s poll — runs change on minute cadence, never
@@ -9,9 +9,11 @@ import type { OpsScheduledTask } from './types.js';
 // no daemon emitter sends one yet — the tick only writes rows — so today the
 // poller carries every delta, and the stream carries the fault signal.
 
-/** What SchedulesState needs of its source: the schedules read and the stream. */
+/** What SchedulesState needs of its source: the schedules read, the controls, and the stream. */
 export interface SchedulesSource {
   readSchedules: () => Promise<ApiResult<OpsScheduledTask[]>>;
+  patchSchedule: (name: string, patch: OpsSchedulePatch) => Promise<ApiResult<OpsScheduledTask>>;
+  readScheduleLog: (name: string) => Promise<ApiResult<OpsScheduleLog>>;
   events: StateStream<StreamFrame>;
 }
 
@@ -32,6 +34,8 @@ export class SchedulesState {
   readonly source: SchedulesSource;
 
   items = $state<OpsScheduledTask[]>([]);
+  /** Log tails by worker name — loaded on expand, never polled. */
+  logs = $state<Record<string, OpsScheduleLog>>({});
   daemonReachable = $state(true);
   /** The live stream's own fault, held until the next open re-reads. */
   streamFault = $state<string | null>(null);
@@ -100,10 +104,37 @@ export class SchedulesState {
     this.#gen += 1;
     this.#teardown();
     this.items = [];
+    this.logs = {};
     this.daemonReachable = true;
     this.streamFault = null;
     this.#attached = false;
     this.#openedOnce = false;
+  }
+
+  /**
+   * Edits one worker's cadence. The daemon's returned row replaces the
+   * local one in place; a refusal leaves the row and returns the reason
+   * for the control to say.
+   */
+  async patch(name: string, patch: OpsSchedulePatch): Promise<ApiResult<OpsScheduledTask>> {
+    const res = await this.source.patchSchedule(name, patch);
+    if (res.ok) {
+      const at = this.items.findIndex((s) => s.name === name);
+      if (at >= 0) this.items[at] = res.data;
+      else this.items = [...this.items, res.data];
+    }
+    return res;
+  }
+
+  /**
+   * Loads one worker's log tail into the cache. Every expand re-reads —
+   * the tail is history the stream never carries, and the read is the
+   * update. A refusal caches nothing and returns the reason.
+   */
+  async loadLog(name: string): Promise<ApiResult<OpsScheduleLog>> {
+    const res = await this.source.readScheduleLog(name);
+    if (res.ok) this.logs = { ...this.logs, [name]: res.data };
+    return res;
   }
 
   /**

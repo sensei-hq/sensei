@@ -87,6 +87,38 @@ describe('opsClient — the paths', () => {
     expect(calledWith(fetch).url).toBe(`${BASE}/api/dojo/sync-state`);
     expect(res).toEqual({ ok: true, data: feed });
   });
+
+  it('reads one task with attempts and children', async () => {
+    const detail = { taskId: 7, current: null, attempts: [], children: [], childSummary: {} };
+    const fetch = stub(200, detail);
+    const res = await api().tryGetTask(7);
+    expect(calledWith(fetch).url).toBe(`${BASE}/api/tasks/7`);
+    expect(res).toEqual({ ok: true, data: detail });
+  });
+
+  it('retries a failed task', async () => {
+    const fetch = stub(200, { taskId: 9 });
+    const res = await api().tryRetryTask(7);
+    const call = calledWith(fetch);
+    expect(call.url).toBe(`${BASE}/api/tasks/7/retry`);
+    expect(call.method).toBe('POST');
+    expect(res).toEqual({ ok: true, data: { taskId: 9 } });
+  });
+
+  it('starts a transcript backfill', async () => {
+    const fetch = stub(200, { ok: true, queued: true, taskId: 11, from: null });
+    const res = await api().tryStartBackfill();
+    const call = calledWith(fetch);
+    expect(call.url).toBe(`${BASE}/api/transcripts/backfill`);
+    expect(call.method).toBe('POST');
+    expect(res).toEqual({ ok: true, data: { ok: true, queued: true, taskId: 11, from: null } });
+  });
+
+  it('an already-running backfill answers without a wave id', async () => {
+    stub(200, { ok: true, queued: false, running: true });
+    const res = await api().tryStartBackfill();
+    expect(res).toEqual({ ok: true, data: { ok: true, queued: false, running: true } });
+  });
 });
 
 describe('opsClient — failures', () => {
