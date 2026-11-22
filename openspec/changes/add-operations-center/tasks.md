@@ -61,11 +61,11 @@
 
 ## 8. Unified alerting (test-first)
 
-- [ ] 8.1 Severity mapping + reason codes for every failure class
-- [ ] 8.2 Dedupe store with success-clear; ack/silence/escalation
-- [ ] 8.3 Proactive notify beyond assistant-capture
-- [ ] 8.4 Daemon-down + provisioning banners
-- [ ] 8.5 E2E: forced failures alert, aggregate, ack, and clear
+- [x] 8.1 Severity mapping + reason codes for every failure class
+- [x] 8.2 Dedupe store with success-clear; ack/silence/escalation
+- [x] 8.3 Proactive notify beyond assistant-capture
+- [x] 8.4 Daemon-down + provisioning banners
+- [ ] 8.5 E2E: forced failures alert, aggregate, ack, and clear — folds into the slice 9 Tauri matrix (browser e2e is boot-gated)
 
 ## 9. E2E matrix completion (Tauri Playwright, live)
 

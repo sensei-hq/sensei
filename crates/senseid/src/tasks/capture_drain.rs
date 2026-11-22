@@ -217,7 +217,7 @@ async fn run(pg: Arc<PgStore>, sensei_dir: PathBuf) {
     // already returns a Result, so the schedule row records a real outcome
     // rather than an unconditional success.
     let store = pg.clone();
-    ticker::run_scheduled(pg, "capture_drain", move || {
+    ticker::run_scheduled(pg, "capture_drain", std::sync::Arc::new(crate::notifications::DesktopNotifier), move || {
         let (pg, dir) = (store.clone(), sensei_dir.clone());
         async move {
             let stats = drain_once(&pg, &dir).await.map_err(|e| e.to_string())?;

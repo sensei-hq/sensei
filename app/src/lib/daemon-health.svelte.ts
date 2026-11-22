@@ -10,9 +10,14 @@
 import type { DaemonDbMode } from './health-types.js';
 
 export class DaemonHealth {
-  /** Latest daemon-reported mode. `undefined` = unknown (daemon down, or a
-   *  payload that didn't carry the field) → no banner. */
+  /** Latest daemon-reported mode. `undefined` = unknown (a payload that
+   *  didn't carry the field) → no banner. An unreadable /health is DOWN,
+   *  not unknown — see `down`. */
   dbMode = $state<DaemonDbMode | undefined>(undefined);
+
+  /** True when the last /health poll could not be read at all — the banner's
+   *  outage state, distinct from an unknown mode, which stays silent. */
+  down = $state(false);
 
   #timer: ReturnType<typeof setInterval> | null = null;
 
@@ -42,8 +47,10 @@ export class DaemonHealth {
       import('./appstate.svelte.js'),
     ]);
     // A /health that cannot be read leaves the mode unknown (no banner) — never
-    // a mode read from a default (#288).
+    // a mode read from a default (#288) — and marks the daemon down, which IS
+    // a banner (8.4): silence about a dead daemon is the outage the spec closes.
     const read = await senseiApi(appState.port).tryGetHealth();
+    this.down = !read.ok;
     this.apply(read.ok ? (read.data as { daemonDbMode?: DaemonDbMode }) : {});
     // Degraded is a transient cold-boot recovery window. Once the daemon reports
     // a working pool there's nothing left to watch, so stop — /health runs a full

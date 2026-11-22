@@ -179,16 +179,22 @@ pub fn spawn(pg: Arc<PgStore>, gateway: Arc<gateway::Gateway>) {
         // per pass, so it does not need rebuilding each time.
         let generalizer = Arc::new(GatewayGeneralizer::new(gateway));
         let store = pg.clone();
-        ticker::run_scheduled(pg, "contribute", move || {
-            let (pg, generalizer) = (store.clone(), generalizer.clone());
-            async move {
-                let now_ms = chrono::Utc::now().timestamp_millis();
-                // Non-fatal: maybe_prepare logs its own failures and returns an
-                // outcome; a staged-nothing pass is a success, not an error.
-                let _ = maybe_prepare_contribution_batch(&pg, generalizer.as_ref(), now_ms).await;
-                Ok(())
-            }
-        })
+        ticker::run_scheduled(
+            pg,
+            "contribute",
+            std::sync::Arc::new(crate::notifications::DesktopNotifier),
+            move || {
+                let (pg, generalizer) = (store.clone(), generalizer.clone());
+                async move {
+                    let now_ms = chrono::Utc::now().timestamp_millis();
+                    // Non-fatal: maybe_prepare logs its own failures and returns an
+                    // outcome; a staged-nothing pass is a success, not an error.
+                    let _ =
+                        maybe_prepare_contribution_batch(&pg, generalizer.as_ref(), now_ms).await;
+                    Ok(())
+                }
+            },
+        )
         .await;
     });
 }

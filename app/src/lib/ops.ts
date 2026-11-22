@@ -7,6 +7,7 @@
 // appstate (or api.js, which specs mock) — the port is a build-time
 // constant; daemon-port.js is its home.
 import {
+  AlertsState,
   JobsState,
   SchedulesState,
   SyncState,
@@ -24,6 +25,9 @@ const api = opsClient(base);
 export const jobsState = new JobsState(jobsSseSource(api, () => opsEvents(base)));
 export const schedulesState = new SchedulesState(schedulesSseSource(api, () => opsEvents(base)));
 export const syncState = new SyncState(syncSseSource(api, () => opsEvents(base)));
+
+/** The one alert store, derived from the three domain states above. */
+export const alertsState = new AlertsState({ jobs: jobsState, schedules: schedulesState, sync: syncState });
 
 /** The raw ops client for one-shot reads the states don't own (drill-down, retry, backfill). */
 export const opsApi = api;

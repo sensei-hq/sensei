@@ -1337,12 +1337,17 @@ pub fn spawn(
 ) {
     tokio::spawn(async move {
         let store = pg.clone();
-        crate::tasks::ticker::run_scheduled(pg, "dojo_sync", move || {
-            let pg = store.clone();
-            let trackers = trackers.clone();
-            let queue = queue.clone();
-            async move { tick(pg, trackers, queue.sender()).await }
-        })
+        crate::tasks::ticker::run_scheduled(
+            pg,
+            "dojo_sync",
+            std::sync::Arc::new(crate::notifications::DesktopNotifier),
+            move || {
+                let pg = store.clone();
+                let trackers = trackers.clone();
+                let queue = queue.clone();
+                async move { tick(pg, trackers, queue.sender()).await }
+            },
+        )
         .await;
     });
 }

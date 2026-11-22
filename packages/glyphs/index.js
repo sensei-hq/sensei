@@ -23,6 +23,8 @@ export const KANJI_ICONS = {
   '運': 'i-solar-server-bold-duotone',
   '時': 'i-solar-calendar-bold-duotone',
   '清': 'i-solar-check-circle-bold-duotone',
+  // Alerting: 安 standing down.
+  '安': 'i-solar-shield-check-bold-duotone',
   '観': 'i-solar-eye-bold-duotone',
   '録': 'i-solar-history-bold-duotone',
   '作': 'i-solar-bolt-bold-duotone',

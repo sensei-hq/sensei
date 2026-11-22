@@ -97,6 +97,9 @@ pub(crate) async fn make_ctx_with_trackers(
         app_state,
         _graph_path: None,
         logger: sensei_logger::Logger::noop(),
+        // Silent: a test run must never pop OS notifications. Tests that pin
+        // notification content rebuild the context with a recorder.
+        notifier: std::sync::Arc::new(crate::notifications::NoopNotifier),
     })
 }
 

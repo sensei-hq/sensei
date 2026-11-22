@@ -56,10 +56,15 @@ pub fn effective_retention_days(configured: Option<String>) -> i32 {
 /// Spawn the pruner for the daemon's lifetime.
 pub fn spawn(pg: Arc<PgStore>) {
     tokio::spawn(async move {
-        ticker::run_scheduled(pg.clone(), "git_history_prune", move || {
-            let pg = pg.clone();
-            async move { prune_once(&pg).await }
-        })
+        ticker::run_scheduled(
+            pg.clone(),
+            "git_history_prune",
+            std::sync::Arc::new(crate::notifications::DesktopNotifier),
+            move || {
+                let pg = pg.clone();
+                async move { prune_once(&pg).await }
+            },
+        )
         .await;
     });
 }

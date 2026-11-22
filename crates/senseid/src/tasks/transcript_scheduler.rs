@@ -97,15 +97,20 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     // created after boot (a newly installed assistant) is picked up without
     // a restart or a consent toggle. The sync diffs and restarts only on
     // change, so steady-state ticks cost one consent read.
-    ticker::run_scheduled(pg.clone(), "ingest_captures", move || {
-        let queue = queue.clone();
-        let pg = pg.clone();
-        async move {
-            crate::transcript::sync_transcript_watches(&pg, &queue).await;
-            enqueue_backfill(&queue).await;
-            Ok(())
-        }
-    })
+    ticker::run_scheduled(
+        pg.clone(),
+        "ingest_captures",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let queue = queue.clone();
+            let pg = pg.clone();
+            async move {
+                crate::transcript::sync_transcript_watches(&pg, &queue).await;
+                enqueue_backfill(&queue).await;
+                Ok(())
+            }
+        },
+    )
     .await;
 }
 

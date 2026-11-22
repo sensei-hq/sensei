@@ -4,19 +4,26 @@
   // ops singletons; the page only attaches them, so navigation never loses
   // their state.
   import { PageHeader, Screen } from '$lib/components';
+  import OpsAlertsSection from '$lib/components/operations/OpsAlertsSection.svelte';
   import OpsNowSection from '$lib/components/operations/OpsNowSection.svelte';
   import OpsQueueSection from '$lib/components/operations/OpsQueueSection.svelte';
   import OpsFailuresSection from '$lib/components/operations/OpsFailuresSection.svelte';
   import OpsSchedulesSection from '$lib/components/operations/OpsSchedulesSection.svelte';
   import OpsPipelinesSection from '$lib/components/operations/OpsPipelinesSection.svelte';
   import OpsSyncSection from '$lib/components/operations/OpsSyncSection.svelte';
+  import { onMount } from 'svelte';
   import { railIcon } from '../observatory-nav';
-  import { jobsState, schedulesState, syncState } from '$lib/ops.js';
+  import { alertsState, jobsState, schedulesState, syncState } from '$lib/ops.js';
 
-  $effect(() => {
+  // onMount, not $effect: refresh() reads the alert list it writes, which
+  // would re-trigger an effect forever. Mount runs once, untracked.
+  onMount(() => {
     void jobsState.attach();
     void schedulesState.attach();
     void syncState.attach();
+    // The layout's poller keeps alerts fresh globally; the page re-derives
+    // once on arrival so the section never shows a stale list first.
+    alertsState.refresh();
   });
 </script>
 
@@ -31,6 +38,7 @@
     />
   {/snippet}
   {#snippet children()}
+    <OpsAlertsSection />
     <OpsNowSection />
     <OpsQueueSection />
     <OpsFailuresSection />

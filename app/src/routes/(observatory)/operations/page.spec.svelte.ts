@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
-import { jobsState, schedulesState, syncState } from '$lib/ops.js';
+import { alertsState, jobsState, schedulesState, syncState } from '$lib/ops.js';
 import OperationsPage from './+page.svelte';
 
 // The page only attaches the singletons and stacks the sections — the
@@ -14,6 +14,7 @@ afterEach(() => {
   jobsState.reset();
   schedulesState.reset();
   syncState.reset();
+  alertsState.reset();
   vi.restoreAllMocks();
 });
 
@@ -22,12 +23,14 @@ describe('Operations page', () => {
     const jobs = vi.spyOn(jobsState, 'attach').mockResolvedValue(undefined);
     const schedules = vi.spyOn(schedulesState, 'attach').mockResolvedValue(undefined);
     const sync = vi.spyOn(syncState, 'attach').mockResolvedValue(undefined);
+    const alerts = vi.spyOn(alertsState, 'refresh');
     const m = mountComponent(OperationsPage, {});
     cleanup.push(m.destroy);
     expect(jobs).toHaveBeenCalledOnce();
     expect(schedules).toHaveBeenCalledOnce();
     expect(sync).toHaveBeenCalledOnce();
-    for (const section of ['ops-now', 'ops-queue', 'ops-failures', 'ops-schedules', 'ops-pipelines', 'ops-sync']) {
+    expect(alerts).toHaveBeenCalled();
+    for (const section of ['ops-alerts', 'ops-now', 'ops-queue', 'ops-failures', 'ops-schedules', 'ops-pipelines', 'ops-sync']) {
       expect(m.container.querySelector(`[data-component="${section}"]`), section).not.toBeNull();
     }
   });

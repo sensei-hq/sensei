@@ -16,6 +16,7 @@
     import { openSettingsWindow } from "$lib/stores/windows.svelte.js";
     import { AlertList } from "@rokkit/ui";
     import { alerts } from "@rokkit/states";
+    import { startOpsAlerts, stopOpsAlerts } from "$lib/ops-alerts.js";
     import ScanProgress from "$lib/components/indexer/ScanProgress.svelte";
     import { scanState } from "$lib/scan.js";
 
@@ -48,7 +49,7 @@
       remedy: "Check that the sensei daemon is running, then retry. Health shows which part is down.",
       service: "the sensei daemon",
     });
-    const banner = $derived(daemonBanner(daemonHealth.dbMode, appState.configError));
+    const banner = $derived(daemonBanner(daemonHealth.dbMode, appState.configError, daemonHealth.down));
 
     // Which window this is decides what it does beyond its own pages: the
     // global work is the main window's alone (a second copy in Settings opened
@@ -108,6 +109,9 @@
         if (duties.announcesIdentities) {
             personaList.onAttention = (text) =>
                 void alerts.push({ type: "warning", text, timeout: 8000, actions: openSettingsAction });
+            // Operations alerts toast through the same list, under the same
+            // visibility rule: the main window announces, others stay silent.
+            startOpsAlerts((toast) => void alerts.push({ ...toast, actions: openOperationsAction }));
         }
         if (duties.renewsCredentials) {
             personaList.renews = true;
@@ -144,6 +148,7 @@
         return () => {
             for (const fn of unlistens) fn();
             daemonHealth.stop();
+            stopOpsAlerts();
             if (duties.renewsCredentials) {
                 personaList.renews = false;
                 personaList.stop();
@@ -157,6 +162,10 @@
 
 {#snippet openSettingsAction()}
     <button type="button" data-open-identities onclick={openIdentities}>Open Settings</button>
+{/snippet}
+
+{#snippet openOperationsAction()}
+    <button type="button" data-open-operations onclick={() => goto("/operations")}>Open Operations</button>
 {/snippet}
 
 {#if banner}<Banner bleed {...banner} data-daemon-banner />{/if}

@@ -301,6 +301,7 @@ mod tests {
             app_state,
             _graph_path: None,
             logger: sensei_logger::Logger::noop(),
+            notifier: std::sync::Arc::new(crate::notifications::NoopNotifier),
         }))
     }
 

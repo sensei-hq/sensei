@@ -26,22 +26,28 @@ pub struct PassReport {
 pub fn spawn(pg: Arc<PgStore>) {
     tokio::spawn(async move {
         let store = pg.clone();
-        ticker::run_scheduled(pg, "derive_session_signals", move || {
-            let pg = store.clone();
-            async move {
-                let report = pass(&pg, chrono::Utc::now().timestamp_millis(), PASS_LIMIT).await?;
-                if report.derived > 0 {
-                    tracing::info!(
-                        derived = report.derived,
-                        failed = report.failed,
-                        "derive_session_signals: derived {} session(s), {} failed",
-                        report.derived,
-                        report.failed,
-                    );
+        ticker::run_scheduled(
+            pg,
+            "derive_session_signals",
+            std::sync::Arc::new(crate::notifications::DesktopNotifier),
+            move || {
+                let pg = store.clone();
+                async move {
+                    let report =
+                        pass(&pg, chrono::Utc::now().timestamp_millis(), PASS_LIMIT).await?;
+                    if report.derived > 0 {
+                        tracing::info!(
+                            derived = report.derived,
+                            failed = report.failed,
+                            "derive_session_signals: derived {} session(s), {} failed",
+                            report.derived,
+                            report.failed,
+                        );
+                    }
+                    outcome(&report)
                 }
-                outcome(&report)
-            }
-        })
+            },
+        )
         .await;
     });
 }

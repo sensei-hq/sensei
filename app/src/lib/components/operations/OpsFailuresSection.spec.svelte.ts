@@ -106,6 +106,17 @@ describe('OpsFailuresSection', () => {
     await vi.waitFor(() => expect(m.container.textContent).toContain('must not be re-run'));
   });
 
+  it('a feed that fails closed never reads as healthy', () => {
+    // Every feed refused on first load: the error renders instead of an
+    // empty "No failures" — fail-closed per the alerting spec.
+    jobsState.failuresLoaded = true;
+    jobsState.failuresError = 'failed tasks (feed failed closed)';
+    flushSync();
+    const m = mount();
+    expect(m.container.textContent).toContain('failed closed');
+    expect(m.container.textContent).not.toContain('No failures');
+  });
+
   it('a feed fault renders without hiding the rows that landed', () => {
     jobsState.failuresLoaded = true;
     jobsState.failed = [failed(7)];

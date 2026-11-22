@@ -180,10 +180,15 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
 /// Spawn the scheduled loop. Cadence lives in `sensei.schedules` (`forge_token`).
 pub fn spawn(pg: Arc<PgStore>) {
     tokio::spawn(async move {
-        crate::tasks::ticker::run_scheduled(pg.clone(), "forge_token", move || {
-            let pg = pg.clone();
-            async move { tick(pg).await }
-        })
+        crate::tasks::ticker::run_scheduled(
+            pg.clone(),
+            "forge_token",
+            std::sync::Arc::new(crate::notifications::DesktopNotifier),
+            move || {
+                let pg = pg.clone();
+                async move { tick(pg).await }
+            },
+        )
         .await;
     });
 }

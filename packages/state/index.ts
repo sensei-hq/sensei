@@ -209,6 +209,16 @@ export {
 } from './ops/sources/sse.js';
 export { WaveState, waveProgress, type WaveRow } from './ops/wave-state.svelte.js';
 export {
+  classifyAlert,
+  sortAlerts,
+  type AlertClass,
+  type AlertKind,
+  type AlertLevel,
+  type AlertSeverity,
+  type OpsAlert,
+} from './ops/alerts.js';
+export { AlertsState, type AlertsDeps } from './ops/alerts-state.svelte.js';
+export {
   JobsState,
   classifyJobFrame,
   JOBS_POLL_MS,

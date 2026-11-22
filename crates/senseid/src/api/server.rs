@@ -223,6 +223,15 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                 } else {
                     write_startup_error(&msg);
                     crate::api::resilience::mark_degraded();
+                    // Proactive notify, once: this branch runs a single time at
+                    // boot, so no flap guard is needed. Provisioning stays
+                    // silent — a wait is not news.
+                    {
+                        use crate::notifications::Notifier;
+                        let (level, title, body) =
+                            crate::notifications::degraded_note(&cfg.db_name);
+                        crate::notifications::DesktopNotifier.notify(level, &title, &body);
+                    }
                     tracing::warn!(
                         "senseid listening on :{} (degraded — DB unavailable; self-heal armed)",
                         port
@@ -420,6 +429,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         app_state: state.clone(),
         _graph_path: None,
         logger: task_logger,
+        notifier: Arc::new(crate::notifications::DesktopNotifier),
     });
     // Schema first (#260): a new binary deploys its release's schema before any
     // worker touches the database — `brew upgrade` neither deploys nor restarts.
