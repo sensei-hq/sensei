@@ -19,7 +19,7 @@
 - [ ] 3.2 Transcript re-drive: fresh backfill covering un-ingested sessions, no duplicates
 - [ ] 3.3 Metric re-drive: missed days via the `as_of` path, no grain gaps
 - [ ] 3.4 Sync: assert next-pass coverage, no boot pass (push-ack race documented in code)
-- [ ] 3.5 Orphan sweep: marker + retryable + `retry_number < MAX` bounds, carried retry numbers, `enqueue_unique` dedup, layered order
+- [x] 3.5 Orphan sweep: marker + retryable + `retry_number < MAX` bounds, carried retry numbers, `enqueue_unique` dedup, layered order
 - [ ] 3.6 Index resume pinned by kill-restart proof (fingerprint counts, no redo)
 - [ ] 3.7 Schedule self-heal asserted sufficient (no new machinery)
 

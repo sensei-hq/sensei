@@ -1120,6 +1120,48 @@ async fn wave_runs_open_close_list_and_boot_abandon() {
     assert_eq!(row["outcome"], "abandoned");
 }
 
+// ── orphan re-queue sweep ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn orphaned_task_rows_lists_only_unparented_orphans_below_max() {
+    let s = pg_store().await;
+    let tag = uuid::Uuid::new_v4().to_string();
+    let seed = |task_id: i64, parent: Option<i64>, kind: &str, retry: i32, error: &str| {
+        let fp = format!("/_test/orphan/{tag}");
+        let kind = kind.to_string();
+        let error = error.to_string();
+        let s = &s;
+        async move {
+            let id = s
+                .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                    task_id,
+                    parent_task_id: parent,
+                    task_kind: &kind,
+                    folder_path: &fp,
+                    path: "src/x.rs",
+                    retry_number: retry,
+                    retried_from: None,
+                })
+                .await
+                .unwrap();
+            s.fail_task_execution(&id, 5, &error).await.unwrap();
+        }
+    };
+    // Taken: crash orphan, unparented, under MAX.
+    seed(310001, None, "process_file", 0, "orphaned: daemon restarted while task was running")
+        .await;
+    // Left: parented (wave/folder children re-drive covers), legit failure,
+    // exhausted, tested in the sweep, not here — the query filters orphans only.
+    seed(310002, Some(99), "process_file", 0, "orphaned: daemon restarted while task was running")
+        .await;
+    seed(310003, None, "process_file", 0, "parse blew up").await;
+    let rows = s.orphaned_task_rows(3).await.unwrap();
+    let ours: Vec<_> =
+        rows.into_iter().filter(|r| r["folderPath"] == format!("/_test/orphan/{tag}")).collect();
+    assert_eq!(ours.len(), 1, "only the unparented orphan: {ours:?}");
+    assert_eq!(ours[0]["taskId"].as_i64(), Some(310001));
+}
+
 // ── retried_from_execution_id — retry lineage ─────────────────────────
 
 static LINEAGE_TEST_ID: std::sync::atomic::AtomicI64 =

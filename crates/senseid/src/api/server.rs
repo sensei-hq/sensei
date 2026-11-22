@@ -673,6 +673,15 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         tracing::info!("startup: resumed {} pending folder scan(s)", resumed);
     }
 
+    // Orphan sweep LAST: crash-orphaned one-offs return here, after every
+    // fan-out (wave re-drive, folder resume) had its chance — `enqueue_unique`
+    // dedups whatever they already covered, so the sweep is strictly the
+    // catch-all and nothing runs twice.
+    let orphans = crate::tasks::resume::resume_orphaned_tasks(&task_queue, &state.pg).await;
+    if orphans > 0 {
+        tracing::info!("startup: re-queued {} crash-orphaned task(s)", orphans);
+    }
+
     spawn_root_watchers(&state, task_queue.clone()).await;
 
     // Materialize the global rules file (~/.sensei/rules.md) from the governance

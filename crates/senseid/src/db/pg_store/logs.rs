@@ -995,5 +995,39 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
+    /// Crash orphans eligible for the boot re-queue sweep: failed rows the
+    /// reconcile marked (never legit failures — those already got bounded
+    /// in-session retries), unparented (wave/folder children belong to their
+    /// re-drive, not the sweep), and under the retry cap so poison
+    /// terminates across crashes. One row per task id: the latest attempt.
+    pub async fn orphaned_task_rows(
+        &self,
+        max_retries: i32,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, i64, String, String, String, i32)> =
+            sqlx_core::query_as::query_as(
+                "SELECT DISTINCT ON (task_id) id, task_id, task_kind::text, folder_path, path, retry_number
+                   FROM activity.task_executions
+                  WHERE status = 'failed'
+                    AND error_message = 'orphaned: daemon restarted while task was running'
+                    AND parent_task_id IS NULL
+                    AND retry_number < $1
+                  ORDER BY task_id, started_at DESC",
+            )
+            .bind(max_retries)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("orphaned_task_rows: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, task_id, kind, folder_path, path, retry_number)| {
+                serde_json::json!({
+                    "id": id, "taskId": task_id, "kind": kind,
+                    "folderPath": folder_path, "path": path, "retryNumber": retry_number,
+                })
+            })
+            .collect())
+    }
+
     // ── Knowledge Sources (federation endpoints) ──────────────────────
 }
