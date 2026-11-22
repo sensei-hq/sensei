@@ -22,6 +22,11 @@ use crate::indexer::lang::{self, Source, TypeHomes};
 /// How long one compile may take before it is abandoned. A bounded wait: a
 /// compiler that never returns must not hold every file task of its project.
 const COMPILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// At most this many compiler subprocesses at once, across every engine,
+/// repo, and scan: each is a whole compiler's memory and CPU, and an
+/// uncapped storm (five ts-drivers, load 31) starves the file workers.
+/// Compiles past the cap wait for a permit instead of spawning.
+const MAX_CONCURRENT_COMPILES: usize = 2;
 /// How long the build tool may take to name a package's project.
 const LOCATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -41,6 +46,26 @@ type Fingerprint = String;
 
 /// An engine's manifest and a directory: what a lookup is keyed by.
 type Key = (&'static str, PathBuf);
+
+/// One compilation flight, shared across CompilerSessions instances: two
+/// scans compiling one root run one driver. Keyed by (manifest, canonical
+/// root, sources fingerprint) — different sources are different flights,
+/// never a stale share. Entries live only while the flight runs; a later
+/// caller recompiles rather than reading yesterday's answer.
+type FlightKey = (String, PathBuf, String);
+type Flight = std::sync::Arc<tokio::sync::OnceCell<Result<std::sync::Arc<Project>, String>>>;
+
+fn permits() -> &'static tokio::sync::Semaphore {
+    static PERMITS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    PERMITS.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_COMPILES))
+}
+
+fn inflight() -> &'static std::sync::Mutex<std::collections::HashMap<FlightKey, Flight>> {
+    static INFLIGHT: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<FlightKey, Flight>>,
+    > = std::sync::OnceLock::new();
+    INFLIGHT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
 
 /// One project's compiles: the one for the latest state of its sources, the
 /// last one that finished, and the turn every compile of it takes.
@@ -207,14 +232,7 @@ impl CompilerSessions {
         let project = cell
             .get_or_init(|| async {
                 let _turn = turn.lock().await;
-                let mut project = compile(engine, root, &fingerprint).await?;
-                // A file the compile created (rust-analyzer's `Cargo.lock`) is
-                // part of what it compiled; a source edited meanwhile is not.
-                let after = source_files(root, engine.sources()).await?;
-                if before.iter().all(|(path, seen)| after.get(path) == Some(seen)) {
-                    project.fingerprint = digest(&after);
-                }
-                Ok(Arc::new(project))
+                compile(engine, root, &fingerprint, &before).await
             })
             .await
             .clone()?;
@@ -366,12 +384,49 @@ pub fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Compile `root` into a SCIP index and read it.
+/// Compile `root` into a SCIP index and read it — one flight per (engine,
+/// root, sources) across ALL sessions: two scans compiling one package
+/// share the driver's answer instead of running it twice.
 async fn compile(
     engine: &'static dyn CompilerEngine,
     root: &Path,
     fingerprint: &str,
+    before: &BTreeMap<String, String>,
+) -> Result<Arc<Project>, String> {
+    let key = (engine.manifest().to_string(), canonical(root), fingerprint.to_string());
+    let cell = inflight()
+        .lock()
+        .map_err(|_| poisoned())?
+        .entry(key.clone())
+        .or_insert_with(|| Arc::new(tokio::sync::OnceCell::new()))
+        .clone();
+    let got = cell
+        .get_or_init(|| async {
+            compile_inner(engine, root, fingerprint, before).await.map(Arc::new)
+        })
+        .await
+        .clone()?;
+    // Release the flight: entries live only while the compile runs, so the
+    // map cannot grow and a later caller recompiles rather than reading a
+    // stale share. A joiner that cloned the Arc first still awaits the same
+    // cell after removal — Arc keeps it alive.
+    if let Ok(mut flights) = inflight().lock()
+        && flights.get(&key).is_some_and(|c| Arc::ptr_eq(c, &cell))
+    {
+        flights.remove(&key);
+    }
+    Ok(got)
+}
+
+/// The actual subprocess run, behind the global permit: at most
+/// MAX_CONCURRENT_COMPILES compilers at once, whatever asks.
+async fn compile_inner(
+    engine: &'static dyn CompilerEngine,
+    root: &Path,
+    fingerprint: &str,
+    before: &BTreeMap<String, String>,
 ) -> Result<Project, String> {
+    let _permit = permits().acquire().await.map_err(|_| "compile permits closed".to_string())?;
     let out_dir = std::env::temp_dir().join("sensei-compiler");
     tokio::fs::create_dir_all(&out_dir)
         .await
@@ -421,7 +476,16 @@ async fn compile(
         }
     }
     let index = merged.ok_or_else(|| "the engine declares no configuration".to_string())?;
-    Ok(Project { root: root.to_path_buf(), index, fingerprint: fingerprint.to_string() })
+    let mut project =
+        Project { root: root.to_path_buf(), index, fingerprint: fingerprint.to_string() };
+    // A file the compile created (rust-analyzer's `Cargo.lock`) is part of
+    // what it compiled; a source edited meanwhile is not. Decided once per
+    // flight so every joiner shares one verdict.
+    let after = source_files(root, engine.sources()).await?;
+    if before.iter().all(|(path, seen)| after.get(path) == Some(seen)) {
+        project.fingerprint = digest(&after);
+    }
+    Ok(project)
 }
 
 /// Run an adapter's invocation, bounded by `timeout`; its stdout on success.
@@ -1792,5 +1856,78 @@ mod tests {
             "{on_line_8:?}"
         );
         assert_eq!(placed.len(), 5, "map, open, bind ×2, go: {placed:?}");
+    }
+
+    /// **THE MACHINE IS FINITE: AT MOST TWO COMPILERS AT ONCE.** Five
+    /// ts-drivers on tsconfig-less packages pegged load to 31 and starved
+    /// the file workers. Compiles past the cap wait for a permit instead
+    /// of spawning — across engines, repos, and scans.
+    #[tokio::test]
+    async fn at_most_two_compiles_run_at_once_across_instances() {
+        let elsewhere = tempfile::tempdir().unwrap();
+        let counter = elsewhere.path().join("overlap.txt");
+        let engine: &'static Counting =
+            Box::leak(Box::new(Counting { counter: counter.clone(), pause: "0.4", creates: None }));
+        let mut jobs = Vec::new();
+        let mut _dirs = Vec::new();
+        for _ in 0..4 {
+            let dir = tempfile::tempdir().unwrap();
+            let root = canonical(dir.path());
+            std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+            std::fs::write(root.join("lib.rs"), "pub fn a() {}\n").unwrap();
+            let sessions = std::sync::Arc::new(CompilerSessions::new(&root));
+            jobs.push(tokio::spawn(async move { sessions.project_for(engine, &root).await }));
+            _dirs.push(dir);
+        }
+        for j in jobs {
+            j.await.unwrap().expect("compiles");
+        }
+        let log = std::fs::read_to_string(&counter).unwrap();
+        let (mut depth, mut max_depth) = (0, 0);
+        for line in log.lines() {
+            match line {
+                "start" => {
+                    depth += 1;
+                    max_depth = max_depth.max(depth);
+                }
+                "end" => {
+                    depth -= 1;
+                }
+                _ => {}
+            }
+        }
+        assert!(max_depth <= 2, "at most two compilers at once, saw {max_depth}:\n{log}");
+        assert_eq!(log.lines().filter(|l| *l == "end").count(), 4, "all four complete:\n{log}");
+    }
+
+    /// **ONE FLIGHT PER (ENGINE, ROOT, SOURCES).** Two scans compiling the
+    /// same package at once ran two drivers; the second now awaits the
+    /// first. Different sources still recompile — sharing never serves
+    /// stale answers.
+    #[tokio::test]
+    async fn two_instances_compiling_one_root_run_one_driver() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\n").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let counter = elsewhere.path().join("runs.txt");
+        let engine: &'static Counting =
+            Box::leak(Box::new(Counting { counter: counter.clone(), pause: "0.2", creates: None }));
+        let a = std::sync::Arc::new(CompilerSessions::new(&root));
+        let b = std::sync::Arc::new(CompilerSessions::new(&root));
+        let (ra, rb) = tokio::join!(a.project_for(engine, &root), b.project_for(engine, &root));
+        ra.expect("a compiles");
+        rb.expect("b compiles");
+        let runs = || {
+            std::fs::read_to_string(&counter)
+                .map(|t| t.lines().filter(|l| *l == "end").count())
+                .unwrap_or(0)
+        };
+        assert_eq!(runs(), 1, "one driver for one root");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
+        a.project_for(engine, &root).await.expect("recompiles");
+        assert_eq!(runs(), 2, "changed sources still recompile");
     }
 }
