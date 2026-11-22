@@ -1,28 +1,30 @@
-# Checkpoint — 2026-11-22 (v0.26.0 released; large-root perf pass done)
+# Checkpoint — 2026-11-23 (perf-indexer-storm landed)
 
-**Slice:** release v0.26.0 + perf recon on ~/Developer + ~/Work.
-**Branch:** `develop` @ `c46b052ee` (pushed). Tag `v0.26.0` on main.
+**Slice:** P1–P5 storm follow-ups + 4.4 harness fix.
+**Branch:** `develop` (pushed, 8 commits past v0.26.0 checkpoint).
+Tag `v0.26.0` on main; deploy-dojo still waits on user approval.
 
 ## Done
-- v0.26.0: PR #519 merged, main CI green, tag pushed, release + tap
-  jobs success, marketplace synced, 0.26.0 installed + verified live.
-  Only deploy-dojo waits (manual approval gate).
-- Perf: ~/Work added (60 repos); Playwright tracked 5 rounds + shots;
-  metrics captured (durations, failures, coverage, load).
-- Findings: ts-driver pile-up (5× no-tsconfig compiles, load 31);
-  Rust p50 14s; C++ gap 86k files; stale-folder alert flood; socket
-  saturation (app survived, test channel didn't).
+- P1 governor (cap 2 + dedup; tsconfig skip reverted, regressed).
+- P2 stale prune (live-folder gate in community + git_history).
+- P3 phase timing (phases_ms JSONB; task-local outbox; spans).
+- P4 list caps (200 + overflow in 4 ops sections).
+- P5 clear redelivery (pending + timeout + ack-cancel + gens).
+- 4.4 root-caused (harness-side webview sleep; keep-awake read).
+- Gates: unit 4102, senseid exit-0, clippy clean, check clean,
+  crash 5/5 + ops-center 5/5 Tauri matrices green.
 
 ## Remaining
-- User: approve deploy-dojo in GitHub (release waits on it).
-- Perf follow-ups (not started): compile cap/dedup, stale prune,
-  C++ adapter, phase timing. Scan still draining (~8h ETA).
+- User: approve deploy-dojo in GitHub.
+- Follow-ups (in tasks.md, not this change): 1.5 ts-driver hang,
+  5.5 event-driven alert derive (poll is sleep-prone backstop).
 
 ## Next command
-None — read the report, then pick a follow-up.
+None — verify live, then pick a follow-up or cut 0.27.0.
 
 ## Open questions
-- None.
+- 6 process.rs fmt spots: local 1.99.1/1.100.0 flag what CI
+  stable accepts. Left untouched (fixing flips CI red).
 
 ## Known-broken
-- None on the release; perf gaps listed above.
+- None.

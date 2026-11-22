@@ -48,6 +48,6 @@
 
 ## 6. Gates + land
 
-- [ ] 6.1 Full unit + senseid suites green; clippy/fmt/fabrication clean
-- [ ] 6.2 Tauri matrices green (crash + ops-center, no regressions)
-- [ ] 6.3 Commit, push, checkpoint, report
+- [x] 6.1 Full unit + senseid suites green; clippy/fmt/fabrication clean
+- [x] 6.2 Tauri matrices green (crash 5/5 + ops-center 5/5, no regressions)
+- [x] 6.3 Commit, push, checkpoint, report
