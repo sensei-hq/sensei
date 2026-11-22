@@ -4,7 +4,7 @@
   // is a one-shot client call. Sync passes live in their own section.
   import { Notice, EmptyState } from '@sensei/ui';
   import { Button } from '@rokkit/ui';
-  import { failureReason, waveProgress } from '@sensei/state';
+  import { failureReason, OPS_LIST_CAP, waveProgress } from '@sensei/state';
   import { jobsState, opsApi } from '$lib/ops.js';
 
   const jobs = jobsState;
@@ -54,13 +54,16 @@
   {#if jobs.waveHistory.length > 0}
     <p>Recent waves</p>
     <ul>
-      {#each jobs.waveHistory as run (run.id)}
+      {#each jobs.waveHistory.slice(0, OPS_LIST_CAP) as run (run.id)}
         <li data-pipeline-history>
           <span>{run.wave}</span>
           <span>{run.settled} of {run.total}</span>
           <span>{run.outcome}</span>
         </li>
       {/each}
+      {#if jobs.waveHistory.length > OPS_LIST_CAP}
+        <li data-pipeline-history-overflow>showing {OPS_LIST_CAP} of {jobs.waveHistory.length}</li>
+      {/if}
     </ul>
   {/if}
   <Button

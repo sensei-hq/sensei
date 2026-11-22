@@ -203,4 +203,18 @@ describe('OpsFailuresSection', () => {
     const m = mount();
     expect(m.container.querySelectorAll('[data-failure-index-error]')).toHaveLength(2);
   });
+
+  it('caps failures and index errors at 200 rows with honest counts', () => {
+    jobsState.failuresLoaded = true;
+    jobsState.failed = Array.from({ length: 201 }, (_, i) => ({ ...failed(2000 + i), id: `f-${i}` }));
+    jobsState.indexErrors = Array.from({ length: 201 }, (_, i) => ({
+      id: 3000 + i, folder_id: 'f', file_path: `/r/e${i}.ts`, error: 'x', adapter: null, phase: null, created_at: 'x',
+    }));
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-failure-row]')).toHaveLength(200);
+    expect(m.container.querySelector('[data-failures-overflow]')?.textContent).toContain('200 of 201');
+    expect(m.container.querySelectorAll('[data-failure-index-error]')).toHaveLength(200);
+    expect(m.container.querySelector('[data-index-errors-overflow]')?.textContent).toContain('200 of 201');
+  });
 });

@@ -134,6 +134,13 @@ export interface OpsSyncStateFeed {
 }
 
 /** One row of `activity.wave_runs`: a wave's recorded run, open/done/abandoned. */
+/**
+ * Render cap for operations lists. Feeds can hold thousands of rows in a
+ * storm; views slice to this many and show an overflow count, so the page
+ * mounts 200 rows instead of 30k. Counts always reflect the full set.
+ */
+export const OPS_LIST_CAP = 200;
+
 export interface OpsWaveRun {
   /** The wave_runs row id. Rendered rows key by this: (wave, key) recurs
    *  across sessions because dispatcher task ids restart per boot. */

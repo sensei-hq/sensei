@@ -47,6 +47,15 @@ describe('OpsAlertsSection', () => {
     expect(m.container.textContent).toContain('boom');
   });
 
+  it('caps a storm at 200 rows with an honest overflow count', () => {
+    jobsState.failed = Array.from({ length: 201 }, (_, i) => ({ ...failedTask(1000 + i), id: `row-${i}` }));
+    alertsState.refresh();
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-alert-row]')).toHaveLength(200);
+    expect(m.container.querySelector('[data-alerts-overflow]')?.textContent).toContain('200 of 201');
+  });
+
   it('an ack marks the alert without dropping it', async () => {
     jobsState.failed = [failedTask(7)];
     alertsState.refresh();
