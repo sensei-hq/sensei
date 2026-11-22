@@ -30,6 +30,10 @@ export interface AlertsSource {
 /** Cleared keys remembered for recurrence, FIFO-capped — a session's memory, not a log. */
 const HISTORY_CAP = 500;
 
+/** One clear write gets this long before the flush moves on; the id stays
+ *  pending and redelivers next refresh. Under the 30s poll with margin. */
+export const FLUSH_WRITE_TIMEOUT_MS = 15_000;
+
 interface Draft {
   class: AlertClass;
   key: string;
@@ -49,6 +53,13 @@ export class AlertsState {
   private dispositions = new Map<string, OpsAlertAck>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private onAlert: ((alert: OpsAlert) => void) | null = null;
+  /** Clears written nowhere yet: redelivered every refresh until one lands. */
+  private pendingClears = new Set<string>();
+  /** In-flight clear attempts by id, with the generation that owns them:
+   *  at most one PUT per id, and a late response from a superseded
+   *  attempt is dropped instead of applied. */
+  private inflightClears = new Map<string, number>();
+  private flushGen = 0;
 
   alerts = $state<OpsAlert[]>([]);
   /** The dispositions read/write fault, when the source refuses — named, never silent. */
@@ -95,6 +106,10 @@ export class AlertsState {
       if (emitted.has(id)) continue;
       emitted.add(id);
       const prior = standing.get(id);
+      // A drafted condition has no clear outstanding: a recurrence cancels
+      // any pending write for the key, so a stale clear can never land
+      // over a live condition.
+      this.pendingClears.delete(id);
       if (prior) {
         prior.count += 1;
         prior.lastSeen = now;
@@ -127,16 +142,19 @@ export class AlertsState {
       standing.delete(id);
     }
     // Whatever remains stood for a condition that cleared: drop it (ack with
-    // it), remember the key, and write the clear through — the write is what
-    // makes the recurrence memory survive this session.
+    // it), remember the key, and queue the clear for write-through — the
+    // write is what makes the recurrence memory survive this session.
+    // Pending ids redeliver every refresh until one lands: a single failed
+    // write must not lose the memory forever.
     const cleared = [...standing.keys()];
     for (const id of cleared) {
       this.remember(id);
+      this.pendingClears.add(id);
     }
-    if (cleared.length > 0) {
+    if (this.pendingClears.size > 0) {
       // flushClears faults by slot; this catch is for a source that throws
       // instead of answering — it faults the same slot, never silent.
-      void this.flushClears(cleared).catch((e: unknown) => {
+      void this.flushClears([...this.pendingClears]).catch((e: unknown) => {
         this.dispositionsError = `alert dispositions unwritable (${e instanceof Error ? e.message : 'write threw'})`;
       });
     }
@@ -150,6 +168,10 @@ export class AlertsState {
    * reason, so the control can say so instead of lying.
    */
   async ack(class_: AlertClass, key: string): Promise<ApiResult<OpsAlertAck>> {
+    // User intent wins over a stale pending clear: drop it (and its flight
+    // marker, so a late response can't clobber this ack) before writing.
+    this.pendingClears.delete(`${class_}:${key}`);
+    this.inflightClears.delete(`${class_}:${key}`);
     const res = await this.source.writeAck(class_, key, true);
     if (!res.ok) {
       this.dispositionsError = `alert dispositions unwritable (${failureReason(res.error)})`;
@@ -162,18 +184,40 @@ export class AlertsState {
     return res;
   }
 
-  /** Records client-observed clears; a refusal faults the slot, never vanishes. */
+  /**
+   * Records client-observed clears; failures stay pending and redeliver
+   * next refresh instead of vanishing. One id's stuck PUT never starves
+   * the ids behind it (each gets its own timeout), at most one PUT runs
+   * per id (no pile-up across polls), and a late response from a
+   * superseded attempt is dropped by generation instead of applied.
+   */
   private async flushClears(ids: string[]): Promise<void> {
+    let failed: string | null = null;
     for (const id of ids) {
+      if (this.inflightClears.has(id)) continue;
       const sep = id.indexOf(':');
-      const res = await this.source.writeAck(id.slice(0, sep), id.slice(sep + 1), false);
-      if (!res.ok) {
-        this.dispositionsError = `alert dispositions unwritable (${failureReason(res.error)})`;
-        return;
+      const gen = ++this.flushGen;
+      this.inflightClears.set(id, gen);
+      try {
+        const res = await Promise.race([
+          this.source.writeAck(id.slice(0, sep), id.slice(sep + 1), false),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('write timed out')), FLUSH_WRITE_TIMEOUT_MS),
+          ),
+        ]);
+        if (this.inflightClears.get(id) !== gen) continue;
+        if (!res.ok) throw new Error(failureReason(res.error));
+        this.dispositions.set(id, res.data);
+        this.pendingClears.delete(id);
+      } catch (e) {
+        if (this.inflightClears.get(id) === gen) {
+          failed = e instanceof Error ? e.message : String(e);
+        }
+      } finally {
+        if (this.inflightClears.get(id) === gen) this.inflightClears.delete(id);
       }
-      this.dispositions.set(id, res.data);
     }
-    this.dispositionsError = null;
+    this.dispositionsError = failed === null ? null : `alert dispositions unwritable (${failed})`;
   }
 
   /**

@@ -191,6 +191,77 @@ describe('AlertsState', () => {
     await vi.waitFor(() => expect(st.dispositionsError).toMatch(/socket hung up/));
   });
 
+  it('a failed clear redelivers on the next refresh until it lands', async () => {
+    const deps = states();
+    deps.jobs.failed = [failedTask(7)];
+    const source = cannedAlerts();
+    const st = new AlertsState(deps, source);
+    st.refresh();
+    let calls = 0;
+    source.writeAck = vi.fn(async (cls: string, key: string, acked: boolean) => {
+      calls += 1;
+      if (calls === 1) return { ok: false as const, error: { status: 0, message: 'down' } };
+      return { ok: true as const, data: { class: cls, key, acked, seen_clears: 1, updated_at: '' } };
+    });
+    deps.jobs.failed = [];
+    st.refresh();
+    await vi.waitFor(() => expect(st.dispositionsError).toMatch(/down/));
+    st.refresh();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    await vi.waitFor(() => expect(st.dispositionsError).toBeNull());
+  });
+
+  it('a hung clear does not starve the ids behind it', async () => {
+    const { FLUSH_WRITE_TIMEOUT_MS } = await import('./alerts-state.svelte.js');
+    const deps = states();
+    deps.jobs.failed = [failedTask(7), failedTask(8)];
+    const source = cannedAlerts();
+    const st = new AlertsState(deps, source);
+    st.refresh();
+    const writes: string[] = [];
+    let hungOnce = false;
+    source.writeAck = vi.fn(async (cls: string, key: string, acked: boolean) => {
+      writes.push(key);
+      if (!hungOnce && !acked) {
+        hungOnce = true;
+        await new Promise(() => {});
+      }
+      return { ok: true as const, data: { class: cls, key, acked, seen_clears: 1, updated_at: '' } };
+    });
+    deps.jobs.failed = [];
+    st.refresh();
+    await vi.advanceTimersByTimeAsync(FLUSH_WRITE_TIMEOUT_MS + 1000);
+    expect(new Set(writes)).toEqual(new Set(['7', '8']));
+  });
+
+  it('an ack beats a hung clear; the late write never clobbers it', async () => {
+    const { FLUSH_WRITE_TIMEOUT_MS } = await import('./alerts-state.svelte.js');
+    const deps = states();
+    deps.jobs.failed = [failedTask(7)];
+    const source = cannedAlerts();
+    const st = new AlertsState(deps, source);
+    st.refresh();
+    let releaseHung: () => void = () => {};
+    source.writeAck = vi.fn(async (cls: string, key: string, acked: boolean) => {
+      if (!acked) {
+        await new Promise<void>((res) => { releaseHung = res; });
+        return { ok: true as const, data: { class: cls, key, acked: false, seen_clears: 9, updated_at: '' } };
+      }
+      return { ok: true as const, data: { class: cls, key, acked: true, seen_clears: 0, updated_at: '' } };
+    });
+    deps.jobs.failed = [];
+    st.refresh();
+    await vi.advanceTimersByTimeAsync(FLUSH_WRITE_TIMEOUT_MS + 1000);
+    deps.jobs.failed = [failedTask(7)];
+    st.refresh();
+    await st.ack('task', '7');
+    releaseHung();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(FLUSH_WRITE_TIMEOUT_MS + 1000);
+    st.refresh();
+    expect(st.dispositions.get('task:7')).toMatchObject({ acked: true });
+  });
+
   it('hydrated dispositions restore acks and recurrence across restarts', async () => {
     const deps = states();
     deps.jobs.failed = [failedTask(7), failedTask(8)];
