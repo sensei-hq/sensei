@@ -3,7 +3,7 @@
 ### Requirement: Ack dispositions persist
 
 Ack state SHALL survive app reloads and daemon restarts: acking writes
-through to `sensei.alert_acks`, attach hydrates it, and a client-observed
+through to `activity.alert_acks`, attach hydrates it, and a client-observed
 clear records the clear (feeding escalation memory) instead of deleting the
 row outright.
 
