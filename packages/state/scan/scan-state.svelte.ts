@@ -531,6 +531,16 @@ export class ScanState {
       this.workspaces.applyFolder(event as unknown as StateEvent<ScanFolderEvent>);
     else if (event.entity === 'activity')
       this.activities.apply(event as unknown as StateEvent<ActivityEvent>);
+    // Folder/activity traffic means indexing is happening NOW — flip idle to
+    // scanning at once, or a burst that drains between the slow idle polls
+    // never shows (9.1). Idle only: never revives an error, never writes
+    // done — the poller's two-idle rule still brings it back down.
+    if (
+      (event.entity === 'folder' || event.entity === 'activity') &&
+      this.status === 'idle'
+    ) {
+      this.status = 'scanning';
+    }
   }
 
   #teardown(): void {

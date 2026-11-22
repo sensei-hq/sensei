@@ -1,5 +1,6 @@
 <script lang="ts">
     import { scanState } from "$lib/scan.js";
+    import { jobsState } from "$lib/ops.js";
     import { miniSummary } from "@sensei/state";
     import { Notice, failureNotice } from "@sensei/ui";
 
@@ -13,8 +14,15 @@
         workspaces.totalFiles > 0 ? (workspaces.completedFiles / workspaces.totalFiles) * 100 : null,
     );
     // The footer's compact progress: visible while a run is live or failed,
-    // nothing while idle — sidebar footers keep their current content.
-    const visible = $derived(scanState.status === "scanning" || scanState.status === "error");
+    // nothing while idle — sidebar footers keep their current content. The
+    // queue counts too: watcher top-ups emit no scan-stream frames (their
+    // folder is tracked already), so the scan singleton idles while the
+    // queue works — and the footer must not miss it (9.1).
+    const visible = $derived(
+        scanState.status === "scanning" ||
+            scanState.status === "error" ||
+            jobsState.pending.length + jobsState.running.length > 0,
+    );
 </script>
 
 {#if visible}

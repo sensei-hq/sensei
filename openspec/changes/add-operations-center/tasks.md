@@ -69,9 +69,9 @@
 
 ## 9. E2E matrix completion (Tauri Playwright, live)
 
-- [ ] 9.1 Root-add initiates scan; indexing status updates live
-- [ ] 9.2 Parent-add consolidates; coverage continues under the parent
-- [ ] 9.3 File add/modify/delete detected, queued, processed, shown
-- [ ] 9.4 Transcript/metric/sync progress live end to end
-- [ ] 9.5 Job-error alert fires with reason and a way back
-- [ ] 9.6 Full unit + e2e suites green; fabrication/error-surfaces/phone gates clean
+- [x] 9.1 Root-add initiates scan; indexing status updates live
+- [x] 9.2 Parent-add consolidates; coverage continues under the parent
+- [x] 9.3 File add/modify/delete detected, queued, processed, shown
+- [x] 9.4 Transcript/metric/sync progress live end to end
+- [x] 9.5 Job-error alert fires with reason and a way back
+- [x] 9.6 Full unit + e2e suites green; fabrication/error-surfaces/phone gates clean

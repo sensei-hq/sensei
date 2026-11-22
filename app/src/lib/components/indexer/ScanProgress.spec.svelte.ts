@@ -3,17 +3,26 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { flushSync } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import { scanState } from '$lib/scan.js';
+import { jobsState } from '$lib/ops.js';
 import ScanProgress from './ScanProgress.svelte';
 
-// The three variants read the one scan singleton: drive the state, assert
-// the DOM. No attach() here — that would open sockets and timers — so the
-// state is set directly and flushed.
+// The three variants read the scan singleton, and the mini/band also read
+// the jobs singleton for queue liveness: drive the states, assert the DOM.
+// No attach() here — that would open sockets and timers — so the states are
+// set directly and flushed.
 let cleanup: Array<() => void> = [];
 afterEach(() => {
   cleanup.forEach((fn) => fn());
   cleanup = [];
   scanState.reset();
   scanState.expanded = false;
+  jobsState.reset();
+});
+
+const queuedJob = (id: number) => ({
+  id, kind: 'process_file', path: `/r/f${id}.ts`, folder_path: '/r', parent_task_id: null,
+  retry_number: 0, wait_ms: 100, running_ms: null, blocked_on: [], budget_secs: null,
+  nearing_budget: false,
 });
 
 function scanning() {
@@ -99,6 +108,34 @@ describe('ScanProgress band', () => {
     scanState.status = 'idle';
     flushSync();
     expect(m.container.querySelector('[data-component="scan-band"]')).toBeNull();
+  });
+
+  it('expanded while the queue is busy shows, even when the scan poller idles', () => {
+    // Watcher top-ups emit no scan-stream frames (their folder is tracked
+    // already), so the scan singleton idles while the queue works (9.1).
+    // The band reads the jobs singleton too, and stays up while it drains.
+    const m = mount('band');
+    scanState.expanded = true;
+    scanState.status = 'idle';
+    jobsState.pending = [queuedJob(1)];
+    flushSync();
+    expect(m.container.querySelector('[data-component="scan-band"]')).not.toBeNull();
+    jobsState.pending = [];
+    flushSync();
+    expect(m.container.querySelector('[data-component="scan-band"]')).toBeNull();
+  });
+});
+
+describe('ScanProgress mini — queue liveness', () => {
+  it('shows while the queue is busy, even when the scan poller idles', () => {
+    const m = mount('mini');
+    scanState.status = 'idle';
+    jobsState.running = [{ ...queuedJob(2), wait_ms: null, running_ms: 500 }];
+    flushSync();
+    expect(m.container.querySelector('[data-component="scan-mini"]')).not.toBeNull();
+    jobsState.running = [];
+    flushSync();
+    expect(m.container.querySelector('[data-component="scan-mini"]')).toBeNull();
   });
 });
 

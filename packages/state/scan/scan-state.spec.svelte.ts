@@ -542,6 +542,38 @@ describe('ScanState.attach — passive observation', () => {
     st.reset();
   });
 
+  it('a folder frame flips idle to scanning at once — the poller would miss a burst', async () => {
+    // A short burst drains between the slow idle polls, so polling alone
+    // never shows it (9.1: the center's live frames saw work the footer
+    // missed). A folder add means work arrived — the poller's two-idle
+    // rule still brings it back when the queue drains.
+    const { source, stream } = cannedSource({ queues: [IDLE] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.status).toBe('idle');
+    stream.on!({
+      v: 1, id: 1, ts: '2026-11-21T10:00:00.000Z', entity: 'folder', action: 'add', key: '/r',
+      data: { workspaceId: 'w', id: 'f', name: 'f' },
+    });
+    expect(st.status).toBe('scanning');
+    await vi.advanceTimersByTimeAsync(3200);
+    expect(st.status).toBe('idle');
+    st.reset();
+  });
+
+  it('a folder frame never revives an errored run', async () => {
+    const { source, stream } = cannedSource({ queues: [IDLE] });
+    const st = new ScanState(source);
+    await st.attach();
+    st.status = 'error';
+    stream.on!({
+      v: 1, id: 1, ts: '2026-11-21T10:00:00.000Z', entity: 'folder', action: 'add', key: '/r',
+      data: { workspaceId: 'w', id: 'f', name: 'f' },
+    });
+    expect(st.status).toBe('error');
+    st.reset();
+  });
+
   it('a dead daemon reads as unreachable and idle, and recovery rehydrates', async () => {
     const { source } = cannedSource({ queues: [BUSY] });
     const down = { ok: false as const, error: { status: 0, message: 'ECONNREFUSED' } };

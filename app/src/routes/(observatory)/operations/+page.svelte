@@ -18,12 +18,16 @@
   // onMount, not $effect: refresh() reads the alert list it writes, which
   // would re-trigger an effect forever. Mount runs once, untracked.
   onMount(() => {
-    void jobsState.attach();
-    void schedulesState.attach();
-    void syncState.attach();
-    // The layout's poller keeps alerts fresh globally; the page re-derives
-    // once on arrival so the section never shows a stale list first.
-    alertsState.refresh();
+    void (async () => {
+      await jobsState.attach();
+      await schedulesState.attach();
+      await syncState.attach();
+      // The jobs state attaches globally from boot, so its failures feed is
+      // stale on arrival — re-read it (and only it; the queue stays live),
+      // then re-derive alerts from the fresh rows.
+      await jobsState.refreshFailures();
+      alertsState.refresh();
+    })();
   });
 </script>
 

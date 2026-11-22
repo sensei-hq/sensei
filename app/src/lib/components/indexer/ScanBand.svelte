@@ -1,6 +1,7 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
     import { scanState } from "$lib/scan.js";
+    import { jobsState } from "$lib/ops.js";
     import { appState } from "$lib/appstate.svelte.js";
     import { Button } from "@rokkit/ui";
     import { Notice, failureNotice } from "@sensei/ui";
@@ -13,10 +14,14 @@
 
     // Full-width but small-height: stats plus the latest activity, only while
     // the user expanded it and a run is live (or failed). Collapses itself
-    // when the run ends.
-    const visible = $derived(
-        scanState.expanded && (scanState.status === "scanning" || scanState.status === "error"),
+    // when the run ends. The queue counts as live for the same reason as the
+    // mini: top-ups bypass the scan stream (9.1).
+    const live = $derived(
+        scanState.status === "scanning" ||
+            scanState.status === "error" ||
+            jobsState.pending.length + jobsState.running.length > 0,
     );
+    const visible = $derived(scanState.expanded && live);
     // Post-setup the scan route redirects unless re-entered with ?force=1
     // (the View → Setup path) — the band uses that re-entry.
     const fullHref = $derived(appState.setupOk ? "/setup/scan?force=1" : "/setup/scan");

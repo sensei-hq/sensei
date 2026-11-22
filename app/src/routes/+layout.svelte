@@ -19,6 +19,7 @@
     import { startOpsAlerts, stopOpsAlerts } from "$lib/ops-alerts.js";
     import ScanProgress from "$lib/components/indexer/ScanProgress.svelte";
     import { scanState } from "$lib/scan.js";
+    import { jobsState } from "$lib/ops.js";
 
     let { children } = $props();
 
@@ -40,9 +41,12 @@
     // The global scan footer observes passively from app boot — and
     // re-attaches after a wizard reset() drops the subscription. attach()
     // is idempotent, so the idle → starting → idle transitions settle
-    // without looping.
+    // without looping. The jobs state rides along: the footer reads its
+    // queue liveness (top-ups bypass the scan stream), and the Operations
+    // page shares the subscription.
     $effect(() => {
         if (scanState.status === "idle") void scanState.attach();
+        void jobsState.attach();
     });
     // Every screen's failure names the daemon — the one thing every sensei screen depends on.
     setStateDefaults({

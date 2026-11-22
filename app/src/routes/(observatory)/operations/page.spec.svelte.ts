@@ -19,17 +19,19 @@ afterEach(() => {
 });
 
 describe('Operations page', () => {
-  it('attaches every domain once and renders all six sections', () => {
+  it('attaches every domain, refreshes failures, and renders all seven sections', async () => {
     const jobs = vi.spyOn(jobsState, 'attach').mockResolvedValue(undefined);
     const schedules = vi.spyOn(schedulesState, 'attach').mockResolvedValue(undefined);
     const sync = vi.spyOn(syncState, 'attach').mockResolvedValue(undefined);
     const alerts = vi.spyOn(alertsState, 'refresh');
+    const failures = vi.spyOn(jobsState, 'refreshFailures').mockResolvedValue(undefined);
     const m = mountComponent(OperationsPage, {});
     cleanup.push(m.destroy);
-    expect(jobs).toHaveBeenCalledOnce();
-    expect(schedules).toHaveBeenCalledOnce();
-    expect(sync).toHaveBeenCalledOnce();
-    expect(alerts).toHaveBeenCalled();
+    await vi.waitFor(() => expect(jobs).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(schedules).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(failures).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(alerts).toHaveBeenCalled());
     for (const section of ['ops-alerts', 'ops-now', 'ops-queue', 'ops-failures', 'ops-schedules', 'ops-pipelines', 'ops-sync']) {
       expect(m.container.querySelector(`[data-component="${section}"]`), section).not.toBeNull();
     }
