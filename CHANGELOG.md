@@ -15,6 +15,43 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-11-22
+
+### Added
+
+- **Operations center.** One live surface for everything the daemon runs in
+  the background: the scan/index queue with waits and backoff, transcript
+  and metric pipeline waves with progress, schedules with next runs and
+  logs, sync state with per-persona activity, and a failures feed (failed
+  tasks with an attempt drill-down and retry, watchdog abandonments, index
+  errors), plus unified alerting with acks. New endpoints cover queue,
+  failed/abandoned feeds, schedules, sync state, task detail, task retry,
+  and wave history, all on one uniform SSE envelope with per-domain state
+  singletons.
+- **Crash recovery.** Operations persist so a crash recovers instead of
+  restarting blind: alert dispositions in `activity.alert_acks` (acks
+  survive restarts, recurrences escalate), wave runs in
+  `activity.wave_runs` (terminals close `done`, boot closes leftovers
+  `abandoned`), retry lineage across sessions, and a bounded boot orphan
+  re-queue sweep. Proven by a kill-restart matrix: index resume without
+  redo, wave abandon and re-drive, orphan lineage, ack survival, and boot
+  backfills.
+- **Global scan-progress footer** with mini, band, and full variants riding
+  one shared scan state (#496).
+- **Root consolidation**: adding a parent root absorbs the inner roots it
+  covers instead of refusing.
+
+### Fixed
+
+- Security lane (#518): three zizmor findings closed and five advisories
+  patched (tokio, rustix, aws-smithy-json CVE-2026-18140, block-buffer,
+  async-executor).
+
+### Changed
+
+- History and failure lists render keyed by row id — session-restarting
+  ids can no longer throw `each_key_duplicate` and blank the center.
+
 ## [0.25.0] — 2026-11-20
 
 ### Added
