@@ -1,25 +1,22 @@
-# Checkpoint — 2026-11-20 (qlty security sweep — 26 findings triaged)
+# Checkpoint — 2026-11-22 (crash recovery slice 4 green + pushed)
 
-**Slice:** security follow-up to v0.25.0 (`qlty check --all`: 162 issues, 26 security).
-**Branch:** `lane/security-qlty` (worktree `lanes/security-qlty`), from origin/develop @ 39df4c0d4.
+**Slice:** `add-ops-crash-recovery` slice 4 (kill-restart e2e matrix).
+**Branch:** `develop` @ `de0c06349` (pushed).
 
 ## Done
-- zizmor ×3 fixed: per-job permissions (coverage.yml), persist-credentials
-  (deploy-dojo), no-cache (deploy-worker setup-bun). Verified with zizmor 1.29.
-- Patched: tokio 1.54.1, rustix 1.1.6, aws-smithy-json 0.62.7 (CVE-2026-18140),
-  block-buffer 0.12.1, async-executor 1.14.1. cargo audit ×3 green.
-- Excepted per bar with proof: number_prefix + paste (dead ort feature),
-  glib + proc-macro-error (Linux-GTK-only). quick-xml was already excepted.
-- Accepted risk in #120: chrono, pin-utils, unsafe-libyaml (no fix exists);
-  zbus 5→6 migration BLOCKED (secret-service 6 is RC; keyring pins ss5).
-- Residual qlty security set is exactly the 12 accepted + 7 excepted; zero fixed
-  items linger. qlty has no advisory-level suppression, so they keep listing.
+- Crash matrix 5/5 green live (Tauri): 4.1–4.5 in ~1m.
+- Ops-center matrix 5/5 green in the same run (10/10 combined).
+- Render-key identity: history/failures/alerts key by row id; alert
+  drafts dedup by condition. Unit 4095 green, senseid 5206 green,
+  clippy/fmt/fabrication/openspec-validate clean.
+- Commits: `e91721ea5` (identity + lints + ratchet 1180→1183),
+  `de0c06349` (slice 4 matrix + ticks). Tasks 3.2–3.4/3.6–3.7, 4.1–4.5 ticked.
 
 ## Remaining
-- Push lane, PR to develop, CI green, merge.
+- User verification in the Sensei app (report delivered in chat).
 
 ## Next command
-`git push -u origin lane/security-qlty` (from `lanes/security-qlty`), then `gh pr create`.
+None — verify, then start the next backlog item.
 
 ## Open questions
 - None.
