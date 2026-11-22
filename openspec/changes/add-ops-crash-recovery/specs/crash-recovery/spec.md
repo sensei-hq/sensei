@@ -55,18 +55,17 @@ orphaned task rows are NEVER individually re-queued.
   un-ingested sessions without duplicating ingested ones, and the new wave
   terminals normally
 
-### Requirement: Missed metric days backfill, sync waits its turn
+### Requirement: Missed metric days backfill, sync boot pass is safe
 
 Metric waves SHALL re-compute missed days via the `as_of` path; sync SHALL
-NOT run a boot pass (push-ack race) and instead covers missed entities on
-its next scheduled pass.
+run its existing boot pass, safe because marks land only on acked pushes
+(re-pushed work is at most unmarked, and dōjō-side keyed writes converge).
 
 #### Scenario: A crash mid-metric-day recomputes that day
 
 - **WHEN** the daemon dies mid-metrics-compute and restarts
 - **THEN** the missed day recomputes via the backfill path and the daily
-  grain shows no gap; sync entities pushed before the crash are not
-  re-pushed
+  grain shows no gap; a sync boot pass terminal arrives with no error
 
 ### Requirement: Schedules need no new recovery
 

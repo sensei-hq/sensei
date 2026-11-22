@@ -29,6 +29,22 @@ export const E2E_CLAUDE_SETTINGS = join(E2E_HOME, '.claude', 'settings.json');
 export const E2E_CLAUDE_PLUGINS = join(E2E_HOME, '.claude', 'plugins', 'installed_plugins.json');
 
 /**
+ * The env that puts a process into the isolated home — WITHOUT touching it.
+ * `isolatedHomeEnv()` wipes and rebuilds the home (keychain, engines link,
+ * `.claude/`); calling that mid-run deletes whatever the run put there
+ * (transcript fixtures, the keychain the app holds). A daemon respawn joins
+ * the existing home, so it takes this instead.
+ */
+export function isolatedHomeEnvVars(): Record<string, string> {
+  const real = homedir();
+  return {
+    HOME: E2E_HOME,
+    RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(real, '.rustup'),
+    CARGO_HOME: process.env.CARGO_HOME ?? join(real, '.cargo'),
+  };
+}
+
+/**
  * A fresh isolated home, and the env that puts the app into it. `.claude/`
  * exists so Claude Code is detected, as it is on a machine that has it.
  */
@@ -59,11 +75,7 @@ export function isolatedHomeEnv(): Record<string, string> {
   const engines = join(real, '.sensei', 'engines');
   if (existsSync(engines)) symlinkSync(engines, join(E2E_HOME, '.sensei', 'engines'));
 
-  return {
-    HOME: E2E_HOME,
-    RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(real, '.rustup'),
-    CARGO_HOME: process.env.CARGO_HOME ?? join(real, '.cargo'),
-  };
+  return isolatedHomeEnvVars();
 }
 
 function readJson(path: string): Record<string, unknown> | null {

@@ -16,7 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = parseInt(process.env.SENSEI_PORT ?? '7744', 10);
-const BIN = process.env.SENSEID_BIN ?? '../../target/debug/senseid';
+const BIN = process.env.SENSEID_BIN ?? '../target/debug/senseid';
 const LOCAL_FOLDER = (process.env.LOCAL_FOLDER ?? '~/Developer').replace('~', process.env.HOME ?? '');
 
 let daemonProcess: ChildProcess | null = null;

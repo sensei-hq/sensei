@@ -28,8 +28,8 @@ died.
   poison work terminates instead of resurrecting every boot.
 - Layered boot order with `enqueue_unique` dedup so layers never double-run:
   orphan reconcile → abandon open waves → wave re-drive (transcript
-  backfill, metric `as_of`, sync via next pass — no boot pass, push-ack
-  race) → folder resume → orphan re-queue sweep as the catch-all.
+  backfill, metric `as_of`, sync boot pass — mark-after-ack makes it safe)
+  → folder resume → orphan re-queue sweep as the catch-all.
 - Kill-restart e2e matrix over Tauri Playwright: index crash resumes without
   redo, wave crash abandons and re-drives, orphaned tasks return with
   lineage, acks survive reload, schedules self-heal.

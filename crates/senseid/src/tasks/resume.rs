@@ -68,8 +68,8 @@ pub async fn resume_pending_scans(queue: &TaskQueue, pg: &PgStore) -> u32 {
 /// emitting a misleading done frame (and closing the wrong history row) for
 /// a wave that never opened — waves re-drive as a unit instead. Dispatchers
 /// need no entry: both are `retryable: false`, so the retryable gate already
-/// excludes them (transcript re-drive is the boot tick, including test mode
-/// on isolated instances; metric re-drive is the boot backfill).
+/// excludes them. Transcript re-drive is the scheduler boot tick (skipped by
+/// design on isolated instances); metric re-drive is the boot backfill.
 fn sweep_skips_kind(kind: &TaskKind) -> bool {
     use TaskKind::*;
     matches!(kind, FinalizeTranscriptWave | ComputeHealth)

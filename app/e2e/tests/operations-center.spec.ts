@@ -321,6 +321,10 @@ test.describe('Operations center matrix', () => {
   test('9.5 a forced failure alerts with its reason, acks, retries, and clears (8.5)', async ({
     tauriPage,
   }) => {
+    // Ack dispositions persist: a row left by a killed run would render this
+    // alert pre-acked (no button) and fail the ack step. Clear it on the way
+    // in as well as the way out.
+    psqlE2e(`DELETE FROM activity.alert_acks WHERE class = 'task' AND alert_key = '900001'`);
     psqlE2e(
       `INSERT INTO activity.task_executions(task_id, task_kind, folder_path, path, status, error_message) VALUES
        (900001, 'process_file', '/r', '/r/e2e-forced.ts', 'failed', 'e2e forced failure')`,
@@ -360,6 +364,7 @@ test.describe('Operations center matrix', () => {
       await waitFor(async () => (await tauriPage.locator('[data-alert-ack="task:900001"]').count()) === 0, 30_000, 500);
     } finally {
       psqlE2e('DELETE FROM activity.task_executions WHERE task_id = 900001');
+      psqlE2e(`DELETE FROM activity.alert_acks WHERE class = 'task' AND alert_key = '900001'`);
     }
   });
 });

@@ -16,17 +16,17 @@
 ## 3. Boot re-drive + orphan re-queue (test-first)
 
 - [x] 3.1 `retried_from_execution_id` column on `activity.task_executions` + lineage in drill-down/failed feed
-- [ ] 3.2 Transcript re-drive: fresh backfill covering un-ingested sessions, no duplicates
-- [ ] 3.3 Metric re-drive: missed days via the `as_of` path, no grain gaps
-- [ ] 3.4 Sync: assert next-pass coverage, no boot pass (push-ack race documented in code)
+- [x] 3.2 Transcript re-drive: fresh backfill covering un-ingested sessions, no duplicates
+- [x] 3.3 Metric re-drive: missed days via the `as_of` path, no grain gaps
+- [x] 3.4 Sync: boot pass exists and is mark-after-ack safe; e2e asserts the boot terminal
 - [x] 3.5 Orphan sweep: marker + retryable + `retry_number < MAX` bounds, carried retry numbers, `enqueue_unique` dedup, layered order
-- [ ] 3.6 Index resume pinned by kill-restart proof (fingerprint counts, no redo)
-- [ ] 3.7 Schedule self-heal asserted sufficient (no new machinery)
+- [x] 3.6 Index resume pinned by kill-restart proof (fingerprint counts, no redo)
+- [x] 3.7 Schedule self-heal asserted sufficient (no new machinery)
 
 ## 4. Kill-restart e2e matrix + full gates (Tauri Playwright, live)
 
-- [ ] 4.1 Index crash resumes without redo
-- [ ] 4.2 Wave crash abandons and re-drives
-- [ ] 4.3 Orphaned tasks return with lineage; drill-down shows the retry chain
-- [ ] 4.4 Acks survive reload; recurrence escalates across restart
-- [ ] 4.5 Full unit + e2e + senseid suites green; clippy/fmt/fabrication clean; commit
+- [x] 4.1 Index crash resumes without redo
+- [x] 4.2 Wave crash abandons and re-drives
+- [x] 4.3 Orphaned tasks return with lineage; drill-down shows the retry chain
+- [x] 4.4 Acks survive reload; recurrence escalates across restart
+- [x] 4.5 Full unit + e2e + senseid suites green; clippy/fmt/fabrication clean; commit
