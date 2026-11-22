@@ -27,6 +27,9 @@ pub(super) mod fault {
 }
 
 pub async fn detect_communities(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    if super::helpers::prune_if_folder_vanished(ctx.pg(), &task.folder_path).await? {
+        return Ok(0);
+    }
     let folder = ctx
         .pg()
         .get_repo_by_path(task.folder_abs_path())
@@ -110,6 +113,36 @@ mod tests {
 
     use crate::tasks::test_support::make_ctx;
 
+    /// **VANISHED FOLDERS PRUNE INSTEAD OF FAILING.** The daily re-detect
+    /// lists rows, then runs; a folder deleted in between must converge,
+    /// not fail ×3 and alert per path.
+    #[tokio::test]
+    async fn detect_communities_prunes_a_folder_whose_directory_is_gone() {
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/detect_prune_{}", uuid::Uuid::new_v4());
+        let root_id =
+            ctx.pg().add_watch_root(&folder_path, "dp", &serde_json::json!([])).await.unwrap();
+        crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "dp-repo", &folder_path)
+            .await
+            .unwrap();
+        // NOTE: the directory is never created — the folder vanished.
+        let task = Task::new(TaskKind::DetectCommunities, &folder_path, "");
+        detect_communities(&ctx, &task).await.unwrap();
+        assert!(
+            ctx.pg().get_repo_by_path(&folder_path).await.unwrap().is_none(),
+            "the vanished folder's row is pruned"
+        );
+    }
+
+    /// Neither row nor directory: already converged — Ok, not "not found".
+    #[tokio::test]
+    async fn detect_communities_skips_a_folder_with_no_row_and_no_directory() {
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/detect_gone_{}", uuid::Uuid::new_v4());
+        let task = Task::new(TaskKind::DetectCommunities, &folder_path, "");
+        detect_communities(&ctx, &task).await.unwrap();
+    }
+
     #[tokio::test]
     async fn detect_communities_marks_indexing_folder_indexed() {
         // D4.1: DetectCommunities is the terminal scan barrier — on success it
@@ -117,6 +150,7 @@ mod tests {
         // implies communities are computed.
         let ctx = make_ctx().await;
         let folder_path = format!("/tmp/detect_terminal_{}", uuid::Uuid::new_v4());
+        std::fs::create_dir_all(&folder_path).unwrap();
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "dt", &serde_json::json!([])).await.unwrap();
         let fid = crate::tasks::test_support::seed_repo_folder(
@@ -147,6 +181,7 @@ mod tests {
         // boot-reconcile / bounded-retry re-drives it.
         let ctx = make_ctx().await;
         let folder_path = format!("/tmp/detect_failclosed_{}", uuid::Uuid::new_v4());
+        std::fs::create_dir_all(&folder_path).unwrap();
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "df", &serde_json::json!([])).await.unwrap();
         let fid = crate::tasks::test_support::seed_repo_folder(
@@ -178,6 +213,7 @@ mod tests {
         // `indexing`.
         let ctx = make_ctx().await;
         let folder_path = format!("/tmp/detect_norestamp_{}", uuid::Uuid::new_v4());
+        std::fs::create_dir_all(&folder_path).unwrap();
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "dn", &serde_json::json!([])).await.unwrap();
         let fid = crate::tasks::test_support::seed_repo_folder(
@@ -225,6 +261,7 @@ mod tests {
         // way ProcessFile's fatal path does.
         let ctx = make_ctx().await;
         let folder_path = format!("/tmp/detect_err_{}", uuid::Uuid::new_v4());
+        std::fs::create_dir_all(&folder_path).unwrap();
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "der", &serde_json::json!([])).await.unwrap();
         let fid = crate::tasks::test_support::seed_repo_folder(
