@@ -866,6 +866,9 @@ pub struct Task {
     pub scope: Scope,
     pub error: Option<String>,
     pub retry_number: u32, // 0 = first attempt; bumped per bounded retry (D6c)
+    /// Crash/manual-retry lineage: the execution row id this task retries.
+    /// None for first runs and in-session retries (those share the task id).
+    pub retried_from: Option<uuid::Uuid>,
     pub created_at: Instant,
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
@@ -889,6 +892,7 @@ impl Task {
             scope: Scope::default(),
             error: None,
             retry_number: 0,
+            retried_from: None,
             created_at: Instant::now(),
             started_at: None,
             completed_at: None,
@@ -1022,6 +1026,9 @@ impl Task {
             scope: Scope::default(),
             error: None,
             retry_number: self.retry_number + 1,
+            // Cross-task lineage survives: a boot-requeued task that fails
+            // retryably in-session still names the attempt it retries.
+            retried_from: self.retried_from,
             created_at: Instant::now(),
             started_at: None,
             completed_at: None,

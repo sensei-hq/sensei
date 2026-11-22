@@ -15,7 +15,7 @@
 
 ## 3. Boot re-drive + orphan re-queue (test-first)
 
-- [ ] 3.1 `retried_from_execution_id` column on `activity.task_executions` + lineage in drill-down/failed feed
+- [x] 3.1 `retried_from_execution_id` column on `activity.task_executions` + lineage in drill-down/failed feed
 - [ ] 3.2 Transcript re-drive: fresh backfill covering un-ingested sessions, no duplicates
 - [ ] 3.3 Metric re-drive: missed days via the `as_of` path, no grain gaps
 - [ ] 3.4 Sync: assert next-pass coverage, no boot pass (push-ack race documented in code)

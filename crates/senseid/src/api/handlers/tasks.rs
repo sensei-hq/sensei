@@ -355,6 +355,9 @@ pub(crate) async fn retry_task(
         latest["path"].as_str().unwrap_or_default(),
     );
     task.parent_task_id = latest["parentTaskId"].as_u64();
+    // Lineage: the new attempt names the exact prior row it retries, so the
+    // drill-down renders the retry chain across sessions.
+    task.retried_from = latest["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
     let new_id = state.task_queue.enqueue(task).await;
     Ok(Json(serde_json::json!({ "taskId": new_id })))
 }
@@ -499,6 +502,17 @@ mod tests {
         assert_eq!(task.kind.to_string(), "process_file");
         assert_eq!(task.path, "/r/a.ts");
         assert_eq!(task.parent_task_id, Some(4242), "the retry rejoins its wave");
+        let attempts = state
+            .pg
+            .task_execution_attempts(id, state.task_queue.session_start())
+            .await
+            .expect("attempts read");
+        let latest_id = attempts[0]["id"].as_str().expect("the prior row id");
+        assert_eq!(
+            task.retried_from.map(|u| u.to_string()).as_deref(),
+            Some(latest_id),
+            "the retry names the exact prior attempt row"
+        );
     }
 
     #[tokio::test]

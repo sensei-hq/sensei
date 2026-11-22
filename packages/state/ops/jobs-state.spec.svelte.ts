@@ -74,6 +74,9 @@ function failedTask(id: number, overrides: Partial<OpsFailedTask> = {}): OpsFail
     error: 'boom',
     startedAt: '2026-11-21T10:00:00.000Z',
     completedAt: null,
+    id: 'row-1',
+    retriedFrom: null,
+    retriedFromTaskId: null,
     ...overrides,
   };
 }

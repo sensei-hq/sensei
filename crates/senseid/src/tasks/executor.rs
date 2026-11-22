@@ -129,6 +129,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             folder_path: &task.folder_path,
             path: &task.path,
             retry_number: task.retry_number as i32,
+            retried_from: task.retried_from,
         })
         .await
     {

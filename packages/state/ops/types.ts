@@ -54,6 +54,12 @@ export interface OpsFailedTask {
   error: string | null;
   startedAt: string;
   completedAt: string | null;
+  /** This attempt's row id, for exact lineage (task IDs restart per session). */
+  id: string;
+  /** The prior attempt's row id this attempt retries, if any. */
+  retriedFrom: string | null;
+  /** The prior attempt's task id, for humans. */
+  retriedFromTaskId: number | null;
 }
 
 export interface OpsAbandonedFeed {

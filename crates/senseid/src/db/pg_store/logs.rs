@@ -16,6 +16,9 @@ type TaskExecutionRow = (
     Option<String>,                        // error_message
     chrono::DateTime<chrono::Utc>,         // started_at
     Option<chrono::DateTime<chrono::Utc>>, // completed_at
+    uuid::Uuid,                            // id
+    Option<uuid::Uuid>,                    // retried_from_execution_id
+    Option<i64>,                           // retried_from_task_id (via self-join)
 );
 
 /// Watchdog abandonments over a window — see [`PgStore::watchdog_abandonments`].
@@ -49,8 +52,12 @@ pub struct AbandonedTask {
 }
 
 /// Select list matching [`TaskExecutionRow`], field for field and in order.
+/// The lineage tail resolves the retried row's task id inline, so every
+/// reader (attempts, children, feeds) carries it without its own join.
 const TASK_EXECUTION_COLUMNS: &str = "task_id, parent_task_id, task_kind::text, folder_path, path, \
-     status, items_processed, duration_ms, retry_number, error_message, started_at, completed_at";
+     status, items_processed, duration_ms, retry_number, error_message, started_at, completed_at, \
+     id, retried_from_execution_id, \
+     (SELECT task_id FROM activity.task_executions r2 WHERE r2.id = activity.task_executions.retried_from_execution_id)";
 
 /// One execution row as the wire shape a follower reads.
 ///
@@ -71,6 +78,9 @@ fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
         "error": r.9,
         "startedAt": r.10,
         "completedAt": r.11,
+        "id": r.12,
+        "retriedFrom": r.13,
+        "retriedFromTaskId": r.14,
     })
 }
 
@@ -484,10 +494,11 @@ impl PgStore {
             folder_path,
             path,
             retry_number,
+            retried_from,
         } = start;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number)
-             VALUES($1, $2, $3::sensei.task_execution_kind, $4, $5, 'running', $6) RETURNING id"
+            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number, retried_from_execution_id)
+             VALUES($1, $2, $3::sensei.task_execution_kind, $4, $5, 'running', $6, $7) RETURNING id"
         )
         .bind(task_id)
         .bind(parent_task_id)
@@ -495,6 +506,7 @@ impl PgStore {
         .bind(folder_path)
         .bind(path)
         .bind(retry_number)
+        .bind(retried_from)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| format!("start_task_execution: {}", e))?;

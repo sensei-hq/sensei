@@ -737,6 +737,7 @@ mod tests {
                 folder_path: "/repo",
                 path: "src/slow.rs",
                 retry_number: 0,
+                retried_from: None,
             })
             .await
             .unwrap();

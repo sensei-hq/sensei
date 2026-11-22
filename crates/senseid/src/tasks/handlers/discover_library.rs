@@ -216,6 +216,7 @@ mod tests {
                 folder_path: &format!("https://github.com/acme/{asked}"),
                 path: &format!("acme/{asked}"),
                 retry_number: 0,
+                retried_from: None,
             })
             .await
             .unwrap();

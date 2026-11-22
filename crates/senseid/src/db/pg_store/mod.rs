@@ -1477,6 +1477,9 @@ pub struct TaskExecutionStart<'a> {
     pub folder_path: &'a str,
     pub path: &'a str,
     pub retry_number: i32,
+    /// Crash/manual-retry lineage: the execution row id this attempt retries.
+    /// A uuid, not a task id — task IDs restart every session.
+    pub retried_from: Option<uuid::Uuid>,
 }
 
 // Written by `mcp.rs`.

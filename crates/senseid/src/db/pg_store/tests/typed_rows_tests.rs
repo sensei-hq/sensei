@@ -504,6 +504,7 @@ async fn a_task_execution_start_lands_field_for_field() {
             folder_path: "/fp",
             path: "src/p.rs",
             retry_number: 2,
+            retried_from: None,
         })
         .await
         .unwrap();

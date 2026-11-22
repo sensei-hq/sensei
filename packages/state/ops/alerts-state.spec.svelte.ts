@@ -59,6 +59,7 @@ const failedTask = (taskId: number, error: string | null = 'boom') => ({
   taskId, parentTaskId: null, kind: 'process_file', folderPath: '/r', path: `/r/f${taskId}.ts`,
   status: 'failed', itemsProcessed: 0, durationMs: null, retryNumber: 0, error,
   startedAt: '2026-11-21T10:00:00.000Z', completedAt: null,
+  id: 'row-1', retriedFrom: null, retriedFromTaskId: null,
 });
 
 const schedule = (name: string, over: Record<string, unknown> = {}) => ({

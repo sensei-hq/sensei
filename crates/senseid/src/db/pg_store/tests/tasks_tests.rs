@@ -28,6 +28,7 @@ async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_
                 folder_path: &fp,
                 path: "src/stuck.rs",
                 retry_number: attempt,
+                retried_from: None,
             })
             .await
             .unwrap();
@@ -45,6 +46,7 @@ async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_
             folder_path: &fp,
             path: "recovered.rs",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -57,6 +59,7 @@ async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_
             folder_path: &fp,
             path: "recovered.rs",
             retry_number: 1,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -124,6 +127,7 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
             folder_path: &fp,
             path: "a",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -143,6 +147,7 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
             folder_path: &fp,
             path: "b",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -155,6 +160,7 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
             folder_path: &fp,
             path: "c",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -175,6 +181,7 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
             folder_path: &fp,
             path: "d",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -256,6 +263,7 @@ async fn rollup_keeps_failures_raw_and_is_idempotent() {
                 folder_path: &fp,
                 path: "x",
                 retry_number: 0,
+                retried_from: None,
             })
             .await
             .unwrap();
@@ -332,6 +340,7 @@ async fn start_task_execution_records_retry_number() {
             folder_path: &fp,
             path: "a.rs",
             retry_number: 2,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -952,6 +961,7 @@ async fn watchdog_abandonments_count_per_day_and_name_the_worst_offenders() {
                 folder_path: &fp,
                 path,
                 retry_number: 0,
+                retried_from: None,
             })
             .await
             .unwrap();
@@ -1008,6 +1018,7 @@ async fn failed_tasks_lists_terminal_failures_with_reasons() {
             folder_path: &fp,
             path,
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap()
@@ -1055,6 +1066,7 @@ async fn abandoned_task_list_names_per_task_rows() {
                 folder_path: &fp,
                 path,
                 retry_number: 0,
+                retried_from: None,
             })
             .await
             .unwrap();
@@ -1106,6 +1118,58 @@ async fn wave_runs_open_close_list_and_boot_abandon() {
     let rows = s.list_wave_runs(Some("sync"), 10).await.unwrap();
     let row = rows.iter().find(|r| r["key"] == stale).expect("the wave lists");
     assert_eq!(row["outcome"], "abandoned");
+}
+
+// ── retried_from_execution_id — retry lineage ─────────────────────────
+
+static LINEAGE_TEST_ID: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(2_000_000_000);
+
+#[tokio::test]
+async fn a_retry_names_the_exact_prior_attempt_row_and_its_task() {
+    let s = pg_store().await;
+    let old_id = LINEAGE_TEST_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let new_id = LINEAGE_TEST_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let fp = format!("/_test/lineage/{}", uuid::Uuid::new_v4());
+    let kind = crate::tasks::TaskKind::ProcessFile.to_string();
+    let first = s
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: old_id,
+            parent_task_id: None,
+            task_kind: &kind,
+            folder_path: &fp,
+            path: "src/a.rs",
+            retry_number: 0,
+            retried_from: None,
+        })
+        .await
+        .unwrap();
+    s.fail_task_execution(&first, 5, "boom").await.unwrap();
+    // A new task retries it (new session ID, carried retry number).
+    s.start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+        task_id: new_id,
+        parent_task_id: None,
+        task_kind: &kind,
+        folder_path: &fp,
+        path: "src/a.rs",
+        retry_number: 1,
+        retried_from: Some(first),
+    })
+    .await
+    .unwrap();
+    let rows = s
+        .task_execution_attempts(new_id, chrono::Utc::now() - chrono::Duration::hours(1))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["retriedFrom"], first.to_string());
+    assert_eq!(rows[0]["retriedFromTaskId"].as_i64(), Some(old_id));
+    // The first attempt names no lineage.
+    let rows = s
+        .task_execution_attempts(old_id, chrono::Utc::now() - chrono::Duration::hours(1))
+        .await
+        .unwrap();
+    assert!(rows[0].get("retriedFrom").unwrap().is_null());
 }
 
 // ── activity.alert_acks — ack dispositions ────────────────────────────

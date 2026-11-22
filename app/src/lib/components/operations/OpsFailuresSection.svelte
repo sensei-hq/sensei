@@ -102,7 +102,10 @@
                   <p>attempts ({detail.attempts.length})</p>
                   <ul>
                     {#each detail.attempts as attempt (attempt.retryNumber)}
-                      <li>#{attempt.retryNumber} {attempt.status}{attempt.error ? ` — ${attempt.error}` : ''}</li>
+                      <li>
+                        #{attempt.retryNumber} {attempt.status}{attempt.error ? ` — ${attempt.error}` : ''}
+                        {#if attempt.retriedFromTaskId != null}<span>retried from #{attempt.retriedFromTaskId}</span>{/if}
+                      </li>
                     {/each}
                   </ul>
                   <p>

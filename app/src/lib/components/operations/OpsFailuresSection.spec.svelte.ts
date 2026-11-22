@@ -23,6 +23,7 @@ const failed = (taskId: number) => ({
   taskId, parentTaskId: null, kind: 'process_file', folderPath: '/r', path: `/r/f${taskId}.ts`,
   status: 'failed', itemsProcessed: 0, durationMs: null, retryNumber: 1, error: 'parse blew up',
   startedAt: '2026-11-21T10:00:00.000Z', completedAt: null,
+  id: 'row-1', retriedFrom: null, retriedFromTaskId: null,
 });
 
 const ok = (body: unknown) =>
@@ -77,6 +78,21 @@ describe('OpsFailuresSection', () => {
     flushSync();
     expect(m.container.textContent).toContain('attempts (1)');
     expect(m.container.textContent).toContain('children 1');
+  });
+
+  it('an attempt that retries names the task it retries', async () => {
+    jobsState.failuresLoaded = true;
+    jobsState.failed = [failed(7)];
+    flushSync();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ok({ taskId: 9, current: null, attempts: [{ ...failed(9), retriedFromTaskId: 7 }], children: [], childSummary: {} })),
+    );
+    const m = mount();
+    m.container.querySelector<HTMLButtonElement>('[data-failure-row="7"]')!.click();
+    await vi.waitFor(() => expect(m.container.querySelector('[data-failure-detail="7"]')).not.toBeNull());
+    flushSync();
+    expect(m.container.textContent).toContain('retried from #7');
   });
 
   it('retry re-queues and names the new id', async () => {
