@@ -46,6 +46,18 @@ describe('OpsPipelinesSection', () => {
     expect(m.container.textContent).toContain('metric');
   });
 
+  it('recorded runs render as history with their outcome', () => {
+    jobsState.waveHistory = [
+      { wave: 'transcript', key: '9', parent_task_id: 9, total: 4, settled: 4, outcome: 'done', opened_at: '', closed_at: '' },
+      { wave: 'metric', key: '3', parent_task_id: 3, total: 2, settled: 0, outcome: 'abandoned', opened_at: '', closed_at: '' },
+    ];
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-pipeline-history]')).toHaveLength(2);
+    expect(m.container.textContent).toContain('4 of 4');
+    expect(m.container.textContent).toContain('abandoned');
+  });
+
   it('starting a backfill posts and names the new wave', async () => {
     const fetch = vi.fn(async (_url: string, _init?: RequestInit) =>
       ok({ ok: true, queued: true, taskId: 11, from: null }),

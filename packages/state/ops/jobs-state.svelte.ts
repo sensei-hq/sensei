@@ -9,6 +9,7 @@ import type {
   OpsKindDepth,
   OpsQueueListing,
   OpsTaskView,
+  OpsWaveRun,
 } from './types.js';
 import { WaveState, waveProgress, type WaveRow } from './wave-state.svelte.js';
 
@@ -23,14 +24,18 @@ export { waveProgress };
 // index errors) loads on attach and on explicit refresh only — failures are
 // history, and a feed that fails closed must fault itself, never the daemon.
 
-/** What JobsState needs of its source: the queue read, the failures reads, and the stream. */
+/** What JobsState needs of its source: the queue read, the failures reads, wave history, and the stream. */
 export interface JobsSource {
   readQueue: () => Promise<ApiResult<OpsQueueListing>>;
   readFailed: () => Promise<ApiResult<{ tasks: OpsFailedTask[] }>>;
   readAbandoned: () => Promise<ApiResult<OpsAbandonedFeed>>;
   readIndexErrors: () => Promise<ApiResult<OpsIndexError[]>>;
+  readWaves: (wave: string | null) => Promise<ApiResult<{ waves: OpsWaveRun[] }>>;
   events: StateStream<StreamFrame>;
 }
+
+/** This state's waves: transcript + metric live here, sync lives in SyncState. */
+const JOBS_WAVES = ['transcript', 'metric'];
 
 /** The poller cadence in ms — waits age in seconds, not milliseconds. */
 export const JOBS_POLL_MS = 15000;
@@ -91,6 +96,8 @@ export class JobsState {
   byKind = $state<Record<string, OpsKindDepth>>({});
   /** True when the daemon capped a list the totals still count. */
   truncated = $state(false);
+  /** Recorded transcript/metric wave runs — history beside the live rows. */
+  waveHistory = $state<OpsWaveRun[]>([]);
   /** True once the failures feed has loaded — distinguishes "none" from "never read". */
   failuresLoaded = $state(false);
   /** Which failures feed refused, when one did — the feed's fault, never the daemon's. */
@@ -150,6 +157,7 @@ export class JobsState {
     this.totals = { pending: 0, blocked: 0, running: 0 };
     this.byKind = {};
     this.truncated = false;
+    this.waveHistory = [];
     this.failuresLoaded = false;
     this.failuresError = null;
     this.streamFault = null;
@@ -179,6 +187,8 @@ export class JobsState {
       await this.#hydrate();
       if (gen !== this.#gen) return;
       await this.refreshFailures();
+      if (gen !== this.#gen) return;
+      await this.refreshWaveHistory();
       if (gen !== this.#gen) return;
     } catch {
       // A daemon that is down at attach time reads as unreachable, never as
@@ -224,12 +234,34 @@ export class JobsState {
     this.totals = { pending: 0, blocked: 0, running: 0 };
     this.byKind = {};
     this.truncated = false;
+    this.waveHistory = [];
     this.failuresLoaded = false;
     this.failuresError = null;
     this.daemonReachable = true;
     this.streamFault = null;
     this.#attached = false;
     this.#openedOnce = false;
+  }
+
+  /**
+   * (Re)reads recorded wave runs for this state's waves. History is
+   * supplementary — the live rows are authoritative — so a failed read keeps
+   * last good silently and the section simply shows no history.
+   */
+  async refreshWaveHistory(): Promise<void> {
+    const reads = await Promise.all(JOBS_WAVES.map((wave) => this.source.readWaves(wave)));
+    const seen = new Set<string>();
+    const runs: OpsWaveRun[] = [];
+    for (const read of reads) {
+      if (!read.ok) continue;
+      for (const run of read.data.waves) {
+        const id = `${run.wave}:${run.key}:${run.opened_at}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        runs.push(run);
+      }
+    }
+    this.waveHistory = runs;
   }
 
   async #hydrate(): Promise<void> {
@@ -257,6 +289,9 @@ export class JobsState {
   apply(frame: StreamFrame): void {
     if (frame.entity === 'transcript' || frame.entity === 'metric') {
       this.wavesState.apply(frame);
+      // A terminal just recorded its run — re-read history so the closed
+      // wave shows without waiting for the next attach.
+      if (frame.done) void this.refreshWaveHistory();
       return;
     }
     const kind = classifyJobFrame(frame);

@@ -1,7 +1,7 @@
 import type { StreamFrame } from '../index.js';
 import type { StateStream } from '../source.js';
 import type { ApiResult } from '../result.js';
-import type { OpsSyncStateRow } from './types.js';
+import type { OpsSyncStateRow, OpsWaveRun } from './types.js';
 import { WaveState, type WaveRow } from './wave-state.svelte.js';
 
 // SyncState observes dōjō sync: sync-state rows hydrated from the DB, wave
@@ -9,9 +9,10 @@ import { WaveState, type WaveRow } from './wave-state.svelte.js';
 // the sync stage frames (which ride as job updates — stages are not queue
 // tasks, so they carry no id to key on).
 
-/** What SyncState needs of its source: the sync-state read and the stream. */
+/** What SyncState needs of its source: the sync-state read, pass history, and the stream. */
 export interface SyncSource {
   readSyncState: () => Promise<ApiResult<OpsSyncStateRow[]>>;
+  readWaves: (wave: string | null) => Promise<ApiResult<{ waves: OpsWaveRun[] }>>;
   events: StateStream<StreamFrame>;
 }
 
@@ -39,6 +40,8 @@ export class SyncState {
   readonly wavesState = new WaveState(['sync']);
 
   rows = $state<OpsSyncStateRow[]>([]);
+  /** Recorded sync pass runs — history beside the live rows. */
+  waveHistory = $state<OpsWaveRun[]>([]);
   activity = $state<Record<string, SyncStageActivity>>({});
   daemonReachable = $state(true);
   /** The live stream's own fault, held until the next open re-reads. */
@@ -77,6 +80,7 @@ export class SyncState {
     const gen = this.#gen;
     this.#teardown();
     this.rows = [];
+    this.waveHistory = [];
     this.activity = {};
     this.streamFault = null;
     this.daemonReachable = true;
@@ -102,10 +106,21 @@ export class SyncState {
     try {
       await this.#hydrate();
       if (gen !== this.#gen) return;
+      await this.refreshWaveHistory();
+      if (gen !== this.#gen) return;
     } catch {
       this.daemonReachable = false;
     }
     this.#ensurePoller();
+  }
+
+  /**
+   * (Re)reads recorded sync pass runs. History is supplementary — the live
+   * rows are authoritative — so a failed read keeps last good silently.
+   */
+  async refreshWaveHistory(): Promise<void> {
+    const read = await this.source.readWaves('sync');
+    if (read.ok) this.waveHistory = read.data.waves;
   }
 
   /** Full teardown — closes the stream, clears the rows. */
@@ -113,6 +128,7 @@ export class SyncState {
     this.#gen += 1;
     this.#teardown();
     this.rows = [];
+    this.waveHistory = [];
     this.activity = {};
     this.daemonReachable = true;
     this.streamFault = null;
@@ -128,6 +144,7 @@ export class SyncState {
   apply(frame: StreamFrame): void {
     if (frame.entity === 'sync') {
       this.wavesState.apply(frame);
+      if (frame.done) void this.refreshWaveHistory();
       return;
     }
     if (frame.entity !== 'job') return;

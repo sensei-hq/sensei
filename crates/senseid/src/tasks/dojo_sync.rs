@@ -208,10 +208,16 @@ async fn run_pass(
         total: total as u64,
         repaired: None,
     });
+    crate::tasks::progress::open_wave(pg, "sync", &pass, None, total as u64).await;
     if personas.is_empty() {
         tracing::debug!("dojo_sync: no signed-in personas");
-        let _ =
-            tx.send(TaskEvent::WaveDone { wave: "sync".into(), key: pass, settled: 0, total: 0 });
+        let _ = tx.send(TaskEvent::WaveDone {
+            wave: "sync".into(),
+            key: pass.clone(),
+            settled: 0,
+            total: 0,
+        });
+        crate::tasks::progress::close_wave(pg, "sync", &pass, 0, 0).await;
         return Ok(());
     }
 
@@ -279,10 +285,11 @@ async fn run_pass(
     let settled = (total - failures.len()) as u64;
     let _ = tx.send(TaskEvent::WaveDone {
         wave: "sync".into(),
-        key: pass,
+        key: pass.clone(),
         settled,
         total: total as u64,
     });
+    crate::tasks::progress::close_wave(pg, "sync", &pass, settled, total as u64).await;
     // A pass where EVERY persona failed is not a success. `run_scheduled` records
     // this return value as the schedule's `last_ok`, so swallowing it printed a
     // green worker over a cycle that moved nothing — the exact false report

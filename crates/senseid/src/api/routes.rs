@@ -372,6 +372,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
         .route("/api/tasks/{id}/retry", post(crate::api::handlers::tasks::retry_task))
+        .route("/api/tasks/waves", get(crate::api::handlers::tasks::waves_listing))
         // Operations alert dispositions: ack state that survives reloads.
         .route(
             "/api/ops/alerts/acks",

@@ -148,8 +148,40 @@ pub async fn emit_wave_done(
         .filter(|c| matches!(c["status"].as_str(), Some("completed" | "failed")))
         .count() as u64;
     let total = children.len() as u64;
-    let _ = sender.send(TaskEvent::WaveDone { wave: wave.into(), key, settled, total });
+    let _ =
+        sender.send(TaskEvent::WaveDone { wave: wave.into(), key: key.clone(), settled, total });
+    close_wave(pg, wave, &key, settled, total).await;
     Ok(u32::try_from(settled).unwrap_or(u32::MAX))
+}
+
+/// Record a wave's opening row in `activity.wave_runs`. Fail-open with a
+/// warn: history bookkeeping must never break the pipeline it observes.
+pub async fn open_wave(
+    pg: &crate::db::pg_store::PgStore,
+    wave: &str,
+    key: &str,
+    parent: Option<u64>,
+    total: u64,
+) {
+    if let Err(e) = pg.open_wave_run(wave, key, parent.map(|p| p as i64), total as i64).await {
+        tracing::warn!(error = %e, wave, key, "open_wave: history write failed");
+    }
+}
+
+/// Close a wave's row `done` with settled counts. Fail-open like [`open_wave`];
+/// a missing open row is a miss, never an error.
+pub async fn close_wave(
+    pg: &crate::db::pg_store::PgStore,
+    wave: &str,
+    key: &str,
+    settled: u64,
+    total: u64,
+) {
+    match pg.close_wave_run(wave, key, settled as i64, total as i64, "done").await {
+        Ok(true) => {}
+        Ok(false) => tracing::warn!(wave, key, "close_wave: no open row for this wave"),
+        Err(e) => tracing::warn!(error = %e, wave, key, "close_wave: history write failed"),
+    }
 }
 
 /// Where a stage's progress goes.

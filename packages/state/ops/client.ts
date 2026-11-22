@@ -17,6 +17,7 @@ import type {
   OpsScheduledTask,
   OpsSyncStateFeed,
   OpsTaskDetail,
+  OpsWaveRun,
 } from './types.js';
 
 // ─── The client ─────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ export interface OpsApi {
   tryStartBackfill: () => Promise<ApiResult<OpsBackfillResult>>;
   tryGetAlertAcks: () => Promise<ApiResult<{ acks: OpsAlertAck[] }>>;
   tryPutAlertAck: (cls: string, key: string, acked: boolean) => Promise<ApiResult<OpsAlertAck>>;
+  tryGetWaves: (wave?: string, limit?: number) => Promise<ApiResult<{ waves: OpsWaveRun[] }>>;
 }
 
 /** The ops client: every call the daemon's answer or an `ApiResult` error,
@@ -82,6 +84,11 @@ export const opsClient = (base: string): OpsApi => {
     tryGetAlertAcks: () => call<{ acks: OpsAlertAck[] }>('GET', '/api/ops/alerts/acks'),
     tryPutAlertAck: (cls, key, acked) =>
       call<OpsAlertAck>('PUT', '/api/ops/alerts/acks', { class: cls, key, acked }),
+    tryGetWaves: (wave, limit = 50) =>
+      call<{ waves: OpsWaveRun[] }>(
+        'GET',
+        `/api/tasks/waves?${wave ? `wave=${encodeURIComponent(wave)}&` : ''}limit=${limit}`,
+      ),
   };
 };
 

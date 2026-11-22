@@ -339,6 +339,8 @@ pub(super) async fn compute_workspace(ctx: &TaskContext, task: &Task) -> Result<
             total: 0,
             repaired: None,
         });
+        crate::tasks::progress::open_wave(pg, "metric", &task.id.to_string(), Some(task.id), 0)
+            .await;
         crate::tasks::progress::emit_wave_done(
             pg,
             ctx.queue.sender(),
@@ -360,6 +362,14 @@ pub(super) async fn compute_workspace(ctx: &TaskContext, task: &Task) -> Result<
         total: n_children as u64,
         repaired: None,
     });
+    crate::tasks::progress::open_wave(
+        pg,
+        "metric",
+        &task.id.to_string(),
+        Some(task.id),
+        n_children as u64,
+    )
+    .await;
     // The per-workspace health barrier: blocked on THIS run's group children (same frozen
     // as_of) so the derived roll-up runs only after the components land. Parented like
     // the groups, so the wave's tree is complete for followers.

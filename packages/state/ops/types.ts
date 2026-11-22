@@ -124,6 +124,18 @@ export interface OpsSyncStateFeed {
   entities: OpsSyncStateRow[];
 }
 
+/** One row of `activity.wave_runs`: a wave's recorded run, open/done/abandoned. */
+export interface OpsWaveRun {
+  wave: string;
+  key: string;
+  parent_task_id: number | null;
+  total: number;
+  settled: number;
+  outcome: 'open' | 'done' | 'abandoned';
+  opened_at: string;
+  closed_at: string | null;
+}
+
 /** One wave row: transcript/metric/sync waves keyed by dispatcher (or pass). */
 export interface OpsWave {
   wave: string;

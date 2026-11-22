@@ -471,6 +471,14 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         ),
         Err(e) => tracing::warn!(error = %e, "startup: reconcile_orphaned_task_executions failed"),
     }
+    // Same crash, the wave half: rows left open by a dead session can never
+    // terminal — their dispatcher died with the process — so they read
+    // abandoned instead of lingering open. Non-fatal like the orphan sweep.
+    match state.pg.abandon_open_wave_runs(session_start).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("startup: abandoned {n} wave run(s) from a prior session"),
+        Err(e) => tracing::warn!(error = %e, "startup: abandon_open_wave_runs failed"),
+    }
 
     // Scale the worker pool to the machine's logical cores (bounded by the DB
     // pool headroom), rather than the old hardcoded 3 — on a many-core host the

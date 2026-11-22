@@ -359,6 +359,30 @@ pub(crate) async fn retry_task(
     Ok(Json(serde_json::json!({ "taskId": new_id })))
 }
 
+#[derive(serde::Deserialize)]
+pub struct WavesQuery {
+    wave: Option<String>,
+    limit: Option<i64>,
+}
+
+/// `GET /api/tasks/waves?wave=&limit=N` — recent wave runs, newest first:
+/// open waves, done terminals, and boot-abandoned runs. History for the
+/// center beside the live stream; capped (default 50).
+pub(crate) async fn waves_listing(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<WavesQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let limit = q.limit.unwrap_or(50);
+    if limit < 1 {
+        return Err(super::err(StatusCode::BAD_REQUEST, "limit must be a positive number"));
+    }
+    let waves = state.pg.list_wave_runs(q.wave.as_deref(), limit).await.map_err(|e| {
+        tracing::warn!(error = %e, "waves_listing: read failed");
+        super::err(StatusCode::INTERNAL_SERVER_ERROR, "waves read failed")
+    })?;
+    Ok(Json(serde_json::json!({ "waves": waves })))
+}
+
 /// `GET /api/tasks/kinds` — the task catalogue, grouped by pipeline.
 ///
 /// Exists because the pipelines were previously convention only: which stage a
@@ -491,6 +515,46 @@ mod tests {
         seed_execution(&state, id, "process_file", "completed").await;
         let err = retry_task(State(state), Path(id as u64)).await.expect_err("409");
         assert_eq!(err.0, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn waves_list_recent_runs_filterable_by_wave() {
+        let state = state().await;
+        let key = format!("waves-test-{}", uuid::Uuid::new_v4());
+        state.pg.open_wave_run("transcript", &key, None, 3).await.unwrap();
+        state.pg.close_wave_run("transcript", &key, 3, 3, "done").await.unwrap();
+        let body = waves_listing(
+            State(state.clone()),
+            axum::extract::Query(WavesQuery { wave: Some("transcript".into()), limit: None }),
+        )
+        .await
+        .expect("waves list");
+        let runs = body.0["waves"].as_array().expect("waves array");
+        let row = runs.iter().find(|r| r["key"] == key).expect("the closed wave lists");
+        assert_eq!(row["outcome"], "done");
+        assert_eq!(row["settled"], 3);
+        let empty = waves_listing(
+            State(state),
+            axum::extract::Query(WavesQuery { wave: Some("metric".into()), limit: None }),
+        )
+        .await
+        .expect("waves list");
+        assert!(
+            !empty.0["waves"].as_array().expect("waves array").iter().any(|r| r["key"] == key),
+            "the wave filter narrows"
+        );
+    }
+
+    #[tokio::test]
+    async fn waves_listing_refuses_a_non_positive_limit() {
+        let state = state().await;
+        let err = waves_listing(
+            State(state),
+            axum::extract::Query(WavesQuery { wave: None, limit: Some(0) }),
+        )
+        .await
+        .expect_err("limit 0 is a 400");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

@@ -200,6 +200,7 @@ export type {
   OpsQueuedTaskDetail,
   OpsBackfillResult,
   OpsAlertAck,
+  OpsWaveRun,
 } from './ops/types.js';
 export { opsClient, opsEvents, parseOpsFrame, type OpsApi } from './ops/client.js';
 export {

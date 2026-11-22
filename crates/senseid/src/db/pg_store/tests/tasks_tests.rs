@@ -1078,6 +1078,36 @@ async fn abandoned_task_list_names_per_task_rows() {
     assert!(rows[0]["error"].as_str().unwrap().starts_with("watchdog:"));
 }
 
+// ── activity.wave_runs — wave history ────────────────────────────────
+
+// One test, sequential: abandonment sweeps every open row, so a split-out
+// abandon test could steal the open-close test's row mid-flight.
+#[tokio::test]
+async fn wave_runs_open_close_list_and_boot_abandon() {
+    let s = pg_store().await;
+    let key = format!("wave-test-{}", uuid::Uuid::new_v4());
+    let id = s.open_wave_run("transcript", &key, Some(4242), 4).await.unwrap();
+    assert!(!id.is_nil());
+    let closed = s.close_wave_run("transcript", &key, 3, 4, "done").await.unwrap();
+    assert!(closed, "the open row closes");
+    let closed_again = s.close_wave_run("transcript", &key, 3, 4, "done").await.unwrap();
+    assert!(!closed_again, "no second open row to close");
+    let rows = s.list_wave_runs(Some("transcript"), 10).await.unwrap();
+    let row = rows.iter().find(|r| r["key"] == key).expect("the wave lists");
+    assert_eq!(row["settled"], 3);
+    assert_eq!(row["outcome"], "done");
+    assert_eq!(row["parent_task_id"], 4242);
+
+    // A row opened before this boot that never closed died with its session.
+    let stale = format!("wave-abandon-{}", uuid::Uuid::new_v4());
+    s.open_wave_run("sync", &stale, None, 2).await.unwrap();
+    let n = s.abandon_open_wave_runs(chrono::Utc::now()).await.unwrap();
+    assert!(n >= 1);
+    let rows = s.list_wave_runs(Some("sync"), 10).await.unwrap();
+    let row = rows.iter().find(|r| r["key"] == stale).expect("the wave lists");
+    assert_eq!(row["outcome"], "abandoned");
+}
+
 // ── activity.alert_acks — ack dispositions ────────────────────────────
 
 #[tokio::test]

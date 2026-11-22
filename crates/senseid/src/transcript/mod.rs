@@ -1091,6 +1091,7 @@ pub async fn backfill(
         total: enqueued as u64,
         repaired: Some(sessions_repaired as u64),
     });
+    crate::tasks::progress::open_wave(pg, "transcript", &key, parent, enqueued as u64).await;
     // The barrier runs when every child settled and emits the terminal wave
     // event. With no children it runs immediately (an empty wave still ends).
     let mut barrier = Task::new(TaskKind::FinalizeTranscriptWave, "", "");

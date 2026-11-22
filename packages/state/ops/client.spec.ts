@@ -138,6 +138,20 @@ describe('opsClient — the paths', () => {
     expect(JSON.parse(call.body as string)).toEqual({ class: 'task', key: '7', acked: true });
     expect(res).toEqual({ ok: true, data: row });
   });
+
+  it('reads wave runs, filterable by wave', async () => {
+    const runs = { waves: [] };
+    const fetch = stub(200, runs);
+    const res = await api().tryGetWaves('transcript', 10);
+    expect(calledWith(fetch).url).toBe(`${BASE}/api/tasks/waves?wave=transcript&limit=10`);
+    expect(res).toEqual({ ok: true, data: runs });
+  });
+
+  it('reads all waves unfiltered', async () => {
+    const fetch = stub(200, { waves: [] });
+    await api().tryGetWaves();
+    expect(calledWith(fetch).url).toBe(`${BASE}/api/tasks/waves?limit=50`);
+  });
 });
 
 describe('opsClient — failures', () => {

@@ -51,6 +51,18 @@
       {/each}
     </ul>
   {/if}
+  {#if jobs.waveHistory.length > 0}
+    <p>Recent waves</p>
+    <ul>
+      {#each jobs.waveHistory as run (`history:${run.wave}:${run.key}`)}
+        <li data-pipeline-history>
+          <span>{run.wave}</span>
+          <span>{run.settled} of {run.total}</span>
+          <span>{run.outcome}</span>
+        </li>
+      {/each}
+    </ul>
+  {/if}
   <Button
     size="sm"
     data-pipeline-backfill

@@ -23,6 +23,7 @@ export function jobsSseSource(api: OpsApi, stream: () => OpsEventStream): JobsSo
     readFailed: () => api.tryGetFailed(),
     readAbandoned: () => api.tryGetAbandoned(),
     readIndexErrors: () => api.tryGetIndexErrors(),
+    readWaves: (wave) => api.tryGetWaves(wave ?? undefined),
     events: sseEvents(stream),
   };
 }
@@ -57,6 +58,7 @@ export function syncSseSource(api: OpsApi, stream: () => OpsEventStream): SyncSo
       if (!read.ok) return read;
       return { ok: true, data: read.data.entities };
     },
+    readWaves: (wave) => api.tryGetWaves(wave ?? undefined),
     events: sseEvents(stream),
   };
 }

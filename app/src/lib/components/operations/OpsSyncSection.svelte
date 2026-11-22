@@ -60,5 +60,17 @@
         {/each}
       </ul>
     {/if}
+    {#if sync.waveHistory.length > 0}
+      <p>Recent passes</p>
+      <ul>
+        {#each sync.waveHistory as run (`history:${run.key}`)}
+          <li data-sync-history>
+            <span>pass {run.key}</span>
+            <span>{run.settled} of {run.total}</span>
+            <span>{run.outcome}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
 </section>

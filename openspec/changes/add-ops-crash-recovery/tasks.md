@@ -7,11 +7,11 @@
 
 ## 2. Wave history (test-first)
 
-- [ ] 2.1 DDL `activity.wave_runs` (full-table file, `dbd` deploy, test-template rebuild)
-- [ ] 2.2 Totals opens the row, terminal closes it (`done`); boot closes leftovers (`abandoned`)
-- [ ] 2.3 `GET /api/tasks/waves` (filterable, capped, exact totals)
-- [ ] 2.4 Pipelines/Sync sections render history beside live waves; rendered specs
-- [ ] 2.5 Live-verified on scratch daemon (run/inspect/abandon); Tauri matrix in slice 4
+- [x] 2.1 DDL `activity.wave_runs` (full-table file, `dbd` deploy, test-template rebuild)
+- [x] 2.2 Totals opens the row, terminal closes it (`done`); boot closes leftovers (`abandoned`)
+- [x] 2.3 `GET /api/tasks/waves` (filterable, capped, exact totals)
+- [x] 2.4 Pipelines/Sync sections render history beside live waves; rendered specs
+- [x] 2.5 Live-verified on scratch daemon (run/inspect/abandon); Tauri matrix in slice 4
 
 ## 3. Boot re-drive + orphan re-queue (test-first)
 

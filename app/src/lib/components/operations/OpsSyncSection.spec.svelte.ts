@@ -71,4 +71,14 @@ describe('OpsSyncSection', () => {
     const m = mount();
     expect(m.container.textContent).toContain('push refused');
   });
+
+  it('recorded passes render as history with their outcome', () => {
+    syncState.waveHistory = [
+      { wave: 'sync', key: 'pass-1', parent_task_id: null, total: 2, settled: 1, outcome: 'done', opened_at: '', closed_at: '' },
+    ];
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-sync-history]')).toHaveLength(1);
+    expect(m.container.textContent).toContain('1 of 2');
+  });
 });

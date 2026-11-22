@@ -688,6 +688,117 @@ impl PgStore {
     /// queries answer "how much", these answer "which task, where, when".
     /// Same watchdog-prefix rule as [`Self::watchdog_abandonments`], so the
     /// two cannot disagree about what an abandonment is.
+    /// Open a wave run row: `WaveTotals` landed. Returns the row id. Keys
+    /// restart per session (dispatcher task ids), so opens never conflict —
+    /// each open is its own row, and closes match the latest open pair.
+    pub async fn open_wave_run(
+        &self,
+        wave: &str,
+        key: &str,
+        parent_task_id: Option<i64>,
+        total: i64,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.wave_runs(wave, key, parent_task_id, total)
+             VALUES ($1, $2, $3, $4) RETURNING id",
+        )
+        .bind(wave)
+        .bind(key)
+        .bind(parent_task_id)
+        .bind(total)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("open_wave_run: {e}"))?;
+        Ok(row.0)
+    }
+
+    /// Close the latest open row for a (wave, key) pair with settled counts.
+    /// Returns false when no open row exists (a terminal without totals —
+    /// recorded as a miss, never an error, so a missed open cannot fail a
+    /// wave that otherwise completed).
+    pub async fn close_wave_run(
+        &self,
+        wave: &str,
+        key: &str,
+        settled: i64,
+        total: i64,
+        outcome: &str,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.wave_runs SET settled = $3, total = $4, outcome = $5, closed_at = now()
+              WHERE id = (SELECT id FROM activity.wave_runs
+                           WHERE wave = $1 AND key = $2 AND outcome = 'open'
+                           ORDER BY opened_at DESC LIMIT 1)",
+        )
+        .bind(wave)
+        .bind(key)
+        .bind(settled)
+        .bind(total)
+        .bind(outcome)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("close_wave_run: {e}"))?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Boot abandonment: close rows left open by dead sessions. A wave whose
+    /// terminal never emitted can never complete — its dispatcher died with
+    /// the process — so it reads `abandoned` with its last known totals
+    /// instead of lingering open. Idempotent. Returns rows abandoned.
+    pub async fn abandon_open_wave_runs(
+        &self,
+        before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.wave_runs SET outcome = 'abandoned', closed_at = now()
+              WHERE outcome = 'open' AND opened_at < $1",
+        )
+        .bind(before)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("abandon_open_wave_runs: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
+    /// Recent wave runs, newest first, optionally narrowed to one wave.
+    pub async fn list_wave_runs(
+        &self,
+        wave: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            String,
+            String,
+            Option<i64>,
+            i32,
+            i32,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT wave, key, parent_task_id, total, settled, outcome, opened_at, closed_at
+                   FROM activity.wave_runs
+                  WHERE ($1::text IS NULL OR wave = $1)
+                  ORDER BY opened_at DESC LIMIT $2",
+        )
+        .bind(wave)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("list_wave_runs: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(wave, key, parent_task_id, total, settled, outcome, opened_at, closed_at)| {
+                serde_json::json!({
+                    "wave": wave, "key": key, "parent_task_id": parent_task_id,
+                    "total": total, "settled": settled, "outcome": outcome,
+                    "opened_at": opened_at.to_rfc3339(),
+                    "closed_at": closed_at.map(|t| t.to_rfc3339()),
+                })
+            })
+            .collect())
+    }
+
     /// Every alert disposition: what the reader acked, and what cleared
     /// before (recurrence memory for escalation). Alerts themselves
     /// re-derive from the feeds; this table holds only dispositions.

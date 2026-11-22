@@ -12,6 +12,7 @@ import type {
   OpsIndexError,
   OpsQueueListing,
   OpsTaskView,
+  OpsWaveRun,
 } from './types.js';
 import type { StateStream, StreamFrame } from '../index.js';
 import type { ApiResult } from '../result.js';
@@ -89,6 +90,7 @@ function cannedJobs(opts: { queue?: OpsQueueListing } = {}) {
     readFailed: vi.fn(async () => ({ ok: true as const, data: { tasks: [] as OpsFailedTask[] } })),
     readAbandoned: vi.fn(async () => ({ ok: true as const, data: abandoned })),
     readIndexErrors: vi.fn(async () => ({ ok: true as const, data: [] as OpsIndexError[] })),
+    readWaves: vi.fn(async () => ({ ok: true as const, data: { waves: [] as OpsWaveRun[] } })),
     events: ((on, onOpen, onFault) => {
       stream.on = on;
       stream.onOpen = onOpen;
@@ -246,6 +248,33 @@ describe('JobsState', () => {
     // queue poller's verdict, untouched by a feed that failed closed.
     expect(st.failed.map((t) => t.taskId)).toEqual([7]);
     expect(st.failuresError).toMatch(/failed tasks/);
+    expect(st.daemonReachable).toBe(true);
+    st.reset();
+  });
+
+  it('attach loads wave history; a terminal re-reads it', async () => {
+    const run: OpsWaveRun = {
+      wave: 'transcript', key: '9', parent_task_id: 9, total: 2, settled: 2,
+      outcome: 'done', opened_at: '', closed_at: '',
+    };
+    const { source, stream } = cannedJobs();
+    source.readWaves = vi.fn(async () => ({ ok: true as const, data: { waves: [run] } }));
+    const st = new JobsState(source);
+    await st.attach();
+    expect(st.waveHistory.map((r) => r.key)).toEqual(['9']);
+    expect(source.readWaves).toHaveBeenCalledTimes(2);
+    stream.on!(frame('transcript', 'update', '9', { settled: 2, total: 2 }, true));
+    await vi.waitFor(() => expect(source.readWaves).toHaveBeenCalledTimes(4));
+    st.reset();
+    expect(st.waveHistory).toEqual([]);
+  });
+
+  it('a failed history read keeps last good without faulting the daemon', async () => {
+    const { source } = cannedJobs();
+    source.readWaves = vi.fn(async () => ({ ok: false as const, error: { status: 0, message: 'down' } }));
+    const st = new JobsState(source);
+    await st.attach();
+    expect(st.waveHistory).toEqual([]);
     expect(st.daemonReachable).toBe(true);
     st.reset();
   });

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SyncState, classifySyncStage, type SyncSource } from './sync-state.svelte.js';
-import type { OpsSyncStateRow } from './types.js';
+import type { OpsSyncStateRow, OpsWaveRun } from './types.js';
 import type { StateStream, StreamFrame } from '../index.js';
 
 function syncRow(entityKey: string, overrides: Partial<OpsSyncStateRow> = {}): OpsSyncStateRow {
@@ -49,6 +49,7 @@ function cannedSync(rows: OpsSyncStateRow[] = []) {
   } = { on: null, onOpen: null, onFault: null };
   const source: SyncSource = {
     readSyncState: vi.fn(async () => ({ ok: true as const, data: rows })),
+    readWaves: vi.fn(async () => ({ ok: true as const, data: { waves: [] as OpsWaveRun[] } })),
     events: ((on, onOpen, onFault) => {
       stream.on = on;
       stream.onOpen = onOpen;
@@ -135,6 +136,22 @@ describe('SyncState', () => {
     st.apply(frame('sync', 'update', 'pass-1', { settled: 2, total: 2 }, true));
     expect(st.waves[0]).toMatchObject({ settled: 2, done: true });
     st.reset();
+  });
+
+  it('attach loads pass history; a terminal re-reads it', async () => {
+    const run: OpsWaveRun = {
+      wave: 'sync', key: 'pass-1', parent_task_id: null, total: 2, settled: 2,
+      outcome: 'done', opened_at: '', closed_at: '',
+    };
+    const { source, stream } = cannedSync();
+    source.readWaves = vi.fn(async () => ({ ok: true as const, data: { waves: [run] } }));
+    const st = new SyncState(source);
+    await st.attach();
+    expect(st.waveHistory.map((r) => r.key)).toEqual(['pass-1']);
+    stream.on!(frame('sync', 'update', 'pass-1', { settled: 2, total: 2 }, true));
+    await vi.waitFor(() => expect(source.readWaves).toHaveBeenCalledTimes(2));
+    st.reset();
+    expect(st.waveHistory).toEqual([]);
   });
 
   it('a socket fault is held until the next open re-reads', async () => {
