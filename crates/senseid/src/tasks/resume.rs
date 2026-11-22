@@ -63,17 +63,16 @@ pub async fn resume_pending_scans(queue: &TaskQueue, pg: &PgStore) -> u32 {
     enqueued
 }
 
-/// Task kinds that frame waves — dispatchers open them, barriers close them.
-/// Waves re-drive as a unit (fresh backfill / missed-day compute), so the
-/// orphan sweep never takes these: re-queueing a lone dispatcher would fan
-/// out beside the re-drive, and a lone barrier would terminal against dead
-/// parents. Leaf and one-off work is the sweep's; framing is the re-drive's.
-fn is_wave_framing(kind: &TaskKind) -> bool {
+/// Task kinds the sweep never takes, though orphans may wear them: the two
+/// barriers. A re-queued barrier would terminal against dead parents,
+/// emitting a misleading done frame (and closing the wrong history row) for
+/// a wave that never opened — waves re-drive as a unit instead. Dispatchers
+/// need no entry: both are `retryable: false`, so the retryable gate already
+/// excludes them (transcript re-drive is the boot tick, including test mode
+/// on isolated instances; metric re-drive is the boot backfill).
+fn sweep_skips_kind(kind: &TaskKind) -> bool {
     use TaskKind::*;
-    matches!(
-        kind,
-        IngestCaptures | ComputeWorkspaceMetrics | FinalizeTranscriptWave | ComputeHealth
-    )
+    matches!(kind, FinalizeTranscriptWave | ComputeHealth)
 }
 
 /// Re-queue crash-orphaned tasks as new tracked tasks. The last recovery
@@ -82,10 +81,11 @@ fn is_wave_framing(kind: &TaskKind) -> bool {
 /// here, each with its retry number carried forward and lineage to the exact
 /// prior attempt row. Bounds: orphan marker only (legit failures already got
 /// bounded in-session retries), unparented only (wave/folder children belong
-/// to their re-drive), retryable kinds under MAX (poison terminates), no
-/// wave-framing kinds (waves re-drive as a unit). `enqueue_unique` dedups
-/// against earlier layers, so nothing runs twice. Returns tasks admitted
-/// (covers don't count). Safe to call when nothing is orphaned — returns 0.
+/// to their re-drive), retryable kinds under MAX (poison terminates; this
+/// also excludes both dispatchers), never barriers (see
+/// [`sweep_skips_kind`]). `enqueue_unique` dedups against earlier layers, so
+/// nothing runs twice. Returns tasks admitted (covers don't count). Safe to
+/// call when nothing is orphaned — returns 0.
 pub async fn resume_orphaned_tasks(queue: &TaskQueue, pg: &PgStore) -> u32 {
     let rows = match pg.orphaned_task_rows(crate::tasks::retry::MAX_RETRIES as i32).await {
         Ok(rows) => rows,
@@ -104,7 +104,7 @@ pub async fn resume_orphaned_tasks(queue: &TaskQueue, pg: &PgStore) -> u32 {
             tracing::warn!(kind = kind_name, "resume_orphaned_tasks: log names an unknown kind");
             continue;
         };
-        if !kind.is_retryable() || is_wave_framing(&kind) {
+        if !kind.is_retryable() || sweep_skips_kind(&kind) {
             continue;
         }
         let folder = row.get("folderPath").and_then(|v| v.as_str()).unwrap_or_default();
@@ -423,7 +423,19 @@ mod tests {
         .await;
         // Legit failure: already got bounded in-session retries.
         seed_orphan(&pg, &tag, "process_file", None, 0, "parse blew up").await;
-        // Wave framing: dispatchers and barriers re-drive as a unit.
+        // Barriers: re-drive as a unit, never swept solo (would terminal
+        // against dead parents).
+        seed_orphan(
+            &pg,
+            &tag,
+            "finalize_transcript_wave",
+            None,
+            0,
+            "orphaned: daemon restarted while task was running",
+        )
+        .await;
+        // Dispatchers: non-retryable, so the retryable gate excludes them;
+        // the boot tick / boot backfill owns their re-drive.
         seed_orphan(
             &pg,
             &tag,

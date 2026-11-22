@@ -21,8 +21,7 @@
 
 Every crash-orphaned task returns as a NEW tracked task rather than
 resuming in place: resuming the dead session's IDs would overwrite status
-and error
-info, losing the record of what died. New rows preserve history — the
+and error info, losing the record of what died. New rows preserve history — the
 orphan stays failed-with-marker, the retry carries `retried_from_execution_id`
 to the exact prior attempt (uuid PK, unambiguous across sessions where
 task IDs restart). Re-drive covers fan-out at dispatcher grain (below);
@@ -34,13 +33,18 @@ deduping via `enqueue_unique`:
   sessions converge instead of duplicating.
 - Metric: enqueue compute for each missed day via the `as_of` backfill path;
   per-day upserts make re-compute safe.
-- Sync: no boot pass. Entity marks make the next scheduled pass skip pushed
-  work, but a crash between push and mark-ack would double-push on an
-  immediate retry; the bounded cadence delay is the safety margin.
+- Sync: the existing boot pass (mark-after-ack per entity — marks land only
+  on acked pushes, so a crash orphan re-pushes at most unmarked work and
+  dōjō-side keyed writes converge). No new machinery; the e2e asserts the
+  boot terminal.
 - Orphan sweep: every crash-orphaned task returns as a NEW tracked task
   (new session ID, `retry_number` carried, `retried_from_execution_id`
-  lineage), bounded to the orphan marker + retryable kinds +
-  `retry_number < MAX`. History is never mutated — recovery only adds rows.
+  lineage). Bounds: orphan marker only (legit failures got bounded
+  in-session retries), unparented only (wave/folder children belong to
+  their re-drive), retryable kinds under MAX (poison terminates; this also
+  excludes both dispatchers), never the two barriers (a re-queued barrier
+  would terminal against dead parents). History is never mutated —
+  recovery only adds rows.
 
 Layered boot order — each layer dedups against the last via
 `enqueue_unique`, so nothing runs twice: orphan reconcile → abandon open
