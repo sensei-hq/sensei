@@ -1,25 +1,28 @@
-# Checkpoint — 2026-11-22 (crash recovery slice 4 green + pushed)
+# Checkpoint — 2026-11-22 (v0.26.0 released; large-root perf pass done)
 
-**Slice:** `add-ops-crash-recovery` slice 4 (kill-restart e2e matrix).
-**Branch:** `develop` @ `de0c06349` (pushed).
+**Slice:** release v0.26.0 + perf recon on ~/Developer + ~/Work.
+**Branch:** `develop` @ `c46b052ee` (pushed). Tag `v0.26.0` on main.
 
 ## Done
-- Crash matrix 5/5 green live (Tauri): 4.1–4.5 in ~1m.
-- Ops-center matrix 5/5 green in the same run (10/10 combined).
-- Render-key identity: history/failures/alerts key by row id; alert
-  drafts dedup by condition. Unit 4095 green, senseid 5206 green,
-  clippy/fmt/fabrication/openspec-validate clean.
-- Commits: `e91721ea5` (identity + lints + ratchet 1180→1183),
-  `de0c06349` (slice 4 matrix + ticks). Tasks 3.2–3.4/3.6–3.7, 4.1–4.5 ticked.
+- v0.26.0: PR #519 merged, main CI green, tag pushed, release + tap
+  jobs success, marketplace synced, 0.26.0 installed + verified live.
+  Only deploy-dojo waits (manual approval gate).
+- Perf: ~/Work added (60 repos); Playwright tracked 5 rounds + shots;
+  metrics captured (durations, failures, coverage, load).
+- Findings: ts-driver pile-up (5× no-tsconfig compiles, load 31);
+  Rust p50 14s; C++ gap 86k files; stale-folder alert flood; socket
+  saturation (app survived, test channel didn't).
 
 ## Remaining
-- User verification in the Sensei app (report delivered in chat).
+- User: approve deploy-dojo in GitHub (release waits on it).
+- Perf follow-ups (not started): compile cap/dedup, stale prune,
+  C++ adapter, phase timing. Scan still draining (~8h ETA).
 
 ## Next command
-None — verify, then start the next backlog item.
+None — read the report, then pick a follow-up.
 
 ## Open questions
 - None.
 
 ## Known-broken
-- None.
+- None on the release; perf gaps listed above.
