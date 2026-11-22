@@ -36,10 +36,15 @@ async fn run(pg: Arc<PgStore>) {
     // Schedule-driven: when to prune is `sensei.schedules`, not a constant here.
     // The tick itself is unchanged — what to do stays code.
     let store = pg.clone();
-    ticker::run_scheduled(pg, "log_prune", move || {
-        let pg = store.clone();
-        async move { prune_once(&pg).await }
-    })
+    ticker::run_scheduled(
+        pg,
+        "log_prune",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let pg = store.clone();
+            async move { prune_once(&pg).await }
+        },
+    )
     .await;
 }
 

@@ -49,6 +49,17 @@
     search={false}
   >
     <div class="flex flex-col gap-3 p-4">
+      {#if state.streamFault}
+        <Notice
+          data-relay-stale
+          tone="fault"
+          size="inline"
+          expanded
+          title="Live updates interrupted"
+          detail={state.streamFault}
+          remedy="Reconnecting automatically — the view refreshes when the stream reopens."
+        />
+      {/if}
       {#if !parts || state.reading || state.notFound || state.error}
         <!-- No task drawn (reading, not found, a failed read): the header's back link is
              not there, so the way back is. -->

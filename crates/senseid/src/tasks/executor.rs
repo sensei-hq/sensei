@@ -12,6 +12,10 @@ pub struct TaskContext {
     pub app_state: crate::api::state::AppState,
     pub _graph_path: Option<std::path::PathBuf>,
     pub logger: sensei_logger::Logger,
+    /// Proactive desktop notify for terminal failures. Production wires
+    /// [`DesktopNotifier`](crate::notifications::DesktopNotifier); tests wire
+    /// the no-op or a recorder — a test run must never pop OS notifications.
+    pub notifier: Arc<dyn crate::notifications::Notifier>,
 }
 
 impl TaskContext {
@@ -54,6 +58,28 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
             }
         });
     }
+}
+
+/// The proactive notification for a terminal task failure: Warn with the
+/// kind, the path, and the reason. A retryable kind that ran out of attempts
+/// says so — "after N attempts" reads differently from "failed", and the
+/// fix differs too (the work is poison, not the attempt unlucky).
+///
+/// Pure so the wording is pinned without a queue or a desktop.
+pub(crate) fn terminal_failure_note(
+    task: &Task,
+    error: &str,
+) -> (crate::notifications::NotifyLevel, String, String) {
+    let exhausted = task.kind.is_retryable() && task.retry_number >= super::retry::MAX_RETRIES;
+    let title = format!("task failed: {}", task.kind);
+    let mut body = format!("{}: {}", task.path, error);
+    if exhausted {
+        body = format!("{body} after {} attempts", task.retry_number + 1);
+    }
+    // The way back: a desktop notification cannot deep-link, so it names the
+    // screen that can (the overnight-failure scenario).
+    body = format!("{body} See Operations → Failures.");
+    (crate::notifications::NotifyLevel::Warn, title, body)
 }
 
 /// Handle one dequeued task: dispatch it, record completion/failure, and on
@@ -103,6 +129,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             folder_path: &task.folder_path,
             path: &task.path,
             retry_number: task.retry_number as i32,
+            retried_from: task.retried_from,
         })
         .await
     {
@@ -171,6 +198,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ScanGitHistory => handlers::git_history::scan_git_history(ctx, task).await,
             TaskKind::IngestCaptures => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::IngestCapture => crate::transcript::run_ingest_capture(ctx, task).await,
+            TaskKind::FinalizeTranscriptWave => {
+                crate::transcript::run_finalize_wave(ctx, task).await
+            }
             TaskKind::BackfillCoverage => {
                 handlers::metrics::coverage::run_backfill(ctx, task).await
             }
@@ -223,6 +253,11 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                         Some(serde_json::json!({"message": e})),
                     )
                     .await;
+                // Proactive notify for the same last failure only — a desktop
+                // notification per attempt would bury the one that matters, the
+                // #194 lesson applied to the notify channel.
+                let (level, title, body) = terminal_failure_note(task, e);
+                ctx.notifier.notify(level, &title, &body);
             } else {
                 tracing::warn!(
                     task_id = task.id, kind = %task.kind, retry_number = task.retry_number,
@@ -285,6 +320,7 @@ mod tests {
                 "daemon",
                 "tasks",
             ),
+            notifier: base.notifier.clone(),
         })
     }
 
@@ -570,6 +606,77 @@ mod tests {
         let ctx = make_ctx().await;
         let task = Task::new(TaskKind::DeleteFile, "repo", "/some/file.rs");
         assert!(run_task(&ctx, 0, task).await.is_none(), "a successful task schedules no retry");
+    }
+
+    /// [`make_ctx`] with a recording notifier instead of the silent default:
+    /// terminal-failure notification pins observe this.
+    async fn ctx_with_recorder(
+        rec: std::sync::Arc<crate::notifications::test_support::Recorder>,
+    ) -> Arc<TaskContext> {
+        let base = make_ctx().await;
+        Arc::new(TaskContext {
+            queue: base.queue.clone(),
+            app_state: base.app_state.clone(),
+            _graph_path: None,
+            logger: base.logger.clone(),
+            notifier: rec,
+        })
+    }
+
+    #[tokio::test]
+    async fn terminal_failure_notifies_once_with_kind_path_and_reason() {
+        let rec = crate::notifications::test_support::recorder();
+        let ctx = ctx_with_recorder(rec.clone()).await;
+        let task = Task::new(TaskKind::ScanRoot, "", "/nonexistent/path");
+        assert!(run_task(&ctx, 0, task).await.is_none(), "ScanRoot is terminal");
+        let notes = rec.notes();
+        assert_eq!(notes.len(), 1, "one terminal failure, one notification");
+        assert_eq!(notes[0].0, crate::notifications::NotifyLevel::Warn);
+        assert!(notes[0].1.contains("scan_root"), "title names the kind: {}", notes[0].1);
+        assert!(notes[0].2.contains("/nonexistent/path"), "body names the path: {}", notes[0].2);
+    }
+
+    #[tokio::test]
+    async fn exhausted_retry_notifies_with_the_attempt_count() {
+        let rec = crate::notifications::test_support::recorder();
+        let ctx = ctx_with_recorder(rec.clone()).await;
+        let mut task =
+            Task::new(TaskKind::ProcessGitFolder, "/nonexistent/repo", "/nonexistent/repo");
+        task.retry_number = super::super::retry::MAX_RETRIES;
+        assert!(run_task(&ctx, 0, task).await.is_none(), "exhausted means terminal");
+        let notes = rec.notes();
+        assert_eq!(notes.len(), 1);
+        assert!(
+            notes[0].2.contains("after") && notes[0].2.contains("attempt"),
+            "the body says the retries ran out: {}",
+            notes[0].2
+        );
+    }
+
+    #[tokio::test]
+    async fn retryable_failure_notifies_nothing_yet() {
+        // A failure that will be retried is not news — the terminal one is.
+        // (The poison-pill lesson from #194 applies to notifications too: a
+        // notification per attempt would bury the one that matters.)
+        let rec = crate::notifications::test_support::recorder();
+        let ctx = ctx_with_recorder(rec.clone()).await;
+        let task = Task::new(TaskKind::ProcessGitFolder, "/nonexistent/repo", "/nonexistent/repo");
+        let handle = run_task(&ctx, 0, task).await.expect("a retry is scheduled");
+        handle.abort();
+        assert!(rec.notes().is_empty(), "no notification before the terminal failure");
+    }
+
+    #[test]
+    fn terminal_note_levels_and_names_exhaustion() {
+        let task = Task::new(TaskKind::ProcessFile, "/r", "/r/a.ts");
+        let (level, title, body) = super::terminal_failure_note(&task, "parse blew up");
+        assert_eq!(level, crate::notifications::NotifyLevel::Warn);
+        assert!(title.contains("process_file"));
+        assert!(body.contains("/r/a.ts") && body.contains("parse blew up"));
+        let mut exhausted = task;
+        exhausted.retry_number = super::super::retry::MAX_RETRIES;
+        let (_, _, exhausted_body) = super::terminal_failure_note(&exhausted, "still broken");
+        assert!(exhausted_body.contains("attempt"), "exhaustion is named: {exhausted_body}");
     }
 
     #[tokio::test]

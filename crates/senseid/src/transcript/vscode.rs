@@ -36,7 +36,7 @@ fn mtime_ns(path: &Path) -> Option<i64> {
 }
 
 /// VS Code variant names to scan.
-const VARIANTS: &[&str] = &["Code", "Code - Insiders", "VSCodium", "Code - OSS"];
+pub(crate) const VARIANTS: &[&str] = &["Code", "Code - Insiders", "VSCodium", "Code - OSS"];
 
 /// Check if a first line looks like a delta journal entry (has `"kind":` field).
 fn is_delta_journal(first_line: &str) -> bool {
@@ -60,7 +60,7 @@ fn otel_key(key: &str) -> Option<(&str, &str)> {
 }
 
 /// The OTel store under an editor's `User/` folder, if it has one.
-fn otel_db_path(user_root: &Path) -> Option<PathBuf> {
+pub(crate) fn otel_db_path(user_root: &Path) -> Option<PathBuf> {
     let db = user_root.join("globalStorage/github.copilot-chat").join(OTEL_DB);
     if db.exists() { Some(db) } else { None }
 }

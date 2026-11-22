@@ -14,6 +14,7 @@ create table if not exists task_executions (
 , error_message            text
 , started_at               timestamptz not null default now()
 , completed_at             timestamptz
+, retried_from_execution_id uuid
 );
 
 create index if not exists task_executions_task_kind_idx
@@ -72,3 +73,5 @@ comment on column task_executions.retry_number
      is '0 for first attempt. Incremented if the same task is retried.';
 comment on column task_executions.error_message
      is 'Error detail if status = failed.';
+comment on column task_executions.retried_from_execution_id
+     is 'Crash/manual-retry lineage: the execution row id this attempt retries. A uuid, not a task_id — task IDs restart every session, so only the row id is unambiguous across restarts.';

@@ -1,5 +1,6 @@
 <script lang="ts">
     import { Eyebrow, Rail, Wordmark } from '$lib/components';
+    import ScanProgress from '$lib/components/indexer/ScanProgress.svelte';
     import { buildNavItems, resolveActiveHref } from './observatory-nav';
     import type { GlyphMode } from '$lib/glyphs';
 
@@ -33,6 +34,7 @@
         </div>
     {/snippet}
     {#snippet footer()}
+        <ScanProgress variant="mini" />
         {#if attention}
             <button
                 type="button"

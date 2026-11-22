@@ -4,8 +4,8 @@
 //! Listens to the task queue's broadcast channel. For each folder being
 //! indexed, maintains an in-memory tracker that counts completed file tasks
 //! and forwards updates to the API broadcast channel. When the terminal
-//! BuildConnections task for a folder completes, emits a final folder_update
-//! with status=Indexed.
+//! DetectCommunities task for a folder completes, emits a final folder_update
+//! with status=Indexed, marked done.
 //!
 //! ## Throttling
 //!
@@ -271,13 +271,13 @@ async fn run(
                     }
                 }
             }
-            TaskEvent::Completed { kind, folder_path, .. } if kind == "build_connections" => {
+            TaskEvent::Completed { kind, folder_path, .. } if kind == "detect_communities" => {
                 if let Some(t) = trackers.remove(&folder_path) {
                     let workspace_id_str = t.workspace_id.clone();
-                    let _ = state_events.send(StateEvent::folder_update(scan_folder_from(
-                        &t,
-                        FolderStatus::Indexed,
-                    )));
+                    let _ = state_events.send(
+                        StateEvent::folder_update(scan_folder_from(&t, FolderStatus::Indexed))
+                            .done(),
+                    );
                     let _ = state_events.send(StateEvent::activity(ActivityEvent::new(
                         ActivityLevel::Process,
                         &indexed_message(&t.folder_name, t.files_completed),
@@ -301,16 +301,17 @@ async fn run(
                     if let Some(check) = all_indexed
                         && check
                     {
-                        let _ = state_events.send(StateEvent::workspace_update(
-                            crate::api::events::ScanWorkspace {
+                        let _ = state_events.send(
+                            StateEvent::workspace_update(crate::api::events::ScanWorkspace {
                                 id: workspace_id_str.clone(),
                                 name: String::new(),
                                 status: crate::api::events::WorkspaceStatus::Active,
                                 folders: vec![],
                                 auto_detected: true,
                                 confidence: crate::api::events::Confidence::High,
-                            },
-                        ));
+                            })
+                            .done(),
+                        );
                     }
                 }
                 // Last folder of the batch finished — reset the scan clock so the

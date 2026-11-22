@@ -18,50 +18,16 @@ export interface Stage {
 export type { StateEvent } from '@sensei/state';
 
 // ─── Scan ──────────────────────────────────────────────────────────────────────
-
-export type FolderStatus = 'discovered' | 'queued' | 'indexing' | 'indexed' | 'failed';
-export type WorkspaceStatus = 'scanning' | 'indexing' | 'active' | 'failed';
-export type ActivityLevel = 'discover' | 'queue' | 'process' | 'info' | 'success' | 'error';
-
-export interface ScanWorkspaceFolder {
-  id: string;
-  name: string;
-  path: string;
-  stack: string[];
-  filesTotal: number;
-  filesCompleted: number;
-  status: FolderStatus;
-  /**
-   * Wall-clock ms timestamp of the last add/update event the client received
-   * for this folder. Drives the task-list panel's reverse-chronological
-   * ordering — in-flight folders bubble up as their progress events arrive,
-   * terminal-status folders drift down once their lastUpdated freezes.
-   * Optional because hydration from /api/workspaces has no event timestamp.
-   */
-  lastUpdated?: number;
-}
-
-/** Folder-level SSE event from daemon — includes workspaceId for routing. */
-export interface ScanFolderEvent extends ScanWorkspaceFolder {
-  workspaceId: string;
-}
-
-export interface ScanWorkspace {
-  id: string;
-  name: string;
-  status: WorkspaceStatus;
-  folders: ScanWorkspaceFolder[];
-  autoDetected: boolean;
-  confidence: 'high' | 'medium' | 'low';
-}
-
-export interface ActivityEvent {
-  id: string;
-  level: ActivityLevel;
-  message: string;
-  elapsed: number;
-  timestamp: number;
-}
+// Shapes live in @sensei/state (#496); every importer still finds them here.
+export type {
+  FolderStatus,
+  WorkspaceStatus,
+  ActivityLevel,
+  ScanWorkspaceFolder,
+  ScanFolderEvent,
+  ScanWorkspace,
+  ActivityEvent,
+} from '@sensei/state';
 
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
 
@@ -1780,6 +1746,20 @@ export interface PruneResult {
   /** The exclusion now on the root, relative to it. */
   excluded: string;
   pruned: PruneReport;
+}
+
+/** A watch root absorbed by a newly added parent: the row is gone, its
+ *  folders and exclusions moved to the parent. */
+export interface AbsorbedWatchRoot {
+  id: string;
+  path: string;
+  status: string;
+}
+
+/** What a parent add consolidated, for the notice that says so. */
+export interface RootConsolidation {
+  parent: string;
+  absorbed: AbsorbedWatchRoot[];
 }
 
 // ── Issue trackers (docs/spec/daemon/tracker-jira-linkage.md R8, R9) ─────────

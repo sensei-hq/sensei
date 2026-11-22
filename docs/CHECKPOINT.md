@@ -1,23 +1,22 @@
-# Checkpoint — 2026-11-20 (rokkit 1.16.1 follow-up — #389 R3/R4 workarounds dropped)
+# Checkpoint — 2026-11-22 (crash recovery slice 4 green + pushed)
 
-**Slice:** rokkit 1.16.1 follow-up (`add-relay-decision-response-form` R3/R4 done-notes).
-**Branch:** `lane/relay-rokkit-1.16.1` (worktree `lanes/relay-rokkit`), from origin/develop @ c4162893d (#510); #514 merged in.
+**Slice:** `add-ops-crash-recovery` slice 4 (kill-restart e2e matrix).
+**Branch:** `develop` @ `de0c06349` (pushed).
 
 ## Done
-- Bump: `@rokkit/*` ^1.16.0 → ^1.16.1 in `app/` + `dojo/` (+ lockfiles); 1.16.1 verified on npm.
-- Deleted `DecisionPickSeveral.svelte`: the card draws rokkit's MultiSelect directly (#206).
-- Removed the listbox-naming attachment (#206), `disabled`-only-when-true (#207),
-  chooser placeholder blanking (#208). #205 still OPEN in rokkit: `withArrayLayout` stays.
-- Specs (red→green): tags in trigger, placeholders shown, axe on every state. e2e covers
-  the open pick-several with members picked (#209); `#209` annotation removed.
-- Gates: app check 0 errors, app unit 3912 pass, dojo test 2411 pass + check clean,
-  e2e `relay-decision-form.spec.ts` 7/7. Prod daemon restored after the run.
+- Crash matrix 5/5 green live (Tauri): 4.1–4.5 in ~1m.
+- Ops-center matrix 5/5 green in the same run (10/10 combined).
+- Render-key identity: history/failures/alerts key by row id; alert
+  drafts dedup by condition. Unit 4095 green, senseid 5206 green,
+  clippy/fmt/fabrication/openspec-validate clean.
+- Commits: `e91721ea5` (identity + lints + ratchet 1180→1183),
+  `de0c06349` (slice 4 matrix + ticks). Tasks 3.2–3.4/3.6–3.7, 4.1–4.5 ticked.
 
 ## Remaining
-- Push lane, PR to develop, CI green, merge. No issue to close (follow-up of closed #389).
+- User verification in the Sensei app (report delivered in chat).
 
 ## Next command
-`git push -u origin lane/relay-rokkit-1.16.1` (from `lanes/relay-rokkit`), then `gh pr create`.
+None — verify, then start the next backlog item.
 
 ## Open questions
 - None.

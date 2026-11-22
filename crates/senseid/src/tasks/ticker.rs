@@ -92,12 +92,16 @@ impl Poll {
 /// A skip is logged at debug with its reason rather than silently: "why has this
 /// not run?" has four different answers and only some are settings a user can
 /// act on.
-pub async fn run_scheduled<F, Fut>(pg: std::sync::Arc<PgStore>, name: &'static str, tick: F)
-where
+pub async fn run_scheduled<F, Fut>(
+    pg: std::sync::Arc<PgStore>,
+    name: &'static str,
+    notifier: std::sync::Arc<dyn crate::notifications::Notifier>,
+    tick: F,
+) where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
-    run_scheduled_inner(pg, name, false, tick).await
+    run_scheduled_inner(pg, name, false, notifier, tick).await
 }
 
 /// As [`run_scheduled`], but a never-run worker waits a full interval before its
@@ -108,18 +112,35 @@ where
 pub async fn run_scheduled_deferred<F, Fut>(
     pg: std::sync::Arc<PgStore>,
     name: &'static str,
+    notifier: std::sync::Arc<dyn crate::notifications::Notifier>,
     tick: F,
 ) where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
-    run_scheduled_inner(pg, name, true, tick).await
+    run_scheduled_inner(pg, name, true, notifier, tick).await
+}
+
+/// The proactive notification for a failed scheduled pass: Warn naming the
+/// worker, the reason, and the way back to the center.
+///
+/// Pure so the wording is pinned without a loop or a desktop.
+pub(crate) fn schedule_failure_note(
+    name: &str,
+    error: &str,
+) -> (crate::notifications::NotifyLevel, String, String) {
+    (
+        crate::notifications::NotifyLevel::Warn,
+        format!("scheduled pass failed: {name}"),
+        format!("{error} See Operations → Schedules."),
+    )
 }
 
 async fn run_scheduled_inner<F, Fut>(
     pg: std::sync::Arc<PgStore>,
     name: &'static str,
     defer_first: bool,
+    notifier: std::sync::Arc<dyn crate::notifications::Notifier>,
     tick: F,
 ) where
     F: Fn() -> Fut,
@@ -139,12 +160,17 @@ async fn run_scheduled_inner<F, Fut>(
     }
     let initial = pg.load_schedule(name).await.ok().flatten();
     let mut poll = Poll::new(initial.as_ref().map_or(60, |s| poll_secs(s.interval_secs)));
+    // Last skip reason written to the row: skips are recorded only when the
+    // reason CHANGES, so a worker skipping every minute does not write its
+    // row every minute.
+    let mut last_skip: Option<String> = initial.as_ref().and_then(|s| s.last_skip_reason.clone());
 
     loop {
         poll.tick().await;
 
         let Some(stored) = pg.load_schedule(name).await.ok().flatten() else {
             tracing::debug!(worker = name, reason = ?Skip::Unscheduled, "scheduled: skipped");
+            // No row to write to — the Unscheduled reason names exactly that.
             continue;
         };
         // Before the due-check, so a shortened cadence starts applying on the
@@ -162,6 +188,15 @@ async fn run_scheduled_inner<F, Fut>(
 
         if let Err(skip) = should_run(&stored.rules(), now_local, now_utc, stored.last_run_at) {
             tracing::debug!(worker = name, reason = ?skip, "scheduled: skipped");
+            if last_skip.as_deref() != Some(skip.as_str()) {
+                match pg.mark_schedule_skip(name, skip.as_str()).await {
+                    Ok(()) => last_skip = Some(skip.as_str().to_string()),
+                    Err(e) => tracing::warn!(
+                        worker = name, error = %e,
+                        "scheduled: could not record the skip"
+                    ),
+                }
+            }
             continue;
         }
 
@@ -182,6 +217,10 @@ async fn run_scheduled_inner<F, Fut>(
             watch_pass(run_pass(name, &tick), pass_limit(stored.interval_secs), overrun).await;
         if let Err(e) = &outcome {
             tracing::warn!(worker = name, error = %e, "scheduled: tick failed");
+            // Proactive notify for the failed pass — the overnight failure is
+            // waiting in the morning, with the way back.
+            let (level, title, body) = schedule_failure_note(name, e);
+            notifier.notify(level, &title, &body);
         }
         if let Err(e) = pg.mark_schedule_run(name, outcome, duration_ms).await {
             // Non-fatal: the work happened; only the bookkeeping failed. Dying
@@ -431,13 +470,18 @@ mod tests {
             .unwrap();
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let worker = tokio::spawn(run_scheduled(pg.clone(), name, move || {
-            let tx = tx.clone();
-            async move {
-                let _ = tx.send(());
-                Ok(())
-            }
-        }));
+        let worker = tokio::spawn(run_scheduled(
+            pg.clone(),
+            name,
+            std::sync::Arc::new(crate::notifications::NoopNotifier),
+            move || {
+                let tx = tx.clone();
+                async move {
+                    let _ = tx.send(());
+                    Ok(())
+                }
+            },
+        ));
         tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("the boot pass runs at once")
@@ -465,5 +509,57 @@ mod tests {
             .await
             .ok();
         assert!(sped_up, "a cadence patched to 1s must not keep waking on the boot-time 3s poll");
+    }
+
+    #[test]
+    fn schedule_note_names_the_worker_and_the_reason() {
+        let (level, title, body) = super::schedule_failure_note("metrics", "all personas failed");
+        assert_eq!(level, crate::notifications::NotifyLevel::Warn);
+        assert!(title.contains("metrics"), "title names the worker: {title}");
+        assert!(body.contains("all personas failed"), "body names the reason: {body}");
+        assert!(
+            body.contains("Operations") || body.contains("operations"),
+            "the body says where to look: {body}"
+        );
+    }
+
+    /// A failing pass notifies through the loop's notifier — the wiring the
+    /// unit pin above cannot prove. A throwaway worker whose tick always
+    /// fails, aborted after the first notification lands.
+    #[tokio::test]
+    async fn a_failing_pass_notifies_once_per_failure() {
+        let pg = std::sync::Arc::new(PgStore::connect_test().await.unwrap());
+        let name: &'static str =
+            Box::leak(crate::tasks::test_support::test_schedule_name().into_boxed_str());
+        sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+            .bind(name)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+
+        let rec = crate::notifications::test_support::recorder();
+        let worker =
+            tokio::spawn(super::run_scheduled(pg.clone(), name, rec.clone(), move || async move {
+                Err("pass exploded".to_string())
+            }));
+        let landed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if !rec.notes().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        worker.abort();
+        sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+            .bind(name)
+            .execute(pg.pool())
+            .await
+            .ok();
+        landed.expect("the boot pass fails and notifies");
+        let notes = rec.notes();
+        assert_eq!(notes.len(), 1, "one failing pass, one notification");
+        assert!(notes[0].2.contains("pass exploded"), "the reason rides along: {}", notes[0].2);
     }
 }

@@ -101,6 +101,7 @@ export function buildNavItems({ workspaceCount }: NavOptions = {}): NavEntry[] {
         link("録", "i-solar-history-bold-duotone", "Sessions", "/sessions"),
         link("庫", "i-solar-library-bold-duotone", "Libraries", "/libraries"),
         link("統", "i-solar-layers-bold-duotone", "Consolidation", "/consolidation"),
+        link("運", "i-solar-server-bold-duotone", "Operations", "/operations"),
         link("具", "i-solar-ruler-pen-bold-duotone", "Instruments", "/instruments"),
         link("診", "i-solar-clipboard-list-bold-duotone", "Logs", "/activity-logs"),
         link("結", "i-solar-link-circle-bold-duotone", "Dōjō", "/dojo/connections"),

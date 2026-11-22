@@ -53,8 +53,6 @@ use axum::{
     response::sse::{Event, Sse},
 };
 use serde::Deserialize;
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
 use crate::api::events::{LaneChange, LaneReason, RunChange, StateEvent};
@@ -1712,7 +1710,7 @@ pub(crate) async fn post_step(
 /// (F8): task notifications carry the task id (the screen re-reads the
 /// view), step events carry the step itself (applied without re-reading),
 /// op-only relay events cover the rest (unregister interrupts). Same
-/// BroadcastStream-over-`event_tx` shape as the scan socket.
+/// Framed uniform stream over the state channel, like the scan socket.
 ///
 /// `?crew_id=` narrows the stream to one crew (#418): an event naming
 /// another crew is dropped; one naming no crew (a relay op, or a task whose
@@ -1721,20 +1719,26 @@ pub(crate) async fn post_step(
 /// id is a 400 from the query extractor.
 pub(crate) async fn relay_events_sse(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(filter): Query<RelayEventsFilter>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
-        Ok(event)
-            if StateEvent::is_relay_family(&event.entity)
-                && event.admits_crew(filter.crew_id.as_ref()) =>
-        {
-            let data = serde_json::to_string(&event).unwrap_or_default();
-            Some(Ok(Event::default().data(data)))
-        }
-        _ => None,
-    });
-    Sse::new(stream)
+    let rx = state.streams.state_tx.subscribe();
+    let cursor = crate::api::stream::parse_cursor(&headers);
+    let crew = filter.crew_id;
+    // Crew admission reads the frame payload: relay frames name their crew
+    // in data (or none, which passes everywhere).
+    let admits = move |f: &crate::api::stream::StreamFrame| {
+        crate::api::stream::allows_entity(crate::api::stream::StreamKind::Relay, f.entity())
+            && match crew {
+                None => true,
+                Some(want) => {
+                    f.payload_crew().map(|named| named == want.to_string()).unwrap_or(true)
+                }
+            }
+    };
+    let stream =
+        crate::api::stream::framed_stream(rx, state.streams.state_log.clone(), cursor, admits);
+    crate::api::stream::heartbeat(stream)
 }
 
 #[derive(Debug, Deserialize)]
@@ -2877,7 +2881,7 @@ mod tests {
         data["op"] = json!(op);
         data["id"] = json!(id);
         data["stage"] = json!(stage);
-        json!({"action": action, "entity": "item", "data": data})
+        json!({"action": action, "entity": "item", "key": id, "data": data})
     }
 
     // ── #419: the queue's item ops and the ticketed backlog add ──
@@ -4635,7 +4639,10 @@ mod tests {
             .cloned()
             .unwrap_or_else(|| panic!("decision not on Now: {now}"));
         row["op"] = json!("asked");
-        assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));
+        assert_eq!(
+            asked,
+            json!({"action": "add", "entity": "decision", "key": decision_id, "data": row})
+        );
         let (status, body) = call(
             &h,
             "POST",
@@ -4648,7 +4655,7 @@ mod tests {
         let answered = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
         assert_eq!(
             answered,
-            json!({"action": "remove", "entity": "decision",
+            json!({"action": "remove", "entity": "decision", "key": decision_id,
                    "data": {"op": "answered", "id": decision_id, "crew_id": coord.2}})
         );
     }
@@ -4737,7 +4744,10 @@ mod tests {
         assert_eq!(row["response"], stored);
         assert_eq!(row["options"], json!([]));
         row["op"] = json!("asked");
-        assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));
+        assert_eq!(
+            asked,
+            json!({"action": "add", "entity": "decision", "key": decision_id, "data": row})
+        );
         let (status, body) = call(
             &h,
             "POST",
@@ -5545,7 +5555,8 @@ mod tests {
         let mut row = now["person_messages"][0].clone();
         assert_eq!(row["text"], "Look here", "{now}");
         row["op"] = json!("sent");
-        assert_eq!(sent, json!({"action": "add", "entity": "message", "data": row}));
+        let mid = row["id"].clone();
+        assert_eq!(sent, json!({"action": "add", "entity": "message", "key": mid, "data": row}));
         send_lane_message(&h, &holder, &token, None, json!({"kind": "coordinator"}), "ack").await;
         while let Ok(event) = rx.try_recv() {
             assert_ne!(event.entity, "message", "{:?}", event.data);
@@ -6846,7 +6857,7 @@ mod tests {
         assert_eq!(data["crew_id"], crew_id);
         data["op"] = json!(op);
         data["lane_id"] = json!(lane_id);
-        json!({"action": action, "entity": "lane", "data": data})
+        json!({"action": action, "entity": "lane", "key": lane_id, "data": data})
     }
 
     async fn lane_event_why(
@@ -6904,7 +6915,7 @@ mod tests {
         // A removal names the row by its id: the screen drops it in place.
         assert_eq!(
             event,
-            json!({"action": "remove", "entity": "lane",
+            json!({"action": "remove", "entity": "lane", "key": lane_id,
                    "data": {"op": "unregistered", "id": lane_id, "lane_id": lane_id, "crew_id": coord.2}})
         );
     }
@@ -7131,7 +7142,7 @@ mod tests {
         assert_eq!(
             event,
             json!({
-                "action": "update", "entity": "run",
+                "action": "update", "entity": "run", "key": coord.2,
                 "data": {"op": "completed", "run_id": coord.2, "crew_id": coord.2},
             })
         );

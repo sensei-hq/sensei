@@ -1,25 +1,25 @@
-//! SSE endpoint for scan events — emits StateEvent format.
+//! SSE endpoint for scan events — uniform frames over the state channel.
 
 use axum::{
     extract::State,
+    http::HeaderMap,
     response::sse::{Event, Sse},
 };
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::state::AppState;
+use crate::api::stream::{StreamKind, allows_entity, framed_stream, heartbeat, parse_cursor};
 
-/// `GET /api/scan/events` — SSE stream of StateEvent (workspace + activity).
+/// `GET /api/scan/events` — uniform frames for scan entities
+/// (workspace/folder/activity/assistant) with cursor replay. Relay traffic
+/// stays on the relay socket.
 pub(crate) async fn scan_events_sse(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(event) => {
-            let data = serde_json::to_string(&event).unwrap_or_default();
-            Some(Ok(Event::default().data(data)))
-        }
-        Err(_) => None,
+    let rx = state.streams.state_tx.subscribe();
+    let cursor = parse_cursor(&headers);
+    let stream = framed_stream(rx, state.streams.state_log.clone(), cursor, move |f| {
+        allows_entity(StreamKind::Scan, f.entity())
     });
-    Sse::new(stream)
+    heartbeat(stream)
 }

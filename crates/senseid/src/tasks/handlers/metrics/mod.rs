@@ -241,7 +241,19 @@ pub async fn compute_health(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
     );
     // Thread the target day through the barrier too (accepted now, per-day wiring
     // in a later phase); `None` keeps the current snapshot-on-today behavior.
-    health::compute(ctx, &task.folder_path, task.as_of).await
+    let out = health::compute(ctx, &task.folder_path, task.as_of).await?;
+    // The barrier is the wave's end: emit its terminal event so followers
+    // complete on the stream instead of polling `childSummary`.
+    crate::tasks::progress::emit_wave_done(
+        ctx.pg(),
+        ctx.queue.sender(),
+        "metric",
+        task.parent_task_id,
+        Some(task.id),
+        ctx.queue.session_start(),
+    )
+    .await?;
+    Ok(out)
 }
 
 /// `ComputeWorkspaceMetrics` handler: the per-workspace PARENT that schedules the compute

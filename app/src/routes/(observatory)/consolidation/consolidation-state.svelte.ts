@@ -46,3 +46,8 @@ export class ConsolidationState {
     await reload();
   }
 }
+
+// The page's one guard (6.3): a run continues daemon-side when navigation
+// drops the page, so the busy flag that prevents a double-fire must survive
+// the remount — a fresh instance per visit would drop it.
+export const consolidationState = new ConsolidationState();

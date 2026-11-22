@@ -304,11 +304,11 @@ export class RelayState {
 
   /** One stream event: a row changes that row alone; ids alone re-read what they name. */
   apply(event: RelayStreamEvent): void {
-    const data = event.data as Record<string, unknown>;
+    const data = event.data;
     // A run changed: the run list (drafts, past runs) is read whole, once it was read.
     if (event.entity === 'run' && this.runList) void this.readRuns();
     if ((ROW_ENTITIES as readonly string[]).includes(event.entity) && typeof data.id === 'string') {
-      this.#applyRow(event.entity as RowEntity, event.action, data as { id: string });
+      this.#applyRow(event.entity as RowEntity, event.action, data as { id: string } & typeof data);
       return;
     }
     switch (event.entity) {

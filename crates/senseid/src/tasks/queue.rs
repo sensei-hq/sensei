@@ -17,6 +17,10 @@ pub struct TaskQueue {
     notify: Notify,
     next_id: AtomicU64,
     tx: broadcast::Sender<TaskEvent>,
+    /// Retries waiting out their backoff, by failed task id — the detached
+    /// sleep is otherwise invisible between failure and re-enqueue. Separate
+    /// lock from `inner`: backoff bookkeeping must never contend the queue.
+    backoffs: Mutex<HashMap<u64, BackoffEntry>>,
     max_concurrent_repos: std::sync::atomic::AtomicUsize,
     /// When this queue — and therefore this id space — came into existence.
     ///
@@ -48,6 +52,10 @@ struct QueueState {
     folder_running_count: HashMap<String, usize>,
     /// Map of task_id → list of task_ids that depend on it
     dependents: HashMap<u64, Vec<u64>>,
+    /// Cumulative per-folder outcomes this session (completed, failed) —
+    /// the completed ring is a last-100 window, so totals cannot come
+    /// from it; without this, per-repo completed/failed read 0 forever.
+    folder_outcomes: HashMap<String, (u64, u64)>,
 }
 
 /// Which twins can cover a request: any in flight, or only those still
@@ -91,7 +99,9 @@ impl TaskQueue {
                 completed: Vec::new(),
                 folder_running_count: HashMap::new(),
                 dependents: HashMap::new(),
+                folder_outcomes: HashMap::new(),
             }),
+            backoffs: Mutex::new(HashMap::new()),
             notify: Notify::new(),
             next_id: AtomicU64::new(1),
             session_start: chrono::Utc::now(),
@@ -240,6 +250,10 @@ impl TaskQueue {
     fn enqueue_locked(&self, state: &mut QueueState, mut task: Task) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         task.id = id;
+        // Identity for the Queued event, captured before the task moves into
+        // a list — followers render the row from the event alone.
+        let (kind, folder_path, path) =
+            (task.kind.to_string(), task.folder_path.clone(), task.path.clone());
 
         // Register dependency tracking
         for dep_id in &task.depends_on {
@@ -282,7 +296,7 @@ impl TaskQueue {
             state.pending.push_back(task);
         }
 
-        let _ = self.tx.send(TaskEvent::Queued { task_id: id });
+        let _ = self.tx.send(TaskEvent::Queued { task_id: id, kind, folder_path, path });
         id
     }
 
@@ -404,6 +418,7 @@ impl TaskQueue {
             if state.completed.len() > 100 {
                 state.completed.remove(0);
             }
+            state.folder_outcomes.entry(folder_path.clone()).or_default().0 += 1;
 
             // Unblock dependents
             let dependent_ids = state.dependents.remove(&task_id).unwrap_or_default();
@@ -457,6 +472,7 @@ impl TaskQueue {
             let folder_path = task.folder_path.clone();
             let kind = task.kind.to_string();
             state.completed.push(task);
+            state.folder_outcomes.entry(folder_path.clone()).or_default().1 += 1;
 
             // Still unblock dependents (they'll see partial data but won't deadlock)
             let dependent_ids = state.dependents.remove(&task_id).unwrap_or_default();
@@ -510,9 +526,124 @@ impl TaskQueue {
             p.running += 1;
             p.current_file = Some(t.path.clone());
         }
-        // Don't include completed in totals (they're done)
+        // Outcomes: session totals per folder, including folders with no
+        // live tasks left. Completed tasks stay out of `total` (they're
+        // done) but their counts are real now, not permanent zeros.
+        for (folder, (completed, failed)) in &state.folder_outcomes {
+            let p = result.entry(folder.clone()).or_default();
+            p.completed = (*completed).min(u32::MAX as u64) as u32;
+            p.failed = (*failed).min(u32::MAX as u64) as u32;
+        }
 
         result
+    }
+
+    /// The queue listing: named pending/blocked/running tasks with waits,
+    /// backoff-pending retries, exact totals, and per-kind depth. Lists cap
+    /// at `limit` each; totals never lie and `truncated` says when a list
+    /// was cut.
+    pub async fn list_queue(&self, limit: usize) -> QueueListing {
+        let state = self.inner.lock().await;
+        let backoffs = self.backoffs.lock().await;
+        let now = std::time::Instant::now();
+
+        let view = |t: &Task, running: bool| {
+            let budget = t.kind.info().budget_secs;
+            let elapsed_ms = if running {
+                t.started_at.map(|s| now.saturating_duration_since(s).as_millis() as u64)
+            } else {
+                None
+            };
+            TaskView {
+                id: t.id,
+                kind: t.kind.to_string(),
+                path: t.path.clone(),
+                folder_path: t.folder_path.clone(),
+                parent_task_id: t.parent_task_id,
+                retry_number: t.retry_number,
+                wait_ms: if running {
+                    None
+                } else {
+                    Some(now.saturating_duration_since(t.created_at).as_millis() as u64)
+                },
+                running_ms: elapsed_ms,
+                blocked_on: t.depends_on.clone(),
+                budget_secs: if running { Some(budget) } else { None },
+                nearing_budget: running
+                    && budget > 0
+                    && elapsed_ms.unwrap_or(0) * 10 >= budget * 1000 * 8,
+            }
+        };
+
+        let mut by_kind: HashMap<String, KindDepth> = HashMap::new();
+        let mut tally = |t: &Task, which: fn(&mut KindDepth)| {
+            let d = by_kind.entry(t.kind.to_string()).or_default();
+            which(d);
+        };
+        for t in state.pending.iter() {
+            tally(t, |d| d.pending += 1);
+        }
+        for t in state.blocked.iter() {
+            tally(t, |d| d.blocked += 1);
+        }
+        for t in state.running.values() {
+            tally(t, |d| d.running += 1);
+        }
+
+        let totals = QueueTotals {
+            pending: state.pending.len(),
+            blocked: state.blocked.len(),
+            running: state.running.len(),
+        };
+        let mut running: Vec<TaskView> = state.running.values().map(|t| view(t, true)).collect();
+        running.sort_by_key(|v| v.id);
+        let mut backoff: Vec<BackoffView> = backoffs
+            .iter()
+            .map(|(task_id, e)| BackoffView {
+                task_id: *task_id,
+                kind: e.kind.clone(),
+                path: e.path.clone(),
+                folder_path: e.folder_path.clone(),
+                attempt: e.attempt,
+                retry_in_ms: e.not_before.saturating_duration_since(now).as_millis() as u64,
+            })
+            .collect();
+        backoff.sort_by_key(|v| v.task_id);
+
+        let mut pending: Vec<TaskView> = state.pending.iter().map(|t| view(t, false)).collect();
+        let mut blocked: Vec<TaskView> = state.blocked.iter().map(|t| view(t, false)).collect();
+        let truncated = pending.len() > limit || blocked.len() > limit || running.len() > limit;
+        pending.truncate(limit);
+        blocked.truncate(limit);
+        running.truncate(limit);
+        QueueListing { pending, blocked, running, backoff, totals, by_kind, truncated }
+    }
+
+    /// Record a retry waiting out its backoff, keyed by the failed task id.
+    pub async fn register_backoff(
+        &self,
+        task_id: u64,
+        kind: super::TaskKind,
+        folder_path: &str,
+        path: &str,
+        attempt: u32,
+        delay: std::time::Duration,
+    ) {
+        self.backoffs.lock().await.insert(
+            task_id,
+            BackoffEntry {
+                kind: kind.to_string(),
+                path: path.to_string(),
+                folder_path: folder_path.to_string(),
+                attempt,
+                not_before: std::time::Instant::now() + delay,
+            },
+        );
+    }
+
+    /// Drop a backoff record once its retry re-enqueues (or is abandoned).
+    pub async fn clear_backoff(&self, task_id: u64) {
+        self.backoffs.lock().await.remove(&task_id);
     }
 
     /// True if a task of `kind` is currently pending, blocked, or running.
@@ -628,6 +759,82 @@ pub struct QueueStatus {
     pub repos_active: usize,
 }
 
+/// Per-list cap for [`TaskQueue::list_queue`]: a bulk re-index holds tens of
+/// thousands of tasks, and a listing must stay a listing. Totals stay exact
+/// and `truncated` says the lists are not.
+pub const QUEUE_LIST_LIMIT: usize = 200;
+
+/// One queued task, as the operations queue listing shows it.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskView {
+    pub id: u64,
+    pub kind: String,
+    pub path: String,
+    pub folder_path: String,
+    pub parent_task_id: Option<u64>,
+    pub retry_number: u32,
+    /// Queue wait for pending/blocked tasks; `None` once running.
+    pub wait_ms: Option<u64>,
+    /// Run time so far for running tasks; `None` before start.
+    pub running_ms: Option<u64>,
+    /// Still-unmet dependency ids (pruned as deps complete).
+    pub blocked_on: Vec<u64>,
+    /// This kind's watchdog budget, when the task is running.
+    pub budget_secs: Option<u64>,
+    /// Running and past 80% of its budget — likely to be abandoned soon.
+    pub nearing_budget: bool,
+}
+
+/// A retry waiting out its backoff: invisible between failure and
+/// re-enqueue unless listed here.
+#[derive(Debug, Clone, Serialize)]
+pub struct BackoffView {
+    pub task_id: u64,
+    pub kind: String,
+    pub path: String,
+    pub folder_path: String,
+    pub attempt: u32,
+    /// Milliseconds until re-enqueue (0 once due but not yet picked up).
+    pub retry_in_ms: u64,
+}
+
+/// Per-kind queue depth.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct KindDepth {
+    pub pending: usize,
+    pub blocked: usize,
+    pub running: usize,
+}
+
+/// Exact list totals (unaffected by the per-list cap).
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct QueueTotals {
+    pub pending: usize,
+    pub blocked: usize,
+    pub running: usize,
+}
+
+/// The queue listing: named tasks with waits, backoff-pending retries,
+/// exact totals, and per-kind depth.
+#[derive(Debug, Clone, Serialize)]
+pub struct QueueListing {
+    pub pending: Vec<TaskView>,
+    pub blocked: Vec<TaskView>,
+    pub running: Vec<TaskView>,
+    pub backoff: Vec<BackoffView>,
+    pub totals: QueueTotals,
+    pub by_kind: std::collections::HashMap<String, KindDepth>,
+    pub truncated: bool,
+}
+
+struct BackoffEntry {
+    kind: String,
+    path: String,
+    folder_path: String,
+    attempt: u32,
+    not_before: std::time::Instant,
+}
+
 /// Scheduling priority of a task kind for [`TaskQueue::next_task`] — LOWER runs
 /// first. The metric-backfill chain (`AnalyzeWorkspace` → `ComputeWorkspaceMetrics` →
 /// `ComputeGroupMetrics` → `ComputeHealth`) is HIGH priority (`0`) so a light metric
@@ -688,6 +895,7 @@ mod tests {
             completed: Vec::new(),
             folder_running_count: HashMap::new(),
             dependents: HashMap::new(),
+            folder_outcomes: HashMap::new(),
         };
         s.pending.extend(pending);
         s.blocked = blocked;
@@ -727,6 +935,88 @@ mod tests {
     fn blocker_summary_empty_deps_returns_empty() {
         let state = state_with(vec![], vec![], vec![]);
         assert!(blocker_summary(&state, &[]).is_empty());
+    }
+
+    /// The queue listing names every task with its kind, path, state, and
+    /// wait — what counts-only status cannot say.
+    #[tokio::test]
+    async fn queue_listing_names_tasks_with_waits_and_blockers() {
+        let q = TaskQueue::new();
+        let a = q.enqueue(Task::new(TaskKind::ProcessFile, "/r", "/r/a.ts")).await;
+        let mut b = Task::new(TaskKind::ProcessFile, "/r", "/r/b.ts");
+        b.status = TaskStatus::Blocked;
+        b.depends_on = vec![a];
+        let b_id = q.enqueue(b).await;
+        q.enqueue(Task::new(TaskKind::ScanRoot, "", "/x")).await;
+        let _ = q.next_task().await;
+
+        let listing = q.list_queue(200).await;
+        assert_eq!(listing.running.len(), 1);
+        assert_eq!(listing.running[0].id, a);
+        assert_eq!(listing.running[0].kind, "process_file");
+        assert!(listing.running[0].running_ms.is_some());
+        assert_eq!(listing.running[0].budget_secs, Some(TaskKind::ProcessFile.info().budget_secs));
+        assert_eq!(listing.blocked.len(), 1);
+        assert_eq!(listing.blocked[0].id, b_id);
+        assert_eq!(listing.blocked[0].blocked_on, vec![a]);
+        assert!(listing.blocked[0].wait_ms.is_some());
+        assert_eq!(listing.pending.len(), 1);
+        assert_eq!(listing.pending[0].kind, "scan_root");
+        assert!(!listing.truncated);
+        assert_eq!(listing.totals.pending, 1);
+        let depths = &listing.by_kind["process_file"];
+        assert_eq!((depths.pending, depths.blocked, depths.running), (0, 1, 1));
+    }
+
+    /// Listing caps are said, not silent: totals stay exact.
+    #[tokio::test]
+    async fn queue_listing_caps_lists_and_says_so() {
+        let q = TaskQueue::new();
+        for i in 0..5 {
+            q.enqueue(Task::new(TaskKind::ProcessFile, "/r", &format!("/r/f{i}.ts"))).await;
+        }
+        let listing = q.list_queue(2).await;
+        assert_eq!(listing.pending.len(), 2);
+        assert_eq!(listing.totals.pending, 5);
+        assert!(listing.truncated);
+    }
+
+    /// Backoff-pending retries are listed with their next attempt — the
+    /// detached sleep is otherwise invisible between failure and re-enqueue.
+    #[tokio::test]
+    async fn backoff_registry_tracks_pending_retries() {
+        let q = TaskQueue::new();
+        q.register_backoff(
+            7,
+            TaskKind::ProcessFile,
+            "/r",
+            "/r/a.ts",
+            1,
+            std::time::Duration::from_secs(2),
+        )
+        .await;
+        let listing = q.list_queue(200).await;
+        assert_eq!(listing.backoff.len(), 1);
+        assert_eq!(listing.backoff[0].task_id, 7);
+        assert_eq!(listing.backoff[0].attempt, 1);
+        q.clear_backoff(7).await;
+        assert!(q.list_queue(200).await.backoff.is_empty());
+    }
+
+    /// Per-folder outcomes count completions AND failures — the progress
+    /// totals used to leave both at zero forever.
+    #[tokio::test]
+    async fn folder_outcomes_count_completions_and_failures() {
+        let q = TaskQueue::new();
+        q.enqueue(Task::new(TaskKind::ProcessFile, "/r", "/r/a.ts")).await;
+        q.enqueue(Task::new(TaskKind::ProcessFile, "/r", "/r/b.ts")).await;
+        let a = q.next_task().await;
+        let b = q.next_task().await;
+        q.complete(a.id).await;
+        q.fail(b.id, "boom".to_string()).await;
+        let progress = q.progress().await;
+        let repo = &progress["/r"];
+        assert_eq!((repo.completed, repo.failed), (1, 1));
     }
 
     #[tokio::test]
@@ -824,7 +1114,10 @@ mod tests {
 
         let id = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
         let evt = rx.recv().await.unwrap();
-        assert!(matches!(evt, TaskEvent::Queued { task_id } if task_id == id));
+        assert!(
+            matches!(evt, TaskEvent::Queued { task_id, ref kind, ref path, .. } if task_id == id && kind == "process_file" && path == "a.ts"),
+            "queued frames carry identity"
+        );
 
         let task = q.next_task().await;
         let evt = rx.recv().await.unwrap();

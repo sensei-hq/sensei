@@ -32,6 +32,8 @@ create table if not exists schedules (
 , runs           integer     not null default 0
 , total_ms       bigint      not null default 0
 , running_since  timestamptz
+, last_skip_reason text
+, last_skip_at   timestamptz
 , created_at     timestamptz not null default now()
 , modified_at    timestamptz not null default now()
 );
@@ -69,3 +71,7 @@ comment on column schedules.total_ms
      is 'Summed wall-clock duration of the timed passes, in milliseconds (#96).';
 comment on column schedules.running_since
      is 'When the pass now in progress started (#283); NULL when idle. Set as a pass starts, cleared as it ends and at daemon start, so a pass blocked for an hour reads as running for an hour rather than as an hour-old result.';
+comment on column schedules.last_skip_reason
+     is 'Why the last tick skipped (disabled, not_due, outside_window, wrong_day, unscheduled). Written only when the reason changes, so the row says why a worker has not run without a write per poll.';
+comment on column schedules.last_skip_at
+     is 'When that skip was recorded. NULL = never skipped since the columns existed.';

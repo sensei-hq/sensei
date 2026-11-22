@@ -39,10 +39,28 @@ pub enum WatcherStatus {
     Stopped(String), // reason
 }
 
+/// What a watched root holds: code (a `folders_to_watch` row, reconciled by
+/// scoped scans) or transcripts (an adapter source dir, ingested per file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchKind {
+    Code,
+    Transcript { source: &'static str, granularity: TranscriptGranularity },
+}
+
+/// How finely transcript changes address work: per file (file-backed
+/// sources — one narrowed ingest per changed file) or whole-db (sqlite
+/// sources, whose changes name no unit — a cursor-guarded sweep instead).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptGranularity {
+    PerFile,
+    WholeDb,
+}
+
 /// A root directory with its exclusion list.
 #[derive(Debug, Clone)]
 pub struct WatchedRoot {
     pub excluded: Vec<String>,
+    pub kind: WatchKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -382,7 +400,24 @@ impl RootWatcher {
     }
 
     pub fn register(&mut self, root: PathBuf, exclusions: Vec<String>) {
-        self.roots.insert(root, WatchedRoot { excluded: exclusions });
+        self.roots.insert(root, WatchedRoot { excluded: exclusions, kind: WatchKind::Code });
+    }
+
+    /// Register a transcript source dir (or db file): changes under it
+    /// ingest transcripts, never scan code.
+    pub fn register_transcript(
+        &mut self,
+        root: PathBuf,
+        source: &'static str,
+        granularity: TranscriptGranularity,
+    ) {
+        self.roots.insert(
+            root,
+            WatchedRoot {
+                excluded: Vec::new(),
+                kind: WatchKind::Transcript { source, granularity },
+            },
+        );
     }
 
     pub fn unregister(&mut self, root: &PathBuf) {
@@ -416,7 +451,9 @@ impl RootWatcher {
         self.stop_flag.store(false, std::sync::atomic::Ordering::Release);
 
         let stop = self.stop_flag.clone();
-        let roots: Vec<PathBuf> = self.roots.keys().cloned().collect();
+        let roots: Vec<(PathBuf, WatchKind)> =
+            self.roots.iter().map(|(p, r)| (p.clone(), r.kind)).collect();
+        let root_paths: Vec<PathBuf> = roots.iter().map(|(p, _)| p.clone()).collect();
         let exclusions: Vec<String> =
             self.roots.values().flat_map(|r| r.excluded.clone()).collect();
         let queue = self.queue.clone();
@@ -442,8 +479,16 @@ impl RootWatcher {
             }).expect("failed to create watcher");
 
             let mut watched = 0usize;
-            for root in &roots {
-                match watcher.watch(root, RecursiveMode::Recursive) {
+            for (root, kind) in &roots {
+                // Transcript db files are watched as FILES (their changes name
+                // no unit); everything else watches recursively.
+                let mode = match kind {
+                    WatchKind::Transcript {
+                        granularity: TranscriptGranularity::WholeDb, ..
+                    } => RecursiveMode::NonRecursive,
+                    _ => RecursiveMode::Recursive,
+                };
+                match watcher.watch(root, mode) {
                     Ok(()) => watched += 1,
                     Err(e) => {
                         tracing::warn!(error = %e, root = %root.display(), "failed to watch root")
@@ -485,7 +530,7 @@ impl RootWatcher {
                             // `targets_off_cooldown` for the measured storm.
                             let targets = overflow_reconcile_targets(
                                 &event.paths,
-                                &roots,
+                                &root_paths,
                                 &mut last_overflow_ms,
                                 chrono::Utc::now().timestamp_millis(),
                                 OVERFLOW_RECONCILE_COOLDOWN_MS,
@@ -503,7 +548,23 @@ impl RootWatcher {
                                 paths = ?event.paths,
                                 "RootWatcher: FSEvents rescan/overflow — forcing reconcile of affected root(s)",
                             );
-                            enqueue_scanroot_reconcile(&rt, &queue, targets);
+                            // Transcript targets re-run the cursor-guarded
+                            // backfill (a lost transcript change is a missed
+                            // ingest, not a repo to re-walk); code targets
+                            // reconcile as before.
+                            let (code, transcripts): (Vec<_>, Vec<_>) =
+                                targets.into_iter().partition(|t| {
+                                    !roots.iter().any(|(p, k)| {
+                                        p == t && matches!(k, WatchKind::Transcript { .. })
+                                    })
+                                });
+                            if !transcripts.is_empty() {
+                                let q = queue.clone();
+                                rt.spawn(async move {
+                                    crate::tasks::transcript_scheduler::enqueue_backfill(&q).await;
+                                });
+                            }
+                            enqueue_scanroot_reconcile(&rt, &queue, code);
                             continue;
                         }
 
@@ -527,7 +588,9 @@ impl RootWatcher {
                                 // The REPOSITORY, not the watch root containing it:
                                 // a root here holds 67 repositories, and one
                                 // checkout should not re-walk the other 66.
-                                if let Some(repo) = branch_switch_reconcile_target(&path, &roots) {
+                                if let Some(repo) =
+                                    branch_switch_reconcile_target(&path, &root_paths)
+                                {
                                     let branch = read_git_head(&path.to_string_lossy());
                                     tracing::info!(
                                         repo = %repo.display(),
@@ -542,11 +605,28 @@ impl RootWatcher {
                             if change_kind != ChangeKind::Delete && !path.is_file() {
                                 continue;
                             }
-                            if !RootWatcher::should_watch_path(&path, &exclusions) {
+                            // Resolve the owning root FIRST: code and transcript
+                            // roots filter differently (code by language +
+                            // exclusions, transcripts by transcript kinds), and
+                            // a path under no root is nobody's to act on.
+                            // Symlink-tolerant: FSEvents reports resolved paths.
+                            let Some((_, kind, event_path)) = resolve_event_path(&path, &roots)
+                            else {
+                                continue;
+                            };
+                            let wanted = match kind {
+                                WatchKind::Code => {
+                                    RootWatcher::should_watch_path(&event_path, &exclusions)
+                                }
+                                WatchKind::Transcript { granularity, .. } => {
+                                    RootWatcher::is_transcript_path(&event_path, granularity)
+                                }
+                            };
+                            if !wanted {
                                 continue;
                             }
 
-                            pending.insert(path, change_kind);
+                            pending.insert(event_path, change_kind);
                             last_event = std::time::Instant::now();
                         }
                     }
@@ -621,6 +701,18 @@ impl RootWatcher {
         is_code || is_doc
     }
 
+    /// Whether a path under a transcript root is worth enqueueing: per-file
+    /// sources read `.jsonl` transcripts (every file-backed adapter's unit
+    /// format — anything else the handler would skip as an unknown unit, so
+    /// the watcher does not spend a task on it); db sources watch the db
+    /// file itself, so any change to it counts.
+    pub(crate) fn is_transcript_path(path: &Path, granularity: TranscriptGranularity) -> bool {
+        match granularity {
+            TranscriptGranularity::WholeDb => true,
+            TranscriptGranularity::PerFile => path.extension().is_some_and(|e| e == "jsonl"),
+        }
+    }
+
     /// Whether `kind` can mean the file's content or name changed.
     ///
     /// inotify (Linux) reports reads — open, close-after-read, access — as
@@ -685,38 +777,130 @@ impl RootWatcher {
     pub(crate) async fn process_batch(
         changes: HashMap<PathBuf, ChangeKind>,
         queue: &TaskQueue,
-        roots: &[PathBuf],
+        roots: &[(PathBuf, WatchKind)],
     ) {
         // Grouped by watch root, splitting OBSERVED deletions from changes: a
         // delete is something the filesystem told us happened, and it is the
         // only removal a non-exhaustive scan may act on.
-        let mut by_root: HashMap<PathBuf, (Vec<PathBuf>, Vec<PathBuf>)> = HashMap::new();
+        let paths: Vec<PathBuf> = roots.iter().map(|(p, _)| p.clone()).collect();
+        let mut by_root: HashMap<PathBuf, (WatchKind, Vec<PathBuf>, Vec<PathBuf>)> = HashMap::new();
         for (path, kind) in changes {
-            let Some(root) = watch_root_for_path(&path, roots) else { continue };
-            let entry = by_root.entry(root).or_default();
+            let Some(root) = watch_root_for_path(&path, &paths) else { continue };
+            let watch_kind =
+                roots.iter().find(|(p, _)| *p == root).map(|(_, k)| *k).unwrap_or(WatchKind::Code);
+            let entry = by_root.entry(root).or_insert_with(|| (watch_kind, Vec::new(), Vec::new()));
             match kind {
-                ChangeKind::Delete => entry.1.push(path),
-                ChangeKind::Create | ChangeKind::Modify => entry.0.push(path),
+                ChangeKind::Delete => entry.2.push(path),
+                ChangeKind::Create | ChangeKind::Modify => entry.1.push(path),
             }
         }
 
-        for (root, (changed, deleted)) in by_root {
-            let path = root.to_string_lossy().to_string();
-            tracing::info!(
-                root = %path, changed = changed.len(), deleted = deleted.len(),
-                "process_batch: enqueueing scoped scan"
-            );
-            queue
-                .enqueue(
-                    Task::new(TaskKind::ScanRoot, "", &path)
-                        .with_scope(crate::tasks::Scope::Events { changed, deleted }),
-                )
-                .await;
+        for (root, (watch_kind, changed, deleted)) in by_root {
+            match watch_kind {
+                WatchKind::Code => {
+                    Self::process_code_batch(queue, &root, changed, deleted).await;
+                }
+                WatchKind::Transcript { source, granularity } => {
+                    Self::process_transcript_batch(
+                        queue,
+                        &root,
+                        source,
+                        granularity,
+                        changed,
+                        deleted,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    async fn process_code_batch(
+        queue: &TaskQueue,
+        root: &Path,
+        changed: Vec<PathBuf>,
+        deleted: Vec<PathBuf>,
+    ) {
+        let path = root.to_string_lossy().to_string();
+        tracing::info!(
+            root = %path, changed = changed.len(), deleted = deleted.len(),
+            "process_batch: enqueueing scoped scan"
+        );
+        queue
+            .enqueue(
+                Task::new(TaskKind::ScanRoot, "", &path)
+                    .with_scope(crate::tasks::Scope::Events { changed, deleted }),
+            )
+            .await;
+    }
+
+    /// Transcript changes ingest transcripts; the code scan never sees them.
+    /// Per-file sources enqueue one narrowed `IngestCapture` per changed
+    /// path (deletes included — a gone file reads as a cursor-guarded
+    /// no-op, never an error). Db sources re-run the cursor-guarded sweep,
+    /// overlap-guarded like the scheduler's own tick.
+    async fn process_transcript_batch(
+        queue: &TaskQueue,
+        root: &Path,
+        source: &'static str,
+        granularity: TranscriptGranularity,
+        changed: Vec<PathBuf>,
+        deleted: Vec<PathBuf>,
+    ) {
+        match granularity {
+            TranscriptGranularity::PerFile => {
+                for path in changed.into_iter().chain(deleted) {
+                    let key = path.to_string_lossy().to_string();
+                    tracing::info!(root = %root.display(), path = %key, "process_batch: enqueueing transcript ingest");
+                    queue
+                        .enqueue_unique(Task::for_capture(TaskKind::IngestCapture, source, &key))
+                        .await;
+                }
+            }
+            TranscriptGranularity::WholeDb => {
+                crate::tasks::transcript_scheduler::enqueue_backfill(queue).await;
+            }
         }
     }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
+
+/// Resolve an event path to its owning root + kind, tolerating symlinks:
+/// FSEvents reports resolved paths, so an event under a root registered
+/// through a symlink (`/tmp/...`) matches nothing by string. Returns the
+/// RAW root, the kind, and the event path re-rooted at the raw root —
+/// downstream (DB rows, watermarks, scan diffing) keys on raw paths, so
+/// only the MATCH sees canonical forms. Without symlinks the path comes
+/// back byte-identical.
+fn resolve_event_path(
+    path: &Path,
+    roots: &[(PathBuf, WatchKind)],
+) -> Option<(PathBuf, WatchKind, PathBuf)> {
+    let raws: Vec<PathBuf> = roots.iter().map(|(p, _)| p.clone()).collect();
+    if let Some(hit) = watch_root_for_path(path, &raws) {
+        let (raw, kind) = roots.iter().find(|(p, _)| p == &hit)?;
+        return Some((raw.clone(), *kind, path.to_path_buf()));
+    }
+    let canon = canonical_event_path(path);
+    let canons: Vec<PathBuf> = roots.iter().map(|(p, _)| canonical_root(p)).collect();
+    let hit = watch_root_for_path(&canon, &canons)?;
+    let idx = canons.iter().position(|p| p == &hit)?;
+    let (raw, kind) = roots.get(idx)?;
+    let rel = canon.strip_prefix(&hit).ok()?;
+    Some((raw.clone(), *kind, raw.join(rel)))
+}
+
+/// Canonicalize a path for root matching. Falls back to the raw path when
+/// it no longer exists — a deleted file has nothing to resolve, and its
+/// parent chain still matches.
+fn canonical_event_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn canonical_root(root: &Path) -> PathBuf {
+    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
+}
 
 /// Read current branch from .git/HEAD file.
 pub(crate) fn read_git_head(head_path: &str) -> Option<String> {
@@ -1086,6 +1270,35 @@ mod tests {
         );
     }
 
+    /// FSEvents reports resolved paths: an event under a root registered
+    /// through a symlink resolves to the RAW root with the RAW-rooted path —
+    /// downstream keys on raw paths, so only the match sees canonical forms.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_event_path_tolerates_symlinked_roots() {
+        let base = std::env::temp_dir().join(format!("sensei-symlink-{}", uuid::Uuid::new_v4()));
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("repo")).unwrap();
+        std::os::unix::fs::symlink(&real, base.join("linked")).unwrap();
+        let roots = vec![(base.join("linked"), WatchKind::Code)];
+        // As FSEvents would deliver it: resolved.
+        let event = real.join("repo/a.rs");
+        std::fs::write(&event, "x").unwrap();
+        let resolved = resolve_event_path(&event, &roots);
+        assert_eq!(
+            resolved,
+            Some((base.join("linked"), WatchKind::Code, base.join("linked/repo/a.rs"),)),
+            "raw root + raw-rooted path, matched through the symlink"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn resolve_event_path_returns_none_outside_every_root() {
+        let roots = vec![(PathBuf::from("/_test/watch/r"), WatchKind::Code)];
+        assert_eq!(resolve_event_path(&PathBuf::from("/elsewhere/x.rs"), &roots), None);
+    }
+
     #[test]
     fn branch_switch_target_handles_a_nested_repo() {
         let roots = vec![PathBuf::from("/dev")];
@@ -1297,11 +1510,62 @@ mod tests {
         changes.insert(root.join("repo/src/a.rs"), ChangeKind::Modify);
 
         // No PgStore anywhere in this test — that is the point.
-        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+        let roots = [(root.clone(), WatchKind::Code)];
+        RootWatcher::process_batch(changes, &q, &roots).await;
 
         let snap = q.snapshot().await;
         assert_eq!(snap.len(), 1, "the batch must survive without a database; got {snap:?}");
         assert_eq!(snap[0].0, TaskKind::ScanRoot);
+    }
+
+    /// A changed transcript ingests incrementally: one narrowed `IngestCapture`
+    /// per changed file under a transcript root — never a scoped repo scan,
+    /// which would walk code for a transcript change.
+    #[tokio::test]
+    async fn a_transcript_change_enqueues_a_narrowed_ingest() {
+        let q = TaskQueue::new();
+        let root = PathBuf::from("/_test/watch/tx-home/.claude/projects");
+        let roots = [(
+            root.clone(),
+            WatchKind::Transcript {
+                source: "claude_code",
+                granularity: TranscriptGranularity::PerFile,
+            },
+        )];
+
+        let mut changes = HashMap::new();
+        changes.insert(root.join("proj/sess.jsonl"), ChangeKind::Modify);
+        changes.insert(root.join("proj/gone.jsonl"), ChangeKind::Delete);
+
+        RootWatcher::process_batch(changes, &q, &roots).await;
+
+        let snap = q.snapshot().await;
+        assert_eq!(snap.len(), 2, "one ingest per changed file; got {snap:?}");
+        assert!(snap.iter().all(|(k, _, _)| *k == TaskKind::IngestCapture));
+    }
+
+    /// A changed transcript database re-runs the cursor-guarded sweep: db
+    /// changes name no unit, so per-file tasks cannot address them.
+    #[tokio::test]
+    async fn a_transcript_db_change_enqueues_one_backfill() {
+        let q = TaskQueue::new();
+        let root = PathBuf::from("/_test/watch/tx-home/.local/share/opencode/opencode.db");
+        let roots = [(
+            root.clone(),
+            WatchKind::Transcript {
+                source: "opencode",
+                granularity: TranscriptGranularity::WholeDb,
+            },
+        )];
+
+        let mut changes = HashMap::new();
+        changes.insert(root.clone(), ChangeKind::Modify);
+
+        RootWatcher::process_batch(changes, &q, &roots).await;
+
+        let snap = q.snapshot().await;
+        assert_eq!(snap.len(), 1, "one backfill per batch; got {snap:?}");
+        assert_eq!(snap[0].0, TaskKind::IngestCaptures);
     }
 
     /// A path under no watched root is still dropped — the grouping is what
@@ -1315,7 +1579,8 @@ mod tests {
         let mut changes = HashMap::new();
         changes.insert(PathBuf::from("/_test/watch/somewhere-else/x.rs"), ChangeKind::Modify);
 
-        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+        let roots = [(root.clone(), WatchKind::Code)];
+        RootWatcher::process_batch(changes, &q, &roots).await;
 
         assert!(q.snapshot().await.is_empty(), "a path under no root must enqueue nothing");
     }
@@ -1349,7 +1614,8 @@ mod tests {
         // The watch root is `repo`'s parent — the thread's own root list, which
         // is what the watcher now resolves against instead of the database.
         let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
-        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+        let roots = [(root.clone(), WatchKind::Code)];
+        RootWatcher::process_batch(changes, &q, &roots).await;
 
         let snap = q.snapshot().await;
         assert_eq!(snap.len(), 1, "one scan for one root, got {snap:?}");
@@ -1373,7 +1639,8 @@ mod tests {
         // The watch root is `repo`'s parent — the thread's own root list, which
         // is what the watcher now resolves against instead of the database.
         let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
-        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+        let roots = [(root.clone(), WatchKind::Code)];
+        RootWatcher::process_batch(changes, &q, &roots).await;
 
         let task = q.next_task().await;
         match &task.scope {
@@ -1401,7 +1668,8 @@ mod tests {
         // The watch root is `repo`'s parent — the thread's own root list, which
         // is what the watcher now resolves against instead of the database.
         let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
-        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+        let roots = [(root.clone(), WatchKind::Code)];
+        RootWatcher::process_batch(changes, &q, &roots).await;
 
         let task = q.next_task().await;
         assert!(!task.scope.is_exhaustive(), "a batch must not license absence-as-deletion");
@@ -1420,7 +1688,8 @@ mod tests {
         // The watch root is `repo`'s parent — the thread's own root list, which
         // is what the watcher now resolves against instead of the database.
         let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
-        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+        let roots = [(root.clone(), WatchKind::Code)];
+        RootWatcher::process_batch(changes, &q, &roots).await;
 
         assert_eq!(q.status().await.pending, 0, "nothing outside a watch root is scanned");
 

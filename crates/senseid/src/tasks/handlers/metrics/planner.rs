@@ -317,7 +317,11 @@ pub(super) async fn compute_workspace(ctx: &TaskContext, task: &Task) -> Result<
     for task_name in active.into_iter().filter(|t| t != HEALTH_TASK_NAME) {
         let id = ctx
             .queue
-            .enqueue(Task::new(TaskKind::ComputeGroupMetrics, &owner, &task_name).with_as_of(as_of))
+            .enqueue(
+                Task::new(TaskKind::ComputeGroupMetrics, &owner, &task_name)
+                    .with_as_of(as_of)
+                    .with_parent(task.id),
+            )
             .await;
         child_ids.push(id);
     }
@@ -327,15 +331,54 @@ pub(super) async fn compute_workspace(ctx: &TaskContext, task: &Task) -> Result<
             workspace = %task.folder_path,
             "compute_workspace: no active base groups — nothing to compute",
         );
+        // An empty wave still states its size and ends, so followers never
+        // wait on a wave that will emit nothing more.
+        let _ = ctx.queue.sender().send(crate::tasks::progress::TaskEvent::WaveTotals {
+            wave: "metric".into(),
+            key: task.id.to_string(),
+            total: 0,
+            repaired: None,
+        });
+        crate::tasks::progress::open_wave(pg, "metric", &task.id.to_string(), Some(task.id), 0)
+            .await;
+        crate::tasks::progress::emit_wave_done(
+            pg,
+            ctx.queue.sender(),
+            "metric",
+            Some(task.id),
+            None,
+            ctx.queue.session_start(),
+        )
+        .await?;
         return Ok(0);
     }
 
     let n_children = child_ids.len();
+    // The wave states its size before the group tail — the denominator
+    // progress needs from the first frame.
+    let _ = ctx.queue.sender().send(crate::tasks::progress::TaskEvent::WaveTotals {
+        wave: "metric".into(),
+        key: task.id.to_string(),
+        total: n_children as u64,
+        repaired: None,
+    });
+    crate::tasks::progress::open_wave(
+        pg,
+        "metric",
+        &task.id.to_string(),
+        Some(task.id),
+        n_children as u64,
+    )
+    .await;
     // The per-workspace health barrier: blocked on THIS run's group children (same frozen
-    // as_of) so the derived roll-up runs only after the components land.
+    // as_of) so the derived roll-up runs only after the components land. Parented like
+    // the groups, so the wave's tree is complete for followers.
     ctx.queue
         .enqueue(
-            Task::new(TaskKind::ComputeHealth, &owner, "").with_as_of(as_of).blocked_by(child_ids),
+            Task::new(TaskKind::ComputeHealth, &owner, "")
+                .with_as_of(as_of)
+                .with_parent(task.id)
+                .blocked_by(child_ids),
         )
         .await;
     let enqueued = n_children as u32 + 1;

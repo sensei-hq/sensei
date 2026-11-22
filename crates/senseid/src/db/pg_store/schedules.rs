@@ -24,12 +24,15 @@ type ScheduleRow = (
     i32,                   // runs
     i64,                   // total_ms
     Option<DateTime<Utc>>, // running_since
+    Option<String>,        // last_skip_reason
+    Option<DateTime<Utc>>, // last_skip_at
 );
 
 /// That same shape as a SELECT list, so the three queries below cannot drift
 /// from [`ScheduleRow`] one column at a time.
 const SCHEDULE_COLUMNS: &str = "name, enabled, interval_secs, window_start, window_end, days, \
-                                last_run_at, last_ok, last_error, runs, total_ms, running_since";
+                                last_run_at, last_ok, last_error, runs, total_ms, running_since, \
+                                last_skip_reason, last_skip_at";
 use crate::tasks::schedule::Schedule;
 
 /// A schedule as stored, including the runtime state the daemon writes back.
@@ -48,6 +51,10 @@ pub struct StoredSchedule {
     pub avg_ms: Option<u64>,
     /// When the pass now in progress started (#283); `None` when idle.
     pub running_since: Option<DateTime<Utc>>,
+    /// Why the last tick skipped; written only when the reason changes.
+    pub last_skip_reason: Option<String>,
+    /// When that skip was recorded.
+    pub last_skip_at: Option<DateTime<Utc>>,
 }
 
 impl From<ScheduleRow> for StoredSchedule {
@@ -65,6 +72,8 @@ impl From<ScheduleRow> for StoredSchedule {
             runs,
             total_ms,
             running_since,
+            last_skip_reason,
+            last_skip_at,
         ) = row;
         Self {
             name,
@@ -84,6 +93,8 @@ impl From<ScheduleRow> for StoredSchedule {
             last_error,
             avg_ms: (runs > 0).then(|| u64::try_from(total_ms / i64::from(runs)).unwrap_or(0)),
             running_since,
+            last_skip_reason,
+            last_skip_at,
         }
     }
 }
@@ -298,6 +309,21 @@ impl PgStore {
         .execute(&self.pool)
         .await
         .map_err(|e| format!("set_schedule_running({name}): {e}"))?;
+        Ok(())
+    }
+
+    /// A tick skipped for `reason`: recorded so the row says why the worker
+    /// has not run. The ticker calls this only when the reason CHANGES — a
+    /// write per poll would churn the row every minute per worker.
+    pub async fn mark_schedule_skip(&self, name: &str, reason: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.schedules SET last_skip_reason = $2, last_skip_at = now() WHERE name = $1",
+        )
+        .bind(name)
+        .bind(reason)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("mark_schedule_skip({name}): {e}"))?;
         Ok(())
     }
 

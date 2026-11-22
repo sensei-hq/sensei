@@ -562,6 +562,9 @@ pub(crate) async fn set_transcript_consent(
         tracing::error!(error = %e, source, "set_transcript_consent: write failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    // Consent changed the watch set: re-register transcript watches now, so
+    // granting starts ingesting on change and withdrawing stops watching.
+    crate::transcript::sync_transcript_watches(&state.pg, &state.task_queue).await;
     Ok(Json(serde_json::json!({ "ok": true, "source": source, "consented": body.consented })))
 }
 

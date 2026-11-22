@@ -101,6 +101,18 @@
     {#if addNotice}
         <div class="-mt-4 mb-6"><Notice size="inline" expanded {...addNotice} data-testid="root-add-error" /></div>
     {/if}
+    {#if wizardState.lastConsolidation}
+        {@const consolidation = wizardState.lastConsolidation}
+        <div class="-mt-4 mb-6" data-testid="root-consolidated">
+            <p class="text-xs text-ink-soft m-0 leading-normal">
+                Consolidated {consolidation.absorbed.length}
+                {consolidation.absorbed.length === 1 ? "inner root" : "inner roots"}
+                under {consolidation.parent}:
+                {consolidation.absorbed.map((a) => a.path).join(", ")}. Their
+                indexed data moved up with them.
+            </p>
+        </div>
+    {/if}
 
     <div class="flex flex-col gap-3 mb-8">
         {#each roots as r (r.id)}

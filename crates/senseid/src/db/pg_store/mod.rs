@@ -611,6 +611,8 @@ mod workspaces;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 
 #[cfg(test)]
+mod consolidation_tests;
+#[cfg(test)]
 pub(crate) mod graph_seed;
 #[cfg(test)]
 mod knowledge_tests;
@@ -1475,6 +1477,9 @@ pub struct TaskExecutionStart<'a> {
     pub folder_path: &'a str,
     pub path: &'a str,
     pub retry_number: i32,
+    /// Crash/manual-retry lineage: the execution row id this attempt retries.
+    /// A uuid, not a task id — task IDs restart every session.
+    pub retried_from: Option<uuid::Uuid>,
 }
 
 // Written by `mcp.rs`.
@@ -2016,6 +2021,17 @@ pub struct IndexErrorRow<'a> {
     pub error: &'a str,
     pub adapter: Option<&'a str>,
     pub phase: Option<&'a str>,
+}
+
+// Written by `tasks/progress.rs`.
+/// A wave terminal's settled counts, as [`PgStore::close_wave_run`] records
+/// them on the latest open row for the (wave, key) pair.
+pub struct WaveRunClose<'a> {
+    pub wave: &'a str,
+    pub key: &'a str,
+    pub settled: i64,
+    pub total: i64,
+    pub outcome: &'a str,
 }
 
 // Written by `personas.rs`.

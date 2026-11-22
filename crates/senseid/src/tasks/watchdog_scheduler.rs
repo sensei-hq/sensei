@@ -167,13 +167,18 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     // Cadence lives in `sensei.schedules` (name `watchdog`); the tick is unchanged.
     let store = pg.clone();
-    crate::tasks::ticker::run_scheduled(pg, "watchdog", move || {
-        let (queue, pg) = (queue.clone(), store.clone());
-        async move {
-            tick(&queue, &pg, Utc::now(), &WatchdogConfig::default()).await;
-            Ok(())
-        }
-    })
+    crate::tasks::ticker::run_scheduled(
+        pg,
+        "watchdog",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let (queue, pg) = (queue.clone(), store.clone());
+            async move {
+                tick(&queue, &pg, Utc::now(), &WatchdogConfig::default()).await;
+                Ok(())
+            }
+        },
+    )
     .await;
 }
 

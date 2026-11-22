@@ -147,13 +147,18 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     // Cadence lives in `sensei.schedules` (name `library_update`).
     let store = pg.clone();
-    ticker::run_scheduled(pg, "library_update", move || {
-        let (queue, pg) = (queue.clone(), store.clone());
-        async move {
-            tick(&pg, &queue, &HttpVersionSource, &OsvVulnSource).await;
-            Ok(())
-        }
-    })
+    ticker::run_scheduled(
+        pg,
+        "library_update",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let (queue, pg) = (queue.clone(), store.clone());
+            async move {
+                tick(&pg, &queue, &HttpVersionSource, &OsvVulnSource).await;
+                Ok(())
+            }
+        },
+    )
     .await;
 }
 
