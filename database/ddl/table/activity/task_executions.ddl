@@ -15,6 +15,7 @@ create table if not exists task_executions (
 , started_at               timestamptz not null default now()
 , completed_at             timestamptz
 , retried_from_execution_id uuid
+, phases_ms              jsonb
 );
 
 create index if not exists task_executions_task_kind_idx
@@ -75,3 +76,5 @@ comment on column task_executions.error_message
      is 'Error detail if status = failed.';
 comment on column task_executions.retried_from_execution_id
      is 'Crash/manual-retry lineage: the execution row id this attempt retries. A uuid, not a task_id — task IDs restart every session, so only the row id is unambiguous across restarts.';
+comment on column task_executions.phases_ms
+     is 'Per-phase wall milliseconds for handlers that record them (process_file: parse_ms, world_load_ms, compile_wait_ms, resolve_ms, write_ms). Absent phases read as missing keys, never zero — a phase the handler never reached is not a phase that took no time.';

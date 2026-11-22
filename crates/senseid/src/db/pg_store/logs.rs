@@ -519,15 +519,17 @@ impl PgStore {
         id: &uuid::Uuid,
         items_processed: i32,
         duration_ms: i32,
+        phases_ms: Option<&serde_json::Value>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE activity.task_executions
-                SET status = 'completed', items_processed = $2, duration_ms = $3, completed_at = now()
+                SET status = 'completed', items_processed = $2, duration_ms = $3, completed_at = now(), phases_ms = $4
               WHERE id = $1"
         )
         .bind(id)
         .bind(items_processed)
         .bind(duration_ms)
+        .bind(phases_ms)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("complete_task_execution: {}", e))?;

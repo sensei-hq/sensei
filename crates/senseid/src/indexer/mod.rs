@@ -30,6 +30,7 @@ pub mod impact;
 pub mod incremental;
 pub mod lang;
 pub mod persist;
+pub mod phases;
 pub mod pipeline;
 /// How good the produced graph is, measured over real source — §6's criteria
 /// and R8 in `acceptance`, lost-edge reachability in `reachability`.

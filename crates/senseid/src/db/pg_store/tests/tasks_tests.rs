@@ -63,7 +63,7 @@ async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_
         })
         .await
         .unwrap();
-    s.complete_task_execution(&ok, 1, 5).await.unwrap();
+    s.complete_task_execution(&ok, 1, 5, None).await.unwrap();
 
     let rows: Vec<(String, i64, i32)> = sqlx_core::query_as::query_as(
         "SELECT path, attempts, max_retry FROM activity.task_failures \
@@ -1038,7 +1038,7 @@ async fn failed_tasks_lists_terminal_failures_with_reasons() {
     .await
     .unwrap();
     let ok = start("process_file", "src/fine.rs").await;
-    s.complete_task_execution(&ok, 10, 50).await.unwrap();
+    s.complete_task_execution(&ok, 10, 50, None).await.unwrap();
     let _running = start("process_file", "src/slow.rs").await;
 
     let rows = s.failed_tasks(7, 100).await.unwrap();
@@ -1279,4 +1279,39 @@ async fn alert_ack_write_prunes_stale_cleared_rows() {
     .execute(s.pool())
     .await
     .unwrap();
+}
+
+// ── phase timing ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn complete_task_execution_persists_phase_splits() {
+    let s = pg_store().await;
+    let fp = format!("/_test/phases/{}", uuid::Uuid::new_v4());
+    let id = s
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 91001,
+            parent_task_id: None,
+            task_kind: "process_file",
+            folder_path: &fp,
+            path: "src/x.rs",
+            retry_number: 0,
+            retried_from: None,
+        })
+        .await
+        .unwrap();
+    let phases = serde_json::json!({"parse_ms": 12, "compile_wait_ms": 34});
+    s.complete_task_execution(&id, 7, 50, Some(&phases)).await.unwrap();
+    let got: (Option<serde_json::Value>,) = sqlx_core::query_as::query_as(
+        "SELECT phases_ms FROM activity.task_executions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got.0.as_ref().and_then(|v| v.get("parse_ms")), Some(&serde_json::json!(12)));
+    assert_eq!(got.0.as_ref().and_then(|v| v.get("compile_wait_ms")), Some(&serde_json::json!(34)));
+    assert!(
+        got.0.as_ref().and_then(|v| v.get("resolve_ms")).is_none(),
+        "absent phases read missing"
+    );
 }
