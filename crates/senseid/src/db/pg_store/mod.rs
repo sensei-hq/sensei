@@ -2023,6 +2023,17 @@ pub struct IndexErrorRow<'a> {
     pub phase: Option<&'a str>,
 }
 
+// Written by `tasks/progress.rs`.
+/// A wave terminal's settled counts, as [`PgStore::close_wave_run`] records
+/// them on the latest open row for the (wave, key) pair.
+pub struct WaveRunClose<'a> {
+    pub wave: &'a str,
+    pub key: &'a str,
+    pub settled: i64,
+    pub total: i64,
+    pub outcome: &'a str,
+}
+
 // Written by `personas.rs`.
 /// A persona's GitHub identity, as [`PgStore::link_persona_identity`] links it.
 pub struct PersonaIdentityRow<'a> {

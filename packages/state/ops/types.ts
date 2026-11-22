@@ -70,6 +70,9 @@ export interface OpsAbandonedFeed {
 }
 
 export interface OpsIndexError {
+  /** The index_errors row id. Rendered rows key by this: the same file can
+   *  error on two scans. */
+  id: number;
   folder_id: string;
   file_path: string;
   error: string;
@@ -132,6 +135,9 @@ export interface OpsSyncStateFeed {
 
 /** One row of `activity.wave_runs`: a wave's recorded run, open/done/abandoned. */
 export interface OpsWaveRun {
+  /** The wave_runs row id. Rendered rows key by this: (wave, key) recurs
+   *  across sessions because dispatcher task ids restart per boot. */
+  id: string;
   wave: string;
   key: string;
   parent_task_id: number | null;

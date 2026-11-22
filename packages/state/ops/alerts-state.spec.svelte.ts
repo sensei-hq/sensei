@@ -83,6 +83,18 @@ describe('AlertsState', () => {
     vi.restoreAllMocks();
   });
 
+  it('repeated task ids across sessions derive one alert, not one per row', () => {
+    const deps = states();
+    deps.jobs.failed = [
+      { ...failedTask(7), id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', error: 'first session' },
+      { ...failedTask(7), id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', error: 'second session' },
+    ];
+    const st = new AlertsState(deps, cannedAlerts());
+    st.refresh();
+    const task = st.alerts.filter((a) => a.class === 'task' && a.key === '7');
+    expect(task).toHaveLength(1);
+  });
+
   it('derives one alert per condition across every class', () => {
     const deps = states();
     deps.jobs.failed = [failedTask(7)];

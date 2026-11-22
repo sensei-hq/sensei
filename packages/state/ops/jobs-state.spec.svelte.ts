@@ -257,6 +257,7 @@ describe('JobsState', () => {
 
   it('attach loads wave history; a terminal re-reads it', async () => {
     const run: OpsWaveRun = {
+      id: 'e5e5e5e5-5555-4555-8555-555555555555',
       wave: 'transcript', key: '9', parent_task_id: 9, total: 2, settled: 2,
       outcome: 'done', opened_at: '', closed_at: '',
     };

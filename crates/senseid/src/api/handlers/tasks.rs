@@ -536,7 +536,14 @@ mod tests {
         let state = state().await;
         let key = format!("waves-test-{}", uuid::Uuid::new_v4());
         state.pg.open_wave_run("transcript", &key, None, 3).await.unwrap();
-        state.pg.close_wave_run("transcript", &key, 3, 3, "done").await.unwrap();
+        let close = crate::db::pg_store::WaveRunClose {
+            wave: "transcript",
+            key: &key,
+            settled: 3,
+            total: 3,
+            outcome: "done",
+        };
+        state.pg.close_wave_run(&close).await.unwrap();
         let body = waves_listing(
             State(state.clone()),
             axum::extract::Query(WavesQuery { wave: Some("transcript".into()), limit: None }),

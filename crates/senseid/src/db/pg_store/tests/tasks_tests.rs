@@ -1100,15 +1100,25 @@ async fn wave_runs_open_close_list_and_boot_abandon() {
     let key = format!("wave-test-{}", uuid::Uuid::new_v4());
     let id = s.open_wave_run("transcript", &key, Some(4242), 4).await.unwrap();
     assert!(!id.is_nil());
-    let closed = s.close_wave_run("transcript", &key, 3, 4, "done").await.unwrap();
+    let close = crate::db::pg_store::WaveRunClose {
+        wave: "transcript",
+        key: &key,
+        settled: 3,
+        total: 4,
+        outcome: "done",
+    };
+    let closed = s.close_wave_run(&close).await.unwrap();
     assert!(closed, "the open row closes");
-    let closed_again = s.close_wave_run("transcript", &key, 3, 4, "done").await.unwrap();
+    let closed_again = s.close_wave_run(&close).await.unwrap();
     assert!(!closed_again, "no second open row to close");
     let rows = s.list_wave_runs(Some("transcript"), 10).await.unwrap();
     let row = rows.iter().find(|r| r["key"] == key).expect("the wave lists");
     assert_eq!(row["settled"], 3);
     assert_eq!(row["outcome"], "done");
     assert_eq!(row["parent_task_id"], 4242);
+    // History rows carry their identity: (wave, key) recurs across sessions
+    // (keys restart per boot), so the UI keys rendered rows by id.
+    assert_eq!(row["id"].as_str().unwrap(), id.to_string());
 
     // A row opened before this boot that never closed died with its session.
     let stale = format!("wave-abandon-{}", uuid::Uuid::new_v4());

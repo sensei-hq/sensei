@@ -63,7 +63,7 @@
     {#if sync.waveHistory.length > 0}
       <p>Recent passes</p>
       <ul>
-        {#each sync.waveHistory as run (`history:${run.key}`)}
+        {#each sync.waveHistory as run (run.id)}
           <li data-sync-history>
             <span>pass {run.key}</span>
             <span>{run.settled} of {run.total}</span>

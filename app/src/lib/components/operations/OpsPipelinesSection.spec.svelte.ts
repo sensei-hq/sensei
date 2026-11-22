@@ -48,8 +48,8 @@ describe('OpsPipelinesSection', () => {
 
   it('recorded runs render as history with their outcome', () => {
     jobsState.waveHistory = [
-      { wave: 'transcript', key: '9', parent_task_id: 9, total: 4, settled: 4, outcome: 'done', opened_at: '', closed_at: '' },
-      { wave: 'metric', key: '3', parent_task_id: 3, total: 2, settled: 0, outcome: 'abandoned', opened_at: '', closed_at: '' },
+      { id: 'a1a1a1a1-1111-4111-8111-111111111111', wave: 'transcript', key: '9', parent_task_id: 9, total: 4, settled: 4, outcome: 'done', opened_at: '', closed_at: '' },
+      { id: 'b2b2b2b2-2222-4222-8222-222222222222', wave: 'metric', key: '3', parent_task_id: 3, total: 2, settled: 0, outcome: 'abandoned', opened_at: '', closed_at: '' },
     ];
     flushSync();
     const m = mount();
@@ -77,6 +77,16 @@ describe('OpsPipelinesSection', () => {
     const m = mount();
     m.container.querySelector<HTMLButtonElement>('[data-pipeline-backfill]')!.click();
     await vi.waitFor(() => expect(m.container.textContent).toContain('no consented source'));
+  });
+
+  it('history rows with a repeated wave+key render once each (keys restart per session)', () => {
+    jobsState.waveHistory = [
+      { id: '11111111-1111-4111-8111-111111111111', wave: 'metric', key: '1', parent_task_id: 1, total: 2, settled: 2, outcome: 'done', opened_at: '2026-11-21T10:00:00.000Z', closed_at: '2026-11-21T10:01:00.000Z' },
+      { id: '22222222-2222-4222-8222-222222222222', wave: 'metric', key: '1', parent_task_id: 1, total: 2, settled: 2, outcome: 'done', opened_at: '2026-11-21T11:00:00.000Z', closed_at: '2026-11-21T11:01:00.000Z' },
+    ];
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-pipeline-history]')).toHaveLength(2);
   });
 
   it('an already-running backfill says so instead of naming no wave', async () => {

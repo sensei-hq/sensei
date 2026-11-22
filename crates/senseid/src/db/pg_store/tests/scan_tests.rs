@@ -659,6 +659,10 @@ async fn idx_err_log_and_get() {
     .unwrap();
     let errors = s.get_index_errors(Some(&fid)).await.unwrap();
     assert_eq!(errors.len(), 2);
+    // History rows carry their identity: the same file can error on two
+    // scans, so the UI keys rendered rows by id, not folder+file.
+    let ids: Vec<i64> = errors.iter().map(|e| e["id"].as_i64().unwrap()).collect();
+    assert_ne!(ids[0], ids[1]);
     s.clear_index_errors(&fid).await.unwrap();
 }
 

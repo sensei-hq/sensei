@@ -102,20 +102,20 @@ impl PgStore {
         &self,
         folder_id: Option<&uuid::Uuid>,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = match folder_id {
+        let rows: Vec<(i32, uuid::Uuid, String, String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = match folder_id {
             Some(fid) => sqlx_core::query_as::query_as(
-                "SELECT folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors WHERE folder_id = $1 ORDER BY created_at DESC"
+                "SELECT id, folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors WHERE folder_id = $1 ORDER BY created_at DESC"
             ).bind(fid).fetch_all(&self.pool).await,
             None => sqlx_core::query_as::query_as(
-                "SELECT folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors ORDER BY created_at DESC LIMIT 200"
+                "SELECT id, folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors ORDER BY created_at DESC LIMIT 200"
             ).fetch_all(&self.pool).await,
         }.map_err(|e| e.to_string())?;
 
         Ok(rows
             .into_iter()
-            .map(|(fid, fp, err, adapter, phase, ts)| {
+            .map(|(id, fid, fp, err, adapter, phase, ts)| {
                 serde_json::json!({
-                    "folder_id": fid, "file_path": fp, "error": err,
+                    "id": id, "folder_id": fid, "file_path": fp, "error": err,
                     "adapter": adapter, "phase": phase, "created_at": ts.to_rfc3339(),
                 })
             })
@@ -728,14 +728,8 @@ impl PgStore {
     /// Returns false when no open row exists (a terminal without totals —
     /// recorded as a miss, never an error, so a missed open cannot fail a
     /// wave that otherwise completed).
-    pub async fn close_wave_run(
-        &self,
-        wave: &str,
-        key: &str,
-        settled: i64,
-        total: i64,
-        outcome: &str,
-    ) -> Result<bool, String> {
+    pub async fn close_wave_run(&self, close: &WaveRunClose<'_>) -> Result<bool, String> {
+        let &WaveRunClose { wave, key, settled, total, outcome } = close;
         let res = sqlx_core::query::query(
             "UPDATE activity.wave_runs SET settled = $3, total = $4, outcome = $5, closed_at = now()
               WHERE id = (SELECT id FROM activity.wave_runs
@@ -779,6 +773,7 @@ impl PgStore {
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(
+            uuid::Uuid,
             String,
             String,
             Option<i64>,
@@ -788,7 +783,7 @@ impl PgStore {
             chrono::DateTime<chrono::Utc>,
             Option<chrono::DateTime<chrono::Utc>>,
         )> = sqlx_core::query_as::query_as(
-            "SELECT wave, key, parent_task_id, total, settled, outcome, opened_at, closed_at
+            "SELECT id, wave, key, parent_task_id, total, settled, outcome, opened_at, closed_at
                    FROM activity.wave_runs
                   WHERE ($1::text IS NULL OR wave = $1)
                   ORDER BY opened_at DESC LIMIT $2",
@@ -800,14 +795,17 @@ impl PgStore {
         .map_err(|e| format!("list_wave_runs: {e}"))?;
         Ok(rows
             .into_iter()
-            .map(|(wave, key, parent_task_id, total, settled, outcome, opened_at, closed_at)| {
-                serde_json::json!({
-                    "wave": wave, "key": key, "parent_task_id": parent_task_id,
-                    "total": total, "settled": settled, "outcome": outcome,
-                    "opened_at": opened_at.to_rfc3339(),
-                    "closed_at": closed_at.map(|t| t.to_rfc3339()),
-                })
-            })
+            .map(
+                |(id, wave, key, parent_task_id, total, settled, outcome, opened_at, closed_at)| {
+                    serde_json::json!({
+                        "id": id.to_string(),
+                        "wave": wave, "key": key, "parent_task_id": parent_task_id,
+                        "total": total, "settled": settled, "outcome": outcome,
+                        "opened_at": opened_at.to_rfc3339(),
+                        "closed_at": closed_at.map(|t| t.to_rfc3339()),
+                    })
+                },
+            )
             .collect())
     }
 

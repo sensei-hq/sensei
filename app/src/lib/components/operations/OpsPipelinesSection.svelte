@@ -54,7 +54,7 @@
   {#if jobs.waveHistory.length > 0}
     <p>Recent waves</p>
     <ul>
-      {#each jobs.waveHistory as run (`history:${run.wave}:${run.key}`)}
+      {#each jobs.waveHistory as run (run.id)}
         <li data-pipeline-history>
           <span>{run.wave}</span>
           <span>{run.settled} of {run.total}</span>

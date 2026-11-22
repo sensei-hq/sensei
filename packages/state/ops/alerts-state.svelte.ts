@@ -85,9 +85,15 @@ export class AlertsState {
     const standing = new Map(this.alerts.map((a) => [`${a.class}:${a.key}`, a]));
     const created: OpsAlert[] = [];
     const next: OpsAlert[] = [];
+    const emitted = new Set<string>();
 
     for (const draft of drafts) {
       const id = `${draft.class}:${draft.key}`;
+      // One alert per condition: feeds can repeat a key (task ids restart
+      // per session), and a repeated key would render twice and throw.
+      // Feeds arrive newest-first, so first-wins keeps the newest.
+      if (emitted.has(id)) continue;
+      emitted.add(id);
       const prior = standing.get(id);
       if (prior) {
         prior.count += 1;

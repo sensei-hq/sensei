@@ -4718,8 +4718,14 @@ mod tests {
         // re-enqueue, plus the test seed's pool read. (Slices 5, 6 and 8
         // add none.) Same documented class, same backlog cure (follow
         // the alias), not a lower number.
+        // Raised 1,180 → 1,183 on 2026-11-22, measured 1,183 over 230
+        // identities: +3 `AppState·pg` alias reaches (566 → 569, every
+        // other bucket identical) from the crash-recovery slices' new
+        // store reads — the acks GET/PUT, retry, and waves-listing
+        // handlers and their driving tests. Same documented class, same
+        // backlog cure (follow the alias), not a lower number.
         assert!(
-            other <= 1_180,
+            other <= 1_183,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

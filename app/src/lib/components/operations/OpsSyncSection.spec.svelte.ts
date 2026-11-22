@@ -74,11 +74,21 @@ describe('OpsSyncSection', () => {
 
   it('recorded passes render as history with their outcome', () => {
     syncState.waveHistory = [
-      { wave: 'sync', key: 'pass-1', parent_task_id: null, total: 2, settled: 1, outcome: 'done', opened_at: '', closed_at: '' },
+      { id: 'c3c3c3c3-3333-4333-8333-333333333333', wave: 'sync', key: 'pass-1', parent_task_id: null, total: 2, settled: 1, outcome: 'done', opened_at: '', closed_at: '' },
     ];
     flushSync();
     const m = mount();
     expect(m.container.querySelectorAll('[data-sync-history]')).toHaveLength(1);
     expect(m.container.textContent).toContain('1 of 2');
+  });
+
+  it('history passes with a repeated key render once each (keys restart per session)', () => {
+    syncState.waveHistory = [
+      { id: '33333333-3333-4333-8333-333333333333', wave: 'sync', key: 'boot', parent_task_id: null, total: 2, settled: 2, outcome: 'done', opened_at: '2026-11-21T10:00:00.000Z', closed_at: '2026-11-21T10:01:00.000Z' },
+      { id: '44444444-4444-4444-8444-444444444444', wave: 'sync', key: 'boot', parent_task_id: null, total: 2, settled: 2, outcome: 'done', opened_at: '2026-11-21T11:00:00.000Z', closed_at: '2026-11-21T11:01:00.000Z' },
+    ];
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-sync-history]')).toHaveLength(2);
   });
 });

@@ -78,7 +78,7 @@
     {/if}
     {#if jobs.failed.length > 0}
       <ul>
-        {#each jobs.failed as row (row.taskId)}
+        {#each jobs.failed as row (row.id)}
           <li>
             <button data-failure-row={row.taskId} onclick={() => toggle(row.taskId)} aria-expanded={expanded === row.taskId}>
               <span>{row.kind}</span>
@@ -101,7 +101,7 @@
                 {:else if 'attempts' in detail}
                   <p>attempts ({detail.attempts.length})</p>
                   <ul>
-                    {#each detail.attempts as attempt (attempt.retryNumber)}
+                    {#each detail.attempts as attempt (attempt.id)}
                       <li>
                         #{attempt.retryNumber} {attempt.status}{attempt.error ? ` — ${attempt.error}` : ''}
                         {#if attempt.retriedFromTaskId != null}<span>retried from #{attempt.retriedFromTaskId}</span>{/if}
@@ -130,7 +130,7 @@
     {/if}
     {#if jobs.indexErrors.length > 0}
       <ul>
-        {#each jobs.indexErrors as row (`${row.folder_id}:${row.file_path}`)}
+        {#each jobs.indexErrors as row (row.id)}
           <li data-failure-index-error>{row.file_path} — {row.error}</li>
         {/each}
       </ul>

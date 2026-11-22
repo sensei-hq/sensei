@@ -149,11 +149,58 @@ describe('OpsFailuresSection', () => {
       days: 7, by_day: [], worst: [{ task_kind: 'process_file', path: '/r/old.ts', count: 3, last_at: 'x' }], tasks: [],
     };
     jobsState.indexErrors = [
-      { folder_id: 'f', file_path: '/r/bad.ts', error: 'no adapter', adapter: null, phase: null, created_at: 'x' },
+      { id: 10, folder_id: 'f', file_path: '/r/bad.ts', error: 'no adapter', adapter: null, phase: null, created_at: 'x' },
     ];
     flushSync();
     const m = mount();
     expect(m.container.textContent).toContain('/r/old.ts');
     expect(m.container.textContent).toContain('no adapter');
+  });
+
+  it('failed rows with a repeated task id render once each (ids restart per session)', () => {
+    jobsState.failuresLoaded = true;
+    jobsState.failed = [
+      { ...failed(7), id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', error: 'first session' },
+      { ...failed(7), id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', error: 'second session' },
+    ];
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-failure-row]')).toHaveLength(2);
+  });
+
+  it('attempts with a repeated retry number render once each', async () => {
+    jobsState.failuresLoaded = true;
+    jobsState.failed = [failed(7)];
+    flushSync();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ok({
+          taskId: 7, current: failed(7),
+          attempts: [
+            { ...failed(7), id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', retryNumber: 0 },
+            { ...failed(7), id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', retryNumber: 0 },
+          ],
+          children: [],
+          childSummary: { total: 0, completed: 0, failed: 0, running: 0, settled: true },
+        }),
+      ),
+    );
+    const m = mount();
+    m.container.querySelector<HTMLButtonElement>('[data-failure-row="7"]')!.click();
+    await vi.waitFor(() => expect(m.container.querySelector('[data-failure-detail="7"]')).not.toBeNull());
+    flushSync();
+    expect(m.container.textContent).toContain('attempts (2)');
+  });
+
+  it('index errors with a repeated folder+file render once each', () => {
+    jobsState.failuresLoaded = true;
+    jobsState.indexErrors = [
+      { id: 11, folder_id: 'f', file_path: '/r/bad.ts', error: 'first scan', adapter: null, phase: null, created_at: 'x' },
+      { id: 12, folder_id: 'f', file_path: '/r/bad.ts', error: 'second scan', adapter: null, phase: null, created_at: 'y' },
+    ];
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-failure-index-error]')).toHaveLength(2);
   });
 });

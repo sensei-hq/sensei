@@ -140,6 +140,7 @@ describe('SyncState', () => {
 
   it('attach loads pass history; a terminal re-reads it', async () => {
     const run: OpsWaveRun = {
+      id: 'd4d4d4d4-4444-4444-8444-444444444444',
       wave: 'sync', key: 'pass-1', parent_task_id: null, total: 2, settled: 2,
       outcome: 'done', opened_at: '', closed_at: '',
     };

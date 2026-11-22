@@ -255,9 +255,8 @@ export class JobsState {
     for (const read of reads) {
       if (!read.ok) continue;
       for (const run of read.data.waves) {
-        const id = `${run.wave}:${run.key}:${run.opened_at}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
+        if (seen.has(run.id)) continue;
+        seen.add(run.id);
         runs.push(run);
       }
     }

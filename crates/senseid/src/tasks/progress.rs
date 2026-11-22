@@ -177,7 +177,14 @@ pub async fn close_wave(
     settled: u64,
     total: u64,
 ) {
-    match pg.close_wave_run(wave, key, settled as i64, total as i64, "done").await {
+    let close = crate::db::pg_store::WaveRunClose {
+        wave,
+        key,
+        settled: settled as i64,
+        total: total as i64,
+        outcome: "done",
+    };
+    match pg.close_wave_run(&close).await {
         Ok(true) => {}
         Ok(false) => tracing::warn!(wave, key, "close_wave: no open row for this wave"),
         Err(e) => tracing::warn!(error = %e, wave, key, "close_wave: history write failed"),
