@@ -1,5 +1,5 @@
 // @sensei/state — domain state shared by the desktop app and the dōjō (#414).
-export type { StateEvent } from './events.js';
+export type { StateEvent, StreamFrame, StreamFrameError } from './events.js';
 export {
   sseEvents,
   realtimeEvents,
@@ -150,3 +150,95 @@ export {
   type RelayTaskHeaderView,
   type RelayTaskPartsView,
 } from './relay/task-selectors.js';
+
+// The scan domain (#496): the wire shapes, the daemon client, and the state.
+export type {
+  FolderStatus,
+  WorkspaceStatus,
+  ActivityLevel,
+  ScanWorkspaceFolder,
+  ScanFolderEvent,
+  ScanWorkspace,
+  ActivityEvent,
+  ScanDaemonWorkspace,
+  ScanDaemonRoot,
+  QueueCounts,
+  IndexQueueStatus,
+} from './scan/types.js';
+export { parseScanStreamEvent } from './scan/types.js';
+export { scanClient, scanEvents, type ScanApi } from './scan/client.js';
+export { scanSseSource, type ScanEventStream } from './scan/sources/sse.js';
+export {
+  ScanWorkspaceState,
+  ScanActivityState,
+  ScanState,
+  commonParent,
+  pollStep,
+  triggerScans,
+  miniSummary,
+  type ScanSource,
+  type ScanRunStatus,
+} from './scan/scan-state.svelte.js';
+
+// The ops domain (operations center): the wire shapes, the daemon client,
+// the per-domain sources, and the states.
+export type {
+  OpsTaskView,
+  OpsBackoffView,
+  OpsKindDepth,
+  OpsQueueListing,
+  OpsFailedTask,
+  OpsAbandonedFeed,
+  OpsIndexError,
+  OpsScheduledTask,
+  OpsSchedulePatch,
+  OpsScheduleLog,
+  OpsSyncStateRow,
+  OpsSyncStateFeed,
+  OpsWave,
+  OpsTaskDetail,
+  OpsQueuedTaskDetail,
+  OpsBackfillResult,
+  OpsAlertAck,
+  OpsWaveRun,
+} from './ops/types.js';
+export { OPS_LIST_CAP } from './ops/types.js';
+export { opsClient, opsEvents, parseOpsFrame, type OpsApi } from './ops/client.js';
+export {
+  alertsSource,
+  jobsSseSource,
+  schedulesSseSource,
+  syncSseSource,
+  type OpsEventStream,
+} from './ops/sources/sse.js';
+export { WaveState, waveProgress, type WaveRow } from './ops/wave-state.svelte.js';
+export {
+  classifyAlert,
+  sortAlerts,
+  type AlertClass,
+  type AlertKind,
+  type AlertLevel,
+  type AlertSeverity,
+  type OpsAlert,
+} from './ops/alerts.js';
+export { AlertsState, type AlertsDeps, type AlertsSource } from './ops/alerts-state.svelte.js';
+export {
+  JobsState,
+  classifyJobFrame,
+  JOBS_POLL_MS,
+  type JobsSource,
+} from './ops/jobs-state.svelte.js';
+export {
+  SchedulesState,
+  pausedSchedules,
+  failingSchedules,
+  SCHEDULES_POLL_MS,
+  type SchedulesSource,
+} from './ops/schedules-state.svelte.js';
+export {
+  SyncState,
+  classifySyncStage,
+  SYNC_POLL_MS,
+  type SyncSource,
+  type SyncStageActivity,
+} from './ops/sync-state.svelte.js';

@@ -16,6 +16,7 @@ export type StateStream<E> = (
 /** What an SSE stream needs of a socket: the EventManager's shape. */
 export interface EventStream<E> {
   onopen: (() => void) | null;
+  onerror: (() => void) | null;
   subscribe(handler: (event: E) => void): () => void;
   destroy(): void;
 }
@@ -44,11 +45,13 @@ export function channelFault(status: ChannelStatus, err?: Error): string | null 
   }
 }
 
-/** A stream over SSE: a fresh socket per subscription, every open reported. */
+/** A stream over SSE: a fresh socket per subscription, every open reported,
+ *  every socket error reported as a fault (until the next open ends it). */
 export function sseEvents<E>(stream: () => EventStream<E>): StateStream<E> {
-  return (on, onOpen) => {
+  return (on, onOpen, onFault) => {
     const socket = stream();
     socket.onopen = () => onOpen();
+    socket.onerror = () => onFault?.('the live stream dropped; reconnecting');
     const unsubscribe = socket.subscribe(on);
     return () => {
       unsubscribe();

@@ -821,7 +821,8 @@ export interface RelayCancelledRun {
 export interface RelayStreamEvent {
   action: 'add' | 'update' | 'remove' | 'set';
   entity: string;
-  /** Run events carry `run_id` + `crew_id`; lane events `lane_id` + `crew_id` (queue cutover). */
+  /** Run events carry `run_id` + `crew_id`; lane events `lane_id` + `crew_id` (queue cutover).
+   *  Removals and row-carrying events name the row `id`; item events name their `stage`. */
   data: {
     op?: string;
     task_id?: string;
@@ -830,6 +831,8 @@ export interface RelayStreamEvent {
     crew_id?: string;
     lane_id?: string;
     reason?: string;
+    id?: string;
+    stage?: string;
   };
 }
 
@@ -864,6 +867,8 @@ export interface RelayCatalogueAssistant {
   last_used_at: string | null;
   /** Sessions started in the last 7 days. */
   sessions_week: number;
+  /** The resolved launch command (#513); null without a template or a repo. */
+  launch: string | null;
 }
 
 /** An editor this machine has seen. */
@@ -877,6 +882,8 @@ export interface RelayCatalogueEditor {
   models: string[];
   /** Where sensei's tools are set up in it; null when not configured. */
   mcp_config: string | null;
+  /** The resolved launch step (#513); null without a template or a repo. */
+  launch: string | null;
 }
 
 /** A word a session named that the catalogue does not list: never offered. */

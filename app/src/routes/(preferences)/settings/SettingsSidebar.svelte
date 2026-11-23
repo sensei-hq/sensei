@@ -1,5 +1,6 @@
 <script lang="ts">
     import { Eyebrow, Rail } from '$lib/components';
+    import ScanProgress from '$lib/components/indexer/ScanProgress.svelte';
     import { buildNavItems, resolveActiveHref } from './settings-nav';
     import type { GlyphMode } from '$lib/glyphs';
 
@@ -20,5 +21,8 @@
         <div class="px-2">
             <Eyebrow>Settings</Eyebrow>
         </div>
+    {/snippet}
+    {#snippet footer()}
+        <ScanProgress variant="mini" />
     {/snippet}
 </Rail>

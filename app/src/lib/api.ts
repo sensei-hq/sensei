@@ -23,7 +23,7 @@ import type {
   SyncStateResponse,
   ProvisionModel, ProvisionPhase,
   SchemaPayload,
-  RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
+  RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult, AbsorbedWatchRoot,
   TranscriptSourceConsent,
   TrackerConnection, TrackerLevel, TrackerSyncCounts,
   SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
@@ -51,6 +51,7 @@ import type { PersonaWire } from './personas.svelte.js';
 
 // The result shapes and their reason live in @sensei/state (#421), shared with the relay source.
 import { failureFrom, failureReason, type ApiError, type ApiResult } from '@sensei/state';
+import { daemonBaseUrl } from './daemon-port.js';
 export { failureReason, type ApiError, type ApiResult };
 
 /** What accepting a recommendation would write (`…/recommendations/{id}/preview`). */
@@ -85,7 +86,7 @@ export function readOutcome<T>(r: ApiResult<T>): { data: T | null; error: string
 /** The daemon's origin for a given port. The single source of truth for the
  *  loopback base URL, shared by `senseiApi` and any non-fetch consumer (e.g.
  *  an `<img src>` that streams bytes from the daemon, like a workspace icon). */
-export const apiBase = (port: number): string => `http://127.0.0.1:${port}`;
+export const apiBase = (port: number): string => daemonBaseUrl(port);
 
 /** Create a typed API client for the sensei Rust daemon. */
 /** `?persona=…` when one is named; nothing, so the daemon resolves the default
@@ -664,7 +665,10 @@ export function senseiApi(port: number) {
     /** Add a root to the DB immediately (synchronous). Does not start scanning.
      *  The stored root, or why it was not added (#304). */
     tryAddWatchRoot: (path: string) =>
-      tryPost<{ ok: boolean; id: string; path: string }>('/api/scan/roots', { path }),
+      tryPost<{ ok: boolean; id: string; path: string; absorbed: AbsorbedWatchRoot[] }>(
+        '/api/scan/roots',
+        { path },
+      ),
 
     /** Remove a watch root (#247). The decision is REQUIRED: `keep` pauses it
      *  and leaves its data readable, `remove` prunes everything it held. Result-

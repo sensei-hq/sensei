@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WizardState, routerKeyStatus, saveRouterKey } from './wizard-state.svelte.js';
-import { scanState } from './scan-state.svelte.js';
+import { scanState } from './scan.js';
 import { mockWizardLoadData, mockWatchRoot, mockRouter, mockWorkspace, mockLibEntry } from './setup/mock-contracts.js';
 
 describe('WizardState', () => {
@@ -65,6 +65,28 @@ describe('WizardState', () => {
       });
       expect(failure).toMatch(/could not reach the daemon/i);
       expect(ws.roots.newPath).toBe('/r2');
+    });
+
+    it('a parent add drops the absorbed inner roots and records the consolidation', async () => {
+      ws.roots.roots = [mockWatchRoot({ id: 'inner', path: '/p/inner' })];
+      ws.roots.newPath = '/p';
+      const failure = await ws.addRoot({
+        tryAddWatchRoot: async () => ({
+          ok: true,
+          data: {
+            ok: true,
+            id: 'r2',
+            path: '/p',
+            absorbed: [{ id: 'inner', path: '/p/inner', status: 'paused' }],
+          },
+        }),
+      });
+      expect(failure).toBeNull();
+      expect(ws.roots.roots.map((r) => r.id)).toEqual(['r2']);
+      expect(ws.lastConsolidation).toEqual({
+        parent: '/p',
+        absorbed: [{ id: 'inner', path: '/p/inner', status: 'paused' }],
+      });
     });
 
     it('an empty or already-listed path is not sent', async () => {

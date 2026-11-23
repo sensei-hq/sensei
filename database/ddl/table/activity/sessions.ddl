@@ -90,7 +90,7 @@ comment on column sessions.task
 comment on column sessions.acp_id
      is 'The assistant family the capturing adapter reports (claude, cursor, codex, aider …); named and classified through sensei.assistant_catalogue_words.';
 comment on column sessions.host
-     is 'The editor the session ran in (cursor, zed, vscode), as its transcript adapter declares it. Null for a terminal session or one with no evidence of an editor; never guessed, and a later write with no host never clears it (#455).';
+     is 'The editor the session ran in (cursor, zed, vscode): its transcript adapter''s declaration, or a hook event''s terminal env through the shared table (#512). Null for a terminal session or one with no evidence of an editor; never guessed, and a later write with no host never clears it (#455).';
 comment on column sessions.client_session_id
      is 'The assistant''s own session id (e.g. Claude session_id from hooks). Correlates all hook events of one session to a single row; NULL for MCP-created sessions.';
 comment on column sessions.outcome

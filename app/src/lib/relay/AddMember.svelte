@@ -118,6 +118,20 @@
     </div>
     <p data-command-note class="m-0 text-xs text-ink-soft [overflow-wrap:anywhere]">{view.command.note}</p>
   </div>
+  {#if view.launch}
+    <div class="flex flex-col gap-2 p-3 rounded-[10px] bg-paper-soft">
+      <p class="m-0 text-sm">Start it first.</p>
+      <div data-launch-line class="flex items-center gap-2 py-1.5 pl-3 pr-1.5 rounded-lg border border-solid border-paper-edge bg-paper">
+        <code data-launch-text class="flex-1 min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{view.launch}</code>
+        <button
+          type="button"
+          data-launch-copy
+          onclick={() => oncopy(view.launch ?? '')}
+          class="min-h-[30px] px-2.5 rounded-[7px] border border-solid border-paper-edge bg-paper text-ink text-xs cursor-pointer"
+        >Copy</button>
+      </div>
+    </div>
+  {/if}
   <p data-listening class="m-0 flex items-center gap-2 text-xs text-ink-soft">
     <span aria-hidden="true" class="inline-block w-2 h-2 rounded-full bg-success"></span>{view.listening}
   </p>

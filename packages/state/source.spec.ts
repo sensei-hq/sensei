@@ -12,8 +12,9 @@ interface Tick {
 /** A socket the test opens and fires by hand (the EventManager's shape). */
 function fakeSocket() {
   let handler: ((e: Tick) => void) | null = null;
-  const socket: EventStream<Tick> & { open(): void; fire(e: Tick): void; destroyed: number; unsubscribed: number } = {
+  const socket: EventStream<Tick> & { open(): void; fail(): void; fire(e: Tick): void; destroyed: number; unsubscribed: number } = {
     onopen: null,
+    onerror: null,
     destroyed: 0,
     unsubscribed: 0,
     subscribe(h) {
@@ -28,6 +29,9 @@ function fakeSocket() {
     },
     open() {
       socket.onopen?.();
+    },
+    fail() {
+      socket.onerror?.();
     },
     fire(e) {
       handler?.(e);
@@ -88,6 +92,20 @@ describe('sseEvents — a StateStream over a socket, for any event type', () => 
     stream(() => {}, () => {})();
     stream(() => {}, () => {})();
     expect(make).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports socket errors as faults', () => {
+    const socket = fakeSocket();
+    const stream: StateStream<Tick> = sseEvents<Tick>(() => socket);
+    const faulted = vi.fn();
+    const stop = stream(
+      () => {},
+      () => {},
+      faulted,
+    );
+    socket.fail();
+    expect(faulted).toHaveBeenCalledWith('the live stream dropped; reconnecting');
+    stop();
   });
 });
 

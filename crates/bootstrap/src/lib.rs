@@ -17,6 +17,7 @@ pub mod database;
 pub mod engines;
 pub mod hardware;
 pub mod health;
+pub mod host;
 pub mod models;
 pub mod pg_container;
 pub mod service;

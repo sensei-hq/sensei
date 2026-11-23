@@ -94,10 +94,15 @@ async fn run(pg: Arc<PgStore>) {
     // interval lets capture win the race; the backstop still bounds anything
     // never captured, and one interval's delay retains at most one extra window.
     let store = pg.clone();
-    ticker::run_scheduled_deferred(pg, "activity_prune", move || {
-        let pg = store.clone();
-        async move { prune_once(&pg).await }
-    })
+    ticker::run_scheduled_deferred(
+        pg,
+        "activity_prune",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let pg = store.clone();
+            async move { prune_once(&pg).await }
+        },
+    )
     .await;
 }
 

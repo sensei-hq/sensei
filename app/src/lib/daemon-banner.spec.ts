@@ -29,4 +29,29 @@ describe('daemonBanner', () => {
     expect(daemonBanner('full', null)).toBeNull();
     expect(daemonBanner(undefined, null)).toBeNull();
   });
+
+  // 8.4: the two states the banner ignored — a dead daemon, and a first
+  // install still building its database. Down is a fault (nothing heals it
+  // but attention); provisioning is a wait (never a fault, never a refusal).
+  it('a dead daemon names the outage, distinct from every other banner', () => {
+    expect(daemonBanner(undefined, null, true)).toEqual({
+      tone: 'fault',
+      title: 'Daemon not answering',
+      detail: 'The app shows the last known state. Check that the daemon is running, then open Health.',
+      action: { label: 'Open Health', href: '/health', name: 'health' },
+    });
+  });
+
+  it('a provisioning database is a normal wait, not a fault', () => {
+    expect(daemonBanner('provisioning', null)).toEqual({
+      tone: 'normal',
+      title: 'Setting things up',
+      detail: 'The database is still being created — the app fills in as it arrives.',
+      action: { label: 'Open Health', href: '/health', name: 'health' },
+    });
+  });
+
+  it('down wins over every other banner', () => {
+    expect(daemonBanner('degraded', 'Load failed', true)?.title).toBe('Daemon not answering');
+  });
 });

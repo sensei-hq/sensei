@@ -105,6 +105,26 @@ else
 fi
 rm -f "$fallback"
 
+# The terminal env rides along for host detection (#512): the program's name
+# and whether a cursor trace is set — never the trace value.
+if command -v jq >/dev/null 2>&1; then
+  export TERM_PROGRAM="zed"
+  export CURSOR_TRACE_ID="trace-value-that-must-never-leave"
+  run_hook "forward" '{"hook_event_name":"Notification","session_id":"abc"}' >/dev/null
+  sleep 0.3
+  unset TERM_PROGRAM CURSOR_TRACE_ID
+  last=$(tail -1 "$fallback")
+  term=$(printf '%s' "$last" | jq -r '.term_program // empty')
+  traced=$(printf '%s' "$last" | jq -r '.cursor_trace // empty')
+  leaked=$(printf '%s' "$last" | grep -c "trace-value-that-must-never-leave" || true)
+  if [ "$term" = "zed" ] && [ "$traced" = "true" ] && [ "$leaked" = "0" ]; then
+    assert_true "fallback row enriched with term_program + cursor_trace presence" "true"
+  else
+    assert_true "fallback row enriched with term_program + cursor_trace presence (term=$term traced=$traced leaked=$leaked)" "false"
+  fi
+  rm -f "$fallback"
+fi
+
 # ── session-start: telemetry + context injection ─────────────────────────────
 
 echo ""

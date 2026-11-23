@@ -76,4 +76,21 @@ describe('DaemonHealth.poll', () => {
     await h.poll();
     expect(h.dbMode).toBeUndefined();
   });
+
+  // 8.4: an unreadable /health is also DOWN — the banner's outage state —
+  // distinct from an unknown mode, which stays silent.
+  it('marks down when /health cannot be read, and clears it on recovery', async () => {
+    const h = new DaemonHealth();
+    expect(h.down).toBe(false);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 503 })));
+    await h.poll();
+    expect(h.down).toBe(true);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ daemonDbMode: 'full' }), { status: 200 })),
+    );
+    await h.poll();
+    expect(h.down).toBe(false);
+    expect(h.dbMode).toBe('full');
+  });
 });

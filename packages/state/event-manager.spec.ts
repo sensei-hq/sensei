@@ -204,6 +204,16 @@ describe('EventManager', () => {
     mgr.destroy();
   });
 
+  it('reports socket errors outward so states can hold the fault', () => {
+    const seen: string[] = [];
+    const mgr = new EventManager<string>('http://test/sse', (d) => d, 100);
+    mgr.onerror = () => seen.push('dropped');
+    mgr.subscribe(() => {});
+    MockEventSource.instances[0].simulateError();
+    expect(seen).toEqual(['dropped']);
+    mgr.destroy();
+  });
+
   it('does not reconnect after destroy', async () => {
     vi.useFakeTimers();
 

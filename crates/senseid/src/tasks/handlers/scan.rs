@@ -41,11 +41,17 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             (id, path)
         }
         None => {
-            let id = ctx
+            let (id, absorbed) = ctx
                 .pg()
-                .add_watch_root(&task.path, root_name, &serde_json::json!([]))
+                .add_watch_root_consolidated(&task.path, root_name, &serde_json::json!([]))
                 .await
                 .map_err(|e| format!("Failed to register watch root: {}", e))?;
+            // Absorbed rows are gone from the database; their live watcher
+            // registrations must go with them, or edits under a deleted row
+            // keep resolving (the #216 class of staleness).
+            for a in &absorbed {
+                crate::api::handlers::workspace::unregister_root_watcher(&ctx.app_state, &a.path);
+            }
             (id, task.path.clone())
         }
     };
@@ -834,12 +840,14 @@ mod tests {
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
             trackers: Default::default(),
+            streams: crate::api::stream::StreamHub::new(),
         });
         Arc::new(TaskContext {
             queue,
             app_state,
             _graph_path: None,
             logger: sensei_logger::Logger::noop(),
+            notifier: std::sync::Arc::new(crate::notifications::NoopNotifier),
         })
     }
 
@@ -859,12 +867,14 @@ mod tests {
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
             trackers: Default::default(),
+            streams: crate::api::stream::StreamHub::new(),
         });
         let ctx = Arc::new(TaskContext {
             queue,
             app_state,
             _graph_path: None,
             logger: sensei_logger::Logger::noop(),
+            notifier: std::sync::Arc::new(crate::notifications::NoopNotifier),
         });
         (ctx, event_rx)
     }

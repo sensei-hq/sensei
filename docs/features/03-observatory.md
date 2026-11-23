@@ -74,6 +74,7 @@ previewed: nothing is shared without a confirmation.
 - [~] **Code map** (図) — see the shape of the codebase: modules, then their files, then their symbols (Atlas retired).
 - [~] **Instruments** (具) — see and try the MCP tools sensei can reach for: a playground, replay of real use, and health.
 - [x] **Logs** (診) — see what sensei is doing: background activity and diagnostics.
+- [x] **Operations** (運) — watch the machine room: scan/index queue, pipeline waves, schedules, sync state, and failures with reasons, plus alerts with acks. Dispositions and wave history persist, so a crash resumes instead of restarting blind.
 - [~] **Dōjō** (結) — join the shared plane: connect to an employer / client / community dōjō (addition).
 - [~] **Sharing** (群) — give back to the collective: contribute learnings upstream, always previewed.
 - [~] **Share review** (送) — control what leaves the machine: review exactly what's queued to share before it goes.
@@ -131,6 +132,7 @@ above surface (per-capability statuses live in the [capability map](README.md)):
 | Code map | Partial | modules → files → symbols, four lenses |
 | Instruments | Partial | playground / replay / health in flight |
 | Logs | Done | activity + diagnostics |
+| Operations | Done | queue · waves · schedules · sync · failures · alerts; crash recovery proven by a kill-restart matrix |
 | Dōjō connections (addition) | Partial | connect screens shipped; membership validation not built |
 | Sharing / Share review | Partial | contribute + preview; opt-in |
 | Focus / All | Done | rail mode toggle |

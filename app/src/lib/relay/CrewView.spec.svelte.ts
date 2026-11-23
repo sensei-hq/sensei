@@ -189,6 +189,7 @@ describe('AddMember', () => {
     listening: 'Listening · 0 of 2 to start a run',
     catalogue: null,
     catalogueError: null,
+    launch: null,
     ...over,
   });
 
@@ -235,7 +236,7 @@ describe('AddMember', () => {
   const picker = (picked: string | null = null): NonNullable<RelayAddMemberView['catalogue']> => ({
     picked,
     assistants: [
-      { id: 'claude', name: 'Claude Code', used: 'last used 2h ago', details: ['3 sessions this week'], pressed: picked === 'claude' },
+      { id: 'claude', name: 'Claude Code', used: 'last used 2h ago', details: ['3 sessions this week'], pressed: picked === 'claude', launch: 'cd "/w/sensei" && claude' },
     ],
     editors: [
       {
@@ -244,6 +245,7 @@ describe('AddMember', () => {
         used: 'last used 5 min ago',
         details: ['claude-sonnet-4-5', "sensei's tools in ~/.cursor/mcp.json"],
         pressed: picked === 'cursor',
+        launch: null,
       },
     ],
   });
@@ -294,5 +296,28 @@ describe('AddMember', () => {
     const c = mount(AddMember, { view: setup(), oncopy: vi.fn(), onrole: vi.fn() });
     expect(c.querySelector('[data-catalogue-group]')).toBeNull();
     expect(c.querySelector('[data-catalogue-error]')).toBeNull();
+  });
+
+  it('the picked tool’s launch: its own block under the paste line, with Copy (#513)', async () => {
+    const oncopy = vi.fn();
+    const c = mount(AddMember, {
+      view: setup({ catalogue: picker('claude'), launch: 'cd "/w/sensei" && claude' }),
+      oncopy,
+      onrole: vi.fn(),
+    });
+    expect(text(c.querySelector('[data-launch-text]'))).toBe('cd "/w/sensei" && claude');
+    (c.querySelector('[data-launch-copy]') as HTMLButtonElement).click();
+    await tick();
+    expect(oncopy).toHaveBeenCalledWith('cd "/w/sensei" && claude');
+    expect(text(c.querySelector('[data-paste-text]'))).toBe('register with sensei as coordinator');
+  });
+
+  it('nothing picked, or nothing resolved: no launch block (#513)', () => {
+    const c = mount(AddMember, {
+      view: setup({ catalogue: picker('cursor'), launch: null }),
+      oncopy: vi.fn(),
+      onrole: vi.fn(),
+    });
+    expect(c.querySelector('[data-launch-line]')).toBeNull();
   });
 });

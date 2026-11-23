@@ -34,6 +34,9 @@ pub struct SharedState {
     /// Tracker integrations: per-tracker locks, the secret store, the transport
     /// factory. Production pieces by default (`TrackerRuntime::default`).
     pub trackers: Arc<crate::tracker::runtime::TrackerRuntime>,
+    /// Framed SSE hub: recent-frame rings + re-broadcast channels behind the
+    /// raw event/task broadcasts (uniform envelope, cursor replay).
+    pub streams: crate::api::stream::StreamHub,
 }
 
 pub type AppState = Arc<SharedState>;

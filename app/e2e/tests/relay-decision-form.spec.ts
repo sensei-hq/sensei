@@ -17,7 +17,7 @@
  * answers a task-bound form the same way. "No refresh" is proved by a marker on
  * `window` that a reload would wipe, and an unchanged path.
  *
- * Slice R (R2) — pick-several and long text: rokkit 1.16 draws an array of enum members as a
+ * Slice R (R2) — pick-several and long text: rokkit 1.16.1 draws an array of enum members as a
  * MultiSelect and an `x-multiline` string as a textarea; the person answers both live and the
  * lane reads the exact members and text back.
  */
@@ -282,7 +282,8 @@ test.describe('relay decision form (#389)', () => {
 
     // The card passes axe with the form showing (WCAG A + AA; no serious or critical).
     expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the form card').toEqual([]);
-    // Open, the Select's listbox is named for its field (axe aria-input-field-name).
+    // Open, rokkit names the Select's listbox after its trigger (sensei-hq/rokkit#206, fixed in
+    // 1.16.1); the card adds no name of its own. axe aria-input-field-name pins it end to end.
     const target = `${card} [data-decision-field="target"] [data-select-trigger]`;
     const listbox = `${card} [data-decision-field="target"] [role="listbox"]`;
     // A press that lands while the fresh card still settles can miss: press again until it opens.
@@ -403,12 +404,18 @@ test.describe('relay decision form (#389)', () => {
         .toBe(true);
     }
     const notes = 'first line\nsecond line';
+    // Open with members picked, the list passes axe: rokkit 1.16.1 restates the focused selected
+    // option (sensei-hq/rokkit#209 fixed). Scoped to the field: the open listbox is fixed over the
+    // field below it, and axe then reads that field's text against the listbox's paper, which no
+    // one sees.
+    const listbox = `${card} [data-decision-field="areas"] [role="listbox"]`;
+    await expect.poll(() => countOf(tauriPage, listbox)).toBe(1);
+    expect(
+      await seriousA11y(tauriPage, `${card} [data-decision-field="areas"]`),
+      'serious/critical a11y violations with the pick-several open',
+    ).toEqual([]);
     // The person closes the list with a press on its trigger and moves to the notes to type: focus
     // leaves the listbox.
-    // A focused, picked option in an open listbox is text-primary on paper-mute, 4.4:1 in dark mode
-    // (sensei-hq/rokkit#209): rokkit's look, kept as shipped; axe covers it once rokkit fixes it.
-    test.info().annotations.push({ type: 'upstream', description: 'sensei-hq/rokkit#209: focused selected option contrast' });
-    const listbox = `${card} [data-decision-field="areas"] [role="listbox"]`;
     await tauriPage.locator(trigger).click();
     await expect.poll(() => countOf(tauriPage, listbox)).toBe(0);
     // TauriPage's press does not move focus in WebKit, so focus the notes as a person's press would.
@@ -422,9 +429,9 @@ test.describe('relay decision form (#389)', () => {
       return true;
     })()`);
     await evidence(tauriPage, '5-several-filled', card);
-    // Filled (members picked, notes typed), the card passes axe: no control nested in the
-    // MultiSelect's trigger (nested-interactive), and no field faded by a "false" disabled mark
-    // (sensei-hq/rokkit#207).
+    // Filled (members picked, notes typed), the card passes axe: rokkit draws each picked member
+    // as a label in the trigger (sensei-hq/rokkit#206 fixed in 1.16.1, no nested-interactive), and
+    // no field is faded by a disabled mark it does not carry (#207 fixed).
     expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the filled pick-several').toEqual([]);
     await tauriPage.locator(`${card} [data-decision-answer]`).click();
 

@@ -13,7 +13,7 @@
     diffStats,
     type ConsolidatedRuleset,
   } from './consolidation-view.js';
-  import { ConsolidationState } from './consolidation-state.svelte.js';
+  import { consolidationState } from './consolidation-state.svelte.js';
 
   let { data } = $props();
 
@@ -24,8 +24,9 @@
   // scope, resolved daemon-side), so the "rules on disk" delta is omitted.
   const stats = $derived(ruleset ? diffStats(ruleset, null) : []);
 
-  // The actions and their busy / notice state live in ConsolidationState.
-  const cs = new ConsolidationState();
+  // The actions and their busy / notice state live in the module
+  // singleton, so the guard survives navigation mid-run.
+  const cs = consolidationState;
   const api = $derived(senseiApi(appState.port));
   const consolidate = () => cs.consolidate(api, invalidateAll);
   const approve = () => (ruleset ? cs.approve(api, ruleset.id, invalidateAll) : undefined);

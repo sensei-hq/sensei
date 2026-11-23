@@ -9,12 +9,7 @@ import { hasTauri } from './bootstrap.js';
 import { healthState } from './health-state.svelte.js';
 import { wizardState } from './wizard-state.svelte.js';
 import { browserStorage, STORAGE_KEYS } from './storage-keys.js';
-
-// Daemon port. Hardcoded — there is one daemon, one port, one source of
-// truth. The previous indirection (a vite-define + a localStorage override)
-// added two failure modes (stale localStorage value, stale bundle) without
-// any callsite that actually needed runtime variability.
-const DEFAULT_PORT = 7744;
+import { DEFAULT_PORT } from './daemon-port.js';
 
 /** The one config entry that remembers every screen's panels (D87 §4). */
 export const VIEWS_KEY = 'ui.views';

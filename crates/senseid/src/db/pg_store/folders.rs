@@ -52,6 +52,32 @@ pub(crate) fn resolve_exclusion(root_path: &str, entry: &str) -> String {
     format!("{root}/{}", entry.trim_start_matches('/').trim_end_matches('/'))
 }
 
+/// Rebase one inner-root exclusion entry onto the absorbing parent root.
+///
+/// Both sides resolve through [`resolve_exclusion`], so the absolute subtree
+/// covered is IDENTICAL before and after — only the spelling changes, from
+/// inner-relative to parent-relative. Scanner and watcher resolve the same
+/// way, so neither can tell the move happened. `None` for a blank entry,
+/// which covers nothing anywhere.
+pub(crate) fn rebase_exclusion(parent_path: &str, inner_path: &str, entry: &str) -> Option<String> {
+    if entry.trim().is_empty() {
+        return None;
+    }
+    let absolute = resolve_exclusion(inner_path, entry);
+    let rebased = absolute.strip_prefix(&format!("{}/", parent_path.trim_end_matches('/')))?;
+    if rebased.is_empty() { None } else { Some(rebased.to_string()) }
+}
+
+/// A watch root absorbed by a newly added parent: the row is gone, its
+/// folders and exclusions moved to the parent. Returned so the caller can
+/// say what happened — and unregister the path from the live watcher.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AbsorbedWatchRoot {
+    pub id: uuid::Uuid,
+    pub path: String,
+    pub status: String,
+}
+
 #[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// The absolute-path exclusion prefixes for a watch root — each `excluded`
@@ -1329,6 +1355,26 @@ impl PgStore {
         name: &str,
         excluded: &serde_json::Value,
     ) -> Result<uuid::Uuid, String> {
+        Ok(self.add_watch_root_consolidated(path, name, excluded).await?.0)
+    }
+
+    /// Upsert a watch root, then absorb every root it encloses (consolidation).
+    ///
+    /// Adding a parent supersedes the inner roots its scan covers: keeping
+    /// them nests roots, splits one tree's folders across root_ids, and leaves
+    /// paused rows the user thought they removed. Every creation path funnels
+    /// through here, so the invariant "roots stay top-level" holds by
+    /// construction — including for re-POSTs (the upsert path consolidates a
+    /// nested tree created before this existed).
+    ///
+    /// Returns the root id plus the absorbed rows, so the caller can report
+    /// them and unregister their paths from the live watcher.
+    pub async fn add_watch_root_consolidated(
+        &self,
+        path: &str,
+        name: &str,
+        excluded: &serde_json::Value,
+    ) -> Result<(uuid::Uuid, Vec<AbsorbedWatchRoot>), String> {
         // On conflict, PRESERVE the existing `excluded` — exclusions are managed
         // by `update_watch_root` (the roots API), and a re-scan passes `[]`, which
         // must never wipe the user's exclusions. `excluded` here is the seed for
@@ -1344,7 +1390,90 @@ impl PgStore {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(row.0)
+        let absorbed = self.consolidate_watch_roots(&row.0, path).await?;
+        Ok((row.0, absorbed))
+    }
+
+    /// Absorb every watch root strictly enclosed by `parent_path` into
+    /// `parent_id`: their ROWS go, their DATA stays.
+    ///
+    /// Folders are re-pointed at the parent — never pruned — because the
+    /// `folders.root_id` delete cascade would otherwise take the indexed data
+    /// with the rows. Exclusions are rebased onto the parent
+    /// ([`rebase_exclusion`]), so the same absolute subtrees stay skipped; an
+    /// exclusion is a privacy boundary, and dropping it would index content
+    /// the user explicitly excluded.
+    ///
+    /// Retry-safe: a failure partway leaves moved folders already parented
+    /// and unmerged exclusions deduped, so re-running (re-POSTing the parent)
+    /// finishes the job rather than doubling it.
+    pub async fn consolidate_watch_roots(
+        &self,
+        parent_id: &uuid::Uuid,
+        parent_path: &str,
+    ) -> Result<Vec<AbsorbedWatchRoot>, String> {
+        let parent = parent_path.trim_end_matches('/');
+        let inners: Vec<(uuid::Uuid, String, String, serde_json::Value)> =
+            sqlx_core::query_as::query_as(
+                // `starts_with`, never `LIKE path || '/%'`: a `_` in a path is
+                // a LIKE wildcard, and a prefix-sharing sibling (`/x/ab` under
+                // parent `/x/a`) is not an enclosed root — the trailing slash
+                // is the whole distinction.
+                "SELECT id, path, status::text, excluded FROM sensei.folders_to_watch
+                  WHERE path != $1 AND starts_with(path, $1 || '/')
+                  ORDER BY path",
+            )
+            .bind(parent)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        if inners.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // The parent's CURRENT exclusions: the upsert preserves them on
+        // conflict, so the insert seed is not what is stored. Everything
+        // merges into this list, deduped by resolved absolute.
+        let (_, mut merged) = self
+            .get_watch_root(parent_id)
+            .await?
+            .ok_or_else(|| "consolidate_watch_roots: parent row vanished mid-add".to_string())?;
+        let mut seen: std::collections::HashSet<String> =
+            merged.iter().map(|e| resolve_exclusion(parent, e)).collect();
+
+        let mut absorbed = Vec::with_capacity(inners.len());
+        for (id, path, status, excluded) in &inners {
+            // Re-point BEFORE deleting: the delete cascades folders.
+            sqlx_core::query::query("UPDATE sensei.folders SET root_id = $1 WHERE root_id = $2")
+                .bind(parent_id)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            if let Some(list) = excluded.as_array() {
+                for raw in list.iter().filter_map(|e| e.as_str()) {
+                    if let Some(rebased) = rebase_exclusion(parent, path, raw)
+                        && seen.insert(resolve_exclusion(parent, &rebased))
+                    {
+                        merged.push(rebased);
+                    }
+                }
+            }
+            absorbed.push(AbsorbedWatchRoot {
+                id: *id,
+                path: path.clone(),
+                status: status.clone(),
+            });
+        }
+
+        let merged_json = serde_json::Value::Array(
+            merged.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
+        );
+        self.update_watch_root(parent_id, None, Some(&merged_json)).await?;
+        for (id, _, _, _) in &inners {
+            self.remove_watch_root(id).await?;
+        }
+        Ok(absorbed)
     }
 
     /// Every watch root, paused ones included — what the settings screen lists,

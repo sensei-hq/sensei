@@ -6,6 +6,7 @@ select c.id   as word
      , c.name
      , c.kind
      , c.joins_crew
+     , c.launch_template
   from sensei.assistant_catalogue c
  union all
 select a.word
@@ -13,6 +14,7 @@ select a.word
      , c.name
      , c.kind
      , c.joins_crew
+     , c.launch_template
   from sensei.assistant_catalogue c
  cross join lateral unnest(c.aliases) as a(word);
 

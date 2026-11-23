@@ -115,6 +115,26 @@ pub async fn apply_to_session(pg: &PgStore, payload: &serde_json::Value) {
     {
         tracing::warn!(error = %e, session_id, "refresh_session_tokens failed");
     }
+    // The terminal env names the editor (#512): map it through the shared
+    // table, keep it only when the catalogue knows it as an editor, and fill
+    // a missing host — never clear one. Unmapped env changes nothing.
+    let term_program = payload.get("term_program").and_then(|v| v.as_str());
+    let cursor_trace = payload.get("cursor_trace").and_then(|v| v.as_bool()).unwrap_or(false);
+    if let Some(host) = sensei_bootstrap::host::detect_host_from_env(term_program, cursor_trace) {
+        match pg.catalogue_names().await {
+            Ok(names) if names.kind(host) == "editor" => {
+                match pg.fill_session_host(session_id, host).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        tracing::debug!(session_id, "host evidence for a session with no row")
+                    }
+                    Err(e) => tracing::warn!(error = %e, session_id, "fill_session_host failed"),
+                }
+            }
+            Ok(_) => tracing::debug!(session_id, host, "host proposal is not a catalogue editor"),
+            Err(e) => tracing::warn!(error = %e, session_id, "catalogue_names failed"),
+        }
+    }
 }
 
 /// Recursively strip NUL (U+0000) from every string in a JSON value. Postgres
@@ -217,7 +237,7 @@ async fn run(pg: Arc<PgStore>, sensei_dir: PathBuf) {
     // already returns a Result, so the schedule row records a real outcome
     // rather than an unconditional success.
     let store = pg.clone();
-    ticker::run_scheduled(pg, "capture_drain", move || {
+    ticker::run_scheduled(pg, "capture_drain", std::sync::Arc::new(crate::notifications::DesktopNotifier), move || {
         let (pg, dir) = (store.clone(), sensei_dir.clone());
         async move {
             let stats = drain_once(&pg, &dir).await.map_err(|e| e.to_string())?;
@@ -642,5 +662,65 @@ not json
         s.add(DrainStats { imported: 1, duplicate: 0, skipped: 0, errored: 0 });
         assert_eq!(s, DrainStats { imported: 3, duplicate: 1, skipped: 3, errored: 1 });
         assert_eq!(s.total(), 8);
+    }
+
+    /// #512: a hook event's terminal env fills a missing session host, never
+    /// clears one, and Terminal.app (unmapped) leaves it null.
+    ///
+    /// MUTATION: drop the host arm of `apply_to_session` — hosts stay NULL.
+    #[tokio::test]
+    async fn a_hook_terminal_env_fills_a_missing_session_host_and_never_clears() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(&pg, "drain-host").await;
+        async fn seed(pg: &PgStore, fid: &uuid::Uuid, tag: &str) -> String {
+            let sid = format!("_test-host-{tag}-{}", uuid::Uuid::new_v4());
+            pg.record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &sid,
+                folder_id: fid,
+                workspace_id: None,
+                family: "claude",
+                is_end: false,
+            })
+            .await
+            .unwrap();
+            sid
+        }
+        async fn host_of(pg: &PgStore, sid: &str) -> Option<String> {
+            let (host,): (Option<String>,) = sqlx_core::query_as::query_as(
+                "SELECT host FROM activity.sessions WHERE client_session_id = $1",
+            )
+            .bind(sid)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            host
+        }
+        let zed = seed(&pg, &fid, "zed").await;
+        let term = seed(&pg, &fid, "term").await;
+        let kept = seed(&pg, &fid, "kept").await;
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET host = 'cursor' WHERE client_session_id = $1",
+        )
+        .bind(&kept)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        apply_to_session(&pg, &json!({"session_id": zed, "term_program": "zed"})).await;
+        apply_to_session(&pg, &json!({"session_id": term, "term_program": "Apple_Terminal"})).await;
+        apply_to_session(&pg, &json!({"session_id": kept, "term_program": "zed"})).await;
+
+        assert_eq!(host_of(&pg, &zed).await.as_deref(), Some("zed"));
+        assert_eq!(host_of(&pg, &term).await, None, "Terminal.app maps to nothing");
+        assert_eq!(host_of(&pg, &kept).await.as_deref(), Some("cursor"), "a set host stands");
+
+        for sid in [&zed, &term, &kept] {
+            for sql in [
+                "DELETE FROM activity.assistant_events WHERE session_id = $1",
+                "DELETE FROM activity.sessions WHERE client_session_id = $1",
+            ] {
+                sqlx_core::query::query(sql).bind(sid).execute(pg.pool()).await.unwrap();
+            }
+        }
     }
 }

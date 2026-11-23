@@ -201,13 +201,18 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     // folding the two would make a user shortening the poll also re-analyze
     // everything daily-many times.
     let store = pg.clone();
-    ticker::run_scheduled(pg, "analyzer", move || {
-        let (queue, pg, state) = (queue.clone(), store.clone(), state.clone());
-        async move {
-            let mut st = state.lock().await;
-            analyzer_pass(&queue, &pg, &mut st, refresh_secs).await
-        }
-    })
+    ticker::run_scheduled(
+        pg,
+        "analyzer",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let (queue, pg, state) = (queue.clone(), store.clone(), state.clone());
+            async move {
+                let mut st = state.lock().await;
+                analyzer_pass(&queue, &pg, &mut st, refresh_secs).await
+            }
+        },
+    )
     .await;
 }
 

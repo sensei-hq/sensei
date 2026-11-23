@@ -128,13 +128,18 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     // Cadence lives in `sensei.schedules` (name `advance_run`); the tick is
     // unchanged.
     let store = pg.clone();
-    ticker::run_scheduled(pg, "advance_run", move || {
-        let (queue, pg) = (queue.clone(), store.clone());
-        async move {
-            tick(&queue, &pg).await;
-            Ok(())
-        }
-    })
+    ticker::run_scheduled(
+        pg,
+        "advance_run",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let (queue, pg) = (queue.clone(), store.clone());
+            async move {
+                tick(&queue, &pg).await;
+                Ok(())
+            }
+        },
+    )
     .await;
 }
 

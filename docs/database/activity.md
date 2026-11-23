@@ -5,6 +5,14 @@ Why the tables in `database/ddl/table/activity/` are shaped the way they are.
 What a column MEANS lives in `comment on column`, where the database catalog can serve it. This file holds the other half: what was measured, what was tried and failed, and what must not be changed back. It is prose about decisions, which is why it is not in the DDL.
 
 
+## `activity.alert_acks`
+
+[`database/ddl/table/activity/alert_acks.ddl`](../../database/ddl/table/activity/alert_acks.ddl)
+
+
+Dispositions only, never the alerts: alerts re-derive from the feeds every poll, and this table annotates them (acked, seen_clears). `sensei` is the knowledge core; runtime operations state lives in `activity`, beside the executions the alerts derive from. Stale dispositions prune on write (90 days), not on a schedule — a row nobody touches costs nothing, and a schedule would wake the database for janitorial work with no reader.
+
+
 ## `activity.session_facets`
 
 [`database/ddl/table/activity/session_facets.ddl`](../../database/ddl/table/activity/session_facets.ddl)
@@ -43,6 +51,12 @@ Session-total usage SPLIT. `tokens_in` above keeps its meaning (all input the mo
 Enum, not text: a renamed or retired kind used to orphan its history silently (four such orphans accumulated before this constraint existed). See the type's header for the retired values and why they are kept.
 
 
+### `retried_from_execution_id`
+
+
+A uuid, not a task id: task ids restart every session, so the retry chain links execution rows. Retries are new rows, never rewrites — the failed attempt keeps its status and reason, and the drill-down renders the chain across restarts.
+
+
 ## `activity.transcript_turns`
 
 [`database/ddl/table/activity/transcript_turns.ddl`](../../database/ddl/table/activity/transcript_turns.ddl)
@@ -70,3 +84,11 @@ Lossy export: `GET /api/transcripts/export/{session}` rebuilds an approximate JS
 The file's bytes as ingested, gzipped — recovery for rotated transcripts. `attrs` keeps the parsed shape; this keeps the unparsed one, so a format detail the parser drops (tool I/O, thinking, record boundaries) survives the file's rotation for the retention window (90 days past last sighting, `activity.transcript_raw_retention_days`).
 
 Three decisions: the sha-compare skip (an upsert with unchanged bytes advances `last_seen_at` without rewriting megabytes of bytea — re-reads are common, changes are not); the sighting clock (fresh skips touch `last_seen_at` without re-reading, so a live file never expires, and a gone file's backup survives exactly the window past its last sighting); best-effort writes (a backup failure warns and the ingest continues — the backup guards the ingest, it must never break it). Units too large to hold whole get no row: the capture re-reads via `load_content`, whose size cap returns None past it, and the Claude adapter streams without keeping bytes at all.
+
+
+## `activity.wave_runs`
+
+[`database/ddl/table/activity/wave_runs.ddl`](../../database/ddl/table/activity/wave_runs.ddl)
+
+
+One table answers "what waves ran" and "what died mid-wave": totals open the row, the terminal closes it `done`, and boot closes leftovers `abandoned`. No unique key on (wave, key) — dispatcher task ids restart per session, so the pair recurs across boots and closes match the latest open row. History is never mutated by recovery: the orphan sweep re-queues as new rows, so the abandoned attempt keeps its story.

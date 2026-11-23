@@ -67,6 +67,7 @@ create type task_execution_kind as enum (
   -- ── activity pipeline ──
 , 'ingest_captures'
 , 'ingest_capture'
+, 'finalize_transcript_wave'
 , 'analyze_workspace'
 , 'analyze_session_process'
 , 'reconcile_repo_metadata'

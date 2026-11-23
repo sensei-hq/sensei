@@ -27,8 +27,10 @@ export interface RegisterBody {
   model?: string;
   version?: string;
   capabilities?: string[];
-  /** The editor the session runs in (#396). */
+  /** The editor the session runs in (#396), as the session says. */
   host?: string;
+  /** The editor the MCP binary detected (#455); it wins over `host`. */
+  host_detected?: string;
 }
 
 interface Registered {

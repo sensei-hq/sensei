@@ -86,6 +86,20 @@ pub enum Skip {
     Unscheduled,
 }
 
+impl Skip {
+    /// Stable wire name, persisted on the schedule row. Renaming one orphans
+    /// the change comparison that keeps skip writes rare.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Skip::Disabled => "disabled",
+            Skip::NotDue => "not_due",
+            Skip::OutsideWindow => "outside_window",
+            Skip::WrongDay => "wrong_day",
+            Skip::Unscheduled => "unscheduled",
+        }
+    }
+}
+
 /// Is `now` inside the schedule's allowed time-of-day window?
 ///
 /// A window whose start is AFTER its end wraps midnight: `22:00–05:00` is how
@@ -468,5 +482,21 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.as_slice(), SCHEDULABLE, "SCHEDULABLE must be sorted and duplicate-free");
+    }
+
+    #[test]
+    fn skip_reasons_serialize_stably_for_the_row() {
+        // The ticker persists these; renaming one orphans the comparison
+        // that keeps skip writes to changes only.
+        assert_eq!(
+            [
+                Skip::Disabled.as_str(),
+                Skip::NotDue.as_str(),
+                Skip::OutsideWindow.as_str(),
+                Skip::WrongDay.as_str(),
+                Skip::Unscheduled.as_str(),
+            ],
+            ["disabled", "not_due", "outside_window", "wrong_day", "unscheduled"]
+        );
     }
 }

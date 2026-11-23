@@ -162,12 +162,17 @@ pub fn spawn<G: GateRunner + 'static>(
     gate: Arc<G>,
 ) {
     tokio::spawn(async move {
-        crate::tasks::ticker::run_scheduled(pg.clone(), "relay_lease", move || {
-            let pg = pg.clone();
-            let event_tx = event_tx.clone();
-            let gate = gate.clone();
-            async move { tick(pg, &event_tx, gate.as_ref()).await }
-        })
+        crate::tasks::ticker::run_scheduled(
+            pg.clone(),
+            "relay_lease",
+            std::sync::Arc::new(crate::notifications::DesktopNotifier),
+            move || {
+                let pg = pg.clone();
+                let event_tx = event_tx.clone();
+                let gate = gate.clone();
+                async move { tick(pg, &event_tx, gate.as_ref()).await }
+            },
+        )
         .await;
     });
 }

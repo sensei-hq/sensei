@@ -404,13 +404,18 @@ async fn run(pg: Arc<PgStore>) {
     // the schedules spec). The write is a no-op cost kept out of this slice —
     // retiring it is a separate change, along with the key itself.
     let store = pg.clone();
-    ticker::run_scheduled(pg, "index_audit", move || {
-        let pg = store.clone();
-        async move {
-            audit_pass(&pg).await;
-            Ok(())
-        }
-    })
+    ticker::run_scheduled(
+        pg,
+        "index_audit",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let pg = store.clone();
+            async move {
+                audit_pass(&pg).await;
+                Ok(())
+            }
+        },
+    )
     .await;
 }
 

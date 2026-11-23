@@ -7,6 +7,7 @@ create table assistant_catalogue (
 , kind                     text
 , aliases                  text[]      default '{}'
 , joins_crew               boolean     default true
+, launch_template          text
 , sequence                 integer
 , modified_at              timestamptz not null default now()
 );

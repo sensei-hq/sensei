@@ -82,12 +82,24 @@ pub(crate) async fn make_ctx_with_trackers(
             crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
         )),
         trackers,
+        streams: crate::api::stream::StreamHub::new(),
     });
+    // Mirror server boot: framed SSE runs behind every broadcast, so
+    // handler-level stream tests see what production subscribers see.
+    // (Per-test runtimes drop these tasks with the test.)
+    crate::api::stream::spawn_frame_loggers(
+        &app_state.streams,
+        app_state.event_tx.subscribe(),
+        queue.sender().subscribe(),
+    );
     Arc::new(crate::tasks::executor::TaskContext {
         queue,
         app_state,
         _graph_path: None,
         logger: sensei_logger::Logger::noop(),
+        // Silent: a test run must never pop OS notifications. Tests that pin
+        // notification content rebuild the context with a recorder.
+        notifier: std::sync::Arc::new(crate::notifications::NoopNotifier),
     })
 }
 

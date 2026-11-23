@@ -43,7 +43,7 @@ use crate::tasks::{Task, TaskKind};
 ///
 /// Returns whether one was enqueued, so a caller can say which happened
 /// instead of logging an unconditional success.
-async fn enqueue_backfill(queue: &TaskQueue) -> bool {
+pub(crate) async fn enqueue_backfill(queue: &TaskQueue) -> bool {
     if queue.has_pending_kind(TaskKind::IngestCaptures).await {
         tracing::debug!("transcript_scheduler: a backfill is already in flight — skipping");
         return false;
@@ -64,13 +64,21 @@ fn ingests_transcripts(isolated_instance: bool) -> bool {
     !isolated_instance
 }
 
+/// Whether this daemon ingests transcripts at all: the real install always,
+/// an isolated instance only in transcript test mode (fixture dirs only).
+fn should_ingest(isolated_instance: bool, test_mode: bool) -> bool {
+    ingests_transcripts(isolated_instance) || test_mode
+}
+
 /// Spawn the transcript scheduler for the daemon's lifetime.
 pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     tokio::spawn(run(queue, pg));
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    if !ingests_transcripts(sensei_bootstrap::SenseiConfig::from_env().is_isolated_instance()) {
+    let isolated = sensei_bootstrap::SenseiConfig::from_env().is_isolated_instance();
+    let test_mode = crate::transcript::transcript_test_root().is_some();
+    if !should_ingest(isolated, test_mode) {
         tracing::info!(
             "transcript_scheduler: isolated instance — not ingesting transcripts (they live outside this instance's data dir)"
         );
@@ -85,13 +93,24 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     }
 
     // From here the schedule owns the cadence (name `ingest_captures`).
-    ticker::run_scheduled(pg, "ingest_captures", move || {
-        let queue = queue.clone();
-        async move {
-            enqueue_backfill(&queue).await;
-            Ok(())
-        }
-    })
+    // Each tick also re-syncs the transcript watches, so an adapter dir
+    // created after boot (a newly installed assistant) is picked up without
+    // a restart or a consent toggle. The sync diffs and restarts only on
+    // change, so steady-state ticks cost one consent read.
+    ticker::run_scheduled(
+        pg.clone(),
+        "ingest_captures",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let queue = queue.clone();
+            let pg = pg.clone();
+            async move {
+                crate::transcript::sync_transcript_watches(&pg, &queue).await;
+                enqueue_backfill(&queue).await;
+                Ok(())
+            }
+        },
+    )
     .await;
 }
 
@@ -115,6 +134,16 @@ mod tests {
     fn an_isolated_instance_never_ingests_transcripts() {
         assert!(ingests_transcripts(false), "the real install ingests");
         assert!(!ingests_transcripts(true), "a throwaway instance does not");
+    }
+
+    /// Test mode re-enables ingest on isolated instances — against fixture
+    /// dirs only (all adapter roots redirect there).
+    #[test]
+    fn test_mode_re_enables_ingest_on_isolated_instances() {
+        assert!(should_ingest(false, false), "real install, no flag");
+        assert!(should_ingest(false, true), "real install, flag set");
+        assert!(!should_ingest(true, false), "isolated, no flag: never");
+        assert!(should_ingest(true, true), "isolated + flag: fixtures only");
     }
 
     /// The tick enqueues the dispatcher, and a second tick while it is still
