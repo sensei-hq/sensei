@@ -130,7 +130,7 @@ export function toTaskView(view: RelayTaskView, o: { back: { label: string; href
       facts: [
         // The holder by codename beside its code (#425); a lane with none reads its code alone.
         { k: 'Lane', v: lane ? `${lane.title ?? lane.code} · ${lane.code}${lane.suggested_name ? ` · ${lane.suggested_name}` : ''}${paused}` : 'in the pool' },
-        { k: 'Assistant', v: lane ? `${assistantLabel(lane.family, lane.version)} · ${lane.model ?? 'model not reported'}` : 'not reported' },
+        { k: 'Assistant', v: lane ? `${assistantLabel(lane.family, lane.version, lane.family_name)} · ${lane.model ?? 'model not reported'}` : 'not reported' },
         { k: 'Time', v: time },
         { k: 'Rounds', v: roundsLabel(t.rounds) || 'none yet' },
       ],

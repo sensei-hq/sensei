@@ -294,12 +294,14 @@ mod tests {
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
             trackers: Default::default(),
+            streams: crate::api::stream::StreamHub::new(),
         });
         Some(Arc::new(TaskContext {
             queue,
             app_state,
             _graph_path: None,
             logger: sensei_logger::Logger::noop(),
+            notifier: std::sync::Arc::new(crate::notifications::NoopNotifier),
         }))
     }
 

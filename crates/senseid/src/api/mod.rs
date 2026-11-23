@@ -9,6 +9,7 @@ pub(crate) mod resilience;
 pub mod routes;
 pub mod server;
 pub mod state;
+pub mod stream;
 pub(crate) mod util;
 // On-demand model provisioning (sensei-owned; downloads via the Ollama registry,
 // not the gateway's HF puller — gateway#5). The `ModelProvisioning` type compiles

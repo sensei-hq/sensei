@@ -6,12 +6,30 @@
 
 use serde::Serialize;
 
+/// A coded error on a terminal frame. `code` is the stable kebab-case
+/// identity alerting maps on; `message` is the human reason.
+#[derive(Debug, Clone, Serialize)]
+pub struct FrameError {
+    pub code: String,
+    pub message: String,
+}
+
 /// Generic state event matching the app's StateEvent<T> interface.
+///
+/// `key` is REQUIRED: the stable id a client keys rows and dedupes
+/// reconnects by (ids everywhere, folder paths for folders — row uuids die
+/// on re-index). `done`/`error` mark terminal frames explicitly and omit
+/// from the wire when unset.
 #[derive(Debug, Clone, Serialize)]
 pub struct StateEvent {
     pub action: Action,
     pub entity: String,
+    pub key: String,
     pub data: serde_json::Value,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub done: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<FrameError>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -222,88 +240,89 @@ pub enum RunChange {
 // ── Constructors ────────────────────────────────────────────────────────────
 
 impl StateEvent {
+    /// The one constructor: every emitter names its key. `done`/`error`
+    /// default unset; terminal emitters mark them via [`Self::done`] /
+    /// [`Self::failed`].
+    pub fn new(action: Action, entity: &str, key: String, data: serde_json::Value) -> Self {
+        Self { action, entity: entity.into(), key, data, done: false, error: None }
+    }
+
+    /// Mark this frame terminal (success): the unit it names will emit no
+    /// more frames.
+    pub fn done(mut self) -> Self {
+        self.done = true;
+        self
+    }
+
+    /// Mark this frame terminal (failure) with a coded reason.
+    pub fn failed(mut self, code: &str, message: &str) -> Self {
+        self.done = true;
+        self.error = Some(FrameError { code: code.into(), message: message.into() });
+        self
+    }
+
     pub fn workspace_add(workspace: ScanWorkspace) -> Self {
-        Self {
-            action: Action::Add,
-            entity: "workspace".into(),
-            data: serde_json::to_value(&workspace).unwrap(),
-        }
+        let key = workspace.id.clone();
+        Self::new(Action::Add, "workspace", key, serde_json::to_value(&workspace).unwrap())
     }
 
     pub fn workspace_update(workspace: ScanWorkspace) -> Self {
-        Self {
-            action: Action::Update,
-            entity: "workspace".into(),
-            data: serde_json::to_value(&workspace).unwrap(),
-        }
+        let key = workspace.id.clone();
+        Self::new(Action::Update, "workspace", key, serde_json::to_value(&workspace).unwrap())
     }
 
     pub fn workspace_remove(id: &str) -> Self {
-        Self {
-            action: Action::Remove,
-            entity: "workspace".into(),
-            data: serde_json::json!({ "id": id }),
-        }
+        Self::new(Action::Remove, "workspace", id.to_string(), serde_json::json!({ "id": id }))
     }
 
     pub fn folder_add(folder: ScanFolder) -> Self {
-        Self {
-            action: Action::Add,
-            entity: "folder".into(),
-            data: serde_json::to_value(&folder).unwrap(),
-        }
+        let key = folder.path.clone();
+        Self::new(Action::Add, "folder", key, serde_json::to_value(&folder).unwrap())
     }
 
     pub fn folder_update(folder: ScanFolder) -> Self {
-        Self {
-            action: Action::Update,
-            entity: "folder".into(),
-            data: serde_json::to_value(&folder).unwrap(),
-        }
+        let key = folder.path.clone();
+        Self::new(Action::Update, "folder", key, serde_json::to_value(&folder).unwrap())
     }
 
     pub fn activity(event: ActivityEvent) -> Self {
-        Self {
-            action: Action::Add,
-            entity: "activity".into(),
-            data: serde_json::to_value(&event).unwrap(),
-        }
+        let key = event.id.clone();
+        Self::new(Action::Add, "activity", key, serde_json::to_value(&event).unwrap())
     }
 
     pub fn assistant_part(event: AssistantPartEvent) -> Self {
-        Self {
-            action: Action::Update,
-            entity: "assistant".into(),
-            data: serde_json::to_value(&event).unwrap(),
-        }
+        let key = format!("{}:{}", event.family, event.part);
+        Self::new(Action::Update, "assistant", key, serde_json::to_value(&event).unwrap())
     }
 
     /// A relay write happened (`op`: message, answer, report, …). Lane
     /// `wait_for_task` holds wake on these and re-read the envelope; the
     /// payload names the op only — the envelope is the state.
     pub fn relay(op: &str) -> Self {
-        Self { action: Action::Add, entity: "relay".into(), data: serde_json::json!({ "op": op }) }
+        Self::new(Action::Add, "relay", op.to_string(), serde_json::json!({ "op": op }))
     }
 
     /// A task changed (F8): the screen re-reads that task's view. The op
     /// says what happened; the view is the state (same split as the
     /// envelope above — the event notifies, it never invents rows).
     pub fn relay_task(op: &str, task_id: &uuid::Uuid) -> Self {
-        Self {
-            action: Action::Update,
-            entity: "task".into(),
-            data: serde_json::json!({ "op": op, "task_id": task_id.to_string() }),
-        }
+        Self::new(
+            Action::Update,
+            "task",
+            task_id.to_string(),
+            serde_json::json!({ "op": op, "task_id": task_id.to_string() }),
+        )
     }
 
     /// A checklist step was created (`Add`) or restated (`Update`), with
     /// the step itself — the screen applies it without re-reading.
     pub fn relay_step(task_id: &uuid::Uuid, step: &serde_json::Value, created: bool) -> Self {
-        Self {
-            action: if created { Action::Add } else { Action::Update },
-            entity: "step".into(),
-            data: serde_json::json!({ "task_id": task_id.to_string(), "step": step }),
-        }
+        Self::new(
+            if created { Action::Add } else { Action::Update },
+            "step",
+            task_id.to_string(),
+            serde_json::json!({ "task_id": task_id.to_string(), "step": step }),
+        )
     }
 
     /// A lane's crew membership changed: the screen adds, re-reads or
@@ -329,7 +348,7 @@ impl StateEvent {
         if matches!(action, Action::Remove) {
             data["id"] = serde_json::Value::String(lane_id.to_string());
         }
-        Self { action, entity: "lane".into(), data }
+        Self::new(action, "lane", lane_id.to_string(), data)
     }
 
     /// The event with its entity's row (#418): the row's fields join the
@@ -367,7 +386,7 @@ impl StateEvent {
         if matches!(action, Action::Remove) {
             data["id"] = serde_json::json!(run_id.to_string());
         }
-        Self { action, entity: "run".into(), data }
+        Self::new(action, "run", run_id.to_string(), data)
     }
 
     /// A run with no crew (a draft, or a cancelled draft): `crew_id` is
@@ -383,39 +402,42 @@ impl StateEvent {
     pub fn relay_decision(answered: bool, decision_id: &uuid::Uuid, crew_id: &uuid::Uuid) -> Self {
         let (action, op) =
             if answered { (Action::Remove, "answered") } else { (Action::Add, "asked") };
-        Self {
+        Self::new(
             action,
-            entity: "decision".into(),
-            data: serde_json::json!({
+            "decision",
+            decision_id.to_string(),
+            serde_json::json!({
                 "op": op,
                 "id": decision_id.to_string(),
                 "crew_id": crew_id.to_string(),
             }),
-        }
+        )
     }
 
     /// A crew → person message joined Needs you (`Add`; its row joins it) —
     /// #418.
     pub fn relay_message(message_id: &uuid::Uuid, crew_id: &uuid::Uuid) -> Self {
-        Self {
-            action: Action::Add,
-            entity: "message".into(),
-            data: serde_json::json!({
+        Self::new(
+            Action::Add,
+            "message",
+            message_id.to_string(),
+            serde_json::json!({
                 "op": "sent",
                 "id": message_id.to_string(),
                 "crew_id": crew_id.to_string(),
             }),
-        }
+        )
     }
 
     /// A queue row changed (#418): `Add` brings its row, `Remove` names the
     /// id the screen keys it by. `stage` is the half it is in (or left).
     pub fn relay_item(added: bool, op: &str, stage: &str, id: &str) -> Self {
-        Self {
-            action: if added { Action::Add } else { Action::Remove },
-            entity: "item".into(),
-            data: serde_json::json!({ "op": op, "id": id, "stage": stage }),
-        }
+        Self::new(
+            if added { Action::Add } else { Action::Remove },
+            "item",
+            id.to_string(),
+            serde_json::json!({ "op": op, "id": id, "stage": stage }),
+        )
     }
 
     /// The relay family's entities, the only ones `/api/relay/events`
@@ -466,6 +488,55 @@ impl ActivityEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every emitter names its frame key: the stable id a client keys rows
+    /// and dedupes reconnects by. Paths for folders (uuids die on re-index),
+    /// ids everywhere else.
+    #[test]
+    fn every_helper_names_its_key() {
+        let ws = ScanWorkspace {
+            id: "w1".into(),
+            name: "Lumen".into(),
+            status: WorkspaceStatus::Active,
+            folders: vec![],
+            auto_detected: true,
+            confidence: Confidence::High,
+        };
+        assert_eq!(StateEvent::workspace_add(ws.clone()).key, "w1");
+        assert_eq!(StateEvent::workspace_remove("w9").key, "w9");
+        let folder = ScanFolder {
+            id: "f1".into(),
+            workspace_id: "w1".into(),
+            name: "app".into(),
+            path: "/code/app".into(),
+            kind: FolderKind::Git,
+            stack: vec![],
+            files_total: 0,
+            files_completed: 0,
+            status: FolderStatus::Indexed,
+        };
+        assert_eq!(StateEvent::folder_update(folder).key, "/code/app");
+        let act = ActivityEvent::new(ActivityLevel::Discover, "found", 0.1);
+        let act_id = act.id.clone();
+        assert_eq!(StateEvent::activity(act).key, act_id);
+        let task = uuid::Uuid::new_v4();
+        assert_eq!(StateEvent::relay_task("claim", &task).key, task.to_string());
+        assert_eq!(StateEvent::relay("message").key, "message");
+    }
+
+    /// Terminal frames say so explicitly; ordinary frames omit the markers.
+    #[test]
+    fn terminal_markers_serialize_only_when_set() {
+        let live = StateEvent::relay("message");
+        let json = serde_json::to_value(&live).unwrap();
+        assert!(json.get("done").is_none() && json.get("error").is_none());
+        let done = StateEvent::relay("message").done();
+        assert_eq!(serde_json::to_value(&done).unwrap()["done"], true);
+        let failed = StateEvent::relay("message").failed("watchdog-timeout", "budget exceeded");
+        let json = serde_json::to_value(&failed).unwrap();
+        assert_eq!(json["done"], true);
+        assert_eq!(json["error"]["code"], "watchdog-timeout");
+    }
 
     #[test]
     fn activity_event_serializes() {
@@ -593,7 +664,12 @@ mod tests {
             }
             assert_eq!(
                 json,
-                serde_json::json!({"action": action, "entity": "lane", "data": data}),
+                serde_json::json!({
+                    "action": action,
+                    "entity": "lane",
+                    "key": lane.to_string(),
+                    "data": data,
+                }),
                 "{change:?}"
             );
         }
@@ -624,7 +700,12 @@ mod tests {
             }
             assert_eq!(
                 json,
-                serde_json::json!({"action": action, "entity": "run", "data": data}),
+                serde_json::json!({
+                    "action": action,
+                    "entity": "run",
+                    "key": run.to_string(),
+                    "data": data,
+                }),
                 "{change:?}"
             );
         }

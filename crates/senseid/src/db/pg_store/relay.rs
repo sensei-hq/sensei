@@ -16,7 +16,7 @@ use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use super::PgStore;
-use crate::relay::decision_schema::validate_values;
+use crate::relay::decision_schema::{validate_values, with_lane_order};
 use crate::relay::envelope::{
     EnvelopeAnswer, EnvelopeAssignment, EnvelopeBrief, EnvelopeMessage, EnvelopeReview,
     EnvelopeTicket, LaneEnvelope, ReviewDirection,
@@ -57,8 +57,11 @@ pub struct RelayRegisterInput {
     /// the lane and used as its title; the code stays the handle.
     pub suggested_name: Option<String>,
     /// The editor the session runs in, as the session says (#396); none for a
-    /// terminal session. Never guessed.
+    /// terminal session. Never guessed. The fallback when nothing was detected.
     pub host: Option<String>,
+    /// The editor the MCP binary detected (#455). It wins over `host` when the
+    /// catalogue knows it as an editor; otherwise it is ignored with a warning.
+    pub host_detected: Option<String>,
 }
 
 /// An editor's name is short: a longer host is prose, not a name (#396).
@@ -260,6 +263,9 @@ pub struct RelayStepOutput {
 pub struct RelayCloseOutput {
     pub crew_id: Uuid,
     pub status: String,
+    /// Each dead-lease lane the close released (#398), with the task it
+    /// held, now `interrupted`.
+    pub released: Vec<(Uuid, Option<Uuid>)>,
 }
 
 /// One reported file. No `outside_owned`: the broker computes it from the
@@ -514,6 +520,16 @@ pub struct RelayCreateRunOutput {
     /// Set once started: the crew and Task 0 (the planning task, ready in
     /// the pool). A draft has neither.
     pub started: Option<RelayStartedRun>,
+}
+
+/// A live-lane check (#398, #161: typed inputs, not five positional ones):
+/// whose crew, the clock to judge leases at (None = the transaction's), and
+/// the one lane to leave out (the closing caller).
+struct LiveLaneQuery {
+    user_id: Uuid,
+    crew_id: Uuid,
+    at: Option<DateTime<Utc>>,
+    except: Option<Uuid>,
 }
 
 /// A run's start (#419): the crew it bound and Task 0 it minted.
@@ -1081,22 +1097,26 @@ async fn grant_next_waiter(
     }
 }
 
-/// Free disk on `/`, in GiB (`df -g` units). Null when unreadable — the
-/// screen degrades, the read never fails for it.
+/// Free disk on the volume holding the user's home, in GiB (`df -g` units) —
+/// `/` on a single-volume Unix, the system drive on Windows. Null when
+/// unreadable — the screen degrades, the read never fails for it.
 fn disk_free_gb() -> Option<u64> {
-    // statvfs widths differ per platform (macOS u32/u64, Linux u64/u64):
-    // the fallible conversions keep one body compiling everywhere.
-    #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
-    fn blocks_to_bytes(blocks: impl TryInto<u64>, size: impl TryInto<u64>) -> Option<u64> {
-        blocks.try_into().ok()?.checked_mul(size.try_into().ok()?)
-    }
-    let mut vfs = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    if unsafe { libc::statvfs(c"/".as_ptr(), vfs.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    let vfs = unsafe { vfs.assume_init() };
-    let free = blocks_to_bytes(vfs.f_bavail, vfs.f_frsize)?;
-    Some(free / 1024 / 1024 / 1024)
+    let home = sensei_bootstrap::config::try_home_dir()?;
+    let disks: Vec<(std::path::PathBuf, u64)> = sysinfo::Disks::new_with_refreshed_list()
+        .iter()
+        .map(|d| (d.mount_point().to_path_buf(), d.available_space()))
+        .collect();
+    free_on(&home, &disks)
+}
+
+/// Free GiB on the deepest mount point that holds `path`, from
+/// `(mount point, available bytes)` pairs.
+fn free_on(path: &std::path::Path, disks: &[(std::path::PathBuf, u64)]) -> Option<u64> {
+    disks
+        .iter()
+        .filter(|(mount, _)| path.starts_with(mount))
+        .max_by_key(|(mount, _)| mount.components().count())
+        .map(|(_, free)| free / 1024 / 1024 / 1024)
 }
 
 /// Free swap, in GiB. macOS reads `vm.swapusage`; anywhere else (or on any
@@ -1500,7 +1520,14 @@ fn now_run_json(crew_id: &Uuid, mut payload: serde_json::Value) -> serde_json::V
 /// One lane as the Now screen shows it: the `relay.now` lane payload,
 /// shaped. `relay_now` lists them; `relay_lane_row` reads one for the
 /// stream (#418), so the event and the read never disagree.
-fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serde_json::Value {
+fn now_lane_json(
+    id: &Uuid,
+    crew_id: &Uuid,
+    payload: &serde_json::Value,
+    names: &crate::assistants::catalogue::CatalogueNames,
+) -> serde_json::Value {
+    let family = payload.get("family").and_then(|v| v.as_str());
+    let host = payload.get("host").and_then(|v| v.as_str());
     let lease_state = payload
         .get("lease")
         .and_then(|l| l.get("state"))
@@ -1518,6 +1545,10 @@ fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serd
         "title": payload.get("title"),
         "role": payload.get("role"),
         "family": payload.get("family"),
+        // #455: the catalogue names and classifies the family and the host; a
+        // word it does not list reads as its own words, kind `unknown`.
+        "family_name": family.map(|f| names.name(f)),
+        "family_kind": family.map(|f| names.kind(f)),
         "version": payload.get("version"),
         "model": payload.get("model"),
         "lease_state": lease_state,
@@ -1531,12 +1562,31 @@ fn now_lane_json(id: &Uuid, crew_id: &Uuid, payload: &serde_json::Value) -> serd
         "suggested_name": payload.get("suggested_name"),
         // #396: the editor the session runs in, as it said; null when it said none.
         "host": payload.get("host"),
+        "host_name": host.map(|h| names.name(h)),
+        "host_kind": host.map(|h| names.kind(h)),
         "reviewing": payload.get("reviewing"),
         "presence": payload.get("presence"),
     })
 }
 
+/// Add the catalogue's name for a run-task lane's family (#455), in place; a
+/// null lane stays null.
+fn name_family(lane: &mut serde_json::Value, names: &crate::assistants::catalogue::CatalogueNames) {
+    let Some(family) = lane.get("family").and_then(|f| f.as_str()).map(str::to_owned) else {
+        return;
+    };
+    lane["family_name"] = names.name(&family).into();
+}
+
 impl PgStore {
+    /// The catalogue's names for a relay read: one query; a failure fails the
+    /// read, never an unnamed lane (#455).
+    async fn relay_catalogue_names(
+        &self,
+    ) -> Result<crate::assistants::catalogue::CatalogueNames, RelayError> {
+        self.catalogue_names().await.map_err(RelayError::Internal)
+    }
+
     /// Mint-or-join a lane (Q6). Mints the crew, the lane (next free code),
     /// its lease (granted, `now` + 300 s) and the lane token (returned raw
     /// once; stored hashed) in one transaction.
@@ -1547,6 +1597,20 @@ impl PgStore {
         now: DateTime<Utc>,
     ) -> Result<RelayRegisterOutput, RelayError> {
         let mode = register_mode(input.role, input.crew_id.map(|_| "present"));
+        // #396/#455: a host is an editor's name, not prose — reported or detected.
+        for value in [&input.host, &input.host_detected] {
+            if value.as_deref().is_some_and(|h| h.trim().chars().count() > HOST_MAX_CHARS) {
+                return Err(RelayError::Validation(format!(
+                    "host names the editor in at most {HOST_MAX_CHARS} characters"
+                )));
+            }
+        }
+        // The catalogue says whether a detection is an editor; read only when one came.
+        let detected = crate::relay::host::given(input.host_detected.as_deref());
+        let names = match detected {
+            Some(_) => self.relay_catalogue_names().await?,
+            None => crate::assistants::catalogue::CatalogueNames::default(),
+        };
         let token = Uuid::new_v4().simple().to_string();
         let token_hash = hash_lane_token(&token);
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
@@ -1603,13 +1667,24 @@ impl PgStore {
         // (`L4 · Muse`), else the bare code when the family is empty.
         let offered =
             input.suggested_name.as_deref().map(str::trim).filter(|name| !name.is_empty());
-        // #396: the host as the session named it; blank is none.
-        let host = input.host.as_deref().map(str::trim).filter(|h| !h.is_empty());
-        if host.is_some_and(|h| h.chars().count() > HOST_MAX_CHARS) {
-            return Err(RelayError::Validation(format!(
-                "host names the editor in at most {HOST_MAX_CHARS} characters"
-            )));
+        // #455: the detected editor wins; the session's own word is the fallback.
+        let resolved = crate::relay::host::resolve_host(input.host.as_deref(), detected, &names);
+        match &resolved.note {
+            Some(crate::relay::host::HostNote::Mismatch { reported, detected }) => {
+                tracing::warn!(
+                    lane = %code,
+                    "relay: lane {code} reported host {reported}, detected {detected}; using {detected}"
+                );
+            }
+            Some(crate::relay::host::HostNote::IgnoredDetection { detected }) => {
+                tracing::warn!(
+                    lane = %code,
+                    "relay: lane {code} detected host {detected} is not an editor the catalogue knows; ignored"
+                );
+            }
+            None => {}
         }
+        let host = resolved.host.as_deref();
         let title = match offered {
             Some(name) => name.to_string(),
             None if input.family.is_empty() => code.clone(),
@@ -1750,6 +1825,28 @@ impl PgStore {
         }
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // Lock order matches the closes: the crew row, then the lane, then
+        // its leases. A close that released this lane while the heartbeat
+        // waited is seen here, so a released lane is not regranted.
+        sqlx_core::query::query(
+            "update relay.crews set heartbeat_at = $1 where user_id = $2 and id = $3",
+        )
+        .bind(now)
+        .bind(user_id)
+        .bind(crew_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let unregistered: Option<DateTime<Utc>> = sqlx_core::query_scalar::query_scalar(
+            "select unregistered_at from relay.lanes where id = $1 for share",
+        )
+        .bind(lane_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if unregistered.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
         // Renew the current granted lease; a lane whose lease lapsed or was
         // released gets a fresh granted row (history is kept, not rewritten).
         let renewed = sqlx_core::query::query(
@@ -1781,15 +1878,6 @@ impl PgStore {
             .await
             .map_err(db_err)?;
         }
-        sqlx_core::query::query(
-            "update relay.crews set heartbeat_at = $1 where user_id = $2 and id = $3",
-        )
-        .bind(now)
-        .bind(user_id)
-        .bind(crew_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
         // Item 3 (Q4): the heartbeat renews the lane's held resource
         // grants alongside its lane lease. Queued rows claim no grant,
         // so they are untouched.
@@ -1970,6 +2058,14 @@ impl PgStore {
             return Err(RelayError::Gone("lane already unregistered".into()));
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // The crew row first, like every lane task write: a close holds it,
+        // then the lane; a leave that took the lane and its task first and
+        // then waited on the crew for its action's key would deadlock it.
+        // A close that released the lane meanwhile answers `410`.
+        Self::relay_hold_lane_crew(&mut tx, user_id, lane_id).await.map_err(|e| match e {
+            RelayError::Gone(_) => RelayError::Gone("lane already unregistered".into()),
+            e => e,
+        })?;
         let interrupted = Self::relay_unregister_tx(&mut tx, user_id, crew_id, lane_id).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(RelayUnregisterOutput { interrupted })
@@ -1978,7 +2074,8 @@ impl PgStore {
     /// A lane leaves, inside the caller's transaction: its lease released,
     /// its held task suspended (`interrupted`, named in the answer), its
     /// resource grants freed to their next waiters. The lane's own
-    /// unregister and the person's crew close (#419) share it.
+    /// unregister, the person's crew close (#419) and the lane close's
+    /// release of dead-lease lanes (#398) share it.
     async fn relay_unregister_tx(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         user_id: Uuid,
@@ -2009,10 +2106,14 @@ impl PgStore {
         // Block memory clears with it: only a blocked task remembers where
         // it was (the tasks_blocked_memory check; cancel's precedent). A
         // report in review floats on the queue: not the lane's to lose.
+        // `for update`: a task a racing writer (a person's cancel_run)
+        // moved on meanwhile drops out of the read, so the leave never
+        // writes over it.
         let task: Option<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
             "select id, state::text, round, phase::text from relay.tasks
              where user_id = $1 and lane_id = $2
-               and state in ('assigned', 'working', 'rework', 'blocked')",
+               and state in ('assigned', 'working', 'rework', 'blocked')
+             for update",
         )
         .bind(user_id)
         .bind(lane_id)
@@ -2348,14 +2449,17 @@ impl PgStore {
     /// A closed crew refuses new work (F3): register-join, reregister, plan
     /// and assign all pass through here inside their write transaction. A
     /// missing crew is not this gate's verdict — each caller rules
-    /// existence its own way.
+    /// existence its own way. The crew row is held `for share` to the end
+    /// of the caller's transaction: a close (`for update`) racing it
+    /// serializes, so the gate reads the status the close committed and a
+    /// closed crew never gains a lane, lease or task.
     async fn relay_require_crew_open(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         user_id: Uuid,
         crew_id: Uuid,
     ) -> Result<(), RelayError> {
         let status: Option<String> = sqlx_core::query_scalar::query_scalar(
-            "select status from relay.crews where user_id = $1 and id = $2",
+            "select status from relay.crews where user_id = $1 and id = $2 for share",
         )
         .bind(user_id)
         .bind(crew_id)
@@ -2368,11 +2472,72 @@ impl PgStore {
         Ok(())
     }
 
+    /// Lock order for a task write (#398): the crew row first. A close
+    /// holds the crew `for update`, then its dead lanes, then their held
+    /// tasks; a write that locked a task first and then waited on the crew
+    /// for its `relay.actions` foreign keys would deadlock it (40P01). The
+    /// crew is held `for key share` — the lock those keys take anyway —
+    /// so only a close waits on it, never a heartbeat or another writer.
+    async fn relay_hold_crew(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+    ) -> Result<(), RelayError> {
+        let held: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.crews where user_id = $1 and id = $2 for key share",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        held.map(|_| ()).ok_or_else(|| RelayError::NotFound("crew not found".into()))
+    }
+
+    /// A lane's task write takes its crew row first (`relay_hold_crew`),
+    /// then reads the lane afresh: a close that released the lane while
+    /// the write waited answers `410`, so a released lane never writes
+    /// over the task the close interrupted. Returns the lane's crew.
+    async fn relay_hold_lane_crew(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        lane_id: Uuid,
+    ) -> Result<Uuid, RelayError> {
+        let crew_id: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select crew_id from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        let Some(crew_id) = crew_id else {
+            return Err(RelayError::NotFound("lane not found".into()));
+        };
+        Self::relay_hold_crew(tx, user_id, crew_id).await?;
+        let unregistered: Option<DateTime<Utc>> = sqlx_core::query_scalar::query_scalar(
+            "select unregistered_at from relay.lanes where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(lane_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        if unregistered.is_some() {
+            return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        Ok(crew_id)
+    }
+
     /// The user's single active crew (queue cutover): a register without
     /// `crew_id` and a run without one both land here. None or several are
     /// the caller's to resolve (`relay_no_active_crew`,
     /// `relay_crew_ambiguous`), never a guess. Returns the crew's id,
-    /// repo_key and workspace_id.
+    /// repo_key and workspace_id. The open crews are held `for share`, as
+    /// the open-crew gate holds one: a crew a racing close holds is read
+    /// after the close commits and drops out, so a closed crew is never
+    /// joined. Every open crew is read (no `limit`): a row that drops out
+    /// after the wait must not hide a third crew from the count.
     async fn relay_single_active_crew(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         user_id: Uuid,
@@ -2380,7 +2545,7 @@ impl PgStore {
         let active: Vec<(Uuid, Option<String>, Option<Uuid>)> = sqlx_core::query_as::query_as(
             "select id, repo_key, workspace_id from relay.crews
              where user_id = $1 and status <> 'closed'
-             order by started_at, id limit 2",
+             order by started_at, id for share",
         )
         .bind(user_id)
         .fetch_all(&mut **tx)
@@ -2710,7 +2875,8 @@ impl PgStore {
                     owned_paths = $6, acceptance = $7, resources = $8, deps = $9,
                     item_id = $10, review_claimed_by = null, review_claimed_at = null,
                     assigned_at = current_timestamp, state_changed_at = current_timestamp
-             where user_id = $11 and id = $12",
+             where user_id = $11 and id = $12
+               and state = $13::relay.task_state and lane_id is not distinct from $14",
         )
         .bind(input.to_lane)
         .bind(input.title.as_str())
@@ -2724,13 +2890,21 @@ impl PgStore {
         .bind(item_id)
         .bind(user_id)
         .bind(task_id)
+        .bind(word(cur))
+        .bind(task_lane)
         .execute(&mut *tx)
         .await;
-        if let Err(e) = task_update {
-            if is_unique_violation(&e) {
+        // Only from the state and holder it read: a task a racing writer
+        // moved on (a person's cancel_run) is refused, not handed out.
+        match task_update {
+            Err(e) if is_unique_violation(&e) => {
                 return Err(RelayError::Conflict("lane is already busy".into()));
             }
-            return Err(db_err(e));
+            Err(e) => return Err(db_err(e)),
+            Ok(moved) if moved.rows_affected() == 0 => {
+                return Err(RelayError::Conflict("task changed state; assign again".into()));
+            }
+            Ok(_) => {}
         }
         let props = serde_json::json!({
             "docs": input.brief_docs,
@@ -2800,6 +2974,7 @@ impl PgStore {
         let next = transition(RelayTaskState::Assigned, TaskEvent::Started)
             .map_err(|_| RelayError::Conflict("task cannot start".into()))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, lane_id).await?;
         let started = sqlx_core::query::query(
             "update relay.tasks set state = $1::relay.task_state,
                     state_changed_at = current_timestamp
@@ -2855,10 +3030,11 @@ impl PgStore {
     ) -> Result<RelayReportOutput, RelayError> {
         self.relay_start_if_assigned(user_id, caller_lane, task_id).await?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
         let task: Option<(Uuid, Option<Uuid>, String, i32, String, Vec<String>, Vec<Uuid>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, lane_id, state::text, round, phase::text, owned_paths, deps
-                 from relay.tasks where user_id = $1 and id = $2",
+                 from relay.tasks where user_id = $1 and id = $2 for update",
             )
             .bind(user_id)
             .bind(task_id)
@@ -3098,10 +3274,11 @@ impl PgStore {
         validate_props(RelayActionKind::Reviewed, &props)
             .map_err(|e| RelayError::Validation(e.message))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
         let task: Option<(Uuid, String, i32, String, Option<Uuid>)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, state::text, round, phase::text, review_claimed_by
-                 from relay.tasks where user_id = $1 and id = $2",
+                 from relay.tasks where user_id = $1 and id = $2 for update",
             )
             .bind(user_id)
             .bind(task_id)
@@ -4240,6 +4417,7 @@ impl PgStore {
             check_summary(reason, "reason")?;
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, lane_id).await?;
         let task: Option<(Uuid, Option<Uuid>, String, Option<Uuid>, i32, String)> =
             sqlx_core::query_as::query_as(
                 "select crew_id, lane_id, state::text, review_claimed_by, round, phase::text
@@ -4380,6 +4558,7 @@ impl PgStore {
         validate_props(RelayActionKind::Checkpointed, &patch)
             .map_err(|e| RelayError::Internal(format!("checkpoint props: {}", e.message)))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, lane_id).await?;
         let stamp: DateTime<Utc> = sqlx_core::query_scalar::query_scalar(
             "update relay.tasks set checkpoint = checkpoint || $1
              where user_id = $2 and id = $3
@@ -4559,6 +4738,34 @@ impl PgStore {
         Ok(started)
     }
 
+    /// Does the crew have a live lane — registered, holding a granted lane
+    /// lease not past its end at `at` (the transaction's clock when `None`)?
+    /// `except` leaves one lane out (the closing caller). Run start and the
+    /// lane close (#398) share it: liveness is the lease, not the flag.
+    async fn relay_crew_has_live_lane(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        query: LiveLaneQuery,
+    ) -> Result<bool, RelayError> {
+        let LiveLaneQuery { user_id, crew_id, at, except } = query;
+        sqlx_core::query_scalar::query_scalar(
+            "select exists (
+               select 1 from relay.lanes l
+                join relay.leases ls on ls.user_id = l.user_id and ls.lane_id = l.id
+                                    and ls.kind = 'lane'
+               where l.user_id = $1 and l.crew_id = $2 and l.unregistered_at is null
+                 and ($4::uuid is null or l.id <> $4)
+                 and ls.state = 'granted'
+                 and ls.expires_at > coalesce($3::timestamptz, current_timestamp))",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .bind(at)
+        .bind(except)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)
+    }
+
     async fn relay_start_run_tx(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         start: RunStart,
@@ -4602,20 +4809,11 @@ impl PgStore {
         Self::relay_require_crew_open(tx, user_id, crew_id).await?;
         // A crew with nobody answering cannot take Task 0: one live lane at
         // least (registered, its lease granted and not past its end).
-        let live: bool = sqlx_core::query_scalar::query_scalar(
-            "select exists (
-               select 1 from relay.lanes l
-                join relay.leases ls on ls.user_id = l.user_id and ls.lane_id = l.id
-                                    and ls.kind = 'lane'
-               where l.user_id = $1 and l.crew_id = $2 and l.unregistered_at is null
-                 and ls.state = 'granted' and ls.expires_at > $3)",
+        let live = Self::relay_crew_has_live_lane(
+            tx,
+            LiveLaneQuery { user_id, crew_id, at: Some(now), except: None },
         )
-        .bind(user_id)
-        .bind(crew_id)
-        .bind(now)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db_err)?;
+        .await?;
         if !live {
             return Err(RelayError::Conflict("the crew has no live lane to start the run".into()));
         }
@@ -4775,6 +4973,7 @@ impl PgStore {
         user_id: Uuid,
         run_id: Uuid,
     ) -> Result<serde_json::Value, RelayError> {
+        let names = self.relay_catalogue_names().await?;
         let row: Option<RunListRow> =
             sqlx_core::query_as::query_as(&format!("{RUN_LIST_SELECT} and id = $2"))
                 .bind(user_id)
@@ -4897,6 +5096,7 @@ impl PgStore {
                     "title": title,
                     "suggested_name": name,
                     "family": family,
+                    "family_name": names.name(family),
                     "model": model,
                 }))
                 .collect::<Vec<_>>(),
@@ -5155,7 +5355,8 @@ impl PgStore {
             props.insert("options".into(), serde_json::Value::Array(options));
         }
         if let Some(response) = &input.response {
-            props.insert("response".into(), response.clone());
+            // jsonb reorders `properties`; the layout keeps the lane's order.
+            props.insert("response".into(), with_lane_order(response.clone()));
         }
         if let Some(context) = &input.context {
             props.insert("context".into(), serde_json::Value::String(context.clone()));
@@ -5167,12 +5368,15 @@ impl PgStore {
         validate_props(RelayActionKind::Asked, &props)
             .map_err(|e| RelayError::Validation(e.message))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
         for (blocked_id, cur) in &blocked {
-            sqlx_core::query::query(
+            // The state was read before the crew row was held: a task a
+            // close interrupted meanwhile is refused, not blocked over.
+            let blocked_now = sqlx_core::query::query(
                 "update relay.tasks set state = 'blocked'::relay.task_state,
                         blocked_from_state = $1::relay.task_state,
                         state_changed_at = current_timestamp
-                 where user_id = $2 and id = $3",
+                 where user_id = $2 and id = $3 and state = $1::relay.task_state",
             )
             .bind(word(*cur))
             .bind(user_id)
@@ -5180,6 +5384,9 @@ impl PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
+            if blocked_now.rows_affected() == 0 {
+                return Err(RelayError::Conflict("a blocked task changed state; ask again".into()));
+            }
         }
         let decision_id = new_id();
         sqlx_core::query::query(
@@ -5332,6 +5539,7 @@ impl PgStore {
             .transpose()?
             .unwrap_or_default();
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_crew(&mut tx, user_id, crew_id).await?;
         let answer_id = new_id();
         sqlx_core::query::query(
             "insert into relay.actions
@@ -5359,7 +5567,7 @@ impl PgStore {
         for blocked_id in &ask_blocks {
             let row: Option<(String, Option<String>, String)> = sqlx_core::query_as::query_as(
                 "select state::text, blocked_from_state::text, executor::text from relay.tasks
-                 where user_id = $1 and id = $2",
+                 where user_id = $1 and id = $2 for update",
             )
             .bind(user_id)
             .bind(blocked_id)
@@ -5608,18 +5816,24 @@ impl PgStore {
         let next = transition(cur, TaskEvent::Merged)
             .map_err(|_| RelayError::Conflict("task cannot merge".into()))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
-        sqlx_core::query::query(
+        // Only from the state it read: a task a racing writer moved on (a
+        // person's cancel_run) is refused, not overwritten.
+        let merged = sqlx_core::query::query(
             "update relay.tasks set state = $1::relay.task_state,
                     completed_at = current_timestamp,
                     state_changed_at = current_timestamp
-             where user_id = $2 and id = $3",
+             where user_id = $2 and id = $3 and state = $4::relay.task_state",
         )
         .bind(word(next))
         .bind(user_id)
         .bind(task_id)
+        .bind(word(cur))
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+        if merged.rows_affected() == 0 {
+            return Err(RelayError::Conflict("task changed state; merge again".into()));
+        }
         sqlx_core::query::query(
             "insert into relay.actions
                (user_id, id, crew_id, task_id, lane_id, kind, round, phase,
@@ -5694,20 +5908,26 @@ impl PgStore {
                 return Err(RelayError::Conflict("task is held by a live lane".into()));
             }
         }
-        let mut tx = self.pool().begin().await.map_err(db_err)?;
-        sqlx_core::query::query(
+        // Only from the state and holder it read: a task a racing writer
+        // moved on (a merge that ended it) is refused, not overwritten.
+        let cancelled = sqlx_core::query::query(
             "update relay.tasks set state = $1::relay.task_state,
                     blocked_from_state = null,
                     state_changed_at = current_timestamp
-             where user_id = $2 and id = $3",
+             where user_id = $2 and id = $3 and state = $4::relay.task_state
+               and lane_id is not distinct from $5",
         )
         .bind(word(next))
         .bind(user_id)
         .bind(task_id)
-        .execute(&mut *tx)
+        .bind(word(cur))
+        .bind(task_lane)
+        .execute(self.pool())
         .await
         .map_err(db_err)?;
-        tx.commit().await.map_err(db_err)?;
+        if cancelled.rows_affected() == 0 {
+            return Err(RelayError::Conflict("task changed state; cancel again".into()));
+        }
         Ok(RelayCancelOutput { task_id, state: next })
     }
 
@@ -5869,13 +6089,16 @@ impl PgStore {
         validate_props(RelayActionKind::Assigned, &props)
             .map_err(|e| RelayError::Internal(format!("handover props: {}", e.message)))?;
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        Self::relay_hold_lane_crew(&mut tx, user_id, caller_lane).await?;
+        // The holder and state were read before the crew row was held: a
+        // task a close interrupted meanwhile is refused, not moved.
         let task_update = sqlx_core::query::query(
             "update relay.tasks set lane_id = $1, phase = $2::relay.task_phase,
                     state = $3::relay.task_state, round = $4,
                     review_claimed_by = null, review_claimed_at = null,
                     owned_paths = $5, acceptance = $6,
                     assigned_at = current_timestamp, state_changed_at = current_timestamp
-             where user_id = $7 and id = $8",
+             where user_id = $7 and id = $8 and lane_id = $9 and state = $10::relay.task_state",
         )
         .bind(to_lane)
         .bind(phase.as_str())
@@ -5885,13 +6108,19 @@ impl PgStore {
         .bind(accept)
         .bind(user_id)
         .bind(task_id)
+        .bind(from_lane)
+        .bind(state.as_str())
         .execute(&mut *tx)
         .await;
-        if let Err(e) = task_update {
-            if is_unique_violation(&e) {
+        match task_update {
+            Err(e) if is_unique_violation(&e) => {
                 return Err(RelayError::Conflict("lane is already busy".into()));
             }
-            return Err(db_err(e));
+            Err(e) => return Err(db_err(e)),
+            Ok(moved) if moved.rows_affected() == 0 => {
+                return Err(RelayError::Conflict("task changed state; hand over again".into()));
+            }
+            Ok(_) => {}
         }
         sqlx_core::query::query(
             "insert into relay.actions
@@ -6057,9 +6286,14 @@ impl PgStore {
     /// Close a crew (coordinator only, F3): the crew's work is over when
     /// its lanes are gone. "Zero live lanes" counts beside the caller —
     /// the coordinator closes, then unregisters (a strict zero is
-    /// uncallable: closing needs a live lane to auth). Idempotent:
-    /// closing a closed crew re-asserts the state. Closed crews refuse
-    /// register/reregister/plan/assign (`relay_require_crew_open`).
+    /// uncallable: closing needs a live lane to auth). A lane is live by
+    /// its lease, not its flag (#398): a registered lane with no live lane
+    /// lease does not block, and close releases it through the shared
+    /// unregister path (lease released, held task interrupted, resource
+    /// grants freed), so a revived session finds `410`, then `409 crew is
+    /// closed`. Idempotent: closing a closed crew re-asserts the state.
+    /// Closed crews refuse register/reregister/plan/assign
+    /// (`relay_require_crew_open`).
     pub async fn relay_close_crew(
         &self,
         user_id: Uuid,
@@ -6071,8 +6305,9 @@ impl PgStore {
             return Err(RelayError::NotFound("crew not found".into()));
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
+        // Lock order matches the person close: the crew, then its lanes.
         let status: Option<String> = sqlx_core::query_scalar::query_scalar(
-            "select status from relay.crews where user_id = $1 and id = $2",
+            "select status from relay.crews where user_id = $1 and id = $2 for update",
         )
         .bind(user_id)
         .bind(crew_id)
@@ -6082,21 +6317,31 @@ impl PgStore {
         let Some(status) = status else {
             return Err(RelayError::NotFound("crew not found".into()));
         };
+        let mut released = Vec::new();
         if status != "closed" {
-            let live: bool = sqlx_core::query_scalar::query_scalar(
-                "select exists (
-                   select 1 from relay.lanes
-                   where user_id = $1 and crew_id = $2
-                     and unregistered_at is null and id <> $3)",
+            let live = Self::relay_crew_has_live_lane(
+                &mut tx,
+                LiveLaneQuery { user_id, crew_id, at: None, except: Some(caller_lane) },
+            )
+            .await?;
+            if live {
+                return Err(RelayError::Conflict("crew has live lanes".into()));
+            }
+            let dead: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select id from relay.lanes
+                 where user_id = $1 and crew_id = $2 and unregistered_at is null and id <> $3
+                 order by id for update",
             )
             .bind(user_id)
             .bind(crew_id)
             .bind(caller_lane)
-            .fetch_one(&mut *tx)
+            .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
-            if live {
-                return Err(RelayError::Conflict("crew has live lanes".into()));
+            for lane_id in dead {
+                let interrupted =
+                    Self::relay_unregister_tx(&mut tx, user_id, crew_id, lane_id).await?;
+                released.push((lane_id, interrupted));
             }
             sqlx_core::query::query(
                 "update relay.crews set status = 'closed',
@@ -6110,7 +6355,7 @@ impl PgStore {
             .map_err(db_err)?;
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(RelayCloseOutput { crew_id, status: "closed".to_string() })
+        Ok(RelayCloseOutput { crew_id, status: "closed".to_string(), released })
     }
 
     /// `POST /relay/crews/{id}/close` (#419; CONTRACT §3k): the person
@@ -6541,6 +6786,38 @@ impl PgStore {
         // The sweep acts at the fed `now`: its writes are stamped then, so
         // the pass is a pure function of (database, now) — a task it
         // interrupts is never due for re-offer in the same pass.
+        //
+        // Lock order matches the closes (#398): the crew rows first, then
+        // lanes and leases. A close holds its crew `for update` while it
+        // releases dead lanes; a sweep that took their leases first and
+        // then waited on a lane row close holds would deadlock. `key
+        // share` waits only for a close — heartbeats and the open-crew
+        // gate pass. A closed crew cannot close again, so open ones do.
+        sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select id from relay.crews where status <> 'closed' order by id for key share",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        // Then the lanes this pass writes or expires, before their leases:
+        // heartbeat (lane `for share`, then its lease) and unregister (the
+        // lane, then its lease) take the same order. Expiring a lease first
+        // and then ending the lane's limit pause would hold the lease they
+        // wait on while waiting on the lane they hold (40P01).
+        sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select l.id from relay.lanes l
+             where (l.limit_paused_at is not null and l.limit_resumes_at is not null
+                    and l.limit_resumes_at <= $1)
+                or exists (
+                    select 1 from relay.leases s
+                    where s.lane_id = l.id and s.kind = 'lane'
+                      and s.state = 'granted' and s.expires_at <= $1)
+             order by l.id for no key update",
+        )
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
         let expired: Vec<(Uuid, Uuid, Uuid)> = sqlx_core::query_as::query_as(
             "update relay.leases set state = 'expired'::relay.lease_state
              where kind = 'lane' and state = 'granted' and expires_at <= $1
@@ -6556,10 +6833,12 @@ impl PgStore {
         let mut task_changes = Vec::new();
         let mut interrupted_tasks = 0u64;
         for (user_id, crew_id, lane_id) in &expired {
+            // `for update`: a task a racing writer moved on drops out.
             let tasks: Vec<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
                 "select id, state::text, round, phase::text from relay.tasks
                  where user_id = $1 and lane_id = $2
-                   and state in ('assigned', 'working', 'rework', 'blocked')",
+                   and state in ('assigned', 'working', 'rework', 'blocked')
+                 order by id for update",
             )
             .bind(user_id)
             .bind(lane_id)
@@ -6626,10 +6905,12 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         for (user_id, crew_id, lane_id) in &paused {
+            // `for update`: a task a racing writer moved on drops out.
             let tasks: Vec<(Uuid, String, i32, String)> = sqlx_core::query_as::query_as(
                 "select id, state::text, round, phase::text from relay.tasks
                  where user_id = $1 and lane_id = $2
-                   and state in ('assigned', 'working', 'rework', 'blocked')",
+                   and state in ('assigned', 'working', 'rework', 'blocked')
+                 order by id for update",
             )
             .bind(user_id)
             .bind(lane_id)
@@ -6688,16 +6969,19 @@ impl PgStore {
         .map_err(db_err)?;
         // Re-offer tasks past the grace, measured from the latest
         // `interrupted` action. Tasks without one are left alone (the grace
-        // has nothing to measure from).
+        // has nothing to measure from), and so are a closed crew's: no lane
+        // can claim there (#398), so its task stays `interrupted`.
         let cutoff = now - Duration::seconds(REOFFER_GRACE_SECS as i64);
         let due: Vec<(Uuid, Uuid, Uuid, Option<Uuid>, i32, String)> =
             sqlx_core::query_as::query_as(
                 "select t.user_id, t.crew_id, t.id, t.lane_id, t.round, t.phase::text
                  from relay.tasks t
-                 where t.state = 'interrupted'
+                 join relay.crews c on c.user_id = t.user_id and c.id = t.crew_id
+                 where t.state = 'interrupted' and c.status <> 'closed'
                    and (select max(a.created_at) from relay.actions a
                         where a.user_id = t.user_id and a.task_id = t.id
-                          and a.kind = 'interrupted') <= $1",
+                          and a.kind = 'interrupted') <= $1
+                 order by t.id for update of t",
             )
             .bind(cutoff)
             .fetch_all(&mut *tx)
@@ -6799,11 +7083,14 @@ impl PgStore {
         .rows_affected();
         // F07: a review floating past the window gets one nudge to everyone
         // in its crew per window — the newest nudge about it dates the next.
+        // A closed crew has nobody left to claim it (#398): no nudge.
         let nudge_cutoff = now - Duration::seconds(NUDGE_AFTER_SECS as i64);
         let stale: Vec<(Uuid, Uuid, Uuid, String, DateTime<Utc>)> = sqlx_core::query_as::query_as(
             "select t.user_id, t.crew_id, t.id, t.title, t.state_changed_at
              from relay.tasks t
+             join relay.crews c on c.user_id = t.user_id and c.id = t.crew_id
              where t.state = 'in_review' and t.review_claimed_by is null
+               and c.status <> 'closed'
                and t.state_changed_at <= $1
                and not exists (
                  select 1 from relay.actions a
@@ -7122,7 +7409,8 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        Ok(row.map(|(id, crew_id, payload)| now_lane_json(&id, &crew_id, &payload)))
+        let names = self.relay_catalogue_names().await?;
+        Ok(row.map(|(id, crew_id, payload)| now_lane_json(&id, &crew_id, &payload, &names)))
     }
 
     /// `RelayNow`, exactly per `relay-api.ts` — crews, facets, lanes,
@@ -7220,9 +7508,10 @@ impl PgStore {
             };
             (rank(&a.1), code_rank(&code(&a.2))).cmp(&(rank(&b.1), code_rank(&code(&b.2))))
         });
+        let names = self.relay_catalogue_names().await?;
         let lanes_json: Vec<serde_json::Value> = lanes
             .iter()
-            .map(|(id, crew_id, payload)| now_lane_json(id, crew_id, payload))
+            .map(|(id, crew_id, payload)| now_lane_json(id, crew_id, payload, &names))
             .collect();
         // The sprint band: one row per open run with its counts, in the
         // order the person created them (the view's `sprint_summary`).
@@ -7281,6 +7570,9 @@ impl PgStore {
             .map(|(mut row, claimed_at, completed_at)| {
                 row["claimed_at"] = claimed_at.map(iso).into();
                 row["completed_at"] = completed_at.map(iso).into();
+                for who in ["lane", "reviewer"] {
+                    name_family(&mut row[who], &names);
+                }
                 row
             })
             .collect();
@@ -7610,6 +7902,7 @@ impl PgStore {
         crew_id: Uuid,
         task_id: Uuid,
     ) -> Result<serde_json::Value, RelayError> {
+        let names = self.relay_catalogue_names().await?;
         let task: Option<(
             String,
             String,
@@ -7740,6 +8033,7 @@ impl PgStore {
                             "code": code,
                             "title": title,
                             "suggested_name": suggested_name,
+                            "family_name": names.name(&family),
                             "family": family,
                             "version": version,
                             "model": model,
@@ -8448,6 +8742,32 @@ fn item_kind_of_issue_type(issue_type: Option<&str>) -> RelayItemKind {
 }
 
 #[cfg(test)]
+mod disk_free_tests {
+    use super::free_on;
+    use std::path::{Path, PathBuf};
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn picks_the_deepest_mount_holding_the_path() {
+        let disks = [(PathBuf::from("/"), 10 * GIB), (PathBuf::from("/home"), 50 * GIB)];
+        assert_eq!(free_on(Path::new("/home/ana"), &disks), Some(50));
+    }
+
+    #[test]
+    fn falls_back_to_the_root_mount() {
+        let disks = [(PathBuf::from("/"), 10 * GIB), (PathBuf::from("/home"), 50 * GIB)];
+        assert_eq!(free_on(Path::new("/var/lib"), &disks), Some(10));
+    }
+
+    #[test]
+    fn no_mount_holding_the_path_is_null() {
+        let disks = [(PathBuf::from("/mnt/x"), 10 * GIB)];
+        assert_eq!(free_on(Path::new("/home/ana"), &disks), None);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -8808,6 +9128,7 @@ mod tests {
             workspace_id: None,
             suggested_name: None,
             host: None,
+            host_detected: None,
         }
     }
 
@@ -11203,6 +11524,14 @@ mod tests {
         }, "required": ["path"]}})
     }
 
+    /// `form_response` as the daemon stores it: with the layout it adds, in the lane's order.
+    fn stored_form_response() -> serde_json::Value {
+        let mut stored = form_response();
+        stored["layout"] =
+            json!({"type": "vertical", "elements": [{"scope": "#/path"}, {"scope": "#/count"}]});
+        stored
+    }
+
     fn form_ask(blocks: Vec<Uuid>) -> RelayAskInput {
         RelayAskInput {
             options: vec![],
@@ -11238,9 +11567,57 @@ mod tests {
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(props["response"], form_response());
+        assert_eq!(props["response"], stored_form_response());
         assert!(props.get("options").is_none(), "a form carries no options: {props}");
         assert_eq!(task_state(&pg, w).await, "blocked");
+    }
+
+    #[tokio::test]
+    async fn ask_without_a_layout_keeps_the_lanes_field_order() {
+        // jsonb stores object keys shorter-first, so `properties` comes back as
+        // ship, count, target; the order the lane wrote survives only as an array.
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let w = v7(0x9c);
+        fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
+        let mut ask = form_ask(vec![w]);
+        ask.response = Some(
+            serde_json::from_str(
+                r#"{"schema": {"type": "object", "properties": {
+                    "target": {"type": "string", "enum": ["develop", "main"]},
+                    "count": {"type": "integer"},
+                    "ship": {"type": "boolean"}}}}"#,
+            )
+            .unwrap(),
+        );
+        let out = pg.relay_ask_decision(u1(), a1, ask).await.unwrap();
+        let props: serde_json::Value =
+            sqlx_core::query_scalar::query_scalar("select props from relay.actions where id = $1")
+                .bind(out.decision_id)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            props["response"]["layout"],
+            json!({"type": "vertical", "elements": [
+                {"scope": "#/target"}, {"scope": "#/count"}, {"scope": "#/ship"}]}),
+            "{props}"
+        );
+        // A lane's own layout is stored as sent.
+        let mut ask = form_ask(vec![]);
+        let layout = json!({"type": "vertical", "elements": [
+            {"scope": "#/count", "label": "How many"}, {"scope": "#/path"}]});
+        ask.response.as_mut().unwrap()["layout"] = layout.clone();
+        let out = pg.relay_ask_decision(u1(), a1, ask).await.unwrap();
+        let now = pg.relay_now(u1(), no_filter()).await.unwrap();
+        let d = now["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == json!(out.decision_id))
+            .unwrap()
+            .clone();
+        assert_eq!(d["response"]["layout"], layout);
     }
 
     #[tokio::test]
@@ -11251,7 +11628,7 @@ mod tests {
         fx_task(&pg, u1(), w, c1, Some(a2), "working", "tests", 1).await;
         let mut ask = form_ask(vec![w]);
         ask.response = Some(json!({"schema": {"type": "object", "properties": {
-            "files": {"type": "array", "items": {"enum": ["a", "b"]}}}}}));
+            "files": {"type": "array", "items": {"type": "string"}}}}}));
         let err = pg.relay_ask_decision(u1(), a1, ask).await.unwrap_err();
         match err {
             RelayError::Validation(m) => assert!(m.contains("files") && m.contains("array"), "{m}"),
@@ -11352,12 +11729,12 @@ mod tests {
             .find(|d| d["id"] == decision.decision_id.to_string())
             .cloned()
             .unwrap_or_else(|| panic!("not on Now: {now}"));
-        assert_eq!(d["response"], form_response());
+        assert_eq!(d["response"], stored_form_response());
         assert_eq!(d["options"], json!([]));
         let row = pg.relay_decision_row(decision.decision_id).await.unwrap().unwrap();
-        assert_eq!(row["response"], form_response());
+        assert_eq!(row["response"], stored_form_response());
         let view = pg.relay_task_view(u1(), c1, w).await.unwrap();
-        assert_eq!(view["decision"]["response"], form_response());
+        assert_eq!(view["decision"]["response"], stored_form_response());
         assert_eq!(view["decision"]["options"], json!([]));
         // Answered: the asking lane's envelope reads the values, option null.
         let values = json!({"path": "src/x"});
@@ -14386,5 +14763,1033 @@ mod tests {
         .unwrap();
         assert_eq!(row.0, "closed");
         assert!(row.1.is_some());
+    }
+
+    // ── #398: the lane close passes over dead-lease lanes and releases them ──
+
+    /// A lane lease good for five minutes by the DB clock (close reads the
+    /// transaction's clock, so the fixture's `t0()` lease is already dead).
+    async fn fx_live_lease(pg: &PgStore, lane: Uuid) {
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp + interval '5 minutes'
+             where lane_id = $1 and kind = 'lane' and state = 'granted'",
+        )
+        .bind(lane)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+
+    async fn lane_gone(pg: &PgStore, lane: Uuid) -> (bool, String) {
+        sqlx_core::query_as::query_as(
+            "select l.unregistered_at is not null,
+                    (select state::text from relay.leases
+                     where lane_id = l.id and kind = 'lane'
+                     order by granted_at desc nulls last, id desc limit 1)
+             from relay.lanes l where l.id = $1",
+        )
+        .bind(lane)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    /// C1 with a second contributor A3 whose lease is dead (fixture time).
+    async fn fx_dead_second_contributor(pg: &PgStore, c1: Uuid) -> Uuid {
+        let a3 = v7(0x14);
+        fx_lane(pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
+        fx_lease(pg, u1(), c1, a3, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
+        a3
+    }
+
+    #[tokio::test]
+    async fn close_crew_passes_over_dead_lease_lanes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = fx_dead_second_contributor(&pg, c1).await;
+        let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        assert_eq!(out.status, "closed");
+        let mut released: Vec<Uuid> = out.released.iter().map(|(lane, _)| *lane).collect();
+        released.sort();
+        assert_eq!(released, vec![a2, a3]);
+        assert!(out.released.iter().all(|(_, task)| task.is_none()));
+        for lane in [a2, a3] {
+            assert_eq!(lane_gone(&pg, lane).await, (true, "released".to_string()));
+        }
+        // The caller is not released by close: it unregisters next itself.
+        assert!(!lane_gone(&pg, a1).await.0);
+        let status: String =
+            sqlx_core::query_scalar::query_scalar("select status from relay.crews where id = $1")
+                .bind(c1)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(status, "closed");
+    }
+
+    #[tokio::test]
+    async fn close_crew_refuses_a_live_lease_lane() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = fx_dead_second_contributor(&pg, c1).await;
+        fx_live_lease(&pg, a2).await;
+        let err = pg.relay_close_crew(u1(), a1, c1).await.unwrap_err();
+        assert!(matches!(&err, RelayError::Conflict(m) if m == "crew has live lanes"), "{err:?}");
+        // The refusal wrote nothing: the dead lane is still registered.
+        assert_eq!(lane_gone(&pg, a3).await, (false, "granted".to_string()));
+        assert_eq!(lane_gone(&pg, a2).await, (false, "granted".to_string()));
+        let status: String =
+            sqlx_core::query_scalar::query_scalar("select status from relay.crews where id = $1")
+                .bind(c1)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(status, "active");
+    }
+
+    #[tokio::test]
+    async fn close_crew_interrupts_a_dead_lanes_task() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xfa);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        assert_eq!(out.released, vec![(a2, Some(t))]);
+        let state: String = sqlx_core::query_scalar::query_scalar(
+            "select state::text from relay.tasks where id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(state, "interrupted");
+        let actions: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions
+             where task_id = $1 and lane_id = $2 and kind = 'interrupted'",
+        )
+        .bind(t)
+        .bind(a2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(actions, 1);
+    }
+
+    /// PR #502 review: a task a close interrupted stays `interrupted` —
+    /// the sweep never re-offers it past the grace into the closed crew,
+    /// where no lane can claim it (`crew is closed`).
+    #[tokio::test]
+    async fn sweep_never_reoffers_a_closed_crews_task() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xfb);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        assert_eq!(out.released, vec![(a2, Some(t))]);
+        // The grace has run out on close's `interrupted` action.
+        sqlx_core::query::query(
+            "update relay.actions set created_at = $1
+             where task_id = $2 and kind = 'interrupted'",
+        )
+        .bind(t0() - chrono::Duration::seconds(REOFFER_GRACE_SECS as i64 + 1))
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.reoffered_tasks, 0, "{:?}", rep.task_changes);
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+        let reoffers: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where task_id = $1 and kind = 'reoffered'",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(reoffers, 0);
+    }
+
+    /// Same class: a review left floating in a closed crew has nobody to
+    /// claim it, so the sweep never nudges the crew about it.
+    #[tokio::test]
+    async fn sweep_never_nudges_a_closed_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xfc);
+        fx_floating_review(&pg, c1, a2, t).await;
+        pg.relay_close_crew(u1(), a1, c1).await.unwrap();
+        sqlx_core::query::query("update relay.tasks set state_changed_at = $1 where id = $2")
+            .bind(t0() - chrono::Duration::seconds(NUDGE_AFTER_SECS as i64 + 1))
+            .bind(t)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert_eq!(rep.nudged, 0);
+        let nudges: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where crew_id = $1 and kind = 'message'",
+        )
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(nudges, 0);
+    }
+
+    /// Close holds the crew row, then releases a dead lane's lease. A
+    /// heartbeat racing it must take the crew row first too, so it waits
+    /// behind close instead of holding the lease close needs (a 40P01
+    /// deadlock), and once close commits it answers `410`, not a fresh
+    /// lease on a released lane.
+    #[tokio::test]
+    async fn close_and_heartbeat_take_the_crew_row_first() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        // Close's first step: the crew row, held.
+        let mut close = pg.pool().begin().await.unwrap();
+        sqlx_core::query::query("set local lock_timeout = '500ms'")
+            .execute(&mut *close)
+            .await
+            .unwrap();
+        sqlx_core::query_scalar::query_scalar::<_, String>(
+            "select status from relay.crews where user_id = $1 and id = $2 for update",
+        )
+        .bind(u1())
+        .bind(c1)
+        .fetch_one(&mut *close)
+        .await
+        .unwrap();
+        let hb_store = pg.clone();
+        let heartbeat = tokio::spawn(async move {
+            hb_store.relay_heartbeat(a2, t0() + chrono::Duration::seconds(3600)).await
+        });
+        // Wait until the heartbeat is blocked on a lock.
+        let mut blocked = false;
+        for _ in 0..100 {
+            let waiting: i64 = sqlx_core::query_scalar::query_scalar(
+                "select count(*) from pg_locks l join pg_stat_activity a on a.pid = l.pid
+                 where not l.granted and a.datname = current_database()",
+            )
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            if waiting > 0 {
+                blocked = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(blocked, "the heartbeat never waited on close's crew lock");
+        // Close's next step: release the dead lane (its lease included).
+        let released = PgStore::relay_unregister_tx(&mut close, u1(), c1, a2).await;
+        assert!(released.is_ok(), "close blocked on the heartbeat's lease lock: {released:?}");
+        close.commit().await.unwrap();
+        let hb = heartbeat.await.unwrap();
+        assert!(matches!(&hb, Err(RelayError::Gone(_))), "{hb:?}");
+        let granted: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.leases
+             where lane_id = $1 and kind = 'lane' and state = 'granted'",
+        )
+        .bind(a2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(granted, 0, "a released lane was regranted a lease");
+    }
+
+    /// Close's first step, held open: the crew row `for update`.
+    async fn close_holding_crew(
+        pg: &PgStore,
+        crew: Uuid,
+    ) -> sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres> {
+        let mut close = pg.pool().begin().await.unwrap();
+        sqlx_core::query::query("set local lock_timeout = '2s'")
+            .execute(&mut *close)
+            .await
+            .unwrap();
+        sqlx_core::query_scalar::query_scalar::<_, String>(
+            "select status from relay.crews where user_id = $1 and id = $2 for update",
+        )
+        .bind(u1())
+        .bind(crew)
+        .fetch_one(&mut *close)
+        .await
+        .unwrap();
+        close
+    }
+
+    /// True once some session in this database waits on a lock.
+    async fn some_session_waits_on_a_lock(pg: &PgStore) -> bool {
+        for _ in 0..100 {
+            let waiting: i64 = sqlx_core::query_scalar::query_scalar(
+                "select count(*) from pg_locks l join pg_stat_activity a on a.pid = l.pid
+                 where not l.granted and a.datname = current_database()",
+            )
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            if waiting > 0 {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    /// Close's last step: the crew turns closed and the close commits.
+    async fn close_commits(
+        mut close: sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres>,
+        crew: Uuid,
+    ) {
+        sqlx_core::query::query(
+            "update relay.crews set status = 'closed', completed_at = current_timestamp
+             where user_id = $1 and id = $2",
+        )
+        .bind(u1())
+        .bind(crew)
+        .execute(&mut *close)
+        .await
+        .unwrap();
+        close.commit().await.unwrap();
+    }
+
+    /// A register joining a crew while a close holds it waits for the
+    /// close, then sees the crew closed: `409 crew is closed`, and the
+    /// closed crew gains no lane.
+    #[tokio::test]
+    async fn register_racing_a_close_is_refused_once_the_crew_closes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, _, _, _) = fx_two_crews(&pg).await;
+        let close = close_holding_crew(&pg, c1).await;
+        let store = pg.clone();
+        let register = tokio::spawn(async move {
+            store.relay_register(u1(), register_input(RelayRole::Contributor, Some(c1)), t0()).await
+        });
+        assert!(some_session_waits_on_a_lock(&pg).await, "register never waited on the close");
+        close_commits(close, c1).await;
+        let out = register.await.unwrap();
+        assert!(
+            matches!(&out, Err(RelayError::Conflict(m)) if m == "crew is closed"),
+            "{:?}",
+            out.as_ref().map(|o| o.lane_id)
+        );
+        let lanes: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.lanes where crew_id = $1",
+        )
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(lanes, 2, "a lane joined the closed crew");
+    }
+
+    /// A reregister racing a close waits for it, then is refused: the
+    /// lane stays unregistered and gains no lease in the closed crew.
+    #[tokio::test]
+    async fn reregister_racing_a_close_is_refused_once_the_crew_closes() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        pg.relay_unregister(a2).await.unwrap();
+        let close = close_holding_crew(&pg, c1).await;
+        let store = pg.clone();
+        let reregister = tokio::spawn(async move { store.relay_reregister(a2, t0()).await });
+        assert!(some_session_waits_on_a_lock(&pg).await, "reregister never waited on the close");
+        close_commits(close, c1).await;
+        let out = reregister.await.unwrap();
+        assert!(
+            matches!(&out, Err(RelayError::Conflict(m)) if m == "crew is closed"),
+            "{:?}",
+            out.as_ref().map(|o| o.lane_id)
+        );
+        let (unregistered, granted): (bool, i64) = sqlx_core::query_as::query_as(
+            "select l.unregistered_at is not null,
+                    (select count(*) from relay.leases s
+                     where s.lane_id = l.id and s.kind = 'lane' and s.state = 'granted')
+             from relay.lanes l where l.id = $1",
+        )
+        .bind(a2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(unregistered, "the lane came back live in a closed crew");
+        assert_eq!(granted, 0, "the lane was granted a lease in a closed crew");
+    }
+
+    /// The sweeper and a close both act on a dead lane: the sweeper
+    /// expires its lease and ends its limit pause, close releases its
+    /// lease. Both take the crew row first, so the sweep waits behind the
+    /// close instead of holding the lease close needs while it waits on
+    /// the lane close holds (a 40P01 deadlock that fails one of them).
+    #[tokio::test]
+    async fn sweep_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        // A2 hit its quota, then died: its pause is due to end.
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = $1, limit_scope = 'daily',
+                    limit_resumes_at = $2
+             where id = $3",
+        )
+        .bind(t0())
+        .bind(t0() + chrono::Duration::seconds(60))
+        .bind(a2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        // Close's first steps: the crew row, then the dead lane, held.
+        let mut close = close_holding_crew(&pg, c1).await;
+        sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select id from relay.lanes
+             where crew_id = $1 and unregistered_at is null and id <> $2
+             order by id for update",
+        )
+        .bind(c1)
+        .bind(v7(0x11))
+        .fetch_all(&mut *close)
+        .await
+        .unwrap();
+        let store = pg.clone();
+        let sweep = tokio::spawn(async move {
+            store.relay_sweep_leases(t0() + chrono::Duration::seconds(3600)).await
+        });
+        assert!(some_session_waits_on_a_lock(&pg).await, "the sweep never waited on the close");
+        // Close's next step: release the dead lane (its lease included).
+        let released = PgStore::relay_unregister_tx(&mut close, u1(), c1, a2).await;
+        assert!(released.is_ok(), "close deadlocked with the sweep: {released:?}");
+        close_commits(close, c1).await;
+        let swept = sweep.await.unwrap();
+        assert!(swept.is_ok(), "the sweep deadlocked with the close: {:?}", swept.err());
+    }
+
+    /// A contributor naming no crew joins the single active one (#402).
+    /// When a close holds that crew, the register waits for it and then
+    /// finds no active crew: the closed crew gains no lane.
+    #[tokio::test]
+    async fn register_joining_the_active_crew_racing_a_close_finds_none() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, _, _, _) = fx_two_crews(&pg).await;
+        let close = close_holding_crew(&pg, c1).await;
+        let store = pg.clone();
+        let register = tokio::spawn(async move {
+            store.relay_register(u1(), register_input(RelayRole::Contributor, None), t0()).await
+        });
+        assert!(some_session_waits_on_a_lock(&pg).await, "register never waited on the close");
+        close_commits(close, c1).await;
+        let out = register.await.unwrap();
+        assert!(
+            matches!(&out, Err(RelayError::NoActiveCrew)),
+            "{:?}",
+            out.as_ref().map(|o| o.lane_id)
+        );
+        let lanes: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.lanes where crew_id = $1",
+        )
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(lanes, 2, "a lane joined the closed crew");
+    }
+
+    /// Lane A2 hit its quota (pause due to end) and its lease lapsed; the
+    /// sweep will expire the lease and end the pause.
+    async fn fx_due_pause_and_lapsed_lease(pg: &PgStore, lane: Uuid) {
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = $1, limit_scope = 'daily',
+                    limit_resumes_at = $2
+             where id = $3",
+        )
+        .bind(t0())
+        .bind(t0() + chrono::Duration::seconds(60))
+        .bind(lane)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+
+    /// A lane transaction held open with `lock_timeout` set, so a lock
+    /// cycle surfaces as an error rather than a hang.
+    async fn lane_tx(
+        pg: &PgStore,
+    ) -> sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres> {
+        let mut tx = pg.pool().begin().await.unwrap();
+        sqlx_core::query::query("set local lock_timeout = '5s'").execute(&mut *tx).await.unwrap();
+        tx
+    }
+
+    /// A heartbeat holds its lane `for share` before it renews the lease.
+    /// The sweep takes lanes before leases too, so it waits behind the
+    /// heartbeat instead of holding the lease the heartbeat renews while
+    /// it waits on the lane (a 40P01 deadlock that fails one of them).
+    #[tokio::test]
+    async fn sweep_racing_a_heartbeat_takes_the_lane_before_the_lease() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        fx_due_pause_and_lapsed_lease(&pg, a2).await;
+        let sweep_at = t0() + chrono::Duration::seconds(3600);
+        // The heartbeat's first steps: the crew row, then the lane, held.
+        let mut hb = lane_tx(&pg).await;
+        sqlx_core::query::query("update relay.crews set heartbeat_at = $1 where id = $2")
+            .bind(sweep_at)
+            .bind(c1)
+            .execute(&mut *hb)
+            .await
+            .unwrap();
+        sqlx_core::query::query("select unregistered_at from relay.lanes where id = $1 for share")
+            .bind(a2)
+            .execute(&mut *hb)
+            .await
+            .unwrap();
+        let store = pg.clone();
+        let sweep = tokio::spawn(async move { store.relay_sweep_leases(sweep_at).await });
+        assert!(some_session_waits_on_a_lock(&pg).await, "the sweep never waited on the heartbeat");
+        // The heartbeat's next step: renew the lane lease.
+        let renewed = sqlx_core::query::query(
+            "update relay.leases set expires_at = $1 where id = (
+               select id from relay.leases
+               where lane_id = $2 and kind = 'lane' and state = 'granted'
+               order by granted_at desc nulls last, id desc limit 1)",
+        )
+        .bind(sweep_at + chrono::Duration::seconds(300))
+        .bind(a2)
+        .execute(&mut *hb)
+        .await;
+        assert!(renewed.is_ok(), "the heartbeat deadlocked with the sweep: {renewed:?}");
+        hb.commit().await.unwrap();
+        let swept = sweep.await.unwrap();
+        assert!(swept.is_ok(), "the sweep deadlocked with the heartbeat: {:?}", swept.err());
+    }
+
+    /// A lane's own unregister takes its lane row, then its lease. The
+    /// sweep takes the lane first too, so the two serialize instead of
+    /// deadlocking over a lapsed lease whose pause is due to end.
+    #[tokio::test]
+    async fn sweep_racing_an_unregister_takes_the_lane_before_the_lease() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        fx_due_pause_and_lapsed_lease(&pg, a2).await;
+        // The unregister's first step: the lane row, held.
+        let mut leave = lane_tx(&pg).await;
+        sqlx_core::query::query(
+            "update relay.lanes set unregistered_at = current_timestamp where id = $1",
+        )
+        .bind(a2)
+        .execute(&mut *leave)
+        .await
+        .unwrap();
+        let store = pg.clone();
+        let sweep = tokio::spawn(async move {
+            store.relay_sweep_leases(t0() + chrono::Duration::seconds(3600)).await
+        });
+        assert!(
+            some_session_waits_on_a_lock(&pg).await,
+            "the sweep never waited on the unregister"
+        );
+        // The unregister's next steps: release its lease, interrupt its task.
+        let left = PgStore::relay_unregister_tx(&mut leave, u1(), c1, a2).await;
+        assert!(left.is_ok(), "the unregister deadlocked with the sweep: {left:?}");
+        leave.commit().await.unwrap();
+        let swept = sweep.await.unwrap();
+        assert!(swept.is_ok(), "the sweep deadlocked with the unregister: {:?}", swept.err());
+    }
+
+    /// A lane write racing the lane close that releases dead lane `dead`.
+    /// Close holds the crew row, then the dead lane, `for update`; the
+    /// write starts and must wait; close then releases the lane (its held
+    /// task interrupted) and commits. Returns the write's answer. A write
+    /// that locked the task before the crew row deadlocks here (40P01).
+    /// `write` is the store call, not yet polled: it starts once close holds
+    /// its rows and runs alongside the release.
+    async fn lane_write_racing_a_close<T>(
+        pg: &PgStore,
+        crew: Uuid,
+        dead: Uuid,
+        write: impl std::future::Future<Output = Result<T, RelayError>>,
+    ) -> Result<T, RelayError> {
+        let mut close = close_holding_crew(pg, crew).await;
+        sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select id from relay.lanes where id = $1 for update",
+        )
+        .bind(dead)
+        .fetch_all(&mut *close)
+        .await
+        .unwrap();
+        let (out, ()) = tokio::join!(write, async move {
+            assert!(
+                some_session_waits_on_a_lock(pg).await,
+                "the lane write never waited on the close"
+            );
+            let released = PgStore::relay_unregister_tx(&mut close, u1(), crew, dead).await;
+            assert!(released.is_ok(), "close deadlocked with the lane write: {released:?}");
+            close_commits(close, crew).await;
+        });
+        out
+    }
+
+    /// The lane whose lease lapsed checkpoints while close releases it:
+    /// the checkpoint waits for the crew row, then answers `410`; the task
+    /// stays interrupted and no `checkpointed` row lands.
+    #[tokio::test]
+    async fn checkpoint_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd1);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let input = RelayCheckpointInput {
+            current_step: Some("clippy".into()),
+            notes: None,
+            steps: vec![],
+        };
+        let out =
+            lane_write_racing_a_close(&pg, c1, a2, pg.relay_checkpoint_task(u1(), a2, t, input))
+                .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+        let rows: i64 = sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where task_id = $1 and kind = 'checkpointed'",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(rows, 0, "a released lane's checkpoint landed");
+    }
+
+    /// A report racing the close waits for the crew row, then answers
+    /// `410`: the interrupted task does not float into review.
+    #[tokio::test]
+    async fn report_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd2);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = lane_write_racing_a_close(
+            &pg,
+            c1,
+            a2,
+            pg.relay_report_task(u1(), a2, t, report_input()),
+        )
+        .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// The holder's first write starts an assigned task: that start races
+    /// the close like any task write, and the report answers `410`.
+    #[tokio::test]
+    async fn starting_an_assigned_task_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd3);
+        fx_task(&pg, u1(), t, c1, Some(a2), "assigned", "tests", 1).await;
+        let out = lane_write_racing_a_close(
+            &pg,
+            c1,
+            a2,
+            pg.relay_report_task(u1(), a2, t, report_input()),
+        )
+        .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// Giving a task back races the close too: `410`, and the task stays
+    /// interrupted on its lane rather than floating back to the pool.
+    #[tokio::test]
+    async fn release_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd4);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out =
+            lane_write_racing_a_close(&pg, c1, a2, pg.relay_release_task(release(a2, t, None)))
+                .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// An ask that blocks the dead lane's task races the close: `410`,
+    /// and the task stays interrupted, not blocked.
+    #[tokio::test]
+    async fn ask_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd5);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = lane_write_racing_a_close(
+            &pg,
+            c1,
+            a2,
+            pg.relay_ask_decision(u1(), a2, ask_input(vec![t])),
+        )
+        .await;
+        assert!(matches!(&out, Err(RelayError::Gone(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// A live lane asks, blocking the dead lane's task, while a close
+    /// releases the dead lane: the ask waits for the crew row, then finds
+    /// the task interrupted (`409`) instead of blocking over the close.
+    #[tokio::test]
+    async fn ask_blocking_a_task_a_close_interrupts_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = v7(0x14);
+        fx_lane(&pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
+        let t = v7(0xd7);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = lane_write_racing_a_close(
+            &pg,
+            c1,
+            a2,
+            pg.relay_ask_decision(u1(), a3, ask_input(vec![t])),
+        )
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// The coordinator hands the dead lane's task to a live lane while a
+    /// close releases the dead lane: the hand-over waits for the crew row,
+    /// then finds the task interrupted (`409`), which stays the sweeper's
+    /// to re-offer.
+    #[tokio::test]
+    async fn handover_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let a3 = v7(0x14);
+        fx_lane(&pg, u1(), a3, c1, "L3", "contributor", "tok-a3").await;
+        fx_lease(&pg, u1(), c1, a3, "granted", Some(Utc::now() + chrono::Duration::hours(1))).await;
+        let t = v7(0xd6);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let input = RelayHandoverInput { to_lane: a3, note: String::new() };
+        let out =
+            lane_write_racing_a_close(&pg, c1, a2, pg.relay_handover_task(u1(), a1, t, input))
+                .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+    }
+
+    /// The lane's own unregister racing a close: it takes the crew row
+    /// first like every other lane write, so it waits behind the close
+    /// (which holds the crew, then the lane) instead of holding the lane
+    /// and the task while it waits on the crew for its `relay.actions`
+    /// foreign key (a 40P01 deadlock). Once close commits it answers `410`
+    /// and the task is interrupted once, by the close.
+    #[tokio::test]
+    async fn unregister_racing_a_close_waits_for_the_crew() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd7);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let mut close = close_holding_crew(&pg, c1).await;
+        let store = pg.clone();
+        let leave = tokio::spawn(async move { store.relay_unregister(a2).await });
+        assert!(
+            some_session_waits_on_a_lock(&pg).await,
+            "the unregister never waited on the close"
+        );
+        // Close's next steps: its dead lanes `for update`, then release them.
+        let dead = sqlx_core::query_scalar::query_scalar::<_, Uuid>(
+            "select id from relay.lanes
+             where user_id = $1 and crew_id = $2 and unregistered_at is null and id <> $3
+             order by id for update",
+        )
+        .bind(u1())
+        .bind(c1)
+        .bind(a1)
+        .fetch_all(&mut *close)
+        .await;
+        assert!(dead.is_ok(), "close deadlocked with the unregister: {dead:?}");
+        let released = PgStore::relay_unregister_tx(&mut close, u1(), c1, a2).await;
+        assert!(released.is_ok(), "close deadlocked with the unregister: {released:?}");
+        close_commits(close, c1).await;
+        let left = leave.await.unwrap();
+        assert!(matches!(&left, Err(RelayError::Gone(_))), "{:?}", left.map(|o| o.interrupted));
+        assert_eq!(task_state(&pg, t).await, "interrupted");
+        assert_eq!(kind_count(&pg, t, "interrupted").await, 1);
+    }
+
+    /// Another writer's transaction holding task `t`, moved to `state`
+    /// (a person's `cancel_run`, a merge), not yet committed.
+    async fn racer_holding_task(
+        pg: &PgStore,
+        t: Uuid,
+        state: &str,
+    ) -> sqlx_core::transaction::Transaction<'static, sqlx_postgres::Postgres> {
+        let mut racer = lane_tx(pg).await;
+        sqlx_core::query::query(
+            "update relay.tasks set state = $1::relay.task_state, blocked_from_state = null,
+                    state_changed_at = current_timestamp
+             where id = $2",
+        )
+        .bind(state)
+        .bind(t)
+        .execute(&mut *racer)
+        .await
+        .unwrap();
+        racer
+    }
+
+    /// A write racing another writer that moves task `t` to `state`: the
+    /// racer holds the task, the write starts and must wait on it, then
+    /// the racer commits. Returns the write's answer. A write that acted
+    /// on the state it read before the racer committed overwrites it.
+    /// `write` is the store call, not yet polled: it starts once the racer
+    /// holds the task and runs alongside the racer's commit.
+    async fn write_racing_a_task_move<T>(
+        pg: &PgStore,
+        t: Uuid,
+        state: &str,
+        write: impl std::future::Future<Output = Result<T, RelayError>>,
+    ) -> Result<T, RelayError> {
+        let racer = racer_holding_task(pg, t, state).await;
+        let (out, ()) = tokio::join!(write, async move {
+            assert!(some_session_waits_on_a_lock(pg).await, "the write never waited on the task");
+            racer.commit().await.unwrap();
+        });
+        out
+    }
+
+    async fn kind_count(pg: &PgStore, t: Uuid, kind: &str) -> i64 {
+        sqlx_core::query_scalar::query_scalar(
+            "select count(*) from relay.actions where task_id = $1 and kind::text = $2",
+        )
+        .bind(t)
+        .bind(kind)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    /// A person cancels the run while the lane close releases the dead
+    /// lane holding its task: close interrupts only a task still active
+    /// once it holds it, so the cancel stands and no `interrupted` row
+    /// lands (the sweeper would re-offer a cancelled run's task).
+    #[tokio::test]
+    async fn close_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd8);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = write_racing_a_task_move(&pg, t, "cancelled", pg.relay_close_crew(u1(), a1, c1))
+            .await
+            .unwrap();
+        assert_eq!(out.released, vec![(a2, None)]);
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "interrupted").await, 0);
+    }
+
+    /// The sweep expiring a lapsed lane racing a cancel leaves the task
+    /// cancelled.
+    #[tokio::test]
+    async fn sweep_expiry_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xd9);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_sweep_leases(t0() + chrono::Duration::seconds(3600)),
+        )
+        .await;
+        assert!(out.is_ok(), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "interrupted").await, 0);
+    }
+
+    /// The sweep suspending a limit-paused lane's work racing a cancel
+    /// leaves the task cancelled.
+    #[tokio::test]
+    async fn sweep_pause_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        sqlx_core::query::query(
+            "update relay.lanes set limit_paused_at = $1, limit_scope = 'daily',
+                    limit_resumes_at = $2
+             where id = $3",
+        )
+        .bind(t0())
+        .bind(t0() + chrono::Duration::days(1))
+        .bind(a2)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let t = v7(0xda);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_sweep_leases(t0() + chrono::Duration::seconds(100)),
+        )
+        .await;
+        assert!(out.is_ok(), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "interrupted").await, 0);
+    }
+
+    /// The sweep re-offering an interrupted task racing a cancel leaves
+    /// the task cancelled: a cancelled run's task never returns to the
+    /// pool.
+    #[tokio::test]
+    async fn sweep_reoffer_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xdb);
+        fx_task(&pg, u1(), t, c1, Some(a2), "interrupted", "tests", 1).await;
+        fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t),
+                lane: Some(a2),
+                kind: "interrupted",
+                round: Some(1),
+                phase: Some("tests"),
+                ..Default::default()
+            },
+        )
+        .await;
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_sweep_leases(Utc::now() + chrono::Duration::days(1)),
+        )
+        .await;
+        assert!(out.is_ok(), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "reoffered").await, 0);
+    }
+
+    /// A report racing a cancel is refused (`409`); the task stays
+    /// cancelled, not floated into review.
+    #[tokio::test]
+    async fn report_racing_a_cancel_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xdc);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_report_task(u1(), a2, t, report_input()),
+        )
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "reported").await, 0);
+    }
+
+    /// A review racing a cancel is refused (`409`); the task stays
+    /// cancelled, not approved.
+    #[tokio::test]
+    async fn review_racing_a_cancel_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xdd);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        pg.relay_report_task(u1(), a2, t, report_input()).await.unwrap();
+        pg.relay_claim_review(u1(), a1, t, t0()).await.unwrap();
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_submit_review(u1(), a1, t, review_input()),
+        )
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+    }
+
+    /// An answer racing a cancel of a task its ask blocked records the
+    /// answer but leaves the task cancelled, not resumed.
+    #[tokio::test]
+    async fn answer_racing_a_cancel_leaves_the_task_cancelled() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xde);
+        fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
+        let ask = pg.relay_ask_decision(u1(), a1, ask_input(vec![t])).await.unwrap();
+        let answer = RelayAnswerInput { option: Some("db".into()), values: None, note: None };
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_answer_decision(
+                u1(),
+                RelayCaller::Person { surface: RelaySurface::Desktop },
+                ask.decision_id,
+                answer,
+            ),
+        )
+        .await;
+        assert!(out.is_ok(), "{:?}", out.err());
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+    }
+
+    /// A merge racing a cancel is refused (`409`); the task stays
+    /// cancelled, not done.
+    #[tokio::test]
+    async fn merge_racing_a_cancel_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xdf);
+        fx_task(&pg, u1(), t, c1, Some(a2), "approved", "tests", 1).await;
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_merge_task(u1(), a1, t, merge_input()),
+        )
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{out:?}");
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "merged").await, 0);
+    }
+
+    /// A task cancel racing a merge is refused (`409`); the merged task
+    /// stays done.
+    #[tokio::test]
+    async fn cancel_racing_a_merge_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xe0);
+        fx_task(&pg, u1(), t, c1, Some(a2), "approved", "tests", 1).await;
+        // The holder left: only a live holder refuses a cancel.
+        sqlx_core::query::query("update relay.lanes set unregistered_at = $1 where id = $2")
+            .bind(t0())
+            .bind(a2)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let out = write_racing_a_task_move(&pg, t, "done", pg.relay_cancel_task(u1(), a1, t)).await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|o| o.state));
+        assert_eq!(task_state(&pg, t).await, "done");
+    }
+
+    /// An assign racing a cancel is refused (`409`); the pool task stays
+    /// cancelled, not handed to a lane.
+    #[tokio::test]
+    async fn assign_racing_a_cancel_is_refused() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, a1, a2, _, _) = fx_two_crews(&pg).await;
+        let t = v7(0xe1);
+        fx_task(&pg, u1(), t, c1, None, "ready", "tests", 1).await;
+        let out = write_racing_a_task_move(
+            &pg,
+            t,
+            "cancelled",
+            pg.relay_assign_task(u1(), a1, t, assign_input(a2)),
+        )
+        .await;
+        assert!(matches!(&out, Err(RelayError::Conflict(_))), "{:?}", out.map(|_| ()));
+        assert_eq!(task_state(&pg, t).await, "cancelled");
+        assert_eq!(kind_count(&pg, t, "assigned").await, 0);
     }
 }

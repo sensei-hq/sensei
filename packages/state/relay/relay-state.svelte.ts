@@ -20,6 +20,7 @@ import type {
   RelayAddTriage,
   RelayAnswer,
   RelayCancelledRun,
+  RelayCatalogue,
   RelayCreateRun,
   RelayCreatedRun,
   RelayCrew,
@@ -63,6 +64,10 @@ export interface RelaySource {
   readRuns(): Promise<ApiResult<RelayRunList>>;
   startRun(runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>>;
   cancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
+  /** What this machine has seen, for AddMember's picker (#455). Only the desktop has a
+   *  machine: a surface without one leaves it out, and the picker is not shown.
+   *  The context resolves launch templates (#513). */
+  readCatalogue?(query: { workspace_id?: string; crew_id?: string }): Promise<ApiResult<RelayCatalogue>>;
   /** Subscribe to the stream: every event, and every open — the first and each
    *  reconnect (a broadcast has no replay). Returns the teardown. */
   events: RelayEvents;
@@ -173,6 +178,12 @@ export class RelayState {
   runList = $state<RelayRunList | null>(null);
   /** Why the last read of the runs failed; null when it did not. */
   runsError = $state<string | null>(null);
+  /** The assistants and editors this machine has seen (#455); null until read. */
+  catalogue = $state<RelayCatalogue | null>(null);
+  /** Why the last catalogue read failed; null when it did not. */
+  catalogueError = $state<string | null>(null);
+  /** The tool the person picked in AddMember; null until one is. */
+  pickedTool = $state<string | null>(null);
   /** The run being started or cancelled; null when none is. */
   startingRun = $state<string | null>(null);
   /** Why the last start or cancel was refused. */
@@ -294,11 +305,11 @@ export class RelayState {
 
   /** One stream event: a row changes that row alone; ids alone re-read what they name. */
   apply(event: RelayStreamEvent): void {
-    const data = event.data as Record<string, unknown>;
+    const data = event.data;
     // A run changed: the run list (drafts, past runs) is read whole, once it was read.
     if (event.entity === 'run' && this.runList) void this.readRuns();
     if ((ROW_ENTITIES as readonly string[]).includes(event.entity) && typeof data.id === 'string') {
-      this.#applyRow(event.entity as RowEntity, event.action, data as { id: string });
+      this.#applyRow(event.entity as RowEntity, event.action, data as { id: string } & typeof data);
       return;
     }
     switch (event.entity) {
@@ -575,6 +586,29 @@ export class RelayState {
     }
     this.runsError = null;
     this.runList = answer.data;
+  }
+
+  // ── The catalogue AddMember picks from (#455) ──
+
+  /** Read what this machine has seen. A failure says so and keeps what was read before;
+   *  a surface with no catalogue reads nothing. */
+  async readCatalogue(): Promise<void> {
+    if (!this.source.readCatalogue) return;
+    const answer = await this.source.readCatalogue({
+      workspace_id: this.filter.workspace_id,
+      crew_id: this.crew?.id,
+    });
+    if (!answer.ok) {
+      this.catalogueError = failureReason(answer.error);
+      return;
+    }
+    this.catalogueError = null;
+    this.catalogue = answer.data;
+  }
+
+  /** The person picked a tool: the note under the paste line names it. */
+  pickTool(id: string): void {
+    this.pickedTool = id;
   }
 
   /** Start a draft on the screen's crew. Null when taken; else why it was refused. One

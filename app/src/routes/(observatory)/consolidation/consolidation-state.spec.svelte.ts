@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ConsolidationState, type ConsolidationApi } from './consolidation-state.svelte';
+import {
+  ConsolidationState,
+  consolidationState,
+  type ConsolidationApi,
+} from './consolidation-state.svelte';
 
 const ok = <T>(data: T) => ({ ok: true as const, data });
 const fail = (status: number, message: string) => ({ ok: false as const, error: { status, message } });
@@ -59,5 +63,13 @@ describe('ConsolidationState', () => {
     release();
     await run;
     expect(s.busy).toBeNull();
+  });
+
+  it('the module singleton survives remounts — one guard, not one per visit', async () => {
+    // A remount re-reads the module binding, never a fresh instance: the
+    // busy guard a run set is still set after navigation drops the page.
+    expect(consolidationState).toBeInstanceOf(ConsolidationState);
+    const remount = await import('./consolidation-state.svelte');
+    expect(remount.consolidationState).toBe(consolidationState);
   });
 });

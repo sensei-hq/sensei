@@ -245,10 +245,10 @@ impl PgStore {
     pub async fn get_session(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         // folder_id is nullable since P1 (a pruned raw-cwd folder SET-NULLs it; the session
         // survives via repo_folder_id) — decode as Option so a pruned row doesn't error.
-        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<i64>, Option<i64>, Option<f64>, Option<String>, Option<String>)> =
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<i64>, Option<i64>, Option<f64>, Option<String>, Option<String>, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, folder_id, task, acp_id, outcome::text, ftr, turns, corrections, started_at, completed_at, \
-                        tokens_in, tokens_out, EXTRACT(EPOCH FROM duration)::float8, provider, model FROM activity.sessions WHERE id = $1"
+                        tokens_in, tokens_out, EXTRACT(EPOCH FROM duration)::float8, provider, model, host FROM activity.sessions WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
 
         Ok(row.map(
@@ -268,6 +268,7 @@ impl PgStore {
                 duration_secs,
                 provider,
                 model,
+                host,
             )| {
                 serde_json::json!({
                     "id": id, "folder_id": fid, "task": task, "acp_id": acp,
@@ -276,6 +277,8 @@ impl PgStore {
                     "completed_at": completed.map(|t| t.to_rfc3339()),
                     "tokensIn": tokens_in, "tokensOut": tokens_out, "durationSecs": duration_secs,
                     "provider": provider, "model": model,
+                    // The editor the session ran in (#455); null for a terminal session.
+                    "host": host,
                 })
             },
         ))
@@ -1420,7 +1423,7 @@ impl PgStore {
         client_session_id: &str,
         patch: &SessionMetadataPatch<'_>,
     ) -> Result<(), String> {
-        let &SessionMetadataPatch { provider, model, tokens_in, tokens_out, split } = patch;
+        let &SessionMetadataPatch { provider, model, tokens_in, tokens_out, split, host } = patch;
         // COALESCE throughout: a source that reports no split must not erase what
         // another pass captured, and `tokens_in` keeps its "all input" meaning.
         sqlx_core::query::query(
@@ -1434,6 +1437,7 @@ impl PgStore {
                     cache_write    = COALESCE($8, cache_write),
                     tokens_reasoning = COALESCE($9, tokens_reasoning),
                     metered_cost   = COALESCE($10, metered_cost),
+                    host           = COALESCE($11, host),
                     meta_synced_at = now()
               WHERE client_session_id = $1",
         )
@@ -1447,6 +1451,7 @@ impl PgStore {
         .bind(split.and_then(|t| t.cache_write))
         .bind(split.and_then(|t| t.reasoning))
         .bind(split.and_then(|t| t.cost))
+        .bind(host)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1512,6 +1517,28 @@ impl PgStore {
         )
         .bind(client_session_id)
         .bind(usd)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(done.rows_affected() > 0)
+    }
+
+    /// Fill a session's editor host when none is set (#512). `COALESCE` keeps
+    /// a host the transcript — or any earlier event — already set: a later
+    /// write with a different host, or none, never clears it. True when the
+    /// session has a row (whether or not the host moved).
+    pub async fn fill_session_host(
+        &self,
+        client_session_id: &str,
+        host: &str,
+    ) -> Result<bool, String> {
+        let done = sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET host = COALESCE(host, $2)
+              WHERE client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .bind(host)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

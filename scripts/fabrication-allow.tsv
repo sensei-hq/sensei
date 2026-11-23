@@ -6,10 +6,10 @@ app/src/lib/impact-load.ts	T3	impactLog: l.data?.verdicts ?? [],	GENUINE-EMPTY	?
 app/src/lib/logger.ts	T3	cpu_cores: navigator.hardwareConcurrency ?? 0,	PARSE-DEFAULT	?? 0 — optional wire/display field	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/personas.svelte.ts	T1	const res = await this.#deps.fetchPersonas().catch(() => null);	GENUINE-EMPTY	.catch( — surfaced: catch sets error/rejects	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/personas.svelte.ts	T1	const url = await this.#deps.startSignIn(slot, id.githubLogin).catch(() => null);	GENUINE-EMPTY	.catch( — surfaced: catch sets error/rejects	audit 2026-11-03 App. C	2026-11-03
-app/src/lib/scan-state.svelte.ts	T3	(b.lastUpdated ?? 0) - (a.lastUpdated ?? 0)	GENUINE-EMPTY	?? 0 — arithmetic/sort identity	audit 2026-11-03 App. C	2026-11-03
-app/src/lib/scan-state.svelte.ts	T3	.filter((p) => (p.folders ?? []).length > 0)	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
-app/src/lib/scan-state.svelte.ts	T3	folders: (p.folders ?? []).map((f) => ({	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
-app/src/lib/scan-state.svelte.ts	T3	stack: f.stack ?? [],	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+packages/state/scan/scan-state.svelte.ts	T3	(b.lastUpdated ?? 0) - (a.lastUpdated ?? 0)	GENUINE-EMPTY	?? 0 — arithmetic/sort identity	audit 2026-11-03 App. C	2026-11-03
+packages/state/scan/scan-state.svelte.ts	T3	.filter((p) => (p.folders ?? []).length > 0)	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+packages/state/scan/scan-state.svelte.ts	T3	folders: (p.folders ?? []).map((f) => ({	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
+packages/state/scan/scan-state.svelte.ts	T3	stack: f.stack ?? [],	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/sessions-digest.svelte.ts	T3	this.hours = initialHours ?? [];	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/sessions-digest.svelte.ts	T3	this.sessions = initialSessions ?? [];	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
 app/src/lib/setup/loaders.ts	T3	(parsed.disabled ?? []).forEach(n => disabled.add(n));	GENUINE-EMPTY	?? [] — optional field on successful value	audit 2026-11-03 App. C	2026-11-03
@@ -113,7 +113,6 @@ crates/senseid/src/indexer/community.rs	R3	Err(e) => {	GENUINE-EMPTY	Err(e) => �
 crates/senseid/src/indexer/community.rs	R4	.filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok())	GENUINE-EMPTY	.ok() — DB ids are uuids; invariant	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/community.rs	R4	members.iter().filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok()).collect();	GENUINE-EMPTY	.ok() — DB ids are uuids; invariant	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/compiler_session.rs	R1	std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())	PARSE-DEFAULT	.unwrap_or_else( — canonicalize documented fallback	audit 2026-11-03 App. C	2026-11-03
-crates/senseid/src/indexer/compiler_session.rs	R6	let Ok(meta) = std::fs::metadata(p) else { return false };	GENUINE-EMPTY	let Ok( — missing file not executable	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/index.rs	R4	files.iter().filter_map(|placed| read_one(placed, types).ok()).collect()	GENUINE-EMPTY	.ok() — counted drop by contract	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/lang/rust/walk.rs	R3	Err(_) => Vec::new(),	GENUINE-EMPTY	Err(_) => — unmintable ref -> no candidate; added	audit 2026-11-03 App. C	2026-11-03
 crates/senseid/src/indexer/resolve.rs	R3	Err(_) => Vec::new(),	GENUINE-EMPTY	Err(_) => — unmintable ref -> no candidate; added	audit 2026-11-03 App. C	2026-11-03
@@ -471,3 +470,7 @@ app/src/routes/(workspace)/workspace/[id]/integrations/integrations-state.svelte
 crates/senseid/src/relay/rows.rs	R3	Err(e) => {	NOT-A-DEFAULT	Err( — an unread decision or message row is logged and sends no row event; the task/relay event beside it makes the screen re-read Now (#418)	review 2026-11-13 #418	2026-11-13
 crates/senseid/src/tasks/handlers/embed.rs	R1	let cap = embed_calls_per_run(ctx.pg().get_config("embed.calls_per_run").await.ok().flatten());	PARSE-DEFAULT	.ok().flatten() — unset/unreadable config knob falls back to documented default (batch_per_tick precedent)	fix-359 impl r1 (frost-capella), for reviewer	2026-11-09
 crates/senseid/src/tasks/handlers/prompt_classify.rs	R3	Err(_) => {	PARSE-DEFAULT	Err(_) => — timeout is logged and answers None; the caller labels the turn by phrase with source phrase (#447), never a fabricated label	reviewed #447	2026-11-17
+app/src/lib/wizard-state.svelte.ts	T3	const absorbed = res.data.absorbed ?? [];	GENUINE-EMPTY	?? [] — old-daemon compat: daemons before consolidation omit absorbed and never absorb, so missing ≡ empty	consolidation impl r1, for reviewer	2026-11-21
+crates/senseid/src/transcript/mod.rs	R1	consent::consented(pg).await.unwrap_or_else(|_| std::collections::HashSet::new());	GENUINE-EMPTY	unreadable consent is no consent (fail closed, self-heals next sync)	ops-center slice 4, for reviewer	2026-11-21
+crates/senseid/src/watcher/root_watcher.rs	R1	std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())	PARSE-DEFAULT	.unwrap_or_else( — canonicalize documented fallback (deleted files have nothing to resolve)	ops-center slice 4, for reviewer	2026-11-21
+crates/senseid/src/watcher/root_watcher.rs	R1	std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())	PARSE-DEFAULT	.unwrap_or_else( — canonicalize documented fallback (missing dirs warn+skip downstream)	ops-center slice 4, for reviewer	2026-11-21

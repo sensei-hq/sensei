@@ -11,10 +11,11 @@
   // Notice with a Retry — never an empty crew, never "No crew yet" (§1f).
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { untrack } from 'svelte';
   import { Loading, Notice } from '@sensei/ui';
   import { failureReason } from '$lib/api.js';
   import { useGlyphMode } from '$lib/glyphs';
-  import type { RelayState } from '@sensei/state';
+  import type { RelayDecisionChoice, RelayState } from '@sensei/state';
   import {
     toAddMember,
     toCompletedRows,
@@ -160,9 +161,9 @@
   }
 
   /** Answer a decision by its id (Needs you calls back with it). */
-  function answer(id: string, option: string): Promise<string | null> {
+  function answer(id: string, choice: RelayDecisionChoice): Promise<string | null> {
     const decision = state.now?.decisions.find((d) => d.id === id);
-    return decision ? state.answer(decision, { option }) : Promise.resolve('This decision is no longer open.');
+    return decision ? state.answer(decision, choice) : Promise.resolve('This decision is no longer open.');
   }
   const completedRows = $derived(toCompletedRows(state.now, rowOptions));
 
@@ -175,8 +176,20 @@
   $effect(() => {
     if (shell.view === 'crew' && state.now && !state.runList) void state.readRuns();
   });
+  // What this machine has seen, for AddMember's picker (#455): read each time the Crew
+  // view opens, since no event says a tool was seen or configured; Retry reads it again.
+  // `crewOpen` is not reactive: it marks the opening, so a crew read that lands while
+  // Crew stays open does not read the catalogue again.
+  let crewOpen = false;
+  $effect(() => {
+    const open = shell.view === 'crew' && state.now != null;
+    if (open && !crewOpen) untrack(() => void state.readCatalogue());
+    crewOpen = open;
+  });
   const memberGroups = $derived(toMemberGroups(state.now, Date.now()));
-  const addMember = $derived(toAddMember(state.now, state.addRole));
+  const addMember = $derived(
+    toAddMember(state.now, state.addRole, { data: state.catalogue, error: state.catalogueError, picked: state.pickedTool }),
+  );
   async function copy(text: string): Promise<void> {
     await navigator.clipboard?.writeText(text);
   }
@@ -199,6 +212,19 @@
   glyphs={mode()}
   compose={composeBand}
 >
+  {#if state.streamFault}
+    <div class="px-4 pt-4">
+      <Notice
+        data-relay-stale
+        tone="fault"
+        size="inline"
+        expanded
+        title="Live updates interrupted"
+        detail={state.streamFault}
+        remedy="Reconnecting automatically — the view refreshes when the stream reopens."
+      />
+    </div>
+  {/if}
   {#if state.reading}
     <Loading />
   {:else if failure}
@@ -228,7 +254,13 @@
           error={state.runActionError}
         />
       {/if}
-      <AddMember view={addMember} oncopy={(text) => void copy(text)} onrole={(role) => (state.addRole = role)} />
+      <AddMember
+        view={addMember}
+        oncopy={(text) => void copy(text)}
+        onrole={(role) => (state.addRole = role)}
+        onpick={(id) => state.pickTool(id)}
+        onretrycatalogue={() => void state.readCatalogue()}
+      />
       {#if state.runsError}
         <Notice
           data-runs-error
@@ -250,7 +282,7 @@
         <NeedsYou
           view={needsYou}
           href={(crewId, taskId) => taskHref(base, crewId, taskId)}
-          onanswer={(id, option) => answer(id, option)}
+          onanswer={(id, choice) => answer(id, choice)}
           onopenqueue={() => state.openQueue()}
           onnudge={(row) => state.nudge(row)}
           nudging={state.nudging}

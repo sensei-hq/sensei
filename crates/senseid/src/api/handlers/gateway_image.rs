@@ -53,10 +53,6 @@ fn split_model_router(
     (None, router)
 }
 
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
-
 fn default_cache_path(prompt: &str, provider: &str, model: Option<&str>) -> PathBuf {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -66,7 +62,7 @@ fn default_cache_path(prompt: &str, provider: &str, model: Option<&str>) -> Path
         hasher.update(m);
     }
     let hash = hex::encode(hasher.finalize());
-    home_dir()
+    sensei_bootstrap::config::try_home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".sensei")
         .join("generated")
@@ -77,7 +73,7 @@ fn path_is_safe(path: &Path, allow_outside_home: bool) -> bool {
     if allow_outside_home {
         return true;
     }
-    let Some(home) = home_dir() else {
+    let Some(home) = sensei_bootstrap::config::try_home_dir() else {
         return true;
     }; // can't enforce — be permissive
     if path.starts_with(&home) {
@@ -298,7 +294,7 @@ mod tests {
 
     #[test]
     fn path_safety_allows_home_and_tmp() {
-        if let Some(home) = home_dir() {
+        if let Some(home) = sensei_bootstrap::config::try_home_dir() {
             assert!(path_is_safe(&home.join("a.png"), false));
         }
         assert!(path_is_safe(&PathBuf::from("/tmp/a.png"), false));

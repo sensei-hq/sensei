@@ -2,14 +2,34 @@
   // Set the crew up, or add to it (COMPONENTS §3e AddMember; CONTRACT §1h): the title and
   // a line on how it works, the role (Coordinator disabled once taken), the step and the
   // line to paste with Copy, and what the screen is listening for. The catalogue picker
-  // (assistants and editors seen on this machine) arrives when the daemon serves it.
-  import type { RelayAddMemberView, RelayRole } from '@sensei/state';
+  // (#455): the assistants and editors this machine has seen, as pressed-state lists;
+  // picking one words the note under the line, never the line itself. A failed read is
+  // a Notice with Retry, and the line stays usable.
+  import { Notice } from '@sensei/ui';
+  import type { RelayAddMemberView, RelayCatalogueItemView, RelayRole } from '@sensei/state';
 
   let {
     view,
     oncopy,
     onrole,
-  }: { view: RelayAddMemberView; oncopy: (text: string) => void; onrole: (role: RelayRole) => void } = $props();
+    onpick = () => {},
+    onretrycatalogue = () => {},
+  }: {
+    view: RelayAddMemberView;
+    oncopy: (text: string) => void;
+    onrole: (role: RelayRole) => void;
+    onpick?: (id: string) => void;
+    onretrycatalogue?: () => void;
+  } = $props();
+
+  const groups = $derived(
+    view.catalogue
+      ? [
+          { id: 'assistants', label: 'Assistants', items: view.catalogue.assistants },
+          { id: 'editors', label: 'Editors', items: view.catalogue.editors },
+        ]
+      : [],
+  );
 
   const ROLES: Array<{ value: RelayRole; label: string }> = [
     { value: 'coordinator', label: 'Coordinator' },
@@ -41,6 +61,47 @@
     </span>
     {#if view.roleLocked}<span class="text-sm text-ink-soft">The coordinator is set; contributors join from here.</span>{/if}
   </div>
+  {#snippet tool(item: RelayCatalogueItemView)}
+    <button
+      type="button"
+      data-catalogue-item={item.id}
+      aria-pressed={item.pressed}
+      onclick={() => onpick(item.id)}
+      class={[
+        'flex flex-col items-start gap-0.5 min-w-[160px] px-3 py-2 rounded-lg border border-solid text-left cursor-pointer',
+        item.pressed ? 'border-primary bg-primary-soft text-ink' : 'border-paper-edge bg-paper text-ink',
+      ]}
+    >
+      <span class="text-sm font-semibold">{item.name}</span>
+      <span class="text-xs text-ink-soft">{item.used}</span>
+      {#each item.details as detail, i (i)}
+        <span class="text-xs text-ink-soft [overflow-wrap:anywhere]">{detail}</span>{' '}
+      {/each}
+    </button>
+  {/snippet}
+  {#if view.catalogueError}
+    <Notice
+      data-catalogue-error
+      tone="fault"
+      size="inline"
+      title="Couldn't read the assistants"
+      detail={view.catalogueError}
+      primary={{ label: 'Retry', name: 'retry-catalogue', onclick: onretrycatalogue }}
+    />
+  {:else if view.catalogue}
+    <div class="flex flex-col gap-3">
+      {#each groups as group (group.id)}
+        {#if group.items.length}
+          <div data-catalogue-group={group.id} role="group" aria-label={group.label} class="flex flex-col gap-1.5">
+            <span class="text-xs font-semibold text-ink-soft uppercase tracking-wide">{group.label}</span>
+            <div class="flex flex-wrap gap-2">
+              {#each group.items as item (item.id)}{@render tool(item)}{/each}
+            </div>
+          </div>
+        {/if}
+      {/each}
+    </div>
+  {/if}
   <div class="flex flex-col gap-2 p-3 rounded-[10px] bg-paper-soft">
     <p class="m-0 text-sm">
       {#if view.command.step}<strong data-command-step>{view.command.step}</strong>{/if}
@@ -55,8 +116,22 @@
         class="min-h-[30px] px-2.5 rounded-[7px] border border-solid border-paper-edge bg-paper text-ink text-xs cursor-pointer"
       >Copy</button>
     </div>
-    <p class="m-0 text-xs text-ink-soft">{view.command.note}</p>
+    <p data-command-note class="m-0 text-xs text-ink-soft [overflow-wrap:anywhere]">{view.command.note}</p>
   </div>
+  {#if view.launch}
+    <div class="flex flex-col gap-2 p-3 rounded-[10px] bg-paper-soft">
+      <p class="m-0 text-sm">Start it first.</p>
+      <div data-launch-line class="flex items-center gap-2 py-1.5 pl-3 pr-1.5 rounded-lg border border-solid border-paper-edge bg-paper">
+        <code data-launch-text class="flex-1 min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{view.launch}</code>
+        <button
+          type="button"
+          data-launch-copy
+          onclick={() => oncopy(view.launch ?? '')}
+          class="min-h-[30px] px-2.5 rounded-[7px] border border-solid border-paper-edge bg-paper text-ink text-xs cursor-pointer"
+        >Copy</button>
+      </div>
+    </div>
+  {/if}
   <p data-listening class="m-0 flex items-center gap-2 text-xs text-ink-soft">
     <span aria-hidden="true" class="inline-block w-2 h-2 rounded-full bg-success"></span>{view.listening}
   </p>

@@ -632,3 +632,51 @@ describe('RelayState · the Lanes view: by run or by agent, kept for the person 
     expect(kept.written).toEqual(['agent']);
   });
 });
+
+describe('RelayState · the catalogue AddMember picks from (#455)', () => {
+  const catalogue = { assistants: [], editors: [], unknown: [] };
+  it('reads it when asked; nothing picked yet', async () => {
+    const readCatalogue = vi.fn(async () => F.ok(catalogue));
+    const { source } = fakeSource({ readCatalogue });
+    const s = new RelayState(source, {}, reads());
+    expect(s.catalogue).toBeNull();
+    await s.readCatalogue();
+    expect(readCatalogue).toHaveBeenCalledTimes(1);
+    expect(s.catalogue).toEqual(catalogue);
+    expect(s.catalogueError).toBeNull();
+    expect(s.pickedTool).toBeNull();
+  });
+
+  it('the read carries the workspace and crew, so launches resolve (#513)', async () => {
+    const readCatalogue = vi.fn(async () => F.ok(catalogue));
+    const { source } = fakeSource({
+      readCatalogue,
+      readNow: vi.fn(async () => F.ok(F.now({ crews: [{ ...F.crew(), id: 'crew-9' }] }))),
+    });
+    const s = new RelayState(source, { workspace_id: 'ws-1' }, reads());
+    await s.reReadNow();
+    await s.readCatalogue();
+    expect(readCatalogue).toHaveBeenCalledWith({ workspace_id: 'ws-1', crew_id: 'crew-9' });
+  });
+
+  it('a failed read says so and invents no groups', async () => {
+    const { source } = fakeSource({ readCatalogue: vi.fn(async () => F.fail(500, 'internal error')) });
+    const s = new RelayState(source, {}, reads());
+    await s.readCatalogue();
+    expect(s.catalogue).toBeNull();
+    expect(s.catalogueError).toContain('internal error');
+  });
+
+  it('a surface with no catalogue reads none and says nothing', async () => {
+    const s = new RelayState(fakeSource().source, {}, reads());
+    await s.readCatalogue();
+    expect(s.catalogue).toBeNull();
+    expect(s.catalogueError).toBeNull();
+  });
+
+  it('picks a tool', () => {
+    const s = new RelayState(fakeSource().source, {}, reads());
+    s.pickTool('cursor');
+    expect(s.pickedTool).toBe('cursor');
+  });
+});

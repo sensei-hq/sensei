@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,197, headroom {})",
+             (ceiling 1,184, headroom {})",
             elsewhere.len(),
-            1_197_i64 - other as i64
+            1_184_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4684,8 +4684,54 @@ mod tests {
         // tests. The lane had stood at 1,185 against its own 1,153 unnoticed.
         // Same documented class, same backlog cure (follow the alias), not a
         // lower number.
+        // Lowered 1,197 -> 1,161 on 2026-11-19, measured 1,161 over 228
+        // identities (develop base 1,197/234): the #455 assistant catalogue
+        // slice adds 9 `AppState·pg` alias reaches (its catalogue, install and
+        // resolve handlers). Its new call sites name the declaring module
+        // (`assistants::catalogue::`, `assistants::health::`) rather than the
+        // re-export, which would have added 18 more, and the same cure removes
+        // 45 existing reaches: `AdapterCheck`, `CheckStatus` and
+        // `AdapterResolveReport` from `claude_code`, `watchdog`, `mod` and the
+        // config handlers.
+        // Raised 1,161 → 1,162 on 2026-11-21, measured 1,162 over 228
+        // identities: +1 `AppState·pg` alias reach, from the watch-root
+        // consolidation's post-merge prefix read in `add_watch_root` (the
+        // watcher registers the database's exclusions, read after the merge).
+        // Same documented class, same backlog cure (follow the alias), not a
+        // lower number.
+        // Raised 1,162 → 1,168 on 2026-11-21, measured 1,168 over 230
+        // identities: +6 from the uniform-SSE slice's framed-stream hub
+        // reads (4 SSE handlers + the forwarder spawn). Same documented
+        // class, same backlog cure (follow the alias), not a lower number.
+        // Raised 1,168 → 1,172 on 2026-11-21, measured 1,172 over 230
+        // identities: +4 from the queue-observability slice's new store
+        // reads (queue listing, failed/abandoned feeds). Same documented
+        // class, same backlog cure (follow the alias), not a lower number.
+        // Raised 1,172 → 1,176 on 2026-11-21, measured 1,176 over 230
+        // identities: +4 from the incremental-transcript slice's watcher
+        // routing (kind-filtered batch + symlink-tolerant resolve). Same
+        // documented class, same backlog cure (follow the alias).
+        // Raised 1,176 → 1,180 on 2026-11-22, measured 1,180 over 230
+        // identities: +2 `AppState·pg` and +2 `AppState·task_queue` alias
+        // reaches, all four from the operations-center slice 7 retry
+        // endpoint — the handler's attempts read, session clock, and
+        // re-enqueue, plus the test seed's pool read. (Slices 5, 6 and 8
+        // add none.) Same documented class, same backlog cure (follow
+        // the alias), not a lower number.
+        // Raised 1,180 → 1,183 on 2026-11-22, measured 1,183 over 230
+        // identities: +3 `AppState·pg` alias reaches (566 → 569, every
+        // other bucket identical) from the crash-recovery slices' new
+        // store reads — the acks GET/PUT, retry, and waves-listing
+        // handlers and their driving tests. Same documented class, same
+        // backlog cure (follow the alias), not a lower number.
+        // Raised 1,183 → 1,184 on 2026-11-23, measured 1,184 over 230
+        // identities: +1 `AppState·pg` (569 → 570, every other bucket
+        // identical) from the #513 launch-template endpoint's
+        // repo-resolution read. Same documented class, same backlog
+        // cure (follow the alias), not a lower number. (Also corrects
+        // the println, which still named the 1,180 ceiling.)
         assert!(
-            other <= 1_197,
+            other <= 1_184,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

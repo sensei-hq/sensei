@@ -1,9 +1,14 @@
+pub(crate) mod catalogue;
 mod claude_code;
-mod health;
+pub(crate) mod health;
 mod helpers;
 mod mcp_file;
 mod trait_def;
-mod watchdog;
+pub(crate) mod watchdog;
+pub use catalogue::{
+    CatalogueNames, CatalogueWordRow, ToolInstall, UNKNOWN_KIND, WordUsage, assemble_catalogue,
+    readable,
+};
 pub use health::{
     AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus, business_elapsed_hours,
     capture_freshness,
@@ -32,9 +37,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         Box::new(ClaudeCodeAssistant),
         Box::new(McpFileAssistant {
             id: "claude-desktop",
-            name: "Claude Desktop",
             family_id: Some("claude"),
-            family_label: Some("Claude"),
             mcp_key: "mcpServers",
             config_rel: "Library/Application Support/Claude/claude_desktop_config.json",
             entry_format: McpEntryFormat::Standard,
@@ -44,9 +47,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "cursor",
-            name: "Cursor",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".cursor/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -56,9 +57,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "windsurf",
-            name: "Windsurf",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".codeium/windsurf/mcp_config.json",
             entry_format: McpEntryFormat::Standard,
@@ -68,9 +67,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "zed",
-            name: "Zed",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".config/zed/settings.json",
             entry_format: McpEntryFormat::Standard,
@@ -80,9 +77,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "kiro",
-            name: "Kiro",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".kiro/settings/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -92,9 +87,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "opencode",
-            name: "OpenCode",
             family_id: None,
-            family_label: None,
             mcp_key: "mcp",
             config_rel: ".config/opencode/opencode.json",
             entry_format: McpEntryFormat::OpenCode,
@@ -104,9 +97,7 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
         }),
         Box::new(McpFileAssistant {
             id: "vscode",
-            name: "VS Code",
             family_id: None,
-            family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".vscode/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -122,7 +113,6 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AssistantStatus {
     pub id: String,
-    pub name: String,
     pub family: String,
     pub installed: bool,
     /// True when sensei is integrated with this assistant. The integration
@@ -147,7 +137,6 @@ pub struct AssistantPart {
 #[derive(Debug, Serialize, Clone)]
 pub struct AssistantFamily {
     pub family: String,
-    pub name: String,
     pub members: Vec<AssistantStatus>,
     pub installed: bool,
     pub config_path: String,
@@ -179,14 +168,136 @@ pub fn detect() -> Vec<AssistantStatus> {
     all_assistants().iter().map(|a| a.status()).collect()
 }
 
+/// Probe this machine and store what it found, one row per catalogue tool
+/// (#455). Runs on first run, after every configure/remove/upgrade/install/
+/// resolve (the watchdog's repair included), and on "Detect again". `just_configured` names the registry ids this sensei configured in
+/// the action that triggered the run (empty for detection alone); only those,
+/// when the probe confirms them, get this time and version as their
+/// configuration. Returns the stored rows joined to the catalogue.
+pub async fn sync_installs(
+    pg: &crate::db::pg_store::PgStore,
+    just_configured: &[String],
+) -> Result<Vec<serde_json::Value>, String> {
+    let statuses = tokio::task::spawn_blocking(detect)
+        .await
+        .map_err(|e| format!("assistant probe panicked: {e}"))?;
+    sync_installs_with(pg, &statuses, just_configured).await
+}
+
+/// Re-detect after an action that configured or removed sensei, so the install
+/// rows follow (#455); `just_configured` as in [`sync_installs`]. The action
+/// already happened: a failed sync is logged and returned for the caller to
+/// report as a warning, never swallowed.
+pub async fn resync_installs(
+    pg: &crate::db::pg_store::PgStore,
+    just_configured: &[String],
+) -> Option<String> {
+    match sync_installs(pg, just_configured).await {
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "assistants: install sync after an action failed");
+            Some(format!("re-detect installs: {e}"))
+        }
+    }
+}
+
+/// [`sync_installs`] with the probe's result given — the seam tests inject.
+pub async fn sync_installs_with(
+    pg: &crate::db::pg_store::PgStore,
+    statuses: &[AssistantStatus],
+    just_configured: &[String],
+) -> Result<Vec<serde_json::Value>, String> {
+    let rows: Vec<crate::db::pg_store::AssistantInstallRow<'_>> = statuses
+        .iter()
+        .map(|s| crate::db::pg_store::AssistantInstallRow {
+            registry_id: &s.id,
+            installed: s.installed,
+            config_path: Some(s.config_path.as_str()),
+            configured: s.configured,
+            configured_now: s.configured && just_configured.contains(&s.id),
+        })
+        .collect();
+    let unknown = pg.upsert_assistant_installs(&rows, env!("CARGO_PKG_VERSION")).await?;
+    for id in unknown {
+        tracing::warn!(registry_id = %id, "assistants: detected a tool with no catalogue row; not stored");
+    }
+    pg.list_assistant_installs().await
+}
+
+/// A detection result with the name the catalogue gives it (#455): the
+/// registry probes, the catalogue names.
+#[derive(Debug, Serialize, Clone)]
+pub struct Named<T> {
+    pub name: String,
+    #[serde(flatten)]
+    pub item: T,
+}
+
+/// Each probed tool, named by the catalogue.
+pub fn name_statuses(
+    statuses: Vec<AssistantStatus>,
+    names: &CatalogueNames,
+) -> Vec<Named<AssistantStatus>> {
+    statuses.into_iter().map(|s| Named { name: names.name(&s.id), item: s }).collect()
+}
+
+/// Each family, its members named by the catalogue. A family is named after
+/// the tools its switch acts on — its installed members, or every member when
+/// none is installed — so the `claude` family reads "Claude Code and Claude
+/// Desktop" where both are installed, never "Claude Code" alone (#455 review).
+pub fn name_families(
+    families: Vec<AssistantFamily>,
+    names: &CatalogueNames,
+) -> Vec<Named<NamedFamily>> {
+    families
+        .into_iter()
+        .map(|f| Named {
+            name: family_name(&f.members, names),
+            item: NamedFamily {
+                family: f.family,
+                members: name_statuses(f.members, names),
+                installed: f.installed,
+                config_path: f.config_path,
+                parts: f.parts,
+            },
+        })
+        .collect()
+}
+
+/// The catalogue names of the members a family's switch acts on, joined.
+fn family_name(members: &[AssistantStatus], names: &CatalogueNames) -> String {
+    let installed: Vec<&AssistantStatus> = members.iter().filter(|m| m.installed).collect();
+    let acted_on = if installed.is_empty() { members.iter().collect() } else { installed };
+    let mut named: Vec<String> = Vec::new();
+    for m in acted_on {
+        let n = names.name(&m.id);
+        if !named.contains(&n) {
+            named.push(n);
+        }
+    }
+    named.join(" and ")
+}
+
+/// [`AssistantFamily`] with its members named.
+#[derive(Debug, Serialize, Clone)]
+pub struct NamedFamily {
+    pub family: String,
+    pub members: Vec<Named<AssistantStatus>>,
+    pub installed: bool,
+    pub config_path: String,
+    pub parts: Vec<AssistantPart>,
+}
+
 /// config_health for a single adapter id, or None if not registered.
-pub fn config_health_for_id(adapter_id: &str) -> Option<Vec<crate::assistants::AdapterCheck>> {
+pub fn config_health_for_id(
+    adapter_id: &str,
+) -> Option<Vec<crate::assistants::health::AdapterCheck>> {
     all_assistants().iter().find(|a| a.id() == adapter_id).map(|a| a.config_health())
 }
 
 /// Resolve a single adapter by id via its `resolve()` (reinstall). None if the
 /// id isn't registered or the mcp binary can't be found.
-pub fn resolve_by_id(adapter_id: &str) -> Option<crate::assistants::AdapterResolveReport> {
+pub fn resolve_by_id(adapter_id: &str) -> Option<crate::assistants::health::AdapterResolveReport> {
     let mcp_cmd = find_mcp_binary()?.to_string_lossy().to_string();
     all_assistants().iter().find(|a| a.id() == adapter_id).map(|a| a.resolve(&mcp_cmd))
 }
@@ -228,7 +339,6 @@ pub fn detect_families() -> Vec<AssistantFamily> {
         } else {
             families.push(AssistantFamily {
                 family: fam_id.to_string(),
-                name: asst.family_name().to_string(),
                 installed: status.installed,
                 config_path: status.config_path.clone(),
                 members: vec![status],
@@ -328,6 +438,13 @@ pub fn configure(
 /// file-based MCP assistant reports a no-op action (its config re-reads on the
 /// assistant's own restart).
 pub fn upgrade(assistant_ids: &[String]) -> Vec<AdapterResolveReport> {
+    upgrade_refreshing(assistant_ids).0
+}
+
+/// [`upgrade`], also naming the ids whose upgrade re-pushed sensei into the
+/// tool (a plugin update). A no-op upgrade refreshes nothing, so it does not
+/// count as configured by this sensei version.
+pub fn upgrade_refreshing(assistant_ids: &[String]) -> (Vec<AdapterResolveReport>, Vec<String>) {
     let assistants = all_assistants();
     let targets: Vec<&Box<dyn Assistant>> = if assistant_ids.is_empty() {
         assistants.iter().filter(|a| a.detect()).collect()
@@ -335,12 +452,14 @@ pub fn upgrade(assistant_ids: &[String]) -> Vec<AdapterResolveReport> {
         assistants.iter().filter(|a| assistant_ids.contains(&a.id().to_string())).collect()
     };
 
-    targets
+    let mut refreshed = Vec::new();
+    let reports = targets
         .iter()
         .map(|asst| match asst.upgrade() {
             Ok(ok) => {
                 let mut actions = Vec::new();
                 if ok.plugin {
+                    refreshed.push(asst.id().to_string());
                     actions.push(format!("upgraded {} plugin", asst.id()));
                 }
                 // A no-op assistant carries its explanatory note in warnings;
@@ -352,6 +471,7 @@ pub fn upgrade(assistant_ids: &[String]) -> Vec<AdapterResolveReport> {
                     ok: true,
                     actions,
                     errors: vec![],
+                    warnings: vec![],
                 }
             }
             Err(e) => AdapterResolveReport {
@@ -359,9 +479,11 @@ pub fn upgrade(assistant_ids: &[String]) -> Vec<AdapterResolveReport> {
                 ok: false,
                 actions: vec![],
                 errors: vec![e],
+                warnings: vec![],
             },
         })
-        .collect()
+        .collect();
+    (reports, refreshed)
 }
 
 /// Broadcast one StateEvent per part. No-op when `tx` is `None` (CLI path)
@@ -820,6 +942,36 @@ mod tests {
         assert_eq!(cmd[0], "sensei-mcp");
     }
 
+    // ── The catalogue owns the supported tools (#455) ─────────────────
+
+    /// Every registry id has a catalogue seed row (as its id or an alias), so a
+    /// detected tool is never dropped for want of one.
+    #[test]
+    fn every_registry_id_resolves_through_the_catalogue_seed() {
+        let seed = include_str!("../../../../database/import/staging/assistant_catalogue.jsonl");
+        let mut words = std::collections::HashSet::new();
+        for line in seed.lines().filter(|l| !l.trim().is_empty()) {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            words.insert(v["id"].as_str().unwrap().to_string());
+            for a in v["aliases"].as_array().unwrap() {
+                words.insert(a.as_str().unwrap().to_string());
+            }
+        }
+        for a in all_assistants() {
+            assert!(words.contains(a.id()), "registry id {} has no catalogue seed row", a.id());
+        }
+    }
+
+    /// An upgrade refreshes only what it re-pushed: a file-based MCP tool's
+    /// upgrade is a no-op, so it does not count as configured by this version.
+    #[test]
+    fn a_noop_upgrade_refreshes_nothing() {
+        let (reports, refreshed) = upgrade_refreshing(&["cursor".to_string()]);
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].ok);
+        assert!(refreshed.is_empty(), "{refreshed:?}");
+    }
+
     // ── Registry consistency ───────────────────────────────────────────
 
     #[test]
@@ -836,7 +988,6 @@ mod tests {
     fn all_assistants_have_nonempty_fields() {
         for asst in all_assistants() {
             assert!(!asst.id().is_empty(), "empty id");
-            assert!(!asst.name().is_empty(), "empty name for {}", asst.id());
             assert!(!asst.mcp_key().is_empty(), "empty mcp_key for {}", asst.id());
             assert!(
                 !asst.config_path().as_os_str().is_empty(),
@@ -1104,6 +1255,66 @@ mod tests {
         std::fs::write(&path, r#"{"otherKey": {}}"#).unwrap();
 
         assert!(!remove_sensei_from_json(&path, "mcpServers"));
+    }
+
+    // ── name_families: a family reads as the tools its switch acts on ──────
+
+    fn claude_family(code_installed: bool, desktop_installed: bool) -> AssistantFamily {
+        let member = |id: &str, installed: bool| AssistantStatus {
+            id: id.into(),
+            family: "claude".into(),
+            installed,
+            configured: false,
+            config_path: String::new(),
+        };
+        AssistantFamily {
+            family: "claude".into(),
+            members: vec![
+                member("claude-code", code_installed),
+                member("claude-desktop", desktop_installed),
+            ],
+            installed: code_installed || desktop_installed,
+            config_path: String::new(),
+            parts: vec![],
+        }
+    }
+
+    fn claude_names() -> CatalogueNames {
+        let row = |word: &str, id: &str, name: &str| CatalogueWordRow {
+            word: word.into(),
+            id: id.into(),
+            name: name.into(),
+            kind: "assistant".into(),
+            joins_crew: id != "claude-desktop",
+            launch_template: None,
+        };
+        CatalogueNames::from_rows(vec![
+            row("claude", "claude", "Claude Code"),
+            row("claude-code", "claude", "Claude Code"),
+            row("claude-desktop", "claude-desktop", "Claude Desktop"),
+        ])
+    }
+
+    // The wizard's switch configures and removes every installed member, so the
+    // card names every installed member: "Enable Claude Code" must not rewrite
+    // Claude Desktop's config too (#455 review).
+    #[test]
+    fn a_family_with_two_installed_members_names_both() {
+        let named = name_families(vec![claude_family(true, true)], &claude_names());
+        assert_eq!(named[0].name, "Claude Code and Claude Desktop");
+    }
+
+    #[test]
+    fn a_family_names_only_its_installed_members() {
+        let n = claude_names();
+        assert_eq!(name_families(vec![claude_family(true, false)], &n)[0].name, "Claude Code");
+        assert_eq!(name_families(vec![claude_family(false, true)], &n)[0].name, "Claude Desktop");
+    }
+
+    #[test]
+    fn a_family_with_nothing_installed_names_every_member() {
+        let named = name_families(vec![claude_family(false, false)], &claude_names());
+        assert_eq!(named[0].name, "Claude Code and Claude Desktop");
     }
 
     // Note: ClaudeCodeAssistant::configure/remove call `claude` CLI which

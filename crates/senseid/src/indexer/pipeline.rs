@@ -21,6 +21,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use tracing::Instrument;
+
 use super::repo;
 use super::scan_repo::{self, RepoScan};
 use super::structure::{self, ChangeKind, FileFacts};
@@ -922,8 +924,14 @@ pub async fn index_and_persist(
             let for_again = facts.clone();
             let stated = crate::indexer::reconcile::Stated::Parsed(facts);
             let again = move || Ok(crate::indexer::reconcile::Stated::Parsed(for_again.clone()));
-            let reconciled =
-                crate::indexer::reconcile::reconcile(pg, folder_id, &stated, &again).await?;
+            let t0 = std::time::Instant::now();
+            let reconciled = async {
+                crate::indexer::reconcile::reconcile(pg, folder_id, &stated, &again).await
+            }
+            .instrument(tracing::debug_span!("indexer.phase", phase = "write"))
+            .await?;
+            let write_ms = t0.elapsed().as_millis() as i64;
+            crate::indexer::phases::PhaseSplits::record(|p| p.write_ms = Some(write_ms));
             Ok(match reconciled.wrote {
                 crate::indexer::reconcile::Wrote::Facts(w) => Some(w),
                 crate::indexer::reconcile::Wrote::Nothing => None,
@@ -1428,6 +1436,71 @@ mod parse_task {
              the id of: resolved {resolved:?}"
         );
 
+        pg.remove_watch_root(&rid).await.ok();
+    }
+
+    /// **AN INDEXED FILE ATTRIBUTES ITS PHASES.** Parse, resolve, and write
+    /// splits land in the task-local outbox for the executor to persist —
+    /// so an 82-second file says where its seconds went.
+    #[tokio::test]
+    async fn an_indexed_file_records_parse_resolve_and_write_splits() {
+        let pg = PgStore::test_store().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let rid = pg
+            .add_watch_root(&root.to_string_lossy(), "phases-seam", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let repo = root.to_string_lossy().to_string();
+        pg.upsert_repo_kind(&rid, "git", "seam", &repo).await.unwrap();
+        let (folder_id,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE abs_path = $1")
+                .bind(&repo)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        pg.upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &folder_id,
+                file_path: "src/lib.rs",
+                mtime: crate::db::pg_store::folders::BARRIER_MTIME,
+                content_hash: crate::db::pg_store::folders::BARRIER_HASH,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let told = TellFile::about("p");
+        let world = told.world();
+        let text = "pub struct Widget;\npub fn make() -> Widget { Widget }\n";
+        let phases = crate::indexer::phases::scope(async {
+            index_and_persist(
+                &pg,
+                &folder_id,
+                crate::indexer::index::FileInput {
+                    repo: &repo,
+                    path: "src/lib.rs",
+                    mode: crate::indexer::index::Mode::New,
+                    package: "p",
+                    module: "lib",
+                    text,
+                    world: &world,
+                    compiled: None,
+                },
+            )
+            .await
+            .expect("the seam writes");
+            crate::indexer::phases::PhaseSplits::take_json()
+        })
+        .await;
+        let phases = phases.expect("splits recorded");
+        for key in ["parse_ms", "resolve_ms", "write_ms"] {
+            assert!(
+                phases.get(key).and_then(|v| v.as_i64()).is_some_and(|ms| ms >= 0),
+                "phase {key} recorded: {phases}"
+            );
+        }
         pg.remove_watch_root(&rid).await.ok();
     }
 }

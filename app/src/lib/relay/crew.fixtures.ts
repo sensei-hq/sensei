@@ -1,6 +1,6 @@
 // The Crew view as the r1 mockup draws it (Relay.dc.html, view "crew"): the bench renders
 // these beside the artboard. Data in the shape the crew selectors produce.
-import { editorTag, type RelayAddMemberView, type RelayMemberGroupView, type RelayMemberView, type RelayRunCardView } from '@sensei/state';
+import { editorTag, toAddMember, type RelayAddMemberView, type RelayCatalogue, type RelayMemberGroupView, type RelayMemberView, type RelayRunCardView } from '@sensei/state';
 
 const m = (
   laneCode: string,
@@ -67,6 +67,9 @@ export const setupStep1 = (): RelayAddMemberView => ({
     note: "Paste it into an assistant session open in this workspace's repository. It registers, gets a codename, and shows above.",
   },
   listening: 'Listening · 0 of 2 to start a run',
+  catalogue: null,
+  catalogueError: null,
+  launch: null,
 });
 
 /** The crew's id on the lines that name it (#419). */
@@ -92,3 +95,27 @@ export const addContributor = (): RelayAddMemberView => ({
   command: { ...setupStep1().command, step: '', text: `register with sensei as contributor in crew ${CREW}` },
   listening: 'Listening · a new member shows above as it registers',
 });
+
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+
+/** What this machine has seen (#455), as the daemon serves it: two assistants, two editors,
+ *  and a word the catalogue does not list (never offered). */
+export const mockupCatalogue = (): RelayCatalogue => ({
+  assistants: [
+    { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: minutesAgo(120), sessions_week: 12, launch: 'cd "/w/sensei" && claude' },
+    { id: 'codex', name: 'Codex', kind: 'assistant', installed: null, last_used_at: minutesAgo(60 * 24 * 9), sessions_week: 0, launch: null },
+  ],
+  editors: [
+    { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: minutesAgo(5), models: ['claude-sonnet-4-5'], mcp_config: '~/.cursor/mcp.json', launch: null },
+    { id: 'zed', name: 'Zed', kind: 'editor', installed: true, last_used_at: null, models: [], mcp_config: null, launch: null },
+  ],
+  unknown: [{ id: 'cowork', name: 'Cowork', kind: 'unknown', last_used_at: minutesAgo(30) }],
+});
+
+/** Add a member with the catalogue picker, nothing picked. */
+export const addWithCatalogue = (picked: string | null = null): RelayAddMemberView =>
+  toAddMember(null, 'coordinator', { data: mockupCatalogue(), error: null, picked });
+
+/** The catalogue could not be read: the error Notice, the line still there. */
+export const addCatalogueError = (): RelayAddMemberView =>
+  toAddMember(null, 'coordinator', { data: null, error: 'The daemon answered 500: internal error', picked: null });

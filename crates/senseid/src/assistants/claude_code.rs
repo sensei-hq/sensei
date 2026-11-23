@@ -4,7 +4,7 @@ use super::trait_def::{Assistant, AssistantConfigureOk};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-use crate::assistants::{AdapterCheck, CheckStatus};
+use crate::assistants::health::{AdapterCheck, CheckStatus};
 use crate::paths::MARKETPLACE_REPO as SENSEI_MARKETPLACE_REPO;
 
 /// Pure helper: read `installed_plugins.json` and confirm that a plugin
@@ -230,9 +230,21 @@ fn installed_plugins_manifest() -> PathBuf {
 // (anthropics/claude-code#69626). We refresh a marker for the long-lived daemon
 // process so the sweep always sees a live owner and never prunes it.
 
-/// The exact compact JSON Claude Code writes per marker: `{"pid":N,"procStart":"..."}`.
-fn in_use_marker_json(pid: u32, proc_start: &str) -> String {
-    format!(r#"{{"pid":{pid},"procStart":"{proc_start}"}}"#)
+/// The exact compact JSON Claude Code writes per marker: `{"pid":N,"procStart":"..."}`,
+/// or `{"pid":N}` with no start time — which its reader accepts (see [`marker_start`]).
+fn in_use_marker_json(pid: u32, proc_start: Option<&str>) -> String {
+    match proc_start {
+        Some(start) => format!(r#"{{"pid":{pid},"procStart":"{start}"}}"#),
+        None => format!(r#"{{"pid":{pid}}}"#),
+    }
+}
+
+/// The start time the daemon's marker records: none on Windows, where Claude
+/// Code keeps its own in `procStartFt` in a format we do not derive and its
+/// reader accepts a marker without one (#505); `ps`'s elsewhere. `Err` when it
+/// cannot be read.
+fn marker_start(pid: u32) -> Result<Option<String>, ()> {
+    if cfg!(windows) { Ok(None) } else { proc_start_utc(pid).map(Some).ok_or(()) }
 }
 
 /// Trim `ps -o lstart=` output (right-padded) to the bare asctime string.
@@ -259,7 +271,11 @@ fn proc_start_utc(pid: u32) -> Option<String> {
 
 /// Write/refresh `<install_path>/.in_use/<pid>` so Claude Code's sweep treats
 /// the plugin as live.
-fn write_in_use_marker(install_path: &Path, pid: u32, proc_start: &str) -> std::io::Result<()> {
+fn write_in_use_marker(
+    install_path: &Path,
+    pid: u32,
+    proc_start: Option<&str>,
+) -> std::io::Result<()> {
     let dir = install_path.join(".in_use");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join(pid.to_string()), in_use_marker_json(pid, proc_start))
@@ -432,14 +448,8 @@ impl Assistant for ClaudeCodeAssistant {
     fn id(&self) -> &str {
         "claude-code"
     }
-    fn name(&self) -> &str {
-        "Claude Code"
-    }
     fn family(&self) -> &str {
         "claude"
-    }
-    fn family_name(&self) -> &str {
-        "Claude"
     }
     fn mcp_key(&self) -> &str {
         "mcpServers"
@@ -501,13 +511,13 @@ impl Assistant for ClaudeCodeAssistant {
     fn keep_alive(&self) {
         let Some(install_path) = plugin_install_path(&installed_plugins_manifest()) else { return };
         let pid = std::process::id();
-        let Some(proc_start) = proc_start_utc(pid) else {
+        let Ok(proc_start) = marker_start(pid) else {
             warn!(
                 "keep_alive: could not read daemon process start time; in-use marker not refreshed"
             );
             return;
         };
-        if let Err(e) = write_in_use_marker(&install_path, pid, &proc_start) {
+        if let Err(e) = write_in_use_marker(&install_path, pid, proc_start.as_deref()) {
             warn!(error = %e, "keep_alive: failed to write plugin in-use marker");
         }
     }
@@ -753,8 +763,27 @@ mod tests {
     #[test]
     fn in_use_marker_json_matches_claude_compact_format() {
         assert_eq!(
-            in_use_marker_json(86189, "Thu Jun 18 14:15:10 2026"),
+            in_use_marker_json(86189, Some("Thu Jun 18 14:15:10 2026")),
             r#"{"pid":86189,"procStart":"Thu Jun 18 14:15:10 2026"}"#
+        );
+    }
+
+    #[test]
+    fn in_use_marker_json_without_a_start_time_is_pid_only() {
+        // Windows: Claude Code keeps its start time in `procStartFt` there, in a
+        // format we do not derive; its reader accepts a marker with no start time.
+        assert_eq!(in_use_marker_json(86189, None), r#"{"pid":86189}"#);
+    }
+
+    #[test]
+    fn write_in_use_marker_without_a_start_time_writes_pid_only() {
+        let tmp = make_tmp_home();
+        let install = tmp.path().join("plugin");
+        std::fs::create_dir_all(&install).unwrap();
+        write_in_use_marker(&install, 4242, None).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(install.join(".in_use/4242")).unwrap(),
+            r#"{"pid":4242}"#
         );
     }
 
@@ -774,7 +803,7 @@ mod tests {
         let tmp = make_tmp_home();
         let install = tmp.path().join("plugin");
         std::fs::create_dir_all(&install).unwrap();
-        write_in_use_marker(&install, 4242, "Thu Jun 18 14:15:10 2026").unwrap();
+        write_in_use_marker(&install, 4242, Some("Thu Jun 18 14:15:10 2026")).unwrap();
         let marker = install.join(".in_use/4242");
         assert!(marker.exists(), "marker file not written");
         assert_eq!(
@@ -783,6 +812,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn proc_start_utc_returns_asctime_for_current_process() {
         // Live: our own pid exists, so `ps` yields a 5-token asctime

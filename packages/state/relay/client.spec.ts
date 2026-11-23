@@ -29,3 +29,20 @@ describe('relayClient · a refusal', () => {
     expect(await relayClient('http://daemon').tryGetRuns()).toMatchObject({ ok: false, error: { status: 502, message: 'Bad Gateway' } });
   });
 });
+
+describe('relayClient · the catalogue (#455)', () => {
+  it('reads GET /relay/catalogue', async () => {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ assistants: [], editors: [], unknown: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const r = await relayClient('http://daemon').tryGetCatalogue();
+    expect(r).toEqual({ ok: true, data: { assistants: [], editors: [], unknown: [] } });
+    expect(fetchSpy).toHaveBeenCalledWith('http://daemon/relay/catalogue', { method: 'GET' });
+  });
+
+  it('the workspace and crew ride along, so launches resolve (#513)', async () => {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ assistants: [], editors: [], unknown: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    await relayClient('http://daemon').tryGetCatalogue({ workspace_id: 'ws-1', crew_id: 'crew-9' });
+    expect(fetchSpy).toHaveBeenCalledWith('http://daemon/relay/catalogue?workspace_id=ws-1&crew_id=crew-9', { method: 'GET' });
+  });
+});

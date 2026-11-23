@@ -19,6 +19,12 @@ export const KANJI_ICONS = {
   '連': 'i-solar-link-round-bold-duotone',
   '結': 'i-solar-link-circle-bold-duotone',
   '統': 'i-solar-layers-bold-duotone',
+  // Operations center: 運 runs, 時 schedules, 清 all-clear.
+  '運': 'i-solar-server-bold-duotone',
+  '時': 'i-solar-calendar-bold-duotone',
+  '清': 'i-solar-check-circle-bold-duotone',
+  // Alerting: 安 standing down.
+  '安': 'i-solar-shield-check-bold-duotone',
   '観': 'i-solar-eye-bold-duotone',
   '録': 'i-solar-history-bold-duotone',
   '作': 'i-solar-bolt-bold-duotone',

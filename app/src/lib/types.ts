@@ -18,52 +18,34 @@ export interface Stage {
 export type { StateEvent } from '@sensei/state';
 
 // ─── Scan ──────────────────────────────────────────────────────────────────────
-
-export type FolderStatus = 'discovered' | 'queued' | 'indexing' | 'indexed' | 'failed';
-export type WorkspaceStatus = 'scanning' | 'indexing' | 'active' | 'failed';
-export type ActivityLevel = 'discover' | 'queue' | 'process' | 'info' | 'success' | 'error';
-
-export interface ScanWorkspaceFolder {
-  id: string;
-  name: string;
-  path: string;
-  stack: string[];
-  filesTotal: number;
-  filesCompleted: number;
-  status: FolderStatus;
-  /**
-   * Wall-clock ms timestamp of the last add/update event the client received
-   * for this folder. Drives the task-list panel's reverse-chronological
-   * ordering — in-flight folders bubble up as their progress events arrive,
-   * terminal-status folders drift down once their lastUpdated freezes.
-   * Optional because hydration from /api/workspaces has no event timestamp.
-   */
-  lastUpdated?: number;
-}
-
-/** Folder-level SSE event from daemon — includes workspaceId for routing. */
-export interface ScanFolderEvent extends ScanWorkspaceFolder {
-  workspaceId: string;
-}
-
-export interface ScanWorkspace {
-  id: string;
-  name: string;
-  status: WorkspaceStatus;
-  folders: ScanWorkspaceFolder[];
-  autoDetected: boolean;
-  confidence: 'high' | 'medium' | 'low';
-}
-
-export interface ActivityEvent {
-  id: string;
-  level: ActivityLevel;
-  message: string;
-  elapsed: number;
-  timestamp: number;
-}
+// Shapes live in @sensei/state (#496); every importer still finds them here.
+export type {
+  FolderStatus,
+  WorkspaceStatus,
+  ActivityLevel,
+  ScanWorkspaceFolder,
+  ScanFolderEvent,
+  ScanWorkspace,
+  ActivityEvent,
+} from '@sensei/state';
 
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
+
+/** One stored install (#455): the catalogue tool, and what detection found on this
+ *  machine at `detected_at`. Nulls are not reported (D83). */
+export interface AssistantInstall {
+  id: string;
+  name: string;
+  kind: 'assistant' | 'editor';
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+  config_path: string | null;
+  configured: boolean;
+  configured_at: string | null;
+  configured_version: string | null;
+  detected_at: string;
+}
 
 export interface AssistantStatus {
   id: string;
@@ -127,13 +109,17 @@ export interface InstallResult {
   commands_installed: number;
   stale_commands_removed: number;
   stale_skills_removed: number;
-  assistants_configured: string[];
+  /** `POST /api/install` (installer::InstallResult) names this `acps_configured`. */
+  acps_configured: string[];
   errors: string[];
+  /** The install landed but a follow-up (e.g. the install re-detect) failed. */
+  warnings: string[];
   marketplace_version: string;
 }
 
 export interface RemoveResult {
-  assistants_removed: string[];
+  /** `POST /api/remove` (installer::RemoveResult) names this `acps_removed`. */
+  acps_removed: string[];
   plugin_removed: boolean;
   commands_removed: number;
   skills_removed: number;
@@ -141,12 +127,18 @@ export interface RemoveResult {
   hooks_removed: boolean;
   cache_cleared: boolean;
   workspaces_cleaned: string[];
+  /** The removal failed for these. */
   errors: string[];
+  /** The removal landed but a follow-up (the install re-detect) failed. */
+  warnings: string[];
 }
 
 export interface AssistantRemoveResult {
   assistants_removed: string[];
+  /** The removal failed for these. */
   errors: string[];
+  /** The removal landed but a follow-up (the install re-detect) failed. */
+  warnings: string[];
 }
 
 export interface InstalledItem {
@@ -1754,6 +1746,20 @@ export interface PruneResult {
   /** The exclusion now on the root, relative to it. */
   excluded: string;
   pruned: PruneReport;
+}
+
+/** A watch root absorbed by a newly added parent: the row is gone, its
+ *  folders and exclusions moved to the parent. */
+export interface AbsorbedWatchRoot {
+  id: string;
+  path: string;
+  status: string;
+}
+
+/** What a parent add consolidated, for the notice that says so. */
+export interface RootConsolidation {
+  parent: string;
+  absorbed: AbsorbedWatchRoot[];
 }
 
 // ── Issue trackers (docs/spec/daemon/tracker-jira-linkage.md R8, R9) ─────────

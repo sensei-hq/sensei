@@ -4,6 +4,8 @@
 //! because it pruned BEFORE writing, offered no way to skip it while iterating,
 //! and swallowed a failed table export — `|| echo skip` with stderr discarded —
 //! so a snapshot missing `sessions` still reported "complete".
+//! Unix only: the script and its fakes are shell scripts.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

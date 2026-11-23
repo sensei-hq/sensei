@@ -2,6 +2,8 @@
 //!
 //! `notarytool submit --wait` can finish on a submission Apple REJECTED; the release
 //! must fail there and show Apple's log, not ship a binary Gatekeeper will refuse.
+//! Unix only: the script and its fakes are shell scripts.
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

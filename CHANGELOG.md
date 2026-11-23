@@ -15,6 +15,126 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-11-23
+
+### Added
+
+- **Relay launch templates** (#513). Each catalogue tool carries a seeded
+  `launch_template`; `GET /relay/catalogue` takes `workspace_id` + `crew_id`
+  and resolves `{repo}` to the crew's checkout, else the workspace's first
+  repo. AddMember renders the resolved launch as its own copyable block
+  under the paste line.
+- **Hook sessions report their host** (#512). A shared env-to-host table in
+  `sensei-bootstrap`; the plugin forwards `TERM_PROGRAM` and cursor-trace
+  presence, and the daemon fills a missing `sessions.host` through the
+  catalogue gate without ever clearing a transcript-derived host.
+- **Indexer phase timing.** Per-file parse/resolve/write splits persist to
+  the new `task_executions.phases_ms` column, so a slow file says where its
+  seconds went.
+
+### Changed
+
+- **Indexer compile governor.** At most two concurrent compiler subprocess
+  spawns; callers for the same (engine, root) share one in-flight compile
+  instead of piling up.
+- **Ops center list caps.** Alerts, failures, pipelines and sync render at
+  most 200 rows with an honest overflow count, so large scan storms no
+  longer choke the webview.
+- **Ops alert clears redeliver.** Uncleared drops stay pending and retry on
+  every refresh until one lands; each write has its own timeout, a
+  recurrence cancels the stale pending write, and late responses from
+  superseded attempts are dropped.
+
+### Fixed
+
+- **Stale folders stop failing.** A vanished directory deletes its tree and
+  skips cleanly instead of failing and alerting; community detection and
+  git-history scans share the same live-folder gate.
+
+## [0.26.0] — 2026-11-22
+
+### Added
+
+- **Operations center.** One live surface for everything the daemon runs in
+  the background: the scan/index queue with waits and backoff, transcript
+  and metric pipeline waves with progress, schedules with next runs and
+  logs, sync state with per-persona activity, and a failures feed (failed
+  tasks with an attempt drill-down and retry, watchdog abandonments, index
+  errors), plus unified alerting with acks. New endpoints cover queue,
+  failed/abandoned feeds, schedules, sync state, task detail, task retry,
+  and wave history, all on one uniform SSE envelope with per-domain state
+  singletons.
+- **Crash recovery.** Operations persist so a crash recovers instead of
+  restarting blind: alert dispositions in `activity.alert_acks` (acks
+  survive restarts, recurrences escalate), wave runs in
+  `activity.wave_runs` (terminals close `done`, boot closes leftovers
+  `abandoned`), retry lineage across sessions, and a bounded boot orphan
+  re-queue sweep. Proven by a kill-restart matrix: index resume without
+  redo, wave abandon and re-drive, orphan lineage, ack survival, and boot
+  backfills.
+- **Global scan-progress footer** with mini, band, and full variants riding
+  one shared scan state (#496).
+- **Root consolidation**: adding a parent root absorbs the inner roots it
+  covers instead of refusing.
+
+### Fixed
+
+- Security lane (#518): three zizmor findings closed and five advisories
+  patched (tokio, rustix, aws-smithy-json CVE-2026-18140, block-buffer,
+  async-executor).
+
+### Changed
+
+- History and failure lists render keyed by row id — session-restarting
+  ids can no longer throw `each_key_duplicate` and blank the center.
+
+## [0.25.0] — 2026-11-20
+
+### Added
+
+- **Structured response forms on relay decisions (#389).** A lane asks the person
+  with a `response` schema and reads typed values back; the Relay screen draws
+  one control per property live with no refresh — selects, numbers, yes/no,
+  a pick-several MultiSelect, long text — checked inline as the daemon checks
+  them. The task view answers task-bound forms the same way.
+- **Assistant catalogue and AddMember picker (#455).** A seeded catalogue tells
+  assistants (harnesses that run a model) from editors (hosts); sessions carry
+  their host, the transcript adapters attribute through it, and register detects
+  the host itself — a detected catalogue editor wins over the self-report.
+- **Native Windows support, first slices (#505).** Windows CI, compile and
+  runtime fixes, and the no-DB suites running on Windows; consumer install and
+  daemon lifecycle continue in follow-up slices.
+- A crew whose lanes hold dead leases can close: close releases each dead lane
+  instead of refusing (#398).
+
+### Changed
+
+- The relay gate fails closed: an unclear reply to a high-risk step is denied,
+  and gate outcomes are recorded in the run's activity (#312, slice 1).
+- Relay task view and Now read through shared `@sensei/state` sources with a
+  realtime channel adapter; the dōjō hosts the package too (#414).
+- `@rokkit/*` 1.16.1: the decision card draws MultiSelect directly and shows
+  chooser placeholders — the nested-control, disabled-fade and placeholder
+  workarounds are gone (upstream #206–#209; #205 still open).
+- Qlty coverage uploads paused while analysis minutes are exhausted; DeepSource
+  reports continue.
+
+### Fixed
+
+- The Ollama router waits 600 s for a 27B cold load instead of timing out at
+  120 s (#447 follow-up).
+
+### Database
+
+- New: `sensei.assistant_catalogue` and `sensei.assistant_installs` (staging
+  table, import procedure, seed, `assistant_catalogue_words` view), the
+  `sensei.tool_kind` enum, `activity.sessions.host`; the relay Now view carries
+  each asked decision's `response`.
+- Retired: `sensei.assistants` — nothing ever read or wrote it, and an apply
+  hook drops it while empty (a row in it refuses the deploy rather than
+  deleting data).
+- Seed: Ollama `timeout_ms` 120000 → 600000.
+
 ## [0.24.0] — 2026-11-17
 
 ### Added

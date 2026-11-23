@@ -1,6 +1,20 @@
-import { describe, it, expect, vi } from 'vitest';
-import { ScanWorkspaceState, ScanActivityState, ScanState, commonParent, pollStep, triggerScans } from './scan-state.svelte.js';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import {
+  ScanWorkspaceState,
+  ScanActivityState,
+  ScanState,
+  commonParent,
+  pollStep,
+  triggerScans,
+  miniSummary,
+  type ScanSource,
+  type IndexQueueStatus,
+  type QueueCounts,
+} from './scan-state.svelte.js';
 import type { ScanWorkspace, ScanWorkspaceFolder, ActivityEvent } from './types.js';
+import type { StateStream } from '../source.js';
+import type { StreamFrame } from '../events.js';
+import type { ApiResult } from '../result.js';
 
 // ── Factories ────────────────────────────────────────────────────────────────
 
@@ -392,26 +406,311 @@ describe('triggerScans', () => {
   const root = (path: string, scanned: boolean) => ({ path, scanned });
 
   it('scans only the roots not yet scanned', async () => {
-    const tryScanFolder = vi.fn(async (_path: string) => ok);
-    await triggerScans({ tryScanFolder }, [root('/a', false), root('/b', true), root('/c', false)]);
-    expect(tryScanFolder.mock.calls.map((c) => c[0])).toEqual(['/a', '/c']);
+    const triggerScan = vi.fn(async (_path: string) => ok);
+    await triggerScans({ triggerScan }, [root('/a', false), root('/b', true), root('/c', false)]);
+    expect(triggerScan.mock.calls.map((c) => c[0])).toEqual(['/a', '/c']);
   });
 
   it('a refused scan throws, naming each root and why', async () => {
-    const tryScanFolder = vi.fn(async (path: string) =>
+    const triggerScan = vi.fn(async (path: string) =>
       path === '/a' ? ok : { ok: false as const, error: { status: 503, message: 'Service Unavailable' } },
     );
-    await expect(triggerScans({ tryScanFolder }, [root('/a', false), root('/c', false)]))
+    await expect(triggerScans({ triggerScan }, [root('/a', false), root('/c', false)]))
       .rejects.toThrow(/\/c.*Service Unavailable/);
-    expect(tryScanFolder).toHaveBeenCalledTimes(2);
+    expect(triggerScan).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('ScanState.notice', () => {
-  it('a failed scan: a fault Notice with the reason', () => {
-    const st = new ScanState();
-    expect(st.notice).toBeNull();
-    st.error = 'daemon unreachable';
-    expect(st.notice).toEqual({ tone: 'fault', title: 'The scan failed', detail: 'daemon unreachable', remedy: 'Retry. If it keeps failing, reload the page.' });
+// ── miniSummary ──────────────────────────────────────────────────────────────
+// The mini band's one line: file counts when the stream has delivered any,
+// queue counts always. "Queued" is pending + running — everything still in
+// the queue, whatever its phase.
+
+describe('miniSummary', () => {
+  const snap = (pending: number, running: number, completed: number): QueueCounts => ({ pending, running, completed });
+
+  it('files plus queue when totals are known', () => {
+    expect(miniSummary(snap(80, 6, 12), 1240, 3580)).toBe('Indexing 1,240/3,580 files · 86 queued');
+  });
+
+  it('queue only before the first file counts arrive', () => {
+    expect(miniSummary(snap(80, 6, 12), 0, 0)).toBe('Indexing · 86 queued');
+  });
+
+  it('a bare line when nothing is known yet', () => {
+    expect(miniSummary(null, 0, 0)).toBe('Indexing…');
+    expect(miniSummary(snap(0, 0, 0), 0, 0)).toBe('Indexing…');
+  });
+
+  it('no snapshot, no queue claim — files alone', () => {
+    expect(miniSummary(null, 1240, 3580)).toBe('Indexing 1,240/3,580 files');
+  });
+});
+
+// ── ScanState.attach / .start ────────────────────────────────────────────────
+// The footer observes through a canned source: scripted queue reads, a
+// captured stream, and spies for every write. Fake timers drive the poller.
+
+type Queue = { pending: number; running: number; completed: number };
+const BUSY: Queue = { pending: 80, running: 6, completed: 12 };
+const IDLE: Queue = { pending: 0, running: 0, completed: 107 };
+
+function cannedSource(script: { queues?: (Queue | 'down')[]; roots?: { path: string; scanned: boolean }[] } = {}) {
+  const queues = script.queues ?? [IDLE];
+  let qi = 0;
+  const stream: {
+    on: ((e: StreamFrame) => void) | null;
+    onOpen: (() => void) | null;
+    onFault: ((reason: string) => void) | null;
+    subscribes: number;
+    teardowns: number;
+  } = { on: null, onOpen: null, onFault: null, subscribes: 0, teardowns: 0 };
+  const read = (q: Queue | 'down'): ApiResult<IndexQueueStatus> =>
+    q === 'down'
+      ? { ok: false, error: { status: 0, message: 'ECONNREFUSED' } }
+      : { ok: true, data: { queue: { ...q, blocked: 0 } } };
+  const source: ScanSource = {
+    readWorkspaces: vi.fn(async () => ({ ok: true as const, data: [] })),
+    readRoots: vi.fn(async () => ({ ok: true as const, data: script.roots ?? [] })),
+    triggerScan: vi.fn(async (_root: string) => ({ ok: true as const, data: { ok: true, scanning: true } })),
+    readIndexStatus: vi.fn(async () => read(queues[Math.min(qi++, queues.length - 1)]!)),
+    events: ((on: (e: StreamFrame) => void, onOpen: () => void, onFault?: (reason: string) => void) => {
+      stream.subscribes += 1;
+      stream.on = on;
+      stream.onOpen = onOpen;
+      stream.onFault = onFault ?? null;
+      onOpen();
+      return () => {
+        stream.teardowns += 1;
+      };
+    }) as StateStream<StreamFrame>,
+  };
+  return { source, stream };
+}
+
+describe('ScanState.attach — passive observation', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('a busy queue reads as scanning, stores the snapshot, and triggers nothing', async () => {
+    const { source } = cannedSource({ queues: [BUSY] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.status).toBe('scanning');
+    expect(st.queueSnapshot).toEqual(BUSY);
+    expect(source.triggerScan).not.toHaveBeenCalled();
+    expect(source.readWorkspaces).toHaveBeenCalledTimes(1);
+    st.reset();
+  });
+
+  it('an idle queue stays idle — never done', async () => {
+    const { source } = cannedSource({ queues: [IDLE] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.status).toBe('idle');
+    await vi.advanceTimersByTimeAsync(3200);
+    expect(st.status).toBe('idle');
+    expect(st.completed).toBe(false);
+    st.reset();
+  });
+
+  it('a draining queue returns to idle, and the poller keeps watching', async () => {
+    const { source } = cannedSource({ queues: [BUSY, IDLE, IDLE, IDLE] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.status).toBe('scanning');
+    await vi.advanceTimersByTimeAsync(3200);
+    expect(st.status).toBe('idle');
+    const reads = (source.readIndexStatus as ReturnType<typeof vi.fn>).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(16000);
+    expect((source.readIndexStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(reads);
+    st.reset();
+  });
+
+  it('a queue that starts later flips idle to scanning', async () => {
+    const { source } = cannedSource({ queues: [IDLE, BUSY] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.status).toBe('idle');
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(st.status).toBe('scanning');
+    st.reset();
+  });
+
+  it('a folder frame flips idle to scanning at once — the poller would miss a burst', async () => {
+    // A short burst drains between the slow idle polls, so polling alone
+    // never shows it (9.1: the center's live frames saw work the footer
+    // missed). A folder add means work arrived — the poller's two-idle
+    // rule still brings it back when the queue drains.
+    const { source, stream } = cannedSource({ queues: [IDLE] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.status).toBe('idle');
+    stream.on!({
+      v: 1, id: 1, ts: '2026-11-21T10:00:00.000Z', entity: 'folder', action: 'add', key: '/r',
+      data: { workspaceId: 'w', id: 'f', name: 'f' },
+    });
+    expect(st.status).toBe('scanning');
+    await vi.advanceTimersByTimeAsync(3200);
+    expect(st.status).toBe('idle');
+    st.reset();
+  });
+
+  it('a folder frame never revives an errored run', async () => {
+    const { source, stream } = cannedSource({ queues: [IDLE] });
+    const st = new ScanState(source);
+    await st.attach();
+    st.status = 'error';
+    stream.on!({
+      v: 1, id: 1, ts: '2026-11-21T10:00:00.000Z', entity: 'folder', action: 'add', key: '/r',
+      data: { workspaceId: 'w', id: 'f', name: 'f' },
+    });
+    expect(st.status).toBe('error');
+    st.reset();
+  });
+
+  it('a dead daemon reads as unreachable and idle, and recovery rehydrates', async () => {
+    const { source } = cannedSource({ queues: [BUSY] });
+    const down = { ok: false as const, error: { status: 0, message: 'ECONNREFUSED' } };
+    source.readWorkspaces = vi
+      .fn()
+      .mockResolvedValueOnce(down)
+      .mockResolvedValue({ ok: true, data: [] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.daemonReachable).toBe(false);
+    expect(st.status).toBe('idle');
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(st.daemonReachable).toBe(true);
+    expect(st.status).toBe('scanning');
+    expect(source.readWorkspaces).toHaveBeenCalledTimes(2);
+    st.reset();
+  });
+
+  it('stream events dispatch into the stores', async () => {
+    const { source, stream } = cannedSource({ queues: [BUSY] });
+    const st = new ScanState(source);
+    await st.attach();
+    // A reconnect open re-reads (broadcast has no replay).
+    const hydrateCalls = (source.readWorkspaces as ReturnType<typeof vi.fn>).mock.calls.length;
+    stream.onOpen!();
+    expect((source.readWorkspaces as ReturnType<typeof vi.fn>).mock.calls.length).toBe(hydrateCalls + 1);
+    const frame = (
+      entity: string,
+      data: unknown,
+    ): StreamFrame => ({
+      v: 1,
+      id: 1,
+      ts: '2026-11-21T10:00:00.000Z',
+      entity,
+      action: 'add',
+      key: 'k1',
+      data: data as Record<string, unknown>,
+    });
+    stream.on!(frame('activity', activity('a1', 'discover', 'found root', 0.1)));
+    expect(st.activities.items).toHaveLength(1);
+    stream.on!(frame('workspace', workspace('p1', 'Lumen', [folder('f1', 'app')])));
+    expect(st.workspaces.items).toHaveLength(1);
+    st.reset();
+  });
+
+  it('a socket fault reads as unreachable at once', async () => {
+    const { source, stream } = cannedSource({ queues: [BUSY] });
+    const st = new ScanState(source);
+    await st.attach();
+    expect(st.daemonReachable).toBe(true);
+    stream.onFault!('the live stream dropped; reconnecting');
+    expect(st.daemonReachable).toBe(false);
+    st.reset();
+  });
+
+  it('attach is idempotent while attached', async () => {
+    const { source, stream } = cannedSource({ queues: [BUSY] });
+    const st = new ScanState(source);
+    await st.attach();
+    await st.attach();
+    expect(stream.subscribes).toBe(1);
+    st.reset();
+  });
+
+  it('reset tears down the stream and clears the run, but keeps expanded', async () => {
+    const { source, stream } = cannedSource({ queues: [BUSY] });
+    const st = new ScanState(source);
+    st.expanded = true;
+    await st.attach();
+    st.reset();
+    expect(stream.teardowns).toBe(1);
+    expect(st.status).toBe('idle');
+    expect(st.queueSnapshot).toBeNull();
+    expect(st.expanded).toBe(true);
+  });
+});
+
+describe('ScanState.start — owning a run', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('triggers unscanned roots and reaches done on an idle queue', async () => {
+    const { source } = cannedSource({
+      queues: [IDLE],
+      roots: [
+        { path: '/a', scanned: false },
+        { path: '/b', scanned: true },
+      ],
+    });
+    const st = new ScanState(source);
+    await st.start();
+    expect(st.status).toBe('scanning');
+    expect((source.triggerScan as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).toEqual(['/a']);
+    await vi.advanceTimersByTimeAsync(3200);
+    expect(st.status).toBe('done');
+    expect(st.completed).toBe(true);
+    const reads = (source.readIndexStatus as ReturnType<typeof vi.fn>).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30000);
+    expect((source.readIndexStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBe(reads);
+    st.reset();
+  });
+
+  it('start upgrades a passive observation instead of resubscribing', async () => {
+    const { source, stream } = cannedSource({ queues: [BUSY], roots: [{ path: '/a', scanned: false }] });
+    const st = new ScanState(source);
+    await st.attach();
+    await st.start();
+    expect(stream.subscribes).toBe(1);
+    expect(source.triggerScan).toHaveBeenCalledTimes(1);
+    st.reset();
+  });
+
+  it('concurrent attach and start share one subscription and one trigger', async () => {
+    const { source, stream } = cannedSource({ queues: [BUSY], roots: [{ path: '/a', scanned: false }] });
+    const st = new ScanState(source);
+    await Promise.all([st.attach(), st.start()]);
+    expect(stream.subscribes).toBe(1);
+    expect(source.triggerScan).toHaveBeenCalledTimes(1);
+    expect(st.status).toBe('scanning');
+    st.reset();
+  });
+
+  it('a refused trigger fails the run and stops the poller', async () => {
+    const { source } = cannedSource({ queues: [IDLE], roots: [{ path: '/a', scanned: false }] });
+    source.triggerScan = vi.fn(async () => ({ ok: false as const, error: { status: 503, message: 'Service Unavailable' } }));
+    const st = new ScanState(source);
+    await st.start();
+    expect(st.status).toBe('error');
+    expect(st.error).toMatch(/\/a.*Service Unavailable/);
+    const reads = (source.readIndexStatus as ReturnType<typeof vi.fn>).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30000);
+    expect((source.readIndexStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBe(reads);
+    st.reset();
   });
 });

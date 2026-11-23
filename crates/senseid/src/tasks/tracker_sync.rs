@@ -68,10 +68,15 @@ pub async fn tick_with(
 /// Spawn the scheduled loop. Cadence lives in `sensei.schedules` (`tracker_sync`).
 pub fn spawn(pg: Arc<PgStore>, rt: Arc<TrackerRuntime>) {
     tokio::spawn(async move {
-        crate::tasks::ticker::run_scheduled(pg.clone(), "tracker_sync", move || {
-            let (pg, rt) = (pg.clone(), rt.clone());
-            async move { tick(pg, rt).await }
-        })
+        crate::tasks::ticker::run_scheduled(
+            pg.clone(),
+            "tracker_sync",
+            std::sync::Arc::new(crate::notifications::DesktopNotifier),
+            move || {
+                let (pg, rt) = (pg.clone(), rt.clone());
+                async move { tick(pg, rt).await }
+            },
+        )
         .await;
     });
 }

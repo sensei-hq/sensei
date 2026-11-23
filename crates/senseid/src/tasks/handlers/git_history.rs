@@ -36,8 +36,8 @@ use crate::tasks::Task;
 /// a caller can tell new history from a re-read.
 pub async fn scan_git_history(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let repo_path = std::path::Path::new(&task.folder_path);
-    if !repo_path.exists() {
-        return Err(format!("scan_git_history: path does not exist: {}", task.folder_path));
+    if super::helpers::prune_if_folder_vanished(ctx.pg(), &task.folder_path).await? {
+        return Ok(0);
     }
 
     let Some(row) = ctx.pg().get_repo_by_path(&task.folder_path).await? else {
@@ -123,6 +123,35 @@ mod tests {
     use super::*;
     use crate::tasks::TaskKind;
     use crate::tasks::test_support::make_ctx;
+
+    /// **VANISHED REPOS PRUNE INSTEAD OF FAILING.** Same listing-then-run
+    /// race as community detection: prune the row, return Ok.
+    #[tokio::test]
+    async fn scan_git_history_prunes_a_repo_whose_directory_is_gone() {
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/ghist_prune_{}", uuid::Uuid::new_v4());
+        let root_id =
+            ctx.pg().add_watch_root(&folder_path, "ghp", &serde_json::json!([])).await.unwrap();
+        crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "ghp-repo", &folder_path)
+            .await
+            .unwrap();
+        // NOTE: the directory is never created — the repo vanished.
+        let task = crate::tasks::Task::new(TaskKind::ScanGitHistory, &folder_path, "");
+        scan_git_history(&ctx, &task).await.unwrap();
+        assert!(
+            ctx.pg().get_repo_by_path(&folder_path).await.unwrap().is_none(),
+            "the vanished repo's row is pruned"
+        );
+    }
+
+    /// Neither row nor directory: already converged — Ok, not an error.
+    #[tokio::test]
+    async fn scan_git_history_skips_a_repo_with_no_row_and_no_directory() {
+        let ctx = make_ctx().await;
+        let folder_path = format!("/tmp/ghist_gone_{}", uuid::Uuid::new_v4());
+        let task = crate::tasks::Task::new(TaskKind::ScanGitHistory, &folder_path, "");
+        scan_git_history(&ctx, &task).await.unwrap();
+    }
 
     /// A real repository's history lands as repository facts.
     ///

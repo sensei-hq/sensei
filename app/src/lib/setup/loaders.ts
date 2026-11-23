@@ -4,6 +4,7 @@
  * Config table uses jsonb — values are native JSON objects, not strings.
  */
 
+import { failureNotice } from '@sensei/ui';
 import { senseiApi, failureReason, dataOrThrow } from '$lib/api.js';
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import { glyphMode } from '$lib/glyphs';
@@ -138,4 +139,18 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     routers: routers.ok ? routers.data.routers : null,
     routersError: routers.ok ? null : failureReason(routers.error),
   };
+}
+
+/** First run (#455): store this machine's installs — the assistants stage posts the
+ *  detection on entry. Null when stored, else why not (the cards' live probe is
+ *  unaffected; the failure is the page's to show). */
+export async function storeAssistantInstalls(port: number): Promise<string | null> {
+  const answer = await senseiApi(port).tryDetectAssistantInstalls();
+  return answer.ok ? null : failureReason(answer.error);
+}
+
+/** Notice props for a detection that could not be stored (#455), or null. Shared by
+ *  the wizard's assistants stage and Settings → Assistants' Detect again. */
+export function detectFailedNotice(error: string | null) {
+  return failureNotice("Couldn't store what was detected on this machine", error);
 }

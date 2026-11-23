@@ -73,24 +73,13 @@ export function laneIn(lane: RelayLane, only: NowRowOptions['only']): boolean {
   return true;
 }
 
-// The assistant families the screen names; any other reads as the daemon wrote it, made readable.
-const FAMILY_NAMES: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  claude: 'Claude Code',
-  codex: 'Codex',
-  cursor: 'Cursor',
-  'gemini-cli': 'Gemini CLI',
-  gemini: 'Gemini CLI',
-  zed: 'Zed',
-  copilot: 'Copilot',
-  cowork: 'Cowork',
-};
-
-/** "Claude Code 2.1": the family as people name it, and its version when reported. */
-export function assistantLabel(family: string, version: string | null): string {
+/** "Claude Code 2.1": the family as the daemon's catalogue names it (#455), and its
+ *  version when reported. With no name served, its own words, made readable — never
+ *  a name the screen keeps (the catalogue owns them). */
+export function assistantLabel(family: string, version: string | null, name?: string | null): string {
   const words = family.replace(/[-_]+/g, ' ').trim();
-  const name = FAMILY_NAMES[family] ?? (words ? words[0].toUpperCase() + words.slice(1) : family);
-  return version ? `${name} ${version}` : name;
+  const label = name ?? (words ? words[0].toUpperCase() + words.slice(1) : family);
+  return version ? `${label} ${version}` : label;
 }
 
 /** The lane's codename, or its code until the daemon mints one (#395). */
@@ -117,7 +106,7 @@ export function laneRow(lane: RelayLane, now: RelayNow, o: NowRowOptions): Relay
     code: lane.code,
     role: lane.role,
     name: lane.title ?? lane.code,
-    who: `${codename(lane)} · ${assistantLabel(lane.family, lane.version)}`,
+    who: `${codename(lane)} · ${assistantLabel(lane.family, lane.version, lane.family_name)}`,
     progress: progressOf(lane.task),
   };
   const task = lane.task;

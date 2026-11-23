@@ -16,6 +16,10 @@
     import { openSettingsWindow } from "$lib/stores/windows.svelte.js";
     import { AlertList } from "@rokkit/ui";
     import { alerts } from "@rokkit/states";
+    import { startOpsAlerts, stopOpsAlerts } from "$lib/ops-alerts.js";
+    import ScanProgress from "$lib/components/indexer/ScanProgress.svelte";
+    import { scanState } from "$lib/scan.js";
+    import { jobsState } from "$lib/ops.js";
 
     let { children } = $props();
 
@@ -34,12 +38,22 @@
     $effect(() => {
         if (appState.loaded && !appState.configError) void appState.migrateLegacyViews(DIAGRAM_VIEW_IDS);
     });
+    // The global scan footer observes passively from app boot — and
+    // re-attaches after a wizard reset() drops the subscription. attach()
+    // is idempotent, so the idle → starting → idle transitions settle
+    // without looping. The jobs state rides along: the footer reads its
+    // queue liveness (top-ups bypass the scan stream), and the Operations
+    // page shares the subscription.
+    $effect(() => {
+        if (scanState.status === "idle") void scanState.attach();
+        void jobsState.attach();
+    });
     // Every screen's failure names the daemon — the one thing every sensei screen depends on.
     setStateDefaults({
       remedy: "Check that the sensei daemon is running, then retry. Health shows which part is down.",
       service: "the sensei daemon",
     });
-    const banner = $derived(daemonBanner(daemonHealth.dbMode, appState.configError));
+    const banner = $derived(daemonBanner(daemonHealth.dbMode, appState.configError, daemonHealth.down));
 
     // Which window this is decides what it does beyond its own pages: the
     // global work is the main window's alone (a second copy in Settings opened
@@ -99,6 +113,9 @@
         if (duties.announcesIdentities) {
             personaList.onAttention = (text) =>
                 void alerts.push({ type: "warning", text, timeout: 8000, actions: openSettingsAction });
+            // Operations alerts toast through the same list, under the same
+            // visibility rule: the main window announces, others stay silent.
+            startOpsAlerts((toast) => void alerts.push({ ...toast, actions: openOperationsAction }));
         }
         if (duties.renewsCredentials) {
             personaList.renews = true;
@@ -135,6 +152,7 @@
         return () => {
             for (const fn of unlistens) fn();
             daemonHealth.stop();
+            stopOpsAlerts();
             if (duties.renewsCredentials) {
                 personaList.renews = false;
                 personaList.stop();
@@ -150,8 +168,13 @@
     <button type="button" data-open-identities onclick={openIdentities}>Open Settings</button>
 {/snippet}
 
+{#snippet openOperationsAction()}
+    <button type="button" data-open-operations onclick={() => goto("/operations")}>Open Operations</button>
+{/snippet}
+
 {#if banner}<Banner bleed {...banner} data-daemon-banner />{/if}
 {#if duties.announcesIdentities}
     <AlertList position="bottom-right" />
 {/if}
 {@render children()}
+<ScanProgress variant="band" />

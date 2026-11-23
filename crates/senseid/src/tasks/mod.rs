@@ -133,6 +133,12 @@ pub enum TaskKind {
     /// Ingest one transcript file into activity.transcript_turns (resumable,
     /// per-file cursor). folder_path = capture source, path = file (#73).
     IngestCapture,
+    /// Transcript-wave barrier: enqueued by `IngestCaptures` blocked on every
+    /// child it dispatched, so it runs exactly when the wave settles and
+    /// emits the wave's terminal transcript frame. The dispatcher's task id
+    /// rides in `parent_task_id`; idempotent (a re-run re-emits the same
+    /// terminal frame, which applies idempotently by key+done).
+    FinalizeTranscriptWave,
     /// Reconstruct historical coverage for one workspace: check out sampled past
     /// commits and run the configured `metrics.coverage_command` in each.
     /// `path` = workspace id, `folder_path` = week bound ("" = all history).
@@ -339,6 +345,7 @@ impl TaskKind {
         Self::IndexLibraryPage,
         Self::IngestCaptures,
         Self::IngestCapture,
+        Self::FinalizeTranscriptWave,
         Self::AnalyzeWorkspace,
         Self::AnalyzeSessionProcess,
         Self::ReconcileRepoMetadata,
@@ -555,6 +562,14 @@ impl TaskKind {
                 high_priority: false,
                 retryable: false,
             },
+            Self::FinalizeTranscriptWave => KindInfo {
+                name: "finalize_transcript_wave",
+                pipeline: Pipeline::Activity,
+                stage: Stage::Aggregate,
+                budget_secs: 60,
+                high_priority: false,
+                retryable: true,
+            },
             Self::AnalyzeWorkspace => KindInfo {
                 name: "analyze_workspace",
                 pipeline: Pipeline::Activity,
@@ -752,6 +767,12 @@ impl TaskKind {
     pub const fn watchdog_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.info().budget_secs)
     }
+
+    /// The kind for a wire/log name, or `None` when nothing declares it.
+    /// Linear scan over [`Self::ALL`] — kinds are few and retries are rare.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().find(|k| k.info().name == name).cloned()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -845,7 +866,10 @@ pub struct Task {
     pub scope: Scope,
     pub error: Option<String>,
     pub retry_number: u32, // 0 = first attempt; bumped per bounded retry (D6c)
-    pub _created_at: Instant,
+    /// Crash/manual-retry lineage: the execution row id this task retries.
+    /// None for first runs and in-session retries (those share the task id).
+    pub retried_from: Option<uuid::Uuid>,
+    pub created_at: Instant,
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
 }
@@ -868,7 +892,8 @@ impl Task {
             scope: Scope::default(),
             error: None,
             retry_number: 0,
-            _created_at: Instant::now(),
+            retried_from: None,
+            created_at: Instant::now(),
             started_at: None,
             completed_at: None,
         }
@@ -1001,7 +1026,10 @@ impl Task {
             scope: Scope::default(),
             error: None,
             retry_number: self.retry_number + 1,
-            _created_at: Instant::now(),
+            // Cross-task lineage survives: a boot-requeued task that fails
+            // retryably in-session still names the attempt it retries.
+            retried_from: self.retried_from,
+            created_at: Instant::now(),
             started_at: None,
             completed_at: None,
         }
@@ -1162,7 +1190,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 44, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 45, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]

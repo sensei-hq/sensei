@@ -20,7 +20,8 @@ pub mod zed;
 
 use crate::db::pg_store::HookEventRow;
 use crate::tasks::executor::TaskContext;
-use crate::tasks::{Task, TaskKind};
+use crate::tasks::{Task, TaskKind, TaskStatus};
+use crate::watcher::root_watcher::TranscriptGranularity;
 use std::path::PathBuf;
 
 // ── Shared constants (used by multiple adapters) ────────────────────────
@@ -429,6 +430,10 @@ pub trait TranscriptAdapter: Send + Sync {
     /// Harness/agent family (the `sensei.assistant_family` enum: "claude", "zed", …).
     /// The precise per-unit model, when known, is carried on [`ParsedTranscript::model`].
     fn family(&self) -> &'static str;
+    /// The editor this source's sessions run in (`cursor`, `zed`, `vscode`), or
+    /// `None` for a terminal harness (#455). No default: a new adapter decides.
+    /// Never guessed — a source with no evidence of an editor answers `None`.
+    fn host(&self) -> Option<&'static str>;
     /// Units this adapter can ingest, each with a change-stamp for cursor skipping.
     fn units(&self) -> Vec<UnitRef>;
     /// Cheap change-stamp for a unit key (no content read) — the cursor
@@ -497,24 +502,45 @@ impl IngestOutcome {
     }
 }
 
+/// Test-mode transcript root. When `SENSEI_TRANSCRIPT_TEST_ROOT` names a
+/// directory, every adapter resolves its source paths under it instead of the
+/// real home — the e2e harness flag that lets transcript scenarios run
+/// against fixtures. Production never sets it.
+pub(crate) fn transcript_test_root() -> Option<PathBuf> {
+    std::env::var("SENSEI_TRANSCRIPT_TEST_ROOT")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
+/// Home for transcript source resolution: the test root in test mode, the
+/// real home otherwise. Every adapter root below joins onto this, so test
+/// mode redirects ALL sources with one switch.
+fn transcript_home() -> PathBuf {
+    transcript_test_root().unwrap_or_else(crate::paths::home)
+}
+
 fn claude_root() -> PathBuf {
-    crate::paths::home().join(".claude/projects")
+    transcript_home().join(".claude/projects")
 }
 
 fn zed_db_path() -> PathBuf {
-    crate::paths::home().join("Library/Application Support/Zed/threads/threads.db")
+    transcript_home().join("Library/Application Support/Zed/threads/threads.db")
 }
 
 fn opencode_db_path() -> PathBuf {
-    crate::paths::home().join(".local/share/opencode/opencode.db")
+    transcript_home().join(".local/share/opencode/opencode.db")
 }
 
 fn cursor_transcript_root() -> PathBuf {
-    crate::paths::home().join(".cursor/projects")
+    transcript_home().join(".cursor/projects")
 }
 
 fn vscode_user_root(variant: &str) -> Option<PathBuf> {
     // variant = "Code" | "Code - Insiders" | "VSCodium" | "Code - OSS"
+    if let Some(t) = transcript_test_root() {
+        return Some(t.join(format!("{variant}/User")));
+    }
     #[cfg(target_os = "macos")]
     {
         Some(crate::paths::home().join(format!("Library/Application Support/{variant}/User")))
@@ -530,9 +556,107 @@ fn vscode_user_root(variant: &str) -> Option<PathBuf> {
 }
 
 fn copilot_home() -> PathBuf {
+    // Test mode wins over even an explicit COPILOT_HOME: hermeticity is the
+    // stronger claim, and test mode is only ever set by the harness.
+    if let Some(t) = transcript_test_root() {
+        return t.join(".copilot");
+    }
     std::env::var("COPILOT_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| crate::paths::home().join(".copilot"))
+}
+
+/// Transcript watch targets for the consented sources: (path, source,
+/// granularity), existing paths only. Unconsented sources are never even
+/// listed; missing adapter dirs are not watched. Roots resolve under the
+/// transcript home, so test mode watches fixtures and never real dirs.
+pub(crate) fn transcript_watch_targets(
+    consented: &std::collections::HashSet<String>,
+) -> Vec<(PathBuf, &'static str, TranscriptGranularity)> {
+    let mut out = Vec::new();
+    let mut consider = |source: &'static str, path: PathBuf, granularity: TranscriptGranularity| {
+        if consented.contains(source) && path.exists() {
+            out.push((path, source, granularity));
+        }
+    };
+    consider("claude_code", claude_root(), TranscriptGranularity::PerFile);
+    consider("cursor", cursor_transcript_root(), TranscriptGranularity::PerFile);
+    consider("copilot_cli", copilot_home(), TranscriptGranularity::PerFile);
+    consider("zed", zed_db_path(), TranscriptGranularity::WholeDb);
+    consider("opencode", opencode_db_path(), TranscriptGranularity::WholeDb);
+    for user in vscode::VARIANTS.iter().filter_map(|v| vscode_user_root(v)) {
+        if !consented.contains("vscode") {
+            break;
+        }
+        if user.is_dir() {
+            out.push((user.clone(), "vscode", TranscriptGranularity::PerFile));
+        }
+        if let Some(db) = vscode::otel_db_path(&user) {
+            out.push((db, "vscode", TranscriptGranularity::WholeDb));
+        }
+    }
+    out
+}
+
+/// Whether this daemon watches transcript dirs at all: the real install
+/// always may (consent still gates per source); an isolated instance only
+/// in transcript test mode, when every root redirects at fixtures.
+fn watches_transcripts() -> bool {
+    !sensei_bootstrap::SenseiConfig::from_env().is_isolated_instance()
+        || transcript_test_root().is_some()
+}
+
+/// Reconcile transcript watches with consent: register watcher entries for
+/// consented sources, drop the rest (and everything on an isolated
+/// instance outside test mode), restarting the watcher iff the set
+/// changed. Called at boot, after every consent change, and on every
+/// scheduler tick (so an adapter dir created later is picked up).
+pub async fn sync_transcript_watches(
+    pg: &crate::db::pg_store::PgStore,
+    queue: &std::sync::Arc<crate::tasks::queue::TaskQueue>,
+) {
+    use crate::watcher::root_watcher::{RootWatcher, WatchKind};
+    let desired: std::collections::HashMap<PathBuf, (&'static str, TranscriptGranularity)> =
+        if !watches_transcripts() {
+            std::collections::HashMap::new()
+        } else {
+            let consented =
+                consent::consented(pg).await.unwrap_or_else(|_| std::collections::HashSet::new());
+            transcript_watch_targets(&consented).into_iter().map(|(p, s, g)| (p, (s, g))).collect()
+        };
+    let mutex = RootWatcher::instance(queue.clone());
+    let Ok(mut watcher) = mutex.lock() else {
+        tracing::warn!(
+            "sync_transcript_watches: watcher mutex poisoned; transcript watches unchanged"
+        );
+        return;
+    };
+    let current: Vec<PathBuf> = watcher
+        .roots()
+        .iter()
+        .filter(|(_, r)| matches!(r.kind, WatchKind::Transcript { .. }))
+        .map(|(p, _)| p.clone())
+        .collect();
+    let mut changed = false;
+    for path in &current {
+        if !desired.contains_key(path) {
+            watcher.unregister(path);
+            changed = true;
+        }
+    }
+    for (path, (source, granularity)) in &desired {
+        if !current.iter().any(|p| p == path) {
+            watcher.register_transcript(path.clone(), source, *granularity);
+            changed = true;
+        }
+    }
+    if changed {
+        // Same restart the roots API performs after membership changes; a
+        // transcript-only install starts its thread here too.
+        if let Err(e) = watcher.start() {
+            tracing::warn!(error = %e, "sync_transcript_watches: watcher restart failed");
+        }
+    }
 }
 
 /// All configured transcript adapters.
@@ -698,7 +822,7 @@ async fn ingest_one(
     //    transcript whether the session was just synthesized or already existed, so
     //    a re-run backfills columns added after the session was first captured.
     //    Idempotent; a miss leaves the column untouched (never a fabricated value).
-    set_session_metadata(pg, &session_id, &parsed).await;
+    set_session_metadata(pg, &session_id, &parsed, adapter.host()).await;
     let session_id = (turns > 0).then(|| session_id.clone());
     Ok(IngestOutcome { skipped: false, turns, analyze_workspace, session_id })
 }
@@ -712,6 +836,7 @@ async fn set_session_metadata(
     pg: &crate::db::pg_store::PgStore,
     session_id: &str,
     parsed: &ParsedTranscript,
+    host: Option<&str>,
 ) {
     let (provider, model_name) = match &parsed.model {
         Some((p, m)) => (Some(p.as_str()), Some(m.as_str())),
@@ -737,6 +862,7 @@ async fn set_session_metadata(
                 tokens_in,
                 tokens_out,
                 split: t.as_ref(),
+                host,
             },
         )
         .await
@@ -954,8 +1080,31 @@ pub async fn backfill(
             }
         }
     }
-    let (files_seen, enqueued) = dispatch(queue, parent, since, &consented).await;
+    let (files_seen, enqueued, child_ids) = dispatch(queue, parent, since, &consented).await;
     let sessions_repaired = repair_sessions(pg).await;
+    // The wave states its size (and what it repaired) before the long child
+    // tail — the denominator progress needs from the first frame.
+    let key = parent.map(|p| p.to_string()).unwrap_or_else(|| "manual".to_string());
+    let _ = queue.sender().send(crate::tasks::progress::TaskEvent::WaveTotals {
+        wave: "transcript".into(),
+        key: key.clone(),
+        total: enqueued as u64,
+        repaired: Some(sessions_repaired as u64),
+    });
+    crate::tasks::progress::open_wave(pg, "transcript", &key, parent, enqueued as u64).await;
+    // The barrier runs when every child settled and emits the terminal wave
+    // event. With no children it runs immediately (an empty wave still ends).
+    let mut barrier = Task::new(TaskKind::FinalizeTranscriptWave, "", "");
+    if let Some(p) = parent {
+        barrier = barrier.with_parent(p);
+    }
+    if child_ids.is_empty() {
+        barrier.status = TaskStatus::Pending;
+    } else {
+        barrier.status = TaskStatus::Blocked;
+        barrier.depends_on = child_ids;
+    }
+    queue.enqueue(barrier).await;
     BackfillOutcome { files_seen, enqueued, sessions_repaired }
 }
 
@@ -1053,9 +1202,10 @@ pub async fn dispatch(
     parent: Option<u64>,
     since: Option<i64>,
     consented: &std::collections::HashSet<String>,
-) -> (u32, u32) {
+) -> (u32, u32, Vec<u64>) {
     let mut count = 0u32;
     let mut skipped = 0u32;
+    let mut child_ids = Vec::new();
     for ad in consented_adapters(consented) {
         for unit in ad.units() {
             // `since` is what makes a backfill a PARAMETER rather than a separate
@@ -1082,12 +1232,30 @@ pub async fn dispatch(
             if let Some(p) = parent {
                 task = task.with_parent(p);
             }
-            queue.enqueue(task).await;
+            child_ids.push(queue.enqueue(task).await);
             count += 1;
         }
     }
     tracing::info!(count, skipped, "capture ingest: dispatched per-unit tasks");
-    (count, count)
+    (count, count, child_ids)
+}
+
+/// Handler for `TaskKind::FinalizeTranscriptWave`: the wave barrier. Enqueued
+/// blocked on every dispatched child, so it runs exactly when the wave
+/// settles, and emits the terminal wave event. Exact because transcript
+/// children are non-retryable: no retry can still be in flight when the
+/// barrier's deps release. Idempotent (a re-run re-emits the same terminal
+/// event, which applies idempotently by key+done).
+pub async fn run_finalize_wave(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    crate::tasks::progress::emit_wave_done(
+        ctx.pg(),
+        ctx.queue.sender(),
+        "transcript",
+        task.parent_task_id,
+        Some(task.id),
+        ctx.queue.session_start(),
+    )
+    .await
 }
 
 /// Handler for `TaskKind::IngestCapture`: ingest one transcript.
@@ -1128,6 +1296,61 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Env guard: the tests below mutate `SENSEI_TRANSCRIPT_TEST_ROOT`, and
+    /// cargo runs tests in parallel threads — both hold this while they do.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Test mode redirects EVERY adapter root under `SENSEI_TRANSCRIPT_TEST_ROOT`
+    /// — the e2e harness flag that lets transcript scenarios run against
+    /// fixtures.
+    #[test]
+    fn test_root_redirects_all_adapter_roots() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: guarded — the only two tests touching this var hold the lock.
+        unsafe { std::env::set_var("SENSEI_TRANSCRIPT_TEST_ROOT", "/tmp/tx-test-root") };
+        let t = PathBuf::from("/tmp/tx-test-root");
+        assert_eq!(claude_root(), t.join(".claude/projects"));
+        assert_eq!(zed_db_path(), t.join("Library/Application Support/Zed/threads/threads.db"));
+        assert_eq!(opencode_db_path(), t.join(".local/share/opencode/opencode.db"));
+        assert_eq!(cursor_transcript_root(), t.join(".cursor/projects"));
+        assert_eq!(copilot_home(), t.join(".copilot"));
+        assert_eq!(vscode_user_root("Code"), Some(t.join("Code/User")));
+        // SAFETY: guarded (see above).
+        unsafe { std::env::remove_var("SENSEI_TRANSCRIPT_TEST_ROOT") };
+        assert_eq!(claude_root(), crate::paths::home().join(".claude/projects"));
+    }
+
+    /// Watch targets: consented sources with existing paths only — an
+    /// unconsented source is never even listed, a missing adapter dir is
+    /// not watched. Db-backed sources watch the db file (whole-db
+    /// granularity); file sources watch their dirs.
+    #[test]
+    fn watch_targets_cover_consented_existing_sources_only() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("sensei-tx-watch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".claude/projects")).unwrap();
+        std::fs::create_dir_all(root.join(".local/share/opencode")).unwrap();
+        std::fs::write(root.join(".local/share/opencode/opencode.db"), b"sqlite").unwrap();
+        // SAFETY: guarded (see above).
+        unsafe {
+            std::env::set_var("SENSEI_TRANSCRIPT_TEST_ROOT", root.to_string_lossy().to_string())
+        };
+
+        let consented: std::collections::HashSet<String> =
+            ["claude_code", "opencode", "cursor"].into_iter().map(str::to_string).collect();
+        let targets = transcript_watch_targets(&consented);
+        let by_source: std::collections::HashMap<_, _> =
+            targets.iter().map(|(_, s, g)| (*s, *g)).collect();
+        use crate::watcher::root_watcher::TranscriptGranularity;
+        assert_eq!(by_source.get("claude_code"), Some(&TranscriptGranularity::PerFile));
+        assert_eq!(by_source.get("opencode"), Some(&TranscriptGranularity::WholeDb));
+        assert!(!by_source.contains_key("cursor"), "missing dir is not watched");
+        assert!(!by_source.contains_key("zed"), "unconsented is never listed");
+
+        unsafe { std::env::remove_var("SENSEI_TRANSCRIPT_TEST_ROOT") };
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     /// Claude Code transcripts read before automated prompts were turns are read once
     /// more, so their scheduled, peer and task-notification turns — and tokens — land.
@@ -1194,6 +1417,9 @@ mod tests {
         fn family(&self) -> &'static str {
             "claude"
         }
+        fn host(&self) -> Option<&'static str> {
+            None
+        }
         fn units(&self) -> Vec<UnitRef> {
             vec![]
         }
@@ -1222,6 +1448,31 @@ mod tests {
         pg.close().await;
         let got = ingest_one(&pg, &GoneTranscript, "/gone.jsonl").await;
         assert!(got.is_err(), "a read that failed was reported as {:?}", got.map(|o| o.skipped));
+    }
+
+    /// The wave barrier runs after every child settled: it emits the wave's
+    /// terminal event (settled/total counts) on the queue channel, which the
+    /// framed mapping turns into a done frame — instead of leaving completion
+    /// to whoever polls `childSummary` next.
+    #[tokio::test]
+    async fn finalize_wave_emits_a_terminal_transcript_event() {
+        use crate::tasks::progress::TaskEvent;
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let mut rx = ctx.queue.sender().subscribe();
+        let mut task = Task::new(TaskKind::FinalizeTranscriptWave, "", "");
+        task.parent_task_id = Some(9);
+        run_finalize_wave(&ctx, &task).await.unwrap();
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("terminal event")
+            .unwrap();
+        match event {
+            TaskEvent::WaveDone { wave, key, settled: _, total: _ } => {
+                assert_eq!(wave, "transcript");
+                assert_eq!(key, "9");
+            }
+            other => panic!("expected WaveDone, got {other:?}"),
+        }
     }
 
     /// A task queued BEFORE consent was withdrawn must not read the file after
@@ -1410,6 +1661,9 @@ mod tests {
         }
         fn family(&self) -> &'static str {
             self.inner.family()
+        }
+        fn host(&self) -> Option<&'static str> {
+            self.inner.host()
         }
         fn units(&self) -> Vec<UnitRef> {
             self.inner.units()
@@ -2016,5 +2270,138 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── The session's host: the editor it ran in (#455) ──────────────────
+
+    #[test]
+    fn every_adapter_declares_its_host() {
+        let p = std::path::PathBuf::from("/nowhere");
+        assert_eq!(cursor::CursorAdapter::new(p.clone()).host(), Some("cursor"));
+        assert_eq!(zed::ZedAdapter::new(p.clone()).host(), Some("zed"));
+        assert_eq!(vscode::VscodeAdapter::new(p.clone()).host(), Some("vscode"));
+        assert_eq!(claude::ClaudeAdapter::new(p.clone()).host(), None);
+        assert_eq!(copilot_cli::CopilotCliAdapter::new(p.clone()).host(), None);
+        assert_eq!(opencode::OpenCodeAdapter::new(p).host(), None);
+    }
+
+    /// Cursor, with the model a transcript carries when its source reports one
+    /// (Cursor's JSONL does not; the host write must not depend on that).
+    struct ModelCursor(cursor::CursorAdapter);
+    impl TranscriptAdapter for ModelCursor {
+        fn source(&self) -> &'static str {
+            self.0.source()
+        }
+        fn family(&self) -> &'static str {
+            self.0.family()
+        }
+        fn host(&self) -> Option<&'static str> {
+            self.0.host()
+        }
+        fn units(&self) -> Vec<UnitRef> {
+            self.0.units()
+        }
+        fn stamp_for(&self, key: &str) -> Option<i64> {
+            self.0.stamp_for(key)
+        }
+        fn session_id_for(&self, key: &str) -> Option<String> {
+            self.0.session_id_for(key)
+        }
+        fn load_content(&self, key: &str) -> Option<String> {
+            self.0.load_content(key)
+        }
+        fn parse(&self, content: &str) -> ParsedTranscript {
+            let mut p = self.0.parse(content);
+            p.model = Some(("anthropic".into(), "claude-sonnet-4-5".into()));
+            p
+        }
+    }
+
+    /// A Cursor transcript under a tracked repository, written to a temp root.
+    async fn cursor_transcript(
+        pg: &crate::db::pg_store::PgStore,
+    ) -> (tempfile::TempDir, String, String) {
+        let stem = format!("_test-host-{}", uuid::Uuid::new_v4());
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("proj-hash").join("agent-transcripts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let cwd = format!("/nowhere/host-{}", uuid::Uuid::new_v4());
+        let rid = pg.add_watch_root("/nowhere", "nowhere", &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&rid, "git", "host", &cwd).await.unwrap();
+        let body = format!(
+            r#"{{"type":"user","cwd":"{cwd}","timestamp":"2026-06-22T10:00:00.000Z","message":{{"role":"user","content":"add a login page"}}}}
+{{"type":"assistant","cwd":"{cwd}","timestamp":"2026-06-22T10:00:02.000Z","message":{{"role":"assistant","content":[{{"type":"text","text":"On it."}}]}}}}
+"#
+        );
+        let file = dir.join(format!("{stem}.jsonl"));
+        std::fs::write(&file, body).unwrap();
+        (root, file.to_string_lossy().to_string(), format!("cursor-{stem}"))
+    }
+
+    async fn host_and_model(
+        pg: &crate::db::pg_store::PgStore,
+        sid: &str,
+    ) -> (Option<String>, Option<String>) {
+        sqlx_core::query_as::query_as(
+            "SELECT host, model FROM activity.sessions WHERE client_session_id = $1",
+        )
+        .bind(sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_new_cursor_session_gets_its_host_and_model() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (root, key, sid) = cursor_transcript(&pg).await;
+        let ad = ModelCursor(cursor::CursorAdapter::new(root.path().to_path_buf()));
+        ingest_one(&pg, &ad, &key).await.unwrap();
+        assert_eq!(
+            host_and_model(&pg, &sid).await,
+            (Some("cursor".into()), Some("claude-sonnet-4-5".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_existing_cursor_session_awaiting_its_metadata_gets_its_host() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let (root, key, sid) = cursor_transcript(&pg).await;
+        let ad = ModelCursor(cursor::CursorAdapter::new(root.path().to_path_buf()));
+        ingest_one(&pg, &ad, &key).await.unwrap();
+        // Captured before hosts existed: no host, metadata not yet synced.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET host = NULL, model = NULL, meta_synced_at = NULL
+              WHERE client_session_id = $1",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        ingest_one(&pg, &ad, &key).await.unwrap();
+        assert_eq!(
+            host_and_model(&pg, &sid).await,
+            (Some("cursor".into()), Some("claude-sonnet-4-5".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_claude_code_session_has_no_host() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let sid = format!("_test-nohost-{}", uuid::Uuid::new_v4());
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("proj")).unwrap();
+        let cwd = format!("/nowhere/nohost-{}", uuid::Uuid::new_v4());
+        let rid = pg.add_watch_root("/nowhere", "nowhere", &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&rid, "git", "nohost", &cwd).await.unwrap();
+        let head = format!(
+            r#"{{"type":"user","cwd":"{cwd}","timestamp":"2026-06-22T09:59:00.000Z","message":{{"role":"user","content":[{{"type":"tool_result","content":"ok"}}]}}}}"#
+        );
+        let file = root.path().join("proj").join(format!("{sid}.jsonl"));
+        std::fs::write(&file, format!("{head}{SAMPLE}")).unwrap();
+        let ad = claude::ClaudeAdapter::new(root.path().to_path_buf());
+        ingest_one(&pg, &ad, &file.to_string_lossy()).await.unwrap();
+        let (host, _) = host_and_model(&pg, &sid).await;
+        assert_eq!(host, None, "a terminal session is never given a host");
     }
 }

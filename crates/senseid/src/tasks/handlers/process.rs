@@ -6,6 +6,7 @@ use super::super::Task;
 use super::helpers::classify_unscannable;
 use crate::db::pg_store::NodeRow;
 use std::path::Path;
+use tracing::Instrument;
 
 // ── Process Repo ──────────────────────────────────────────────────────────
 
@@ -492,15 +493,24 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // A read failure degrades to this file's own package rather than failing
         // the parse — the file still indexes, intra-package edges still place.
         // Logged, because a degraded world loses edges silently.
-        let told = match crate::indexer::pipeline::TellFile::shared(ctx.pg(), fid).await {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::warn!(error = %e, folder_id = %fid,
-                    "world unavailable — resolving with this file's package alone, so \
-                     cross-package and receiver-typed edges will not place");
-                std::sync::Arc::new(crate::indexer::pipeline::TellFile::about(&placement.package))
+        let t0 = std::time::Instant::now();
+        let told = async {
+            match crate::indexer::pipeline::TellFile::shared(ctx.pg(), fid).await {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!(error = %e, folder_id = %fid,
+                        "world unavailable — resolving with this file's package alone, so \
+                         cross-package and receiver-typed edges will not place");
+                    std::sync::Arc::new(crate::indexer::pipeline::TellFile::about(
+                        &placement.package,
+                    ))
+                }
             }
-        };
+        }
+        .instrument(tracing::debug_span!("indexer.phase", phase = "world_load", file = %rel))
+        .await;
+        let world_ms = t0.elapsed().as_millis() as i64;
+        crate::indexer::phases::PhaseSplits::record(|p| p.world_load_ms = Some(world_ms));
         // THE COMPILER, for a language whose adapter declares one: this file's
         // project compiled once per scan (the first file to ask waits for it,
         // the rest share it). A failure is logged with its cause and the file's
@@ -515,14 +525,28 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 match crate::indexer::pipeline::owning_manifest_on_disk(fpath, repo_root, language)
                 {
                     Some((package_dir, _)) => {
-                        match sessions.compiled_for(engine, &package_dir).await {
-                            Ok(project) => Some(project),
-                            Err(e) => {
-                                tracing::warn!(file = %rel, error = %e,
-                                "compiler not run for this file's project — its calls are engine_not_run");
-                                None
+                        let t0 = std::time::Instant::now();
+                        let out = async {
+                            match sessions.compiled_for(engine, &package_dir).await {
+                                Ok(project) => Some(project),
+                                Err(e) => {
+                                    tracing::warn!(file = %rel, error = %e,
+                                    "compiler not run for this file's project — its calls are engine_not_run");
+                                    None
+                                }
                             }
                         }
+                        .instrument(tracing::debug_span!(
+                            "indexer.phase",
+                            phase = "compile_wait",
+                            file = %rel
+                        ))
+                        .await;
+                        let ms = t0.elapsed().as_millis() as i64;
+                        crate::indexer::phases::PhaseSplits::record(|p| {
+                            p.compile_wait_ms = Some(ms)
+                        });
+                        out
                     }
                     None => None,
                 }
@@ -626,10 +650,21 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     let abs_owned = abs_path.clone();
     let folder_path_owned = task.folder_path.clone();
     let folder_name_owned = folder_name.to_string();
-    let parsed = tokio::task::spawn_blocking(move || {
-        crate::tasks::processors::process_file(&abs_owned, &folder_path_owned, &folder_name_owned)
-    })
+    let t_parse = std::time::Instant::now();
+    let parsed = async {
+        tokio::task::spawn_blocking(move || {
+            crate::tasks::processors::process_file(
+                &abs_owned,
+                &folder_path_owned,
+                &folder_name_owned,
+            )
+        })
+        .await
+    }
+    .instrument(tracing::debug_span!("indexer.phase", phase = "parse", file = %abs_path))
     .await;
+    let parse_ms = t_parse.elapsed().as_millis() as i64;
+    crate::indexer::phases::PhaseSplits::record(|p| p.parse_ms = Some(parse_ms));
     let result = match parsed {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
@@ -704,7 +739,8 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
     // Any DB write in here failing is fatal — `?` propagates it out of the async
     // block and we handle it uniformly below (no partial "success").
-    let write_result: Result<(), String> = async {
+    let t_write = std::time::Instant::now();
+    let write_future = async {
         // D3 upsert-then-prune: UPSERT the file's current nodes (surviving symbols
         // keep their id → community_id/embedding/inbound edges), then prune the
         // ones that vanished from the parse. No destructive delete-then-insert.
@@ -876,7 +912,6 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             .await
             .map_err(|e| format!("delete_edges_from_sources: {e}"))?;
 
-
         // Call edges. The FQN path emits RESOLVED node→node edges AT EMIT: the
         // target is get-or-created by FQN (a stub if its definition isn't indexed
         // yet — enriched later, keeping the same id; a `lib_symbol` for an external
@@ -890,7 +925,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 .copied()
                 .unwrap_or(file_node_id);
             ctx.pg()
-                .insert_edge(&folder_id, &source, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(&call.callee_name), file: None }, "calls")
+                .insert_edge(
+                    &folder_id,
+                    &source,
+                    crate::db::pg_store::EdgeTarget::Unresolved {
+                        name: Some(&call.callee_name),
+                        file: None,
+                    },
+                    "calls",
+                )
                 .await
                 .map_err(|e| format!("insert_edge (calls): {e}"))?;
         }
@@ -928,12 +971,25 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 match target {
                     Some(t) => ctx
                         .pg()
-                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Node(&t), "references")
+                        .insert_edge(
+                            &folder_id,
+                            &file_node_id,
+                            crate::db::pg_store::EdgeTarget::Node(&t),
+                            "references",
+                        )
                         .await
                         .map_err(|e| format!("insert_edge (references, file resolved): {e}"))?,
                     None => ctx
                         .pg()
-                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(file_ref), file: None }, "references")
+                        .insert_edge(
+                            &folder_id,
+                            &file_node_id,
+                            crate::db::pg_store::EdgeTarget::Unresolved {
+                                name: Some(file_ref),
+                                file: None,
+                            },
+                            "references",
+                        )
                         .await
                         .map_err(|e| format!("insert_edge (references, file): {e}"))?,
                 };
@@ -952,13 +1008,26 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .map_err(|e| format!("sole_definition_id_by_name({fn_ref}): {e}"))?
                 {
                     ctx.pg()
-                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Node(&t), "references")
+                        .insert_edge(
+                            &folder_id,
+                            &file_node_id,
+                            crate::db::pg_store::EdgeTarget::Node(&t),
+                            "references",
+                        )
                         .await
                         .map_err(|e| format!("insert_edge (references, symbol resolved): {e}"))?;
                     continue;
                 }
                 ctx.pg()
-                    .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(fn_ref), file: None }, "references")
+                    .insert_edge(
+                        &folder_id,
+                        &file_node_id,
+                        crate::db::pg_store::EdgeTarget::Unresolved {
+                            name: Some(fn_ref),
+                            file: None,
+                        },
+                        "references",
+                    )
                     .await
                     .map_err(|e| format!("insert_edge (references, symbol): {e}"))?;
             }
@@ -993,8 +1062,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             .await
             .map_err(|e| format!("set_nodes_is_test_for_file: {e}"))?;
         Ok::<(), String>(())
-    }
-    .await;
+    };
+    let write_result: Result<(), String> = write_future
+        .instrument(tracing::debug_span!("indexer.phase", phase = "write", file = %abs_path))
+        .await;
+
+    let write_ms = t_write.elapsed().as_millis() as i64;
+    crate::indexer::phases::PhaseSplits::record(|p| p.write_ms = Some(write_ms));
 
     if let Err(e) = write_result {
         return fail_folder(ctx, &folder_id, &result.rel_path, e).await;

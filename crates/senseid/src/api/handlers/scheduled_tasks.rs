@@ -100,6 +100,14 @@ fn render(s: &StoredSchedule) -> serde_json::Value {
         "avg_ms": s.avg_ms,
         // When the pass now running started; `null` when idle (#283).
         "running_since": s.running_since.map(|t| t.to_rfc3339()),
+        // Why the last tick skipped, and when — written only when the reason
+        // changes, so the row answers "why has this not run" without a write
+        // per poll.
+        "last_skip_reason": s.last_skip_reason,
+        "last_skip_at": s.last_skip_at.map(|t| t.to_rfc3339()),
+        // Seconds a pass may run before it reads as overrun — the same
+        // clamp the ticker applies, so the UI can show elapsed-of-limit.
+        "overrun_limit_secs": crate::tasks::ticker::pass_limit(s.interval_secs).as_secs(),
         // When it runs next, from the rules the ticker applies (#96). `null` when
         // disabled. Local time decides the window, as it does in the ticker.
         "next_run_at": crate::tasks::schedule::next_run(
@@ -470,6 +478,8 @@ mod tests {
             last_error: None,
             avg_ms: Some(1200),
             running_since: None,
+            last_skip_reason: None,
+            last_skip_at: None,
         };
         let next = render(&s)["next_run_at"].as_str().map(str::to_string).expect("next_run_at");
         let next = chrono::DateTime::parse_from_rfc3339(&next).unwrap();
@@ -496,10 +506,37 @@ mod tests {
             last_error: None,
             avg_ms: None,
             running_since: Some(since),
+            last_skip_reason: None,
+            last_skip_at: None,
         };
         assert_eq!(render(&s)["running_since"], since.to_rfc3339());
         let idle = StoredSchedule { running_since: None, ..s };
         assert!(render(&idle)["running_since"].is_null());
+    }
+
+    /// A skipped worker reports why and when, plus the overrun limit its
+    /// pass is measured against.
+    #[test]
+    fn a_schedule_reports_its_last_skip_and_overrun_limit() {
+        let at = chrono::Utc::now() - chrono::Duration::minutes(3);
+        let s = StoredSchedule {
+            name: "prune".into(),
+            enabled: true,
+            interval_secs: 60,
+            window_start: None,
+            window_end: None,
+            days: vec![],
+            last_run_at: None,
+            last_ok: None,
+            last_error: None,
+            avg_ms: None,
+            running_since: None,
+            last_skip_reason: Some("not_due".into()),
+            last_skip_at: Some(at),
+        };
+        assert_eq!(render(&s)["last_skip_reason"], "not_due");
+        assert_eq!(render(&s)["last_skip_at"], at.to_rfc3339());
+        assert_eq!(render(&s)["overrun_limit_secs"], 1800);
     }
 
     /// #96: a worker's log tail — the last lines tagged with it, from a file.

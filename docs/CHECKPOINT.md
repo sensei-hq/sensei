@@ -1,24 +1,30 @@
-# Checkpoint — 2026-11-19 (#299 — verify sync-filed dōjō workspaces)
+# Checkpoint — 2026-11-23 (perf-indexer-storm landed)
 
-**Slice:** `verify-dojo-sync-files-workspaces` slice 1/1 (#299). Branch `lane/relay-299-s1`
-(worktree `lanes/relay-open`), PR #503.
+**Slice:** P1–P5 storm follow-ups + 4.4 harness fix.
+**Branch:** `develop` (pushed, 8 commits past v0.26.0 checkpoint).
+Tag `v0.26.0` on main; deploy-dojo still waits on user approval.
 
-**Done (tasks 1.1–1.4, 2.1–2.9) + #503 review fixes:**
-- SQL `make test-db` 101/101; dōjō vitest 237 files / 2411 tests; senseid filing tests pass.
-- Member floor on `GET /v1/t/{origin}/{org}/workspaces` (red `110729d0e`, fix `87d9a1693`).
-- Committed browser spec `dojo/e2e/workspace-filing.e2e.ts` (`cd dojo && bun run test:e2e`, local Supabase
-  only): two sync cycles, contributor sees the filed workspace once, lead with no repository role sees none,
-  unconnected org files nothing. 5/5 green; red with the floor put back to `lead`.
-- Live re-run after the fix: scratch `senseid --instance` against the local dōjō, 7 cycles `mapped=1
-  unmapped=1`, no "could not file" warning, 1 workspace (same id) and 1 link throughout; browser: contributor
-  1 row, lead 0 rows.
+## Done
+- P1 governor (cap 2 + dedup; tsconfig skip reverted, regressed).
+- P2 stale prune (live-folder gate in community + git_history).
+- P3 phase timing (phases_ms JSONB; task-local outbox; spans).
+- P4 list caps (200 + overflow in 4 ops sections).
+- P5 clear redelivery (pending + timeout + ack-cancel + gens).
+- 4.4 root-caused (harness-side webview sleep; keep-awake read).
+- Gates: unit 4102, senseid exit-0, clippy clean, check clean,
+  crash 5/5 + ops-center 5/5 Tauri matrices green.
 
-**Remaining:** tasks 3.1–3.5, the production runbook (user only). The member floor reaches production with
-the next release.
+## Remaining
+- User: approve deploy-dojo in GitHub.
+- Follow-ups (in tasks.md, not this change): 1.5 ts-driver hang,
+  5.5 event-driven alert derive (poll is sleep-prone backstop).
 
-**Next command:** the user runs `sensei auth approve`, then follows tasks.md section 3.
+## Next command
+None — verify live, then pick a follow-up or cut 0.27.0.
 
-**Open questions:** none.
+## Open questions
+- 6 process.rs fmt spots: local 1.99.1/1.100.0 flag what CI
+  stable accepts. Left untouched (fixing flips CI red).
 
-**Known broken:** none from this branch. `bun run test:e2e` is not in CI (needs a local Supabase). A scratch
-daemon reads a `security`-written keychain item only with `SENSEI_CREDENTIAL_BACKEND=security`.
+## Known-broken
+- None.

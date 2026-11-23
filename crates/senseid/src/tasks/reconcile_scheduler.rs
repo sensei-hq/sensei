@@ -223,17 +223,22 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 
     // From here the schedule owns the cadence (name `reconcile`).
     let store = pg.clone();
-    ticker::run_scheduled(pg, "reconcile", move || {
-        let (queue, pg) = (queue.clone(), store.clone());
-        async move {
-            let now_ms = Utc::now().timestamp_millis();
-            reconcile_tick(&queue, &pg, now_ms).await;
-            // The watchdog rides the same cadence, so a watcher stall is caught
-            // within ~one pass of the stall window.
-            watcher_watchdog(&queue, &pg, now_ms, stall_ms).await;
-            Ok(())
-        }
-    })
+    ticker::run_scheduled(
+        pg,
+        "reconcile",
+        std::sync::Arc::new(crate::notifications::DesktopNotifier),
+        move || {
+            let (queue, pg) = (queue.clone(), store.clone());
+            async move {
+                let now_ms = Utc::now().timestamp_millis();
+                reconcile_tick(&queue, &pg, now_ms).await;
+                // The watchdog rides the same cadence, so a watcher stall is caught
+                // within ~one pass of the stall window.
+                watcher_watchdog(&queue, &pg, now_ms, stall_ms).await;
+                Ok(())
+            }
+        },
+    )
     .await;
 }
 

@@ -7,8 +7,15 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TaskEvent {
+    /// A task arrived and can start — this event and only this event both
+    /// wakes the run loop and announces the wait is over. Carries identity
+    /// (kind, paths) so stream followers can render the row without a
+    /// re-read.
     Queued {
         task_id: u64,
+        kind: String,
+        folder_path: String,
+        path: String,
     },
     Started {
         task_id: u64,
@@ -91,6 +98,97 @@ pub enum TaskEvent {
         path: String,
         error: String,
     },
+    /// A pipeline wave states its size when it starts: transcript backfills,
+    /// metric computations, any fan-out whose children settle later. `wave`
+    /// names the pipeline entity (`transcript`, `metric`), `key` the wave
+    /// (dispatcher task id), `total` the denominator progress needs from
+    /// the first frame. `repaired` rides along when the wave repaired
+    /// sessions as well as ingesting (transcript backfills only).
+    WaveTotals {
+        wave: String,
+        key: String,
+        total: u64,
+        repaired: Option<u64>,
+    },
+    /// A pipeline wave settled: every child reached a terminal row. Emitted
+    /// by the wave's barrier exactly once per wave.
+    WaveDone {
+        wave: String,
+        key: String,
+        settled: u64,
+        total: u64,
+    },
+}
+
+/// Emit a wave's terminal event: settled/total children of `parent` as of
+/// now. Shared by wave barriers (transcript finalize, metric health) so
+/// every wave ends the same way. Returns the settled count. A parentless
+/// wave ends 0/0 under the key "manual". `own_id` excludes the barrier's
+/// own execution row — without it the barrier counts itself as an
+/// unsettled child and no wave ever reads fully settled.
+pub async fn emit_wave_done(
+    pg: &crate::db::pg_store::PgStore,
+    sender: &broadcast::Sender<TaskEvent>,
+    wave: &str,
+    parent: Option<u64>,
+    own_id: Option<u64>,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<u32, String> {
+    let key = parent.map(|p| p.to_string()).unwrap_or_else(|| "manual".to_string());
+    let children = match parent {
+        Some(p) => pg.child_task_executions(p as i64, since).await?,
+        None => Vec::new(),
+    };
+    let children: Vec<_> = match own_id {
+        Some(me) => children.into_iter().filter(|c| c["taskId"].as_u64() != Some(me)).collect(),
+        None => children,
+    };
+    let settled = children
+        .iter()
+        .filter(|c| matches!(c["status"].as_str(), Some("completed" | "failed")))
+        .count() as u64;
+    let total = children.len() as u64;
+    let _ =
+        sender.send(TaskEvent::WaveDone { wave: wave.into(), key: key.clone(), settled, total });
+    close_wave(pg, wave, &key, settled, total).await;
+    Ok(u32::try_from(settled).unwrap_or(u32::MAX))
+}
+
+/// Record a wave's opening row in `activity.wave_runs`. Fail-open with a
+/// warn: history bookkeeping must never break the pipeline it observes.
+pub async fn open_wave(
+    pg: &crate::db::pg_store::PgStore,
+    wave: &str,
+    key: &str,
+    parent: Option<u64>,
+    total: u64,
+) {
+    if let Err(e) = pg.open_wave_run(wave, key, parent.map(|p| p as i64), total as i64).await {
+        tracing::warn!(error = %e, wave, key, "open_wave: history write failed");
+    }
+}
+
+/// Close a wave's row `done` with settled counts. Fail-open like [`open_wave`];
+/// a missing open row is a miss, never an error.
+pub async fn close_wave(
+    pg: &crate::db::pg_store::PgStore,
+    wave: &str,
+    key: &str,
+    settled: u64,
+    total: u64,
+) {
+    let close = crate::db::pg_store::WaveRunClose {
+        wave,
+        key,
+        settled: settled as i64,
+        total: total as i64,
+        outcome: "done",
+    };
+    match pg.close_wave_run(&close).await {
+        Ok(true) => {}
+        Ok(false) => tracing::warn!(wave, key, "close_wave: no open row for this wave"),
+        Err(e) => tracing::warn!(error = %e, wave, key, "close_wave: history write failed"),
+    }
 }
 
 /// Where a stage's progress goes.

@@ -6,7 +6,7 @@
 import { crewTail, hhmm, taskHref, taskStateLabel } from './format.js';
 import { taskStateTone } from './task-selectors.js';
 import { assistantLabel, type RelayTone } from './now-selectors.js';
-import type { RelayLane, RelayNow, RelayPresence, RelayRole, RelayRunDetail, RelayRunList, RelayRunListRow } from './types.js';
+import type { RelayCatalogue, RelayLane, RelayNow, RelayPresence, RelayRole, RelayRunDetail, RelayRunList, RelayRunListRow } from './types.js';
 
 export type { RelayPresence };
 
@@ -79,6 +79,98 @@ export interface RelayAddMemberView {
   roleLocked: boolean;
   command: { step: string; text: string; note: string };
   listening: string;
+  /** The assistants and editors this machine has seen (#455); null until read, or where
+   *  the surface has no catalogue. */
+  catalogue: RelayCatalogueView | null;
+  /** Why the catalogue could not be read; never shown as empty groups. */
+  catalogueError: string | null;
+  /** The picked tool's resolved launch, for the block under the paste line
+   *  (#513); null with nothing picked or nothing resolved. */
+  launch: string | null;
+}
+
+/** One tool AddMember offers (#455): its name, when it was last used, what else is known. */
+export interface RelayCatalogueItemView {
+  id: string;
+  name: string;
+  /** "last used 2h ago", or "not used yet". */
+  used: string;
+  /** Assistant: its sessions this week. Editor: the models seen, where sensei's tools are. */
+  details: string[];
+  pressed: boolean;
+  /** The resolved launch (#513); null when the tool has no template or no repo resolved. */
+  launch: string | null;
+}
+
+export interface RelayCatalogueView {
+  assistants: RelayCatalogueItemView[];
+  editors: RelayCatalogueItemView[];
+  picked: string | null;
+}
+
+/** The catalogue as the state holds it: the read, why it failed, what the person picked. */
+export interface RelayCatalogueInput {
+  data: RelayCatalogue | null;
+  error: string | null;
+  picked: string | null;
+}
+
+const NO_CATALOGUE: RelayCatalogueInput = { data: null, error: null, picked: null };
+
+/** "5 min ago", "2h ago", "3d ago". */
+function ago(iso: string, at: number): string {
+  const mins = Math.max(0, Math.round((at - new Date(iso).getTime()) / 60_000));
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+const usedLine = (lastUsed: string | null, at: number) => (lastUsed ? `last used ${ago(lastUsed, at)}` : 'not used yet');
+
+function sessionsLine(n: number): string {
+  if (n === 0) return 'no sessions this week';
+  return `${n} ${n === 1 ? 'session' : 'sessions'} this week`;
+}
+
+function catalogueView(c: RelayCatalogue, picked: string | null, at: number): RelayCatalogueView {
+  return {
+    picked,
+    // Only what the catalogue lists as an assistant or an editor: `unknown` is never offered.
+    assistants: c.assistants.map((a) => ({
+      id: a.id,
+      name: a.name,
+      used: usedLine(a.last_used_at, at),
+      details: [sessionsLine(a.sessions_week)],
+      pressed: a.id === picked,
+      launch: a.launch,
+    })),
+    editors: c.editors.map((e) => ({
+      id: e.id,
+      name: e.name,
+      used: usedLine(e.last_used_at, at),
+      details: [
+        e.models.length ? e.models.join(', ') : 'no models seen',
+        e.mcp_config ? `sensei's tools in ${e.mcp_config}` : "sensei's tools not set up here",
+      ],
+      pressed: e.id === picked,
+      launch: e.launch,
+    })),
+  };
+}
+
+/** The note under the paste line: for the picked tool, else today's. */
+function pasteNote(c: RelayCatalogue | null, picked: string | null): string {
+  const assistant = c?.assistants.find((a) => a.id === picked);
+  if (assistant) return `Paste it into a ${assistant.name} session opened in this workspace's repository.`;
+  const editor = c?.editors.find((e) => e.id === picked);
+  if (editor) {
+    const where = editor.mcp_config
+      ? `sensei's tools are set up in ${editor.mcp_config}.`
+      : "sensei's tools are not set up there yet.";
+    return `Paste it into ${editor.name}'s agent chat. ${where}`;
+  }
+  return `Paste it into an assistant session open in this workspace's repository. It registers, gets a codename, and shows above.`;
 }
 
 const codename = (lane: RelayLane) => lane.suggested_name ?? lane.code;
@@ -225,7 +317,7 @@ export function toArchivedRun(detail: RelayRunDetail, opts: { base: string; at?:
       codename: m.suggested_name ?? m.code,
       laneCode: m.code,
       role: m.role,
-      family: assistantLabel(m.family, null),
+      family: assistantLabel(m.family, null, m.family_name),
       model: m.model ?? 'model not reported',
     })),
     tasks,
@@ -244,14 +336,14 @@ function member(lane: RelayLane): RelayMemberView {
     role: lane.role,
     status,
     statusText: STATUS_TEXT[status],
-    family: assistantLabel(lane.family, lane.version),
+    family: assistantLabel(lane.family, lane.version, lane.family_name),
     model: lane.model ?? 'model not reported',
     alert:
       status === 'not_responding'
         ? `No answer since ${lane.lease_expires_at ? hhmm(lane.lease_expires_at) : 'a time not reported'} · lease lost.`
         : null,
     // The editor the session said it runs in (#396), named as people name it; none said, none shown.
-    editor: lane.host ? editorTag(assistantLabel(lane.host, null), lane.model ?? 'model not reported') : null,
+    editor: lane.host ? editorTag(assistantLabel(lane.host, null, lane.host_name), lane.model ?? 'model not reported') : null,
   };
 }
 
@@ -279,7 +371,12 @@ const SETUP_LEAD =
   'Relay runs one crew at a time. Two sessions are enough: one coordinator, then one or more contributors. Each registers with a single line, gets a codename, and the run starts with the second.';
 
 /** AddMember: set the crew up (no run and fewer than two members), or add to it. */
-export function toAddMember(now: RelayNow | null, picked: RelayRole): RelayAddMemberView {
+export function toAddMember(
+  now: RelayNow | null,
+  picked: RelayRole,
+  catalogue: RelayCatalogueInput = NO_CATALOGUE,
+  at: number = Date.now(),
+): RelayAddMemberView {
   const lanes = now?.lanes ?? [];
   const hasCoordinator = lanes.some((l) => l.role === 'coordinator');
   const hasRun = (now?.runs ?? []).some((r) => r.state === 'planning' || r.state === 'active');
@@ -292,7 +389,19 @@ export function toAddMember(now: RelayNow | null, picked: RelayRole): RelayAddMe
   const command = {
     step: setup ? (role === 'coordinator' ? 'Step 1 of 2.' : 'Step 2 of 2.') : '',
     text: line,
-    note: `Paste it into an assistant session open in this workspace's repository. It registers, gets a codename, and shows above.`,
+    note: pasteNote(catalogue.data, catalogue.picked),
+  };
+  const pickedLaunch = ((): string | null => {
+    if (!catalogue.data || !catalogue.picked) return null;
+    const hit =
+      catalogue.data.assistants.find((a) => a.id === catalogue.picked) ??
+      catalogue.data.editors.find((e) => e.id === catalogue.picked);
+    return hit?.launch ?? null;
+  })();
+  const picker = {
+    catalogue: catalogue.data ? catalogueView(catalogue.data, catalogue.picked, at) : null,
+    catalogueError: catalogue.error,
+    launch: pickedLaunch,
   };
   if (setup) {
     return {
@@ -303,6 +412,7 @@ export function toAddMember(now: RelayNow | null, picked: RelayRole): RelayAddMe
       roleLocked: hasCoordinator,
       command,
       listening: `Listening · ${lanes.length} of 2 to start a run`,
+      ...picker,
     };
   }
   return {
@@ -313,5 +423,6 @@ export function toAddMember(now: RelayNow | null, picked: RelayRole): RelayAddMe
     roleLocked: hasCoordinator,
     command,
     listening: 'Listening · a new member shows above as it registers',
+    ...picker,
   };
 }

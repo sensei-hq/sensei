@@ -49,6 +49,17 @@
     search={false}
   >
     <div class="flex flex-col gap-3 p-4">
+      {#if state.streamFault}
+        <Notice
+          data-relay-stale
+          tone="fault"
+          size="inline"
+          expanded
+          title="Live updates interrupted"
+          detail={state.streamFault}
+          remedy="Reconnecting automatically — the view refreshes when the stream reopens."
+        />
+      {/if}
       {#if !parts || state.reading || state.notFound || state.error}
         <!-- No task drawn (reading, not found, a failed read): the header's back link is
              not there, so the way back is. -->
@@ -87,11 +98,15 @@
         <RunDetails run={parts!.run} />
 
         {#if view.decision}
-          <DecisionRow
-            decision={view.decision}
-            href={null}
-            onanswer={(option) => state.answer(view.decision!, { option })}
-          />
+          <!-- Keyed by id: a re-read can bring a different open decision, and the card
+               (its chosen option, its form and values) belongs to one decision. -->
+          {#key view.decision.id}
+            <DecisionRow
+              decision={view.decision}
+              href={null}
+              onanswer={(choice) => state.answer(view.decision!, choice)}
+            />
+          {/key}
         {/if}
 
         {#if parts?.handoff}

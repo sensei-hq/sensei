@@ -28,11 +28,16 @@ async function safeJson<T>(url: string, fallback: T): Promise<T> {
 
 test.describe('Observatory — Today', () => {
   test('Recent Sessions column formats corrections in the shared words', async ({ tauriPage }) => {
-    const sessions = await safeJson<{ sessions: Array<unknown> }>(
-      `${DAEMON_URL}/api/sessions`, { sessions: [] },
+    // The screen reads Today's recent sessions and drops a ghost row — one with no
+    // workspace, task or summary (#61, recent-sessions.ts). Gate on that same read:
+    // a bare session another spec seeded (relay-catalogue, #455) draws no row.
+    type Recent = { workspace?: string | null; task?: string | null; summary?: string | null };
+    const today = await safeJson<{ recentSessions?: Recent[] }>(`${DAEMON_URL}/api/observatory/today`, {});
+    const drawn = (today.recentSessions ?? []).filter(
+      (s) => (s.workspace ?? '').trim() || (s.task ?? '').trim() || (s.summary ?? '').trim(),
     );
-    if (sessions.sessions.length === 0) {
-      test.skip(true, 'no sessions captured yet on this daemon');
+    if (drawn.length === 0) {
+      test.skip(true, 'no session with a workspace, task or summary on this daemon');
       return;
     }
     await navigateToScreen(tauriPage, '/', '[data-component="observatory-main"]');

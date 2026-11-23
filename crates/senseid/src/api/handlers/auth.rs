@@ -2193,6 +2193,7 @@ mod tests {
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
             trackers: Default::default(),
+            streams: crate::api::stream::StreamHub::new(),
         })
     }
 

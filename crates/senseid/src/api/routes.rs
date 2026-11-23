@@ -131,6 +131,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/relay/resources/request", post(relay::request_resource))
         .route("/api/relay/resources/release", post(relay::release_resource))
         .route("/relay/now", get(relay::now))
+        .route("/relay/catalogue", get(relay::catalogue))
         .route("/relay/queue", get(relay::queue))
         .route("/relay/tasks/{crew_id}/{task_id}", get(relay::task_view))
         .route("/relay/messages", post(relay::person_message))
@@ -365,9 +366,19 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/keychain/approve", post(crate::api::handlers::auth::approve_keychain))
         .route("/api/auth/orgs", get(crate::api::handlers::auth::orgs))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
+        .route("/api/tasks/queue", get(crate::api::handlers::tasks::queue_listing))
         .route("/api/tasks/abandoned", get(crate::api::handlers::tasks::abandoned))
+        .route("/api/tasks/failed", get(crate::api::handlers::tasks::failed))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
+        .route("/api/tasks/{id}/retry", post(crate::api::handlers::tasks::retry_task))
+        .route("/api/tasks/waves", get(crate::api::handlers::tasks::waves_listing))
+        // Operations alert dispositions: ack state that survives reloads.
+        .route(
+            "/api/ops/alerts/acks",
+            get(crate::api::handlers::ops::list_alert_acks)
+                .put(crate::api::handlers::ops::put_alert_ack),
+        )
         // Background-task visibility (#96): the sensei.schedules table — what each
         // worker is, when it runs, and how its last pass went — plus editing it.
         .route("/api/tasks/scheduled", get(crate::api::handlers::scheduled_tasks::scheduled))
@@ -461,7 +472,11 @@ pub fn create_router(state: AppState) -> Router {
         // Marketplace install (legacy — prefer /api/install endpoints)
         .route("/api/marketplace/install", post(config::marketplace_install))
         // Assistants detection & configuration
-        .route("/api/assistants/detect", get(config::assistant_detect))
+        .route(
+            "/api/assistants/detect",
+            get(config::assistant_detect).post(config::assistant_sync_installs),
+        )
+        .route("/api/assistants/installs", get(config::assistant_installs))
         .route("/api/assistants/families", get(config::assistant_detect_families))
         .route("/api/assistants/configure", post(config::assistant_configure))
         .route("/api/assistants/upgrade", post(config::assistant_upgrade))
@@ -699,6 +714,7 @@ mod tests {
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
             trackers: Default::default(),
+            streams: crate::api::stream::StreamHub::new(),
         });
         let router = create_router(state.clone());
         (router, state)
@@ -721,6 +737,7 @@ mod tests {
                 folder_path: "/repo",
                 path: "src/slow.rs",
                 retry_number: 0,
+                retried_from: None,
             })
             .await
             .unwrap();

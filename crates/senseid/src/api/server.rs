@@ -223,6 +223,15 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                 } else {
                     write_startup_error(&msg);
                     crate::api::resilience::mark_degraded();
+                    // Proactive notify, once: this branch runs a single time at
+                    // boot, so no flap guard is needed. Provisioning stays
+                    // silent — a wait is not news.
+                    {
+                        use crate::notifications::Notifier;
+                        let (level, title, body) =
+                            crate::notifications::degraded_note(&cfg.db_name);
+                        crate::notifications::DesktopNotifier.notify(level, &title, &body);
+                    }
                     tracing::warn!(
                         "senseid listening on :{} (degraded — DB unavailable; self-heal armed)",
                         port
@@ -406,6 +415,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
         )),
         trackers: Default::default(),
+        streams: crate::api::stream::StreamHub::new(),
     });
 
     let task_logger = sensei_logger::Logger::new(
@@ -419,10 +429,32 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         app_state: state.clone(),
         _graph_path: None,
         logger: task_logger,
+        notifier: Arc::new(crate::notifications::DesktopNotifier),
     });
     // Schema first (#260): a new binary deploys its release's schema before any
     // worker touches the database — `brew upgrade` neither deploys nor restarts.
     crate::tasks::schema_deploy::on_boot(&state.pg).await;
+
+    // First run (#455): a machine that skipped the setup wizard still gets its
+    // installs. Detected once, when no install row exists; never on every boot
+    // (configure/remove/upgrade and "Detect again" keep the rows current).
+    {
+        let pg = state.pg.clone();
+        tokio::spawn(async move {
+            match pg.assistant_installs_empty().await {
+                Ok(true) => match crate::assistants::sync_installs(&pg, &[]).await {
+                    Ok(rows) => {
+                        tracing::info!(stored = rows.len(), "startup: detected assistant installs")
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "startup: assistant install detection failed")
+                    }
+                },
+                Ok(false) => {}
+                Err(e) => tracing::warn!(error = %e, "startup: reading assistant installs failed"),
+            }
+        });
+    }
 
     // Boot reconcile (D6b/W2): before any worker can create a new
     // task_execution row, terminate rows left `running` by a dead prior
@@ -439,6 +471,14 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         ),
         Err(e) => tracing::warn!(error = %e, "startup: reconcile_orphaned_task_executions failed"),
     }
+    // Same crash, the wave half: rows left open by a dead session can never
+    // terminal — their dispatcher died with the process — so they read
+    // abandoned instead of lingering open. Non-fatal like the orphan sweep.
+    match state.pg.abandon_open_wave_runs(session_start).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("startup: abandoned {n} wave run(s) from a prior session"),
+        Err(e) => tracing::warn!(error = %e, "startup: abandon_open_wave_runs failed"),
+    }
 
     // Scale the worker pool to the machine's logical cores (bounded by the DB
     // pool headroom), rather than the old hardcoded 3 — on a many-core host the
@@ -453,6 +493,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         task_queue.sender().subscribe(),
         state.event_tx.clone(),
         Arc::new(state.pg.clone()),
+    );
+
+    // Uniform SSE frames: stamp + ring + re-broadcast behind both channels.
+    crate::api::stream::spawn_frame_loggers(
+        &state.streams,
+        state.event_tx.subscribe(),
+        task_queue.sender().subscribe(),
     );
 
     // Version-change rebuild (D2): if this binary differs from the one that
@@ -626,6 +673,15 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         tracing::info!("startup: resumed {} pending folder scan(s)", resumed);
     }
 
+    // Orphan sweep LAST: crash-orphaned one-offs return here, after every
+    // fan-out (wave re-drive, folder resume) had its chance — `enqueue_unique`
+    // dedups whatever they already covered, so the sweep is strictly the
+    // catch-all and nothing runs twice.
+    let orphans = crate::tasks::resume::resume_orphaned_tasks(&task_queue, &state.pg).await;
+    if orphans > 0 {
+        tracing::info!("startup: re-queued {} crash-orphaned task(s)", orphans);
+    }
+
     spawn_root_watchers(&state, task_queue.clone()).await;
 
     // Materialize the global rules file (~/.sensei/rules.md) from the governance
@@ -762,7 +818,11 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Dōjō sync: establishes repository IDENTITY (which tenant) and ENTITLEMENT
     // (what may sync) for every signed-in persona. Pushes no metrics yet — see
     // the module docs for why that is a separate slice.
-    crate::tasks::dojo_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
+    crate::tasks::dojo_sync::spawn(
+        Arc::new(state.pg.clone()),
+        state.trackers.clone(),
+        task_queue.clone(),
+    );
 
     // Capture watchdog: hourly sweep over configured ACP adapters. Auto-resolves
     // config-side failures (reinstall), trips a per-adapter breaker on give-up,
@@ -796,6 +856,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 
 /// Start root watchers for persisted scanned roots.
 async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
+    // Transcript watches first: consent-gated, independent of code roots, so
+    // a transcript-only install still starts its thread below.
+    crate::transcript::sync_transcript_watches(&state.pg, &state.task_queue).await;
     // Get all watch roots from PgStore — (id, path) for roots that still exist
     // on disk (skip stale rows pointing at deleted dirs).
     let roots = state.pg.list_watch_roots_to_sync().await.unwrap_or_else(|e| {

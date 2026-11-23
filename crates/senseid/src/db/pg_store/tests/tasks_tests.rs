@@ -28,6 +28,7 @@ async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_
                 folder_path: &fp,
                 path: "src/stuck.rs",
                 retry_number: attempt,
+                retried_from: None,
             })
             .await
             .unwrap();
@@ -45,6 +46,7 @@ async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_
             folder_path: &fp,
             path: "recovered.rs",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -57,10 +59,11 @@ async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_
             folder_path: &fp,
             path: "recovered.rs",
             retry_number: 1,
+            retried_from: None,
         })
         .await
         .unwrap();
-    s.complete_task_execution(&ok, 1, 5).await.unwrap();
+    s.complete_task_execution(&ok, 1, 5, None).await.unwrap();
 
     let rows: Vec<(String, i64, i32)> = sqlx_core::query_as::query_as(
         "SELECT path, attempts, max_retry FROM activity.task_failures \
@@ -124,6 +127,7 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
             folder_path: &fp,
             path: "a",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -143,6 +147,7 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
             folder_path: &fp,
             path: "b",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -155,6 +160,7 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
             folder_path: &fp,
             path: "c",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -175,6 +181,7 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
             folder_path: &fp,
             path: "d",
             retry_number: 0,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -256,6 +263,7 @@ async fn rollup_keeps_failures_raw_and_is_idempotent() {
                 folder_path: &fp,
                 path: "x",
                 retry_number: 0,
+                retried_from: None,
             })
             .await
             .unwrap();
@@ -332,6 +340,7 @@ async fn start_task_execution_records_retry_number() {
             folder_path: &fp,
             path: "a.rs",
             retry_number: 2,
+            retried_from: None,
         })
         .await
         .unwrap();
@@ -477,6 +486,32 @@ async fn marking_a_run_records_the_outcome_and_clears_a_stale_error() {
     let after_ok = s.load_schedule(&name).await.unwrap().unwrap();
     assert_eq!(after_ok.last_ok, Some(true));
     assert_eq!(after_ok.last_error, None, "success must clear the previous error");
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+/// A skipped tick records WHY it skipped: "disabled" and "outside its
+/// window" are different answers to "why has this not run", and the UI
+/// reads them from the row.
+#[tokio::test]
+async fn marking_a_skip_records_the_reason_and_when() {
+    let s = pg_store().await;
+    let name = test_schedule_name();
+    sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(s.load_schedule(&name).await.unwrap().unwrap().last_skip_reason, None);
+
+    s.mark_schedule_skip(&name, "outside_window").await.unwrap();
+    let after = s.load_schedule(&name).await.unwrap().unwrap();
+    assert_eq!(after.last_skip_reason.as_deref(), Some("outside_window"));
+    assert!(after.last_skip_at.is_some());
 
     sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
         .bind(&name)
@@ -926,6 +961,7 @@ async fn watchdog_abandonments_count_per_day_and_name_the_worst_offenders() {
                 folder_path: &fp,
                 path,
                 retry_number: 0,
+                retried_from: None,
             })
             .await
             .unwrap();
@@ -966,4 +1002,316 @@ async fn watchdog_abandonments_count_per_day_and_name_the_worst_offenders() {
     );
     assert!(a.worst.iter().all(|w| w.path != "src/broken.rs"), "{:?}", a.worst);
     assert_eq!(s.watchdog_abandonments(7, 1).await.unwrap().worst.len(), 1, "the limit holds");
+}
+
+/// The failures feed: terminal failures newest-first with kind, path, and
+/// reason. Completed and still-running rows are not failures.
+#[tokio::test]
+async fn failed_tasks_lists_terminal_failures_with_reasons() {
+    let s = pg_store().await;
+    let fp = format!("/_test/failed/{}/repo", uuid::Uuid::new_v4());
+    let start = async |kind: &str, path: &str| {
+        s.start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 11,
+            parent_task_id: None,
+            task_kind: kind,
+            folder_path: &fp,
+            path,
+            retry_number: 0,
+            retried_from: None,
+        })
+        .await
+        .unwrap()
+    };
+    let bad = start("process_file", "src/broken.rs").await;
+    s.fail_task_execution(&bad, 120, "parse error: unexpected token").await.unwrap();
+    let gone = start("process_file", "src/gone.rs").await;
+    s.fail_task_execution(
+        &gone,
+        200_000,
+        &crate::tasks::executor::watchdog_message(
+            &crate::tasks::TaskKind::ProcessFile,
+            11,
+            crate::tasks::TaskKind::ProcessFile.watchdog_timeout(),
+        ),
+    )
+    .await
+    .unwrap();
+    let ok = start("process_file", "src/fine.rs").await;
+    s.complete_task_execution(&ok, 10, 50, None).await.unwrap();
+    let _running = start("process_file", "src/slow.rs").await;
+
+    let rows = s.failed_tasks(7, 100).await.unwrap();
+    let paths: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"src/broken.rs") && paths.contains(&"src/gone.rs"), "{paths:?}");
+    assert!(!paths.contains(&"src/fine.rs") && !paths.contains(&"src/slow.rs"), "{paths:?}");
+    let broken = rows.iter().find(|r| r["path"] == "src/broken.rs").unwrap();
+    assert_eq!(broken["kind"], "process_file");
+    assert_eq!(broken["error"], "parse error: unexpected token");
+    assert_eq!(s.failed_tasks(7, 1).await.unwrap().len(), 1, "the limit holds");
+}
+
+/// Abandonments as per-task rows, not just aggregates: which task, where,
+// when, and the watchdog reason.
+#[tokio::test]
+async fn abandoned_task_list_names_per_task_rows() {
+    let s = pg_store().await;
+    let fp = format!("/_test/abandoned-list/{}/repo", uuid::Uuid::new_v4());
+    let fail = async |path: &str, message: String| {
+        let id = s
+            .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                task_id: 13,
+                parent_task_id: None,
+                task_kind: "process_file",
+                folder_path: &fp,
+                path,
+                retry_number: 0,
+                retried_from: None,
+            })
+            .await
+            .unwrap();
+        s.fail_task_execution(&id, 180_000, &message).await.unwrap();
+    };
+    fail(
+        "src/huge.rs",
+        crate::tasks::executor::watchdog_message(
+            &crate::tasks::TaskKind::ProcessFile,
+            13,
+            crate::tasks::TaskKind::ProcessFile.watchdog_timeout(),
+        ),
+    )
+    .await;
+    fail("src/broken.rs", "parse error: unexpected token".to_string()).await;
+
+    let rows = s.abandoned_task_list(7, 10).await.unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["path"], "src/huge.rs");
+    assert_eq!(rows[0]["kind"], "process_file");
+    assert!(rows[0]["error"].as_str().unwrap().starts_with("watchdog:"));
+}
+
+// ── activity.wave_runs — wave history ────────────────────────────────
+
+// One test, sequential: abandonment sweeps every open row, so a split-out
+// abandon test could steal the open-close test's row mid-flight.
+#[tokio::test]
+async fn wave_runs_open_close_list_and_boot_abandon() {
+    let s = pg_store().await;
+    let key = format!("wave-test-{}", uuid::Uuid::new_v4());
+    let id = s.open_wave_run("transcript", &key, Some(4242), 4).await.unwrap();
+    assert!(!id.is_nil());
+    let close = crate::db::pg_store::WaveRunClose {
+        wave: "transcript",
+        key: &key,
+        settled: 3,
+        total: 4,
+        outcome: "done",
+    };
+    let closed = s.close_wave_run(&close).await.unwrap();
+    assert!(closed, "the open row closes");
+    let closed_again = s.close_wave_run(&close).await.unwrap();
+    assert!(!closed_again, "no second open row to close");
+    let rows = s.list_wave_runs(Some("transcript"), 10).await.unwrap();
+    let row = rows.iter().find(|r| r["key"] == key).expect("the wave lists");
+    assert_eq!(row["settled"], 3);
+    assert_eq!(row["outcome"], "done");
+    assert_eq!(row["parent_task_id"], 4242);
+    // History rows carry their identity: (wave, key) recurs across sessions
+    // (keys restart per boot), so the UI keys rendered rows by id.
+    assert_eq!(row["id"].as_str().unwrap(), id.to_string());
+
+    // A row opened before this boot that never closed died with its session.
+    let stale = format!("wave-abandon-{}", uuid::Uuid::new_v4());
+    s.open_wave_run("sync", &stale, None, 2).await.unwrap();
+    let n = s.abandon_open_wave_runs(chrono::Utc::now()).await.unwrap();
+    assert!(n >= 1);
+    let rows = s.list_wave_runs(Some("sync"), 10).await.unwrap();
+    let row = rows.iter().find(|r| r["key"] == stale).expect("the wave lists");
+    assert_eq!(row["outcome"], "abandoned");
+}
+
+// ── orphan re-queue sweep ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn orphaned_task_rows_lists_only_unparented_orphans_below_max() {
+    let s = pg_store().await;
+    let tag = uuid::Uuid::new_v4().to_string();
+    let seed = |task_id: i64, parent: Option<i64>, kind: &str, retry: i32, error: &str| {
+        let fp = format!("/_test/orphan/{tag}");
+        let kind = kind.to_string();
+        let error = error.to_string();
+        let s = &s;
+        async move {
+            let id = s
+                .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                    task_id,
+                    parent_task_id: parent,
+                    task_kind: &kind,
+                    folder_path: &fp,
+                    path: "src/x.rs",
+                    retry_number: retry,
+                    retried_from: None,
+                })
+                .await
+                .unwrap();
+            s.fail_task_execution(&id, 5, &error).await.unwrap();
+        }
+    };
+    // Taken: crash orphan, unparented, under MAX.
+    seed(310001, None, "process_file", 0, "orphaned: daemon restarted while task was running")
+        .await;
+    // Left: parented (wave/folder children re-drive covers), legit failure,
+    // exhausted, tested in the sweep, not here — the query filters orphans only.
+    seed(310002, Some(99), "process_file", 0, "orphaned: daemon restarted while task was running")
+        .await;
+    seed(310003, None, "process_file", 0, "parse blew up").await;
+    let rows = s.orphaned_task_rows(3).await.unwrap();
+    let ours: Vec<_> =
+        rows.into_iter().filter(|r| r["folderPath"] == format!("/_test/orphan/{tag}")).collect();
+    assert_eq!(ours.len(), 1, "only the unparented orphan: {ours:?}");
+    assert_eq!(ours[0]["taskId"].as_i64(), Some(310001));
+}
+
+// ── retried_from_execution_id — retry lineage ─────────────────────────
+
+static LINEAGE_TEST_ID: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(2_000_000_000);
+
+#[tokio::test]
+async fn a_retry_names_the_exact_prior_attempt_row_and_its_task() {
+    let s = pg_store().await;
+    let old_id = LINEAGE_TEST_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let new_id = LINEAGE_TEST_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let fp = format!("/_test/lineage/{}", uuid::Uuid::new_v4());
+    let kind = crate::tasks::TaskKind::ProcessFile.to_string();
+    let first = s
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: old_id,
+            parent_task_id: None,
+            task_kind: &kind,
+            folder_path: &fp,
+            path: "src/a.rs",
+            retry_number: 0,
+            retried_from: None,
+        })
+        .await
+        .unwrap();
+    s.fail_task_execution(&first, 5, "boom").await.unwrap();
+    // A new task retries it (new session ID, carried retry number).
+    s.start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+        task_id: new_id,
+        parent_task_id: None,
+        task_kind: &kind,
+        folder_path: &fp,
+        path: "src/a.rs",
+        retry_number: 1,
+        retried_from: Some(first),
+    })
+    .await
+    .unwrap();
+    let rows = s
+        .task_execution_attempts(new_id, chrono::Utc::now() - chrono::Duration::hours(1))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["retriedFrom"], first.to_string());
+    assert_eq!(rows[0]["retriedFromTaskId"].as_i64(), Some(old_id));
+    // The first attempt names no lineage.
+    let rows = s
+        .task_execution_attempts(old_id, chrono::Utc::now() - chrono::Duration::hours(1))
+        .await
+        .unwrap();
+    assert!(rows[0].get("retriedFrom").unwrap().is_null());
+}
+
+// ── activity.alert_acks — ack dispositions ────────────────────────────
+
+#[tokio::test]
+async fn alert_acks_round_trip_and_clear_bumps_seen_clears() {
+    let s = pg_store().await;
+    let key = format!("ack-test-{}", uuid::Uuid::new_v4());
+    // Fresh: no row.
+    let rows = s.list_alert_acks().await.unwrap();
+    assert!(!rows.iter().any(|r| r["key"] == key));
+    // Ack writes through.
+    let row = s.set_alert_ack("task", &key, true).await.unwrap();
+    assert_eq!(row["acked"], true);
+    assert_eq!(row["seen_clears"], 0);
+    let rows = s.list_alert_acks().await.unwrap();
+    assert!(rows.iter().any(|r| r["key"] == key && r["acked"] == true));
+    // A client-observed clear un-acks AND records the clear (recurrence
+    // memory) — it must not delete the row outright.
+    let row = s.set_alert_ack("task", &key, false).await.unwrap();
+    assert_eq!(row["acked"], false);
+    assert_eq!(row["seen_clears"], 1);
+    // Cleanup: this table has no TTL for acked rows.
+    sqlx_core::query::query("DELETE FROM activity.alert_acks WHERE alert_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn alert_ack_write_prunes_stale_cleared_rows() {
+    let s = pg_store().await;
+    let stale = format!("ack-stale-{}", uuid::Uuid::new_v4());
+    let fresh = format!("ack-fresh-{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query(
+        "INSERT INTO activity.alert_acks(class, alert_key, acked, seen_clears, updated_at) VALUES
+         ('task', $1, false, 2, now() - interval '100 days'),
+         ('task', $2, false, 1, now())",
+    )
+    .bind(&stale)
+    .bind(&fresh)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    // Any write prunes cleared rows untouched for 90+ days.
+    s.set_alert_ack("task", &format!("ack-trigger-{}", uuid::Uuid::new_v4()), true).await.unwrap();
+    let rows = s.list_alert_acks().await.unwrap();
+    assert!(!rows.iter().any(|r| r["key"] == stale), "stale cleared row pruned");
+    assert!(rows.iter().any(|r| r["key"] == fresh), "fresh cleared row kept");
+    sqlx_core::query::query(
+        "DELETE FROM activity.alert_acks WHERE alert_key = $1 OR alert_key LIKE 'ack-trigger-%'",
+    )
+    .bind(&fresh)
+    .execute(s.pool())
+    .await
+    .unwrap();
+}
+
+// ── phase timing ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn complete_task_execution_persists_phase_splits() {
+    let s = pg_store().await;
+    let fp = format!("/_test/phases/{}", uuid::Uuid::new_v4());
+    let id = s
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 91001,
+            parent_task_id: None,
+            task_kind: "process_file",
+            folder_path: &fp,
+            path: "src/x.rs",
+            retry_number: 0,
+            retried_from: None,
+        })
+        .await
+        .unwrap();
+    let phases = serde_json::json!({"parse_ms": 12, "compile_wait_ms": 34});
+    s.complete_task_execution(&id, 7, 50, Some(&phases)).await.unwrap();
+    let got: (Option<serde_json::Value>,) = sqlx_core::query_as::query_as(
+        "SELECT phases_ms FROM activity.task_executions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got.0.as_ref().and_then(|v| v.get("parse_ms")), Some(&serde_json::json!(12)));
+    assert_eq!(got.0.as_ref().and_then(|v| v.get("compile_wait_ms")), Some(&serde_json::json!(34)));
+    assert!(
+        got.0.as_ref().and_then(|v| v.get("resolve_ms")).is_none(),
+        "absent phases read missing"
+    );
 }

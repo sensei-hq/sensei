@@ -63,6 +63,71 @@ pub async fn resume_pending_scans(queue: &TaskQueue, pg: &PgStore) -> u32 {
     enqueued
 }
 
+/// Task kinds the sweep never takes, though orphans may wear them: the two
+/// barriers. A re-queued barrier would terminal against dead parents,
+/// emitting a misleading done frame (and closing the wrong history row) for
+/// a wave that never opened — waves re-drive as a unit instead. Dispatchers
+/// need no entry: both are `retryable: false`, so the retryable gate already
+/// excludes them. Transcript re-drive is the scheduler boot tick (skipped by
+/// design on isolated instances); metric re-drive is the boot backfill.
+fn sweep_skips_kind(kind: &TaskKind) -> bool {
+    use TaskKind::*;
+    matches!(kind, FinalizeTranscriptWave | ComputeHealth)
+}
+
+/// Re-queue crash-orphaned tasks as new tracked tasks. The last recovery
+/// layer at boot, after wave re-drive and folder resume: whatever those
+/// fan-outs did not already cover — one-offs, retries, embeds — returns
+/// here, each with its retry number carried forward and lineage to the exact
+/// prior attempt row. Bounds: orphan marker only (legit failures already got
+/// bounded in-session retries), unparented only (wave/folder children belong
+/// to their re-drive), retryable kinds under MAX (poison terminates; this
+/// also excludes both dispatchers), never barriers (see
+/// [`sweep_skips_kind`]). `enqueue_unique` dedups against earlier layers, so
+/// nothing runs twice. Returns tasks admitted (covers don't count). Safe to
+/// call when nothing is orphaned — returns 0.
+pub async fn resume_orphaned_tasks(queue: &TaskQueue, pg: &PgStore) -> u32 {
+    let rows = match pg.orphaned_task_rows(crate::tasks::retry::MAX_RETRIES as i32).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!("resume_orphaned_tasks: orphaned_task_rows failed: {}", e);
+            return 0;
+        }
+    };
+
+    let mut admitted = 0u32;
+    for row in &rows {
+        let Some(kind_name) = row.get("kind").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(kind) = TaskKind::from_name(kind_name) else {
+            tracing::warn!(kind = kind_name, "resume_orphaned_tasks: log names an unknown kind");
+            continue;
+        };
+        if !kind.is_retryable() || sweep_skips_kind(&kind) {
+            continue;
+        }
+        let folder = row.get("folderPath").and_then(|v| v.as_str()).unwrap_or_default();
+        let path = row.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+        let retry_number = row.get("retryNumber").and_then(|v| v.as_u64()).unwrap_or(0) as u32 + 1;
+        let mut task = Task::new(kind, folder, path);
+        task.retry_number = retry_number;
+        // Dead parents do not carry over: session IDs restart, so the old
+        // parent names nothing. Lineage (below) is what links the retry to
+        // its history, not the parent pointer.
+        task.parent_task_id = None;
+        task.retried_from =
+            row.get("id").and_then(|v| v.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok());
+        if queue.enqueue_unique(task).await.is_some() {
+            admitted += 1;
+        }
+    }
+    if admitted > 0 {
+        tracing::info!("resume_orphaned_tasks: re-queued {} orphaned task(s)", admitted);
+    }
+    admitted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +328,154 @@ mod tests {
         );
 
         pg.remove_watch_root(&rid).await.unwrap();
+    }
+
+    async fn seed_orphan(
+        pg: &PgStore,
+        tag: &str,
+        kind: &str,
+        parent: Option<i64>,
+        retry: i32,
+        error: &str,
+    ) -> uuid::Uuid {
+        let id = pg
+            .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                task_id: 320000 + rand_suffix(),
+                parent_task_id: parent,
+                task_kind: kind,
+                folder_path: &format!("/_test/sweep/{tag}"),
+                path: "src/x.rs",
+                retry_number: retry,
+                retried_from: None,
+            })
+            .await
+            .unwrap();
+        pg.fail_task_execution(&id, 5, error).await.unwrap();
+        id
+    }
+
+    fn rand_suffix() -> i64 {
+        (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            % 1_000_000) as i64
+    }
+
+    #[tokio::test]
+    async fn sweep_requeues_orphans_with_lineage_and_carried_retries() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let queue = TaskQueue::new();
+        let tag = uuid::Uuid::new_v4().to_string();
+        let prior = seed_orphan(
+            &pg,
+            &tag,
+            "process_file",
+            None,
+            1,
+            "orphaned: daemon restarted while task was running",
+        )
+        .await;
+
+        let n = super::resume_orphaned_tasks(&queue, &pg).await;
+        assert!(n >= 1, "the orphan returns");
+
+        let tasks = drain(&queue).await;
+        let ours: Vec<&Task> = tasks.iter().filter(|t| t.folder_path.contains(&tag)).collect();
+        assert_eq!(ours.len(), 1, "exactly one re-queue: {ours:?}");
+        assert_eq!(ours[0].kind, TaskKind::ProcessFile);
+        assert_eq!(ours[0].retry_number, 2, "retry number carried forward");
+        assert_eq!(ours[0].retried_from, Some(prior), "lineage names the prior row");
+        assert_eq!(ours[0].parent_task_id, None, "dead parents do not carry over");
+    }
+
+    #[tokio::test]
+    async fn sweep_skips_parented_non_retryable_exhausted_and_legit_failures() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let queue = TaskQueue::new();
+        let tag = uuid::Uuid::new_v4().to_string();
+        // Parented: wave/folder children belong to their re-drive.
+        seed_orphan(
+            &pg,
+            &tag,
+            "process_file",
+            Some(99),
+            0,
+            "orphaned: daemon restarted while task was running",
+        )
+        .await;
+        // Non-retryable kind.
+        seed_orphan(
+            &pg,
+            &tag,
+            "import_lib",
+            None,
+            0,
+            "orphaned: daemon restarted while task was running",
+        )
+        .await;
+        // Exhausted: at MAX already.
+        seed_orphan(
+            &pg,
+            &tag,
+            "process_file",
+            None,
+            crate::tasks::retry::MAX_RETRIES as i32,
+            "orphaned: daemon restarted while task was running",
+        )
+        .await;
+        // Legit failure: already got bounded in-session retries.
+        seed_orphan(&pg, &tag, "process_file", None, 0, "parse blew up").await;
+        // Barriers: re-drive as a unit, never swept solo (would terminal
+        // against dead parents).
+        seed_orphan(
+            &pg,
+            &tag,
+            "finalize_transcript_wave",
+            None,
+            0,
+            "orphaned: daemon restarted while task was running",
+        )
+        .await;
+        // Dispatchers: non-retryable, so the retryable gate excludes them;
+        // the boot tick / boot backfill owns their re-drive.
+        seed_orphan(
+            &pg,
+            &tag,
+            "ingest_captures",
+            None,
+            0,
+            "orphaned: daemon restarted while task was running",
+        )
+        .await;
+
+        super::resume_orphaned_tasks(&queue, &pg).await;
+
+        let tasks = drain(&queue).await;
+        let ours: Vec<&Task> = tasks.iter().filter(|t| t.folder_path.contains(&tag)).collect();
+        assert!(ours.is_empty(), "nothing swept: {ours:?}");
+    }
+
+    #[tokio::test]
+    async fn sweep_dedups_against_already_queued_twins() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let queue = TaskQueue::new();
+        let tag = uuid::Uuid::new_v4().to_string();
+        let fp = format!("/_test/sweep/{tag}");
+        seed_orphan(
+            &pg,
+            &tag,
+            "process_file",
+            None,
+            0,
+            "orphaned: daemon restarted while task was running",
+        )
+        .await;
+        // The folder re-drive got here first (boot order): same identity.
+        queue.enqueue_unique(Task::new(TaskKind::ProcessFile, &fp, "src/x.rs")).await;
+
+        let n = super::resume_orphaned_tasks(&queue, &pg).await;
+
+        let tasks = drain(&queue).await;
+        let ours: Vec<&Task> = tasks.iter().filter(|t| t.folder_path.contains(&tag)).collect();
+        assert_eq!(ours.len(), 1, "one task does the work: {ours:?}");
+        assert_eq!(n, 0, "the sweep counts admissions, not covers");
     }
 }

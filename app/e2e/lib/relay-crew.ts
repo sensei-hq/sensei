@@ -27,8 +27,10 @@ export interface RegisterBody {
   model?: string;
   version?: string;
   capabilities?: string[];
-  /** The editor the session runs in (#396). */
+  /** The editor the session runs in (#396), as the session says. */
   host?: string;
+  /** The editor the MCP binary detected (#455); it wins over `host`. */
+  host_detected?: string;
 }
 
 interface Registered {
@@ -188,6 +190,11 @@ export class RelayLane {
 
   unregister(): Promise<unknown> {
     return this.#post('/api/relay/unregister');
+  }
+
+  /** Close the lane's crew (coordinator): the lanes it released with no live lease (#398). */
+  closeCrew(): Promise<{ crew_id: string; status: string; released: string[] }> {
+    return this.#post(`/api/relay/crews/${this.crewId}/close`);
   }
 
   /** Run a call the journey expects may be refused: its result, or the refusal. */

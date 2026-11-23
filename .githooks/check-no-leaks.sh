@@ -32,6 +32,9 @@ SAFE_USERS='user|users|dev|dev\.user|jane|john|alice|bob|acme|test|tester|exampl
 # A one-letter real username is not a thing; `k.nakamura` and `mjackson` stay
 # OUT, because the self-test relies on them being caught.
 SAFE_USERS="$SAFE_USERS|[a-z]|[a-z][a-z]|\.\.\.|keiko|name"
+# `ana` is the synthetic user develop's Windows-home tests and spec use
+# (bootstrap config.rs home_from, relay.rs free_on, add-windows-native-support).
+SAFE_USERS="$SAFE_USERS|ana"
 # NO USERNAME AT ALL is not a leaked username, and three shapes produce it:
 #   /Users/.cursor/…      the user segment elided, leaving a dotfile
 #   /home/.copilot/…      same

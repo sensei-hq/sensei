@@ -468,6 +468,49 @@ fn knowledge_request(
     })
 }
 
+/// The editor this MCP session runs in (#455), from the client's `initialize`
+/// name, else `TERM_PROGRAM` (with `CURSOR_TRACE_ID`). None when neither names
+/// one: detection never guesses. `env` is injected, never read from the process.
+/// The values are the ones the clients on this machine sent (design.md, task 5.1).
+/// The id it gives is only a proposal: the daemon keeps it only when the
+/// catalogue knows it as an editor.
+pub fn detect_host(
+    client_name: Option<&str>,
+    env: &std::collections::HashMap<String, String>,
+) -> Option<&'static str> {
+    let client = client_name.map(|n| n.trim().to_ascii_lowercase()).unwrap_or_default();
+    let by_client = match client.as_str() {
+        c if c.starts_with("cursor") => Some("cursor"),
+        "zed" => Some("zed"),
+        "visual studio code" | "vscode" => Some("vscode"),
+        c if c.starts_with("windsurf") => Some("windsurf"),
+        c if c.starts_with("kiro") => Some("kiro"),
+        _ => None,
+    };
+    by_client.or_else(|| {
+        let set = |k: &str| env.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+        // The env half is the shared table (#512): one mapping, both binaries.
+        sensei_bootstrap::host::detect_host_from_env(
+            set("TERM_PROGRAM"),
+            set("CURSOR_TRACE_ID").is_some(),
+        )
+    })
+}
+
+/// `relay_register` arguments with the detected host set (#455), or without the
+/// key when nothing was detected. A `host_detected` the caller passed is
+/// dropped: only this binary detects.
+pub fn with_detected_host(args: &Value, detected: Option<&str>) -> Value {
+    let mut args = args.clone();
+    if let Some(map) = args.as_object_mut() {
+        map.remove("host_detected");
+        if let Some(host) = detected {
+            map.insert("host_detected".into(), json!(host));
+        }
+    }
+    args
+}
+
 /// The relay lane loop: register, claim, heartbeat, report and review.
 /// `None` when `tool` is not one of them; the inner `None` is a tool the binary answers.
 fn relay_claim_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>> {
@@ -492,8 +535,10 @@ fn relay_claim_request(tool: &str, args: &Value) -> Option<Option<DaemonRequest>
                 "workspace_id",
                 // Queue cutover: the name the assistant proposes for itself.
                 "suggested_name",
-                // #396: the editor the session runs in, when it runs in one.
+                // #396: the editor the session runs in, as the session says.
                 "host",
+                // #455: the editor this binary detected; the daemon prefers it.
+                "host_detected",
             ] {
                 if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
                     body.insert(k.into(), v.clone());
@@ -1511,7 +1556,7 @@ pub fn handle_list_tools() -> Value {
                 &[
                     ("role", "string", "coordinator | contributor (default contributor)"),
                     ("suggested_name", "string", "The name you propose for yourself: becomes the lane title (the code stays the handle)"),
-                    ("host", "string", "The editor you run inside (cursor, zed), when you run in one; omit in a terminal"),
+                    ("host", "string", "The editor you run inside (cursor, zed), when you run in one; omit in a terminal. sensei also detects it, and what it detects wins"),
                     ("version", "string", "Lane version"),
                     ("model", "string", "Model the lane runs"),
                     ("capabilities", "array", "What the lane can do"),
@@ -1654,7 +1699,7 @@ pub fn handle_list_tools() -> Value {
                     ("telemetry", "object", "Review telemetry"),
                 ]),
             tool("relay_ask_decision",
-                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered). Send options (buttons) or response (a form), never both. A response is {schema, layout?}: one object schema of 1-12 string/number/integer/boolean properties with enum (pick one), required, minimum/maximum, maxLength (≤600) and pattern; anything else (arrays, format, nested objects) is refused with 422.",
+                "Ask a decision of the person or a lane, blocking tasks until it answers (their states are remembered). Send options (buttons) or response (a form), never both. A response is {schema, layout?}: one object schema of 1-12 string/number/integer/boolean/array properties with enum (pick one), required, minimum/maximum, maxLength (≤600; ≤4000 with x-multiline: true, long text) and pattern (Rust regex, no (?, no \\w \\d \\s \\b; use [0-9] or \\p{L}); an array is pick-several: items {type: string, enum} and optional uniqueItems: true; anything else (format, minItems, nested objects) is refused with 422. Fields show in the order layout lists them; without a layout, in the order properties lists them.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
@@ -1783,7 +1828,7 @@ pub fn handle_list_tools() -> Value {
                     ("note", "string", "The ≤600-char note on the pause"),
                 ]),
             tool("relay_close_crew",
-                "Close the crew when its lanes are gone (besides the caller, who unregisters after). Closed crews refuse register/reregister/plan/assign. Coordinator only.",
+                "Close the crew when no other lane holds a live lease (the caller unregisters after). Lanes with no live lease do not block: close releases them (their held task is interrupted) and names them in `released`. Closed crews refuse register/reregister/plan/assign. Coordinator only.",
                 &[
                     ("lane_id", "string", "The lane's uuid"),
                     ("lane_token", "string", "The register-minted token"),
@@ -3749,6 +3794,86 @@ mod tests {
         assert_token_only_in_headers(&req, TOKEN);
     }
 
+    fn env(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    /// #455 5.2: the client name names the editor first; the values are the ones
+    /// this machine's clients sent (design.md, task 5.1).
+    #[test]
+    fn detect_host_reads_the_client_name_first() {
+        let none = env(&[]);
+        assert_eq!(detect_host(Some("cursor-vscode"), &none), Some("cursor"));
+        assert_eq!(detect_host(Some("Cursor"), &none), Some("cursor"));
+        assert_eq!(detect_host(Some("Zed"), &none), Some("zed"));
+        assert_eq!(detect_host(Some("Visual Studio Code"), &none), Some("vscode"));
+        assert_eq!(detect_host(Some("windsurf-client"), &none), Some("windsurf"));
+        assert_eq!(detect_host(Some("Kiro"), &none), Some("kiro"));
+        // The client name wins over the terminal it was started from.
+        assert_eq!(detect_host(Some("Zed"), &env(&[("TERM_PROGRAM", "vscode")])), Some("zed"));
+    }
+
+    /// #455 5.2: an assistant client falls through to `TERM_PROGRAM`.
+    #[test]
+    fn detect_host_falls_back_to_the_terminal_program() {
+        let claude = Some("claude-code");
+        assert_eq!(detect_host(claude, &env(&[("TERM_PROGRAM", "zed")])), Some("zed"));
+        assert_eq!(
+            detect_host(claude, &env(&[("TERM_PROGRAM", "vscode"), ("CURSOR_TRACE_ID", "abc")])),
+            Some("cursor")
+        );
+        assert_eq!(detect_host(claude, &env(&[("TERM_PROGRAM", "vscode")])), Some("vscode"));
+        assert_eq!(
+            detect_host(claude, &env(&[("TERM_PROGRAM", "vscode"), ("CURSOR_TRACE_ID", "")])),
+            Some("vscode"),
+            "a blank trace id is no trace id"
+        );
+        assert_eq!(detect_host(None, &env(&[("TERM_PROGRAM", "zed")])), Some("zed"));
+    }
+
+    /// #455 5.2: detection never guesses.
+    #[test]
+    fn detect_host_gives_none_for_a_terminal_or_an_unknown_client() {
+        assert_eq!(
+            detect_host(Some("claude-code"), &env(&[("TERM_PROGRAM", "Apple_Terminal")])),
+            None
+        );
+        assert_eq!(detect_host(Some("muse"), &env(&[])), None);
+        assert_eq!(detect_host(None, &env(&[])), None);
+        assert_eq!(detect_host(Some("claude-code"), &env(&[("TERM_PROGRAM", "iTerm.app")])), None);
+    }
+
+    /// #455 5.2: the register body carries what the binary detected, omits it when
+    /// nothing was, and still forwards the self-reported host. A `host_detected`
+    /// the assistant passed itself is never forwarded: only the binary detects.
+    #[test]
+    fn register_body_carries_the_detected_host_beside_the_reported_one() {
+        let args = json!({"family": "claude-code", "host": "cursor"});
+        let req = daemon_request_for(
+            "relay_register",
+            &with_detected_host(&args, Some("zed")),
+            "/cwd",
+            None,
+        )
+        .unwrap();
+        let body = req.body.as_ref().unwrap();
+        assert_eq!(body["host_detected"], "zed");
+        assert_eq!(body["host"], "cursor");
+
+        let req =
+            daemon_request_for("relay_register", &with_detected_host(&args, None), "/cwd", None)
+                .unwrap();
+        let body = req.body.as_ref().unwrap();
+        assert!(body.get("host_detected").is_none(), "nothing detected: the key is omitted");
+        assert_eq!(body["host"], "cursor");
+
+        let forged = json!({"family": "claude-code", "host_detected": "zed"});
+        let req =
+            daemon_request_for("relay_register", &with_detected_host(&forged, None), "/cwd", None)
+                .unwrap();
+        assert!(req.body.as_ref().unwrap().get("host_detected").is_none());
+    }
+
     #[test]
     fn register_dispatch_forwards_suggested_name_and_omits_role_when_absent() {
         let req = daemon_request_for(
@@ -4124,6 +4249,28 @@ mod tests {
         assert_eq!(req.path, "/api/relay/decisions/d1/answer");
         assert_eq!(req.body.as_ref().unwrap()["option"], "db");
         assert_token_only_in_headers(&req, TOKEN);
+    }
+
+    #[test]
+    fn relay_ask_forwards_a_forms_fields_in_the_lanes_order_389() {
+        // Without a layout, the order the lane wrote `properties` in is the
+        // order the form shows; a sorted map would reorder it before the daemon.
+        let args: Value = serde_json::from_str(
+            r#"{"question": "Where?", "asked_of": "person", "response": {"schema": {
+                "type": "object", "properties": {
+                    "target": {"type": "string"}, "count": {"type": "integer"},
+                    "ship": {"type": "boolean"}}}}}"#,
+        )
+        .unwrap();
+        let req = daemon_request_for("relay_ask_decision", &lane_args(args), "/cwd", None).unwrap();
+        let body = req.body.unwrap();
+        let names: Vec<&str> = body["response"]["schema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(names, ["target", "count", "ship"]);
     }
 
     #[test]

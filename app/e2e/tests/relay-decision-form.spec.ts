@@ -10,10 +10,19 @@
  * The task view reads a form answer back as its values, in the timeline row and its
  * expanded entry — never "null" or an empty option.
  *
- * The screen tests (the form drawn, live arrival and resolution) join this file in
- * slice B.
+ * Slice B — the screen: a form decision arrives in Needs you while the Relay screen is
+ * open, drawn as one control per property (`data-decision-field`); Answer with the
+ * required field empty shows its message and sends nothing; filled and answered, the
+ * card leaves with no navigation and the lane reads the exact values; the task view
+ * answers a task-bound form the same way. "No refresh" is proved by a marker on
+ * `window` that a reload would wipe, and an unchanged path.
+ *
+ * Slice R (R2) — pick-several and long text: rokkit 1.16.1 draws an array of enum members as a
+ * MultiSelect and an `x-multiline` string as a textarea; the person answers both live and the
+ * lane reads the exact members and text back.
  */
-import { test, expect } from '../fixtures';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { DAEMON_URL, navigateTo, navigateToScreen } from '../helpers';
 import { RelayCrew, type RelayLane } from '../lib/relay-crew';
 
@@ -53,6 +62,11 @@ const RESPONSE = {
     required: ['target'],
   },
 };
+/** The layout the daemon stores for RESPONSE: its properties in the order the lane wrote them. */
+const LANE_ORDER = {
+  type: 'vertical',
+  elements: [{ scope: '#/target' }, { scope: '#/count' }, { scope: '#/ship' }],
+};
 
 test.describe('relay decision form (#389)', () => {
   let lane: RelayLane | null = null;
@@ -76,7 +90,8 @@ test.describe('relay decision form (#389)', () => {
     expect(now.status).toBe(200);
     const row = now.body.decisions.find((d) => d.id === decisionId);
     expect(row, 'the form decision is on Now').toBeTruthy();
-    expect(row?.response).toEqual(RESPONSE);
+    // The schema as sent; with no layout sent, the daemon stores one in the lane's order.
+    expect(row?.response).toEqual({ ...RESPONSE, layout: LANE_ORDER });
     expect(row?.options).toEqual([]);
 
     // Values that break the schema are refused by name, and nothing is recorded.
@@ -137,6 +152,327 @@ test.describe('relay decision form (#389)', () => {
       'count: 3, ship: true, target: main · from the desktop',
     );
 
+    if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
+  });
+
+  // ── slice B: the form on the screen, live ────────────────────────────────────
+
+  const STREAM = 20_000;
+  const EVIDENCE = 'test-results/relay-decision-form';
+  const NEEDS = '[data-relay-section="needs-you"]';
+  const FORM_REPO = 'github.com/sensei-hq/e2e-form-screen';
+
+  /** How many elements a selector matches, counted in the page (this driver has no count). */
+  const countOf = async (page: TauriPageLike, selector: string) =>
+    Number(await page.evaluate(`document.querySelectorAll(${JSON.stringify(selector)}).length`));
+  /** The text of every element a selector matches. */
+  const textsOf = async (page: TauriPageLike, selector: string): Promise<string[]> =>
+    JSON.parse(
+      (await page.evaluate(
+        `JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.textContent.replace(/\\s+/g, ' ').trim()))`,
+      )) as string,
+    );
+  /** Mark the page: a reload or a remount of the document wipes it. */
+  const markPage = (page: TauriPageLike) => page.evaluate(`(window.__formNoReload = ${JSON.stringify(RUN_TAG)}, location.pathname)`) as Promise<string>;
+  const stillMarked = (page: TauriPageLike) =>
+    page.evaluate(`JSON.stringify({ mark: window.__formNoReload ?? null, at: location.pathname })`) as Promise<string>;
+  /** Pick a value in a field's rokkit Select: open it, press the option by its text. */
+  async function pick(page: TauriPageLike, card: string, name: string, label: string): Promise<void> {
+    // Scrolled into view first: the task view's card can sit below the fold, where a pointer
+    // click misses. The Select opens on a real pointer press, not a scripted click.
+    const trigger = `${card} [data-decision-field="${name}"] [data-select-trigger]`;
+    await page.evaluate(`(document.querySelector(${JSON.stringify(trigger)}).scrollIntoView({ block: 'center' }), true)`);
+    await page.locator(trigger).click();
+    await expect
+      .poll(() =>
+        page.evaluate(`(() => {
+          const o = [...document.querySelectorAll(${JSON.stringify(`${card} [data-decision-field="${name}"] [data-select-option]`)})]
+            .find((e) => e.textContent.trim() === ${JSON.stringify(label)});
+          if (!o) return false;
+          o.click();
+          return true;
+        })()`),
+      )
+      .toBe(true);
+    await expect.poll(async () => (await textsOf(page, `${card} [data-decision-field="${name}"] [data-select-value-text]`))[0] ?? '').toBe(label);
+  }
+  /** Set a number field as typing would: input, then change. */
+  const setNumber = (page: TauriPageLike, card: string, name: string, value: string) =>
+    page.evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(`${card} [data-decision-field="${name}"] input[type="number"]`)});
+      if (!el) throw new Error('no number input for ${name}');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+  /** The card's DOM, kept as evidence beside the run (the window capture is not reliable here). */
+  async function evidence(page: TauriPageLike, name: string, selector: string): Promise<void> {
+    mkdirSync(EVIDENCE, { recursive: true });
+    const html = (await page.evaluate(`document.querySelector(${JSON.stringify(selector)})?.outerHTML ?? '(gone)'`)) as string;
+    writeFileSync(`${EVIDENCE}/${name}.html`, html);
+  }
+
+  async function openRelay(page: TauriPageLike): Promise<void> {
+    await fetch(`${DAEMON_URL}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ setup_complete: '1' }),
+    });
+    await navigateTo(page, '/logs');
+    await navigateToScreen(page, '/relay', '[data-screen="relay"] [data-screen-tools]');
+    await page.locator('[data-screen-tools] [aria-label^="Now"]').click();
+    await page.waitForSelector(NEEDS, 20_000).catch(() => undefined);
+  }
+
+  /** The serious and critical axe violations (WCAG A + AA) inside `selector`, as `id: targets`. */
+  async function seriousA11y(page: TauriPageLike, selector: string): Promise<string[]> {
+    await page.evaluate(
+      `(function () { if (!window.axe) { ${readFileSync('node_modules/axe-core/axe.min.js', 'utf8')} } return typeof window.axe === 'object'; })()`,
+    );
+    return JSON.parse(
+      (await page.evaluate(`(async function () {
+        var r = await window.axe.run(document.querySelector(${JSON.stringify(selector)}), {
+          runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+          resultTypes: ['violations'],
+        });
+        return JSON.stringify((r.violations || [])
+          .filter(function (v) { return v.impact === 'serious' || v.impact === 'critical'; })
+          .map(function (v) {
+            return v.id + ': ' + v.nodes.map(function (n) {
+              var why = (n.any || []).concat(n.all || []).map(function (c) { return c.message; }).join('; ');
+              return n.target.join(' ') + (why ? ' (' + why + ')' : '');
+            }).join(', ');
+          }));
+      })()`)) as string,
+    );
+  }
+
+  /** The screen tests share one coordinator and one open screen session per test. */
+  async function formLane(goal: string): Promise<RelayLane> {
+    return new RelayCrew(DAEMON_URL).register({ role: 'coordinator', family: 'e2e', goal: `${goal} ${RUN_TAG}`, repo_key: FORM_REPO });
+  }
+
+  test('a form decision arrives with no refresh', async ({ tauriPage }) => {
+    test.setTimeout(180_000);
+    await openRelay(tauriPage);
+    const at = await markPage(tauriPage);
+    const coord = await formLane('form arrives');
+    lane ??= coord;
+    const question = `Arrives live? ${RUN_TAG}`;
+    const decisionId = await coord.ask({ question, response: RESPONSE });
+    const card = `${NEEDS} [data-decision="${decisionId}"]`;
+
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
+    expect(await textsOf(tauriPage, `${card} [data-decision-question]`)).toEqual([question]);
+    expect(await textsOf(tauriPage, `${card} [data-decision-field]`).then((t) => t.length)).toBe(3);
+    // The fields come in the order the lane wrote them, though jsonb stores the keys shorter-first.
+    const names = JSON.parse(
+      (await tauriPage.evaluate(
+        `JSON.stringify([...document.querySelectorAll(${JSON.stringify(`${card} [data-decision-field]`)})].map((e) => e.getAttribute('data-decision-field')))`,
+      )) as string,
+    );
+    expect(names).toEqual(['target', 'count', 'ship']);
+    expect(await countOf(tauriPage, `${card} [data-decision-field="target"] [data-select]`)).toBe(1);
+    expect(await countOf(tauriPage, `${card} [data-decision-field="count"] input[type="number"]`)).toBe(1);
+    expect(await countOf(tauriPage, `${card} [data-decision-field="ship"] input[type="checkbox"]`)).toBe(1);
+    expect(await countOf(tauriPage, `${card} [data-option]`)).toBe(0);
+    expect(JSON.parse(await stillMarked(tauriPage))).toEqual({ mark: RUN_TAG, at });
+    await evidence(tauriPage, '1-arrived', card);
+
+    // The card passes axe with the form showing (WCAG A + AA; no serious or critical).
+    expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the form card').toEqual([]);
+    // Open, rokkit names the Select's listbox after its trigger (sensei-hq/rokkit#206, fixed in
+    // 1.16.1); the card adds no name of its own. axe aria-input-field-name pins it end to end.
+    const target = `${card} [data-decision-field="target"] [data-select-trigger]`;
+    const listbox = `${card} [data-decision-field="target"] [role="listbox"]`;
+    // A press that lands while the fresh card still settles can miss: press again until it opens.
+    await expect
+      .poll(async () => {
+        if ((await countOf(tauriPage, listbox)) === 1) return true;
+        await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' }), true)`);
+        await tauriPage.locator(target).click();
+        return false;
+      }, { intervals: [500] })
+      .toBe(true);
+    // Scoped to the field: the open listbox is fixed over the field below it, and axe then reads
+    // that field's empty text against the listbox's paper, which no one sees.
+    expect(
+      await seriousA11y(tauriPage, `${card} [data-decision-field="target"]`),
+      'serious/critical a11y violations with the Select open',
+    ).toEqual([]);
+    await tauriPage.locator(target).click();
+    if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
+  });
+
+  test('required fields refuse inline', async ({ tauriPage }) => {
+    test.setTimeout(180_000);
+    await openRelay(tauriPage);
+    const coord = await formLane('form refuses');
+    lane ??= coord;
+    const decisionId = await coord.ask({ question: `Refuse inline? ${RUN_TAG}`, response: RESPONSE });
+    const card = `${NEEDS} [data-decision="${decisionId}"]`;
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
+
+    // Every answer the page posts is counted: the inline refusal must send none, which a
+    // daemon 422 (the card stays, the envelope stays empty) could not tell apart.
+    await tauriPage.evaluate(`(() => {
+      window.__answerPosts = 0;
+      if (!window.__answerSpy) {
+        const real = window.fetch;
+        window.fetch = (input, init) => {
+          const url = typeof input === 'string' ? input : input.url;
+          if (url.includes('/relay/answers')) window.__answerPosts += 1;
+          return real(input, init);
+        };
+        window.__answerSpy = true;
+      }
+      return true;
+    })()`);
+    await tauriPage.locator(`${card} [data-decision-answer]`).click();
+    await expect
+      .poll(async () => (await textsOf(tauriPage, `${card} [data-decision-field="target"] [data-message]`))[0] ?? '', { timeout: STREAM })
+      .toContain('is required');
+    expect(Number(await tauriPage.evaluate('window.__answerPosts'))).toBe(0);
+    expect(await countOf(tauriPage, card)).toBe(1);
+    expect((await coord.envelope()).answers.filter((a) => a.decision_id === decisionId)).toEqual([]);
+    await evidence(tauriPage, '2-refused-inline', card);
+    if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
+  });
+
+  test('answering resolves with no refresh', async ({ tauriPage }) => {
+    test.setTimeout(180_000);
+    await openRelay(tauriPage);
+    const at = await markPage(tauriPage);
+    const coord = await formLane('form resolves');
+    lane ??= coord;
+    const decisionId = await coord.ask({ question: `Resolve live? ${RUN_TAG}`, response: RESPONSE });
+    const card = `${NEEDS} [data-decision="${decisionId}"]`;
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
+
+    await pick(tauriPage, card, 'target', 'main');
+    await setNumber(tauriPage, card, 'count', '3');
+    await evidence(tauriPage, '3-filled', card);
+    await tauriPage.locator(`${card} [data-decision-answer]`).click();
+
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(0);
+    expect(JSON.parse(await stillMarked(tauriPage))).toEqual({ mark: RUN_TAG, at });
+    // ship was never touched: absent, not false (D83).
+    const answer = (await coord.envelope()).answers.find((a) => a.decision_id === decisionId);
+    expect(answer).toMatchObject({ decision_id: decisionId, option: null, values: { target: 'main', count: 3 } });
+    expect(Object.keys((answer as { values: Record<string, unknown> }).values).sort()).toEqual(['count', 'target']);
+    if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
+  });
+
+  test('a pick-several and long-text decision is answered live', async ({ tauriPage }) => {
+    test.setTimeout(180_000);
+    await openRelay(tauriPage);
+    const at = await markPage(tauriPage);
+    const coord = await formLane('form several');
+    lane ??= coord;
+    const several = {
+      schema: {
+        type: 'object',
+        properties: {
+          areas: { type: 'array', items: { type: 'string', enum: ['api', 'app', 'db'] }, uniqueItems: true, title: 'Areas' },
+          notes: { type: 'string', 'x-multiline': true, maxLength: 2000, title: 'Notes' },
+        },
+        required: ['areas'],
+      },
+    };
+    const decisionId = await coord.ask({ question: `Pick several? ${RUN_TAG}`, response: several });
+    const card = `${NEEDS} [data-decision="${decisionId}"]`;
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
+    expect(await countOf(tauriPage, `${card} [data-decision-field="areas"] [data-multiselect]`)).toBe(1);
+    expect(await countOf(tauriPage, `${card} [data-decision-field="notes"] textarea`)).toBe(1);
+
+    // Pick two members: open the MultiSelect with a real press, then press each option.
+    const trigger = `${card} [data-decision-field="areas"] [data-select-trigger]`;
+    await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(trigger)}).scrollIntoView({ block: 'center' }), true)`);
+    await tauriPage.locator(trigger).click();
+    for (const member of ['db', 'api']) {
+      await expect
+        .poll(() =>
+          tauriPage.evaluate(`(() => {
+            const o = [...document.querySelectorAll(${JSON.stringify(`${card} [data-decision-field="areas"] [data-select-option]`)})]
+              .find((e) => e.textContent.trim() === ${JSON.stringify(member)});
+            if (!o) return false;
+            o.click();
+            return true;
+          })()`),
+        )
+        .toBe(true);
+    }
+    const notes = 'first line\nsecond line';
+    // Open with members picked, the list passes axe: rokkit 1.16.1 restates the focused selected
+    // option (sensei-hq/rokkit#209 fixed). Scoped to the field: the open listbox is fixed over the
+    // field below it, and axe then reads that field's text against the listbox's paper, which no
+    // one sees.
+    const listbox = `${card} [data-decision-field="areas"] [role="listbox"]`;
+    await expect.poll(() => countOf(tauriPage, listbox)).toBe(1);
+    expect(
+      await seriousA11y(tauriPage, `${card} [data-decision-field="areas"]`),
+      'serious/critical a11y violations with the pick-several open',
+    ).toEqual([]);
+    // The person closes the list with a press on its trigger and moves to the notes to type: focus
+    // leaves the listbox.
+    await tauriPage.locator(trigger).click();
+    await expect.poll(() => countOf(tauriPage, listbox)).toBe(0);
+    // TauriPage's press does not move focus in WebKit, so focus the notes as a person's press would.
+    await tauriPage.evaluate(`(document.querySelector(${JSON.stringify(`${card} [data-decision-field="notes"] textarea`)}).focus(), true)`);
+    expect(await tauriPage.evaluate('document.activeElement?.tagName')).toBe('TEXTAREA');
+    await tauriPage.evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(`${card} [data-decision-field="notes"] textarea`)});
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, ${JSON.stringify(notes)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await evidence(tauriPage, '5-several-filled', card);
+    // Filled (members picked, notes typed), the card passes axe: rokkit draws each picked member
+    // as a label in the trigger (sensei-hq/rokkit#206 fixed in 1.16.1, no nested-interactive), and
+    // no field is faded by a disabled mark it does not carry (#207 fixed).
+    expect(await seriousA11y(tauriPage, card), 'serious/critical a11y violations on the filled pick-several').toEqual([]);
+    await tauriPage.locator(`${card} [data-decision-answer]`).click();
+
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(0);
+    expect(JSON.parse(await stillMarked(tauriPage))).toEqual({ mark: RUN_TAG, at });
+    const answer = (await coord.envelope()).answers.find((a) => a.decision_id === decisionId) as
+      | { option: unknown; values: { areas: string[]; notes: string } }
+      | undefined;
+    expect(answer?.option).toBeNull();
+    expect([...(answer?.values.areas ?? [])].sort()).toEqual(['api', 'db']);
+    expect(answer?.values.notes).toBe(notes);
+    if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
+  });
+
+  test('the task view answers too', async ({ tauriPage }) => {
+    test.setTimeout(180_000);
+    await fetch(`${DAEMON_URL}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ setup_complete: '1' }),
+    });
+    await navigateTo(tauriPage, '/logs');
+    const coord = await formLane('form task view');
+    lane ??= coord;
+    const title = `Form on the task ${RUN_TAG}`;
+    const taskId = await coord.plan({ title, phase: 'impl', repo_key: FORM_REPO });
+    await navigateToScreen(tauriPage, `/relay/${coord.crewId}/${taskId}`, '[data-screen="relay"] [data-task-title]');
+    const at = await markPage(tauriPage);
+
+    // Asked while the task view is open: it arrives there too.
+    const decisionId = await coord.ask({ task_id: taskId, question: `Answer from the task? ${RUN_TAG}`, response: RESPONSE });
+    const card = `[data-decision="${decisionId}"]`;
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(1);
+    await pick(tauriPage, card, 'target', 'develop');
+    await tauriPage.locator(`${card} [data-decision-answer]`).click();
+
+    await expect.poll(() => countOf(tauriPage, card), { timeout: STREAM }).toBe(0);
+    expect(JSON.parse(await stillMarked(tauriPage))).toEqual({ mark: RUN_TAG, at });
+    const answer = (await coord.envelope()).answers.find((a) => a.decision_id === decisionId);
+    expect(answer).toMatchObject({ option: null, values: { target: 'develop' } });
+    await evidence(tauriPage, '4-task-view-answered', '[data-screen="relay"]');
     if (lane !== coord) await person('POST', `/relay/crews/${coord.crewId}/close`, {});
   });
 });

@@ -53,8 +53,6 @@ use axum::{
     response::sse::{Event, Sse},
 };
 use serde::Deserialize;
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
 use crate::api::events::{LaneChange, LaneReason, RunChange, StateEvent};
@@ -198,8 +196,10 @@ pub(crate) struct RegisterBody {
     role: Option<String>,
     /// The name the assistant proposes for itself: the lane's title.
     suggested_name: Option<String>,
-    /// The editor the session runs in (#396), when it runs in one.
+    /// The editor the session runs in (#396), as the session says.
     host: Option<String>,
+    /// The editor the MCP binary detected (#455); preferred over `host`.
+    host_detected: Option<String>,
     family: String,
     version: Option<String>,
     model: Option<String>,
@@ -926,6 +926,15 @@ pub(crate) struct ReadQuery {
     repo_key: Option<String>,
 }
 
+/// `GET /relay/catalogue` (#513): the context launch templates resolve
+/// against. Both optional; both absent leaves every `launch` null.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CatalogueQuery {
+    workspace_id: Option<String>,
+    crew_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct TriageBody {
     title: String,
@@ -1011,6 +1020,7 @@ pub(crate) async fn register(
                     .map_err(err)?,
                 suggested_name: body.suggested_name,
                 host: body.host,
+                host_detected: body.host_detected,
             },
             chrono::Utc::now(),
         )
@@ -1709,7 +1719,7 @@ pub(crate) async fn post_step(
 /// (F8): task notifications carry the task id (the screen re-reads the
 /// view), step events carry the step itself (applied without re-reading),
 /// op-only relay events cover the rest (unregister interrupts). Same
-/// BroadcastStream-over-`event_tx` shape as the scan socket.
+/// Framed uniform stream over the state channel, like the scan socket.
 ///
 /// `?crew_id=` narrows the stream to one crew (#418): an event naming
 /// another crew is dropped; one naming no crew (a relay op, or a task whose
@@ -1718,20 +1728,26 @@ pub(crate) async fn post_step(
 /// id is a 400 from the query extractor.
 pub(crate) async fn relay_events_sse(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(filter): Query<RelayEventsFilter>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
-        Ok(event)
-            if StateEvent::is_relay_family(&event.entity)
-                && event.admits_crew(filter.crew_id.as_ref()) =>
-        {
-            let data = serde_json::to_string(&event).unwrap_or_default();
-            Some(Ok(Event::default().data(data)))
-        }
-        _ => None,
-    });
-    Sse::new(stream)
+    let rx = state.streams.state_tx.subscribe();
+    let cursor = crate::api::stream::parse_cursor(&headers);
+    let crew = filter.crew_id;
+    // Crew admission reads the frame payload: relay frames name their crew
+    // in data (or none, which passes everywhere).
+    let admits = move |f: &crate::api::stream::StreamFrame| {
+        crate::api::stream::allows_entity(crate::api::stream::StreamKind::Relay, f.entity())
+            && match crew {
+                None => true,
+                Some(want) => {
+                    f.payload_crew().map(|named| named == want.to_string()).unwrap_or(true)
+                }
+            }
+    };
+    let stream =
+        crate::api::stream::framed_stream(rx, state.streams.state_log.clone(), cursor, admits);
+    crate::api::stream::heartbeat(stream)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1749,12 +1765,27 @@ pub(crate) async fn close_crew(
     let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_close_crew(session.user_id, caller, crew_id).await.map_err(err)?;
+    emit_released(&state, &out.crew_id, &out.released).await;
     // A crew's lifecycle event: the crew id stands as the run id (§3k).
     emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
+    let released: Vec<String> = out.released.iter().map(|(lane, _)| lane.to_string()).collect();
     ok(serde_json::json!({
         "crew_id": out.crew_id.to_string(),
         "status": out.status,
+        "released": released,
     }))
+}
+
+/// Lanes a close released leave Now on the stream, each followed by the
+/// task it held, now interrupted. The lane close (#398) and the person
+/// close (#419) share it.
+async fn emit_released(state: &AppState, crew_id: &Uuid, released: &[(Uuid, Option<Uuid>)]) {
+    for (lane_id, interrupted) in released {
+        emit_lane(state, LaneChange::Unregistered, lane_id, crew_id).await;
+        if let Some(task_id) = interrupted {
+            emit_task(state, "interrupt", task_id).await;
+        }
+    }
 }
 
 // ─── Person routes ───
@@ -1768,12 +1799,7 @@ pub(crate) async fn person_close_crew(
     let user_id = person_user(&state).await.map_err(err)?;
     let crew_id = parse_uuid(&crew_id, "crew_id").map_err(err)?;
     let out = state.pg.relay_person_close_crew(user_id, crew_id).await.map_err(err)?;
-    for (lane_id, interrupted) in &out.released {
-        emit_lane(&state, LaneChange::Unregistered, lane_id, &out.crew_id).await;
-        if let Some(task_id) = interrupted {
-            emit_task(&state, "interrupt", task_id).await;
-        }
-    }
+    emit_released(&state, &out.crew_id, &out.released).await;
     if out.closed_now {
         // A crew's lifecycle event: the crew id stands as the run id (§3k).
         emit_run(&state, RunChange::Completed, &out.crew_id, &out.crew_id).await;
@@ -1788,6 +1814,37 @@ pub(crate) async fn now(
     let user_id = person_user(&state).await.map_err(err)?;
     let now = state.pg.relay_now(user_id, read_filter(&query).map_err(err)?).await.map_err(err)?;
     ok(now)
+}
+
+/// `GET /relay/catalogue` (#455): the assistants and editors this machine has
+/// seen, for AddMember's picker. `workspace_id` + `crew_id` resolve the repo
+/// launch templates start in (#513): the crew's repo, else the workspace's
+/// first; without either, every `launch` is null. A failed read is a 500,
+/// never empty lists.
+pub(crate) async fn catalogue(
+    State(state): State<AppState>,
+    Query(query): Query<CatalogueQuery>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let crew_id =
+        query.crew_id.as_deref().map(|c| parse_uuid(c, "crew_id")).transpose().map_err(err)?;
+    let workspace_id = query
+        .workspace_id
+        .as_deref()
+        .map(|w| parse_uuid(w, "workspace_id"))
+        .transpose()
+        .map_err(err)?;
+    let repo = state
+        .pg
+        .launch_repo_path(user_id, crew_id, workspace_id)
+        .await
+        .map_err(|e| err(RelayError::Internal(e)))?;
+    let catalogue = state
+        .pg
+        .relay_catalogue(repo.as_deref())
+        .await
+        .map_err(|e| err(RelayError::Internal(e)))?;
+    ok(catalogue)
 }
 
 pub(crate) async fn queue(
@@ -2855,7 +2912,7 @@ mod tests {
         data["op"] = json!(op);
         data["id"] = json!(id);
         data["stage"] = json!(stage);
-        json!({"action": action, "entity": "item", "data": data})
+        json!({"action": action, "entity": "item", "key": id, "data": data})
     }
 
     // ── #419: the queue's item ops and the ticketed backlog add ──
@@ -4613,7 +4670,10 @@ mod tests {
             .cloned()
             .unwrap_or_else(|| panic!("decision not on Now: {now}"));
         row["op"] = json!("asked");
-        assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));
+        assert_eq!(
+            asked,
+            json!({"action": "add", "entity": "decision", "key": decision_id, "data": row})
+        );
         let (status, body) = call(
             &h,
             "POST",
@@ -4626,7 +4686,7 @@ mod tests {
         let answered = serde_json::to_value(event_for_entity(&mut rx, "decision").await).unwrap();
         assert_eq!(
             answered,
-            json!({"action": "remove", "entity": "decision",
+            json!({"action": "remove", "entity": "decision", "key": decision_id,
                    "data": {"op": "answered", "id": decision_id, "crew_id": coord.2}})
         );
     }
@@ -4707,10 +4767,18 @@ mod tests {
             .find(|d| d["id"] == decision_id)
             .cloned()
             .unwrap_or_else(|| panic!("decision not on Now: {now}"));
-        assert_eq!(row["response"], form_response());
+        // The schema as sent; no layout was sent, so the stored one lists the
+        // fields in the order the lane wrote them (jsonb reorders `properties`).
+        let mut stored = form_response();
+        stored["layout"] = json!({"type": "vertical", "elements": [
+            {"scope": "#/path"}, {"scope": "#/count"}, {"scope": "#/ship"}]});
+        assert_eq!(row["response"], stored);
         assert_eq!(row["options"], json!([]));
         row["op"] = json!("asked");
-        assert_eq!(asked, json!({"action": "add", "entity": "decision", "data": row}));
+        assert_eq!(
+            asked,
+            json!({"action": "add", "entity": "decision", "key": decision_id, "data": row})
+        );
         let (status, body) = call(
             &h,
             "POST",
@@ -4740,7 +4808,7 @@ mod tests {
                 json!({
                     "task_id": task_id, "question": "Which files?",
                     "response": {"schema": {"type": "object", "properties": {
-                        "files": {"type": "array", "items": {"enum": ["a", "b"]}}}}},
+                        "files": {"type": "array", "items": {"type": "string"}}}}},
                     "blocks": [], "asked_of": "person",
                 }),
             )),
@@ -5518,7 +5586,8 @@ mod tests {
         let mut row = now["person_messages"][0].clone();
         assert_eq!(row["text"], "Look here", "{now}");
         row["op"] = json!("sent");
-        assert_eq!(sent, json!({"action": "add", "entity": "message", "data": row}));
+        let mid = row["id"].clone();
+        assert_eq!(sent, json!({"action": "add", "entity": "message", "key": mid, "data": row}));
         send_lane_message(&h, &holder, &token, None, json!({"kind": "coordinator"}), "ack").await;
         while let Ok(event) = rx.try_recv() {
             assert_ne!(event.entity, "message", "{:?}", event.data);
@@ -5787,6 +5856,55 @@ mod tests {
         )
         .await;
         // A refusal of the body's values is relay_invalid, 422, like every other.
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+
+    /// #455 5.5: the detected host wins; the self-report is the fallback. A
+    /// detection the catalogue does not know as an editor is never stored.
+    #[tokio::test]
+    async fn register_prefers_the_detected_host_over_the_reported_one() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let cases = [
+            (json!({"host_detected": "zed"}), json!("zed")),
+            (json!({"host": "cursor", "host_detected": "zed"}), json!("zed")),
+            (json!({"host": "cursor"}), json!("cursor")),
+            (json!({"host": "cursor", "host_detected": "claude"}), json!("cursor")),
+            (json!({"host_detected": "muse"}), Value::Null),
+        ];
+        let mut lanes = Vec::new();
+        for (extra, _) in &cases {
+            let mut req = json!({"family": "claude-code", "crew_id": coord.2});
+            for (k, v) in extra.as_object().unwrap() {
+                req[k] = v.clone();
+            }
+            let (status, body) = call(&h, "POST", "/api/relay/register", Some(req), None).await;
+            assert_eq!(status, StatusCode::OK, "{extra}: {body}");
+            lanes.push(body["lane_id"].as_str().unwrap().to_string());
+        }
+        let (status, body) = call(&h, "GET", "/relay/now", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for ((extra, want), id) in cases.iter().zip(&lanes) {
+            let lane = body["lanes"].as_array().unwrap().iter().find(|l| l["id"] == **id).unwrap();
+            assert_eq!(&lane["host"], want, "{extra}");
+        }
+    }
+
+    /// #455 5.5: a detected host is an editor's name too — a long one is refused.
+    #[tokio::test]
+    async fn register_refuses_a_detected_host_longer_than_a_name() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({
+                "family": "claude-code", "crew_id": coord.2, "host_detected": "x".repeat(65)
+            })),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     }
 
@@ -6480,6 +6598,104 @@ mod tests {
         assert_eq!(now["crews"][0]["status"], "active");
     }
 
+    /// Back-date a lane's lease past its end: the session died and the
+    /// sweeper has not run yet (#398).
+    async fn kill_lane_lease(h: &Harness, lane_id: &str) {
+        sqlx_core::query::query(
+            "update relay.leases set expires_at = current_timestamp - interval '1 minute'
+             where lane_id = $1::uuid and kind = 'lane' and state = 'granted'",
+        )
+        .bind(lane_id)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_with_dead_lane_closes() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, token) = register_contributor(&h, &coord.2).await;
+        kill_lane_lease(&h, &lane_id).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "closed");
+        assert_eq!(body["released"], json!([lane_id]));
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        assert!(
+            !now["crews"].as_array().unwrap().iter().any(|c| c["id"] == coord.2),
+            "the closed crew is not on Now: {now}"
+        );
+        // The dead session comes back: gone, and the crew is closed to it.
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/heartbeat",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::GONE, "{body}");
+        assert_eq!(body["error"], "relay_lane_gone");
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/reregister",
+            Some(json!({"lane_id": lane_id})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["message"].as_str().unwrap_or("").contains("crew is closed"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn close_emits_lane_unregistered_for_released_lanes() {
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (lane_id, _) = register_contributor(&h, &coord.2).await;
+        let task_id = assigned_task(&h, &coord, &lane_id).await;
+        kill_lane_lease(&h, &lane_id).await;
+        let mut rx = h.state.event_tx.subscribe();
+        let (status, body) = call(
+            &h,
+            "POST",
+            &format!("/api/relay/crews/{}/close", coord.2),
+            Some(json!({"lane_id": coord.0})),
+            Some(&coord.1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // In order: the lane leaves, its task is interrupted, the crew completes.
+        let mut seen = Vec::new();
+        loop {
+            let event = serde_json::to_value(next_event(&mut rx).await).unwrap();
+            let done = event["entity"] == "run" && event["data"]["op"] == "completed";
+            seen.push(event);
+            if done {
+                break;
+            }
+        }
+        let at = |pred: &dyn Fn(&Value) -> bool| seen.iter().position(pred);
+        let lane_gone =
+            at(&|e| e["entity"] == "lane" && e["action"] == "remove" && e["data"]["id"] == lane_id);
+        let interrupted = at(&|e| {
+            e["entity"] == "task"
+                && e["data"]["op"] == "interrupt"
+                && e["data"]["task_id"] == task_id
+        });
+        let completed = seen.len() - 1;
+        assert!(lane_gone.is_some_and(|i| i < completed), "{seen:?}");
+        assert!(interrupted.is_some_and(|i| i < completed), "{seen:?}");
+    }
+
     #[tokio::test]
     async fn close_requires_coordinator() {
         let h = harness().await;
@@ -6672,7 +6888,7 @@ mod tests {
         assert_eq!(data["crew_id"], crew_id);
         data["op"] = json!(op);
         data["lane_id"] = json!(lane_id);
-        json!({"action": action, "entity": "lane", "data": data})
+        json!({"action": action, "entity": "lane", "key": lane_id, "data": data})
     }
 
     async fn lane_event_why(
@@ -6730,7 +6946,7 @@ mod tests {
         // A removal names the row by its id: the screen drops it in place.
         assert_eq!(
             event,
-            json!({"action": "remove", "entity": "lane",
+            json!({"action": "remove", "entity": "lane", "key": lane_id,
                    "data": {"op": "unregistered", "id": lane_id, "lane_id": lane_id, "crew_id": coord.2}})
         );
     }
@@ -6957,7 +7173,7 @@ mod tests {
         assert_eq!(
             event,
             json!({
-                "action": "update", "entity": "run",
+                "action": "update", "entity": "run", "key": coord.2,
                 "data": {"op": "completed", "run_id": coord.2, "crew_id": coord.2},
             })
         );
@@ -6974,5 +7190,340 @@ mod tests {
         assert_eq!(body["error"], "relay_internal");
         // A failed read never answers 200-with-empty either.
         assert_ne!(status, StatusCode::OK);
+    }
+
+    // ── #455: the catalogue read and the names every relay read serves ──
+
+    async fn seed_session(
+        h: &Harness,
+        sid: &str,
+        acp: &str,
+        host: Option<&str>,
+        model: Option<&str>,
+        age_days: i32,
+    ) {
+        sqlx_core::query::query(
+            "insert into activity.sessions (client_session_id, acp_id, host, model, started_at)
+             values ($1, $2, $3, $4, now() - make_interval(days => $5))",
+        )
+        .bind(sid)
+        .bind(acp)
+        .bind(host)
+        .bind(model)
+        .bind(age_days)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+    }
+
+    async fn clean_slate(h: &Harness) {
+        for sql in ["delete from activity.sessions", "delete from sensei.assistant_installs"] {
+            sqlx_core::query::query(sql).execute(h.state.pg.pool()).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn catalogue_serves_what_this_machine_has_seen() {
+        let h = harness().await;
+        clean_slate(&h).await;
+        seed_session(&h, "cat-claude", "claude", None, Some("claude-opus-4-1"), 0).await;
+        seed_session(&h, "cat-cursor", "cursor", Some("cursor"), Some("claude-sonnet-4-5"), 1)
+            .await;
+        seed_session(&h, "cat-codex", "codex", None, None, 9).await;
+        seed_session(&h, "cat-cowork", "cowork", None, None, 2).await;
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs (catalogue_id, installed, config_path, configured, detected_at)
+             values ('cursor', true, '/home/x/.cursor/mcp.json', true, now()),
+                    ('claude-desktop', true, '/home/x/claude.json', true, now())",
+        )
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = call(&h, "GET", "/relay/catalogue", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let assistants = body["assistants"].as_array().unwrap_or_else(|| panic!("{body}"));
+        let ids: Vec<&str> = assistants.iter().map(|a| a["id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids,
+            ["claude", "codex"],
+            "ordered by sessions this week, Claude Desktop never offered: {body}"
+        );
+        assert_eq!(assistants[0]["name"], "Claude Code");
+        assert_eq!(assistants[0]["kind"], "assistant");
+        assert_eq!(assistants[0]["sessions_week"], 1);
+        assert_eq!(
+            assistants[0]["launch"],
+            Value::Null,
+            "no workspace/crew context, no launch (#513)"
+        );
+        assert_eq!(assistants[0]["installed"], Value::Null, "never detected reads null");
+        assert!(assistants[0]["last_used_at"].is_string());
+        assert_eq!(assistants[1]["name"], "Codex");
+        assert_eq!(assistants[1]["sessions_week"], 0);
+        assert!(assistants[1]["last_used_at"].is_string(), "{body}");
+        let editors = body["editors"].as_array().unwrap();
+        assert_eq!(editors.len(), 1, "{body}");
+        assert_eq!(editors[0]["id"], "cursor");
+        assert_eq!(editors[0]["name"], "Cursor");
+        assert_eq!(editors[0]["kind"], "editor");
+        assert_eq!(editors[0]["installed"], true);
+        assert_eq!(editors[0]["models"], json!(["claude-sonnet-4-5"]));
+        assert_eq!(editors[0]["mcp_config"], "/home/x/.cursor/mcp.json");
+        assert!(editors[0]["last_used_at"].is_string());
+        let unknown = body["unknown"].as_array().unwrap();
+        assert_eq!(unknown.len(), 1, "{body}");
+        assert_eq!(unknown[0]["id"], "cowork");
+        assert_eq!(unknown[0]["name"], "Cowork");
+        assert_eq!(unknown[0]["kind"], "unknown");
+    }
+
+    #[tokio::test]
+    async fn an_installed_tool_is_seen_without_a_session_and_unconfigured_has_no_config() {
+        let h = harness().await;
+        clean_slate(&h).await;
+        sqlx_core::query::query(
+            "insert into sensei.assistant_installs (catalogue_id, installed, config_path, configured, detected_at)
+             values ('zed', true, '/home/x/.config/zed/settings.json', false, now())",
+        )
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let (status, body) = call(&h, "GET", "/relay/catalogue", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let zed = &body["editors"][0];
+        assert_eq!(zed["id"], "zed", "{body}");
+        assert_eq!(zed["last_used_at"], Value::Null);
+        assert_eq!(zed["models"], json!([]));
+        assert_eq!(zed["mcp_config"], Value::Null, "sensei is not configured there");
+    }
+
+    #[tokio::test]
+    async fn catalogue_launch_resolves_the_crew_repo_then_the_workspace_first() {
+        let h = harness().await;
+        clean_slate(&h).await;
+        seed_session(&h, "cat-launch", "claude", None, None, 0).await;
+        let (_, _, crew_id) = register_coordinator(&h).await;
+        let ws: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "insert into sensei.workspaces (name) values ('launch-probe-ep-ws') returning id",
+        )
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        for (tag, join_ws) in ["crew", "ws"].iter().map(|t| (*t, *t == "ws")) {
+            let key = format!("launch-probe-ep-{tag}");
+            let path = format!("/tmp/launch-probe-ep-{tag}");
+            let repo: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "insert into sensei.repositories (repo_key, name) values ($1, $2)
+                 on conflict (repo_key) do update set repo_key = excluded.repo_key returning id",
+            )
+            .bind(&key)
+            .bind(format!("probe-ep-{tag}"))
+            .fetch_one(h.state.pg.pool())
+            .await
+            .unwrap();
+            let root: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "insert into sensei.folders_to_watch (path, name) values ($1, $2)
+                 on conflict (path) do update set path = excluded.path returning id",
+            )
+            .bind(&path)
+            .bind(format!("probe-ep-{tag}"))
+            .fetch_one(h.state.pg.pool())
+            .await
+            .unwrap();
+            sqlx_core::query::query(
+                "insert into sensei.folders (root_id, repository_id, name, path, abs_path, kind)
+                 values ($1, $2, $3, $4, $5, 'git') on conflict (abs_path) do nothing",
+            )
+            .bind(root.0)
+            .bind(repo.0)
+            .bind(format!("probe-ep-{tag}"))
+            .bind(&path)
+            .bind(&path)
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+            if join_ws {
+                sqlx_core::query::query(
+                    "insert into sensei.repositories_in_workspaces (workspace_id, repository_id)
+                     values ($1, $2) on conflict do nothing",
+                )
+                .bind(ws.0)
+                .bind(repo.0)
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap();
+            }
+        }
+        sqlx_core::query::query(
+            "update relay.crews set repo_key = 'launch-probe-ep-crew' where id = $1",
+        )
+        .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        // The crew's checkout wins.
+        let uri = format!("/relay/catalogue?workspace_id={}&crew_id={crew_id}", ws.0);
+        let (status, body) = call(&h, "GET", &uri, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let claude = body["assistants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == "claude")
+            .unwrap()
+            .clone();
+        assert_eq!(claude["launch"], json!("cd \"/tmp/launch-probe-ep-crew\" && claude"), "{body}");
+        // No crew repo: the workspace's first checkout.
+        sqlx_core::query::query("update relay.crews set repo_key = null where id = $1")
+            .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        let (status, body) = call(&h, "GET", &uri, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let claude = body["assistants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == "claude")
+            .unwrap()
+            .clone();
+        assert_eq!(claude["launch"], json!("cd \"/tmp/launch-probe-ep-ws\" && claude"), "{body}");
+        // Cleanup: leases, then lanes, then the crew.
+        sqlx_core::query::query(
+            "delete from relay.leases where lane_id in (select id from relay.lanes where crew_id = $1)",
+        )
+        .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query("delete from relay.lanes where crew_id = $1")
+            .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("delete from relay.crews where id = $1")
+            .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "delete from sensei.repositories_in_workspaces where workspace_id = $1",
+        )
+        .bind(ws.0)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query("delete from sensei.workspaces where id = $1")
+            .bind(ws.0)
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        for tag in ["crew", "ws"] {
+            let path = format!("/tmp/launch-probe-ep-{tag}");
+            sqlx_core::query::query("delete from sensei.folders where abs_path = $1")
+                .bind(&path)
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap();
+            sqlx_core::query::query("delete from sensei.folders_to_watch where path = $1")
+                .bind(&path)
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap();
+            sqlx_core::query::query("delete from sensei.repositories where repo_key = $1")
+                .bind(format!("launch-probe-ep-{tag}"))
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_catalogue_read_is_a_500_with_no_lists() {
+        let h = harness().await;
+        sqlx_core::query::query("alter view sensei.assistant_catalogue_words rename to gone_words")
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        let (status, body) = call(&h, "GET", "/relay/catalogue", None, None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert!(body.get("assistants").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn every_relay_read_names_the_lane_from_the_catalogue() {
+        let h = harness().await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "coordinator", "family": "claude-code", "host": "zed"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let crew = body["crew_id"].as_str().unwrap().to_string();
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/api/relay/register",
+            Some(json!({"role": "contributor", "family": "muse", "crew_id": crew})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (muse, muse_token) = (
+            body["lane_id"].as_str().unwrap().to_string(),
+            body["lane_token"].as_str().unwrap().to_string(),
+        );
+
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let lanes = now["lanes"].as_array().unwrap();
+        let coord = lanes.iter().find(|l| l["role"] == "coordinator").unwrap();
+        assert_eq!(coord["family_name"], "Claude Code", "{coord}");
+        assert_eq!(coord["family_kind"], "assistant");
+        assert_eq!(coord["host_name"], "Zed");
+        assert_eq!(coord["host_kind"], "editor");
+        let m = lanes.iter().find(|l| l["id"] == muse).unwrap();
+        assert_eq!(m["family_name"], "Muse", "{m}");
+        assert_eq!(m["family_kind"], "unknown");
+        assert_eq!(m["host_name"], Value::Null);
+        assert_eq!(m["host_kind"], Value::Null);
+
+        // A run: Task 0 claimed by the muse lane.
+        let item = triage_item(&h).await;
+        let (status, body) = call(
+            &h,
+            "POST",
+            "/relay/runs",
+            Some(json!({"title": "S", "goal": "G", "item_ids": [item], "repo_key": "github.com/o/r", "start": true})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let run_id = body["run_id"].as_str().unwrap().to_string();
+        let task0 = body["planning_task_id"].as_str().unwrap().to_string();
+        let (status, body) = claim_next(&h, &muse, &muse_token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let (_, now) = call(&h, "GET", "/relay/now", None, None).await;
+        let task =
+            now["run_tasks"].as_array().unwrap().iter().find(|t| t["task_id"] == task0).unwrap();
+        assert_eq!(task["lane"]["family_name"], "Muse", "{task}");
+
+        let (status, detail) = call(&h, "GET", &format!("/relay/runs/{run_id}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{detail}");
+        let members = detail["members"].as_array().unwrap();
+        assert!(!members.is_empty(), "{detail}");
+        for m in members {
+            let want = if m["family"] == "muse" { "Muse" } else { "Claude Code" };
+            assert_eq!(m["family_name"], want, "{m}");
+        }
+
+        let (status, view) =
+            call(&h, "GET", &format!("/relay/tasks/{crew}/{task0}"), None, None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["task"]["lane"]["family_name"], "Muse", "{view}");
     }
 }

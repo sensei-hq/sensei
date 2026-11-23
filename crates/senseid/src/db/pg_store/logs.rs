@@ -16,6 +16,9 @@ type TaskExecutionRow = (
     Option<String>,                        // error_message
     chrono::DateTime<chrono::Utc>,         // started_at
     Option<chrono::DateTime<chrono::Utc>>, // completed_at
+    uuid::Uuid,                            // id
+    Option<uuid::Uuid>,                    // retried_from_execution_id
+    Option<i64>,                           // retried_from_task_id (via self-join)
 );
 
 /// Watchdog abandonments over a window — see [`PgStore::watchdog_abandonments`].
@@ -24,6 +27,11 @@ pub struct Abandonments {
     pub days: i32,
     pub by_day: Vec<AbandonedDay>,
     pub worst: Vec<AbandonedTask>,
+    /// Per-task rows, newest first — which task, where, when, and why.
+    /// Populated separately (the aggregates answer "how much", these
+    /// answer "which").
+    #[serde(default)]
+    pub tasks: Vec<serde_json::Value>,
 }
 
 /// Abandonments of one kind on one day.
@@ -44,8 +52,12 @@ pub struct AbandonedTask {
 }
 
 /// Select list matching [`TaskExecutionRow`], field for field and in order.
+/// The lineage tail resolves the retried row's task id inline, so every
+/// reader (attempts, children, feeds) carries it without its own join.
 const TASK_EXECUTION_COLUMNS: &str = "task_id, parent_task_id, task_kind::text, folder_path, path, \
-     status, items_processed, duration_ms, retry_number, error_message, started_at, completed_at";
+     status, items_processed, duration_ms, retry_number, error_message, started_at, completed_at, \
+     id, retried_from_execution_id, \
+     (SELECT task_id FROM activity.task_executions r2 WHERE r2.id = activity.task_executions.retried_from_execution_id)";
 
 /// One execution row as the wire shape a follower reads.
 ///
@@ -66,6 +78,9 @@ fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
         "error": r.9,
         "startedAt": r.10,
         "completedAt": r.11,
+        "id": r.12,
+        "retriedFrom": r.13,
+        "retriedFromTaskId": r.14,
     })
 }
 
@@ -87,20 +102,20 @@ impl PgStore {
         &self,
         folder_id: Option<&uuid::Uuid>,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = match folder_id {
+        let rows: Vec<(i32, uuid::Uuid, String, String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = match folder_id {
             Some(fid) => sqlx_core::query_as::query_as(
-                "SELECT folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors WHERE folder_id = $1 ORDER BY created_at DESC"
+                "SELECT id, folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors WHERE folder_id = $1 ORDER BY created_at DESC"
             ).bind(fid).fetch_all(&self.pool).await,
             None => sqlx_core::query_as::query_as(
-                "SELECT folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors ORDER BY created_at DESC LIMIT 200"
+                "SELECT id, folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors ORDER BY created_at DESC LIMIT 200"
             ).fetch_all(&self.pool).await,
         }.map_err(|e| e.to_string())?;
 
         Ok(rows
             .into_iter()
-            .map(|(fid, fp, err, adapter, phase, ts)| {
+            .map(|(id, fid, fp, err, adapter, phase, ts)| {
                 serde_json::json!({
-                    "folder_id": fid, "file_path": fp, "error": err,
+                    "id": id, "folder_id": fid, "file_path": fp, "error": err,
                     "adapter": adapter, "phase": phase, "created_at": ts.to_rfc3339(),
                 })
             })
@@ -479,10 +494,11 @@ impl PgStore {
             folder_path,
             path,
             retry_number,
+            retried_from,
         } = start;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number)
-             VALUES($1, $2, $3::sensei.task_execution_kind, $4, $5, 'running', $6) RETURNING id"
+            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number, retried_from_execution_id)
+             VALUES($1, $2, $3::sensei.task_execution_kind, $4, $5, 'running', $6, $7) RETURNING id"
         )
         .bind(task_id)
         .bind(parent_task_id)
@@ -490,6 +506,7 @@ impl PgStore {
         .bind(folder_path)
         .bind(path)
         .bind(retry_number)
+        .bind(retried_from)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| format!("start_task_execution: {}", e))?;
@@ -502,15 +519,17 @@ impl PgStore {
         id: &uuid::Uuid,
         items_processed: i32,
         duration_ms: i32,
+        phases_ms: Option<&serde_json::Value>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE activity.task_executions
-                SET status = 'completed', items_processed = $2, duration_ms = $3, completed_at = now()
+                SET status = 'completed', items_processed = $2, duration_ms = $3, completed_at = now(), phases_ms = $4
               WHERE id = $1"
         )
         .bind(id)
         .bind(items_processed)
         .bind(duration_ms)
+        .bind(phases_ms)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("complete_task_execution: {}", e))?;
@@ -653,7 +672,230 @@ impl PgStore {
                     last_at,
                 })
                 .collect(),
+            tasks: Vec::new(),
         })
+    }
+
+    /// Terminal failures in the last `days`, newest first, with kind, path,
+    /// and reason — the failures feed. Completed and still-running rows are
+    /// not failures.
+    pub async fn failed_tasks(
+        &self,
+        days: i32,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let sql = format!(
+            "SELECT {TASK_EXECUTION_COLUMNS} FROM activity.task_executions
+              WHERE status = 'failed' AND started_at >= now() - (interval '1 day' * $1)
+              ORDER BY started_at DESC LIMIT $2"
+        );
+        let rows: Vec<TaskExecutionRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("failed_tasks: {e}"))?;
+        Ok(rows.into_iter().map(task_execution_json).collect())
+    }
+
+    /// Watchdog abandonments as per-task rows, newest first — the aggregate
+    /// queries answer "how much", these answer "which task, where, when".
+    /// Same watchdog-prefix rule as [`Self::watchdog_abandonments`], so the
+    /// two cannot disagree about what an abandonment is.
+    /// Open a wave run row: `WaveTotals` landed. Returns the row id. Keys
+    /// restart per session (dispatcher task ids), so opens never conflict —
+    /// each open is its own row, and closes match the latest open pair.
+    pub async fn open_wave_run(
+        &self,
+        wave: &str,
+        key: &str,
+        parent_task_id: Option<i64>,
+        total: i64,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.wave_runs(wave, key, parent_task_id, total)
+             VALUES ($1, $2, $3, $4) RETURNING id",
+        )
+        .bind(wave)
+        .bind(key)
+        .bind(parent_task_id)
+        .bind(total)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("open_wave_run: {e}"))?;
+        Ok(row.0)
+    }
+
+    /// Close the latest open row for a (wave, key) pair with settled counts.
+    /// Returns false when no open row exists (a terminal without totals —
+    /// recorded as a miss, never an error, so a missed open cannot fail a
+    /// wave that otherwise completed).
+    pub async fn close_wave_run(&self, close: &WaveRunClose<'_>) -> Result<bool, String> {
+        let &WaveRunClose { wave, key, settled, total, outcome } = close;
+        let res = sqlx_core::query::query(
+            "UPDATE activity.wave_runs SET settled = $3, total = $4, outcome = $5, closed_at = now()
+              WHERE id = (SELECT id FROM activity.wave_runs
+                           WHERE wave = $1 AND key = $2 AND outcome = 'open'
+                           ORDER BY opened_at DESC LIMIT 1)",
+        )
+        .bind(wave)
+        .bind(key)
+        .bind(settled)
+        .bind(total)
+        .bind(outcome)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("close_wave_run: {e}"))?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Boot abandonment: close rows left open by dead sessions. A wave whose
+    /// terminal never emitted can never complete — its dispatcher died with
+    /// the process — so it reads `abandoned` with its last known totals
+    /// instead of lingering open. Idempotent. Returns rows abandoned.
+    pub async fn abandon_open_wave_runs(
+        &self,
+        before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.wave_runs SET outcome = 'abandoned', closed_at = now()
+              WHERE outcome = 'open' AND opened_at < $1",
+        )
+        .bind(before)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("abandon_open_wave_runs: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
+    /// Recent wave runs, newest first, optionally narrowed to one wave.
+    pub async fn list_wave_runs(
+        &self,
+        wave: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            uuid::Uuid,
+            String,
+            String,
+            Option<i64>,
+            i32,
+            i32,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, wave, key, parent_task_id, total, settled, outcome, opened_at, closed_at
+                   FROM activity.wave_runs
+                  WHERE ($1::text IS NULL OR wave = $1)
+                  ORDER BY opened_at DESC LIMIT $2",
+        )
+        .bind(wave)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("list_wave_runs: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, wave, key, parent_task_id, total, settled, outcome, opened_at, closed_at)| {
+                    serde_json::json!({
+                        "id": id.to_string(),
+                        "wave": wave, "key": key, "parent_task_id": parent_task_id,
+                        "total": total, "settled": settled, "outcome": outcome,
+                        "opened_at": opened_at.to_rfc3339(),
+                        "closed_at": closed_at.map(|t| t.to_rfc3339()),
+                    })
+                },
+            )
+            .collect())
+    }
+
+    /// Every alert disposition: what the reader acked, and what cleared
+    /// before (recurrence memory for escalation). Alerts themselves
+    /// re-derive from the feeds; this table holds only dispositions.
+    pub async fn list_alert_acks(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, bool, i32, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT class, alert_key, acked, seen_clears, updated_at
+                   FROM activity.alert_acks ORDER BY updated_at DESC",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("list_alert_acks: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(class, key, acked, seen_clears, updated_at)| {
+                serde_json::json!({
+                    "class": class, "key": key, "acked": acked,
+                    "seen_clears": seen_clears,
+                    "updated_at": updated_at.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    /// Write one disposition. `acked=true` acks; `acked=false` records a
+    /// client-observed clear: un-acks AND bumps `seen_clears` — but only on
+    /// the acked→cleared transition (or a first-seen clear), so a duplicate
+    /// clear call never double-counts a recurrence. Piggybacks the stale
+    /// prune: cleared rows untouched for 90+ days go, so recurrence memory
+    /// fades instead of growing forever. No new worker.
+    pub async fn set_alert_ack(
+        &self,
+        class: &str,
+        key: &str,
+        acked: bool,
+    ) -> Result<serde_json::Value, String> {
+        let row: (String, String, bool, i32, chrono::DateTime<chrono::Utc>) =
+            sqlx_core::query_as::query_as(
+                "INSERT INTO activity.alert_acks(class, alert_key, acked, seen_clears, updated_at)
+                 VALUES ($1, $2, $3, CASE WHEN $3 THEN 0 ELSE 1 END, now())
+                 ON CONFLICT(class, alert_key) DO UPDATE SET
+                   acked = EXCLUDED.acked,
+                   seen_clears = activity.alert_acks.seen_clears
+                     + CASE WHEN NOT EXCLUDED.acked AND activity.alert_acks.acked THEN 1 ELSE 0 END,
+                   updated_at = now()
+                 RETURNING class, alert_key, acked, seen_clears, updated_at",
+            )
+            .bind(class)
+            .bind(key)
+            .bind(acked)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| format!("set_alert_ack: {e}"))?;
+        sqlx_core::query::query(
+            "DELETE FROM activity.alert_acks WHERE NOT acked AND updated_at < now() - interval '90 days'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_alert_ack prune: {e}"))?;
+        Ok(serde_json::json!({
+            "class": row.0, "key": row.1, "acked": row.2,
+            "seen_clears": row.3, "updated_at": row.4.to_rfc3339(),
+        }))
+    }
+
+    pub async fn abandoned_task_list(
+        &self,
+        days: i32,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let prefix = format!("{}%", crate::tasks::executor::WATCHDOG_ABANDONED);
+        let sql = format!(
+            "SELECT {TASK_EXECUTION_COLUMNS} FROM activity.task_executions
+              WHERE status = 'failed' AND error_message LIKE $1
+                AND started_at >= now() - (interval '1 day' * $2)
+              ORDER BY started_at DESC LIMIT $3"
+        );
+        let rows: Vec<TaskExecutionRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(&prefix)
+            .bind(days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("abandoned_task_list: {e}"))?;
+        Ok(rows.into_iter().map(task_execution_json).collect())
     }
 
     /// Roll up task executions older than `days` into `task_execution_daily`,
@@ -751,6 +993,40 @@ impl PgStore {
         .await
         .map_err(|e| format!("reconcile_orphaned_task_executions: {}", e))?;
         Ok(res.rows_affected())
+    }
+
+    /// Crash orphans eligible for the boot re-queue sweep: failed rows the
+    /// reconcile marked (never legit failures — those already got bounded
+    /// in-session retries), unparented (wave/folder children belong to their
+    /// re-drive, not the sweep), and under the retry cap so poison
+    /// terminates across crashes. One row per task id: the latest attempt.
+    pub async fn orphaned_task_rows(
+        &self,
+        max_retries: i32,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, i64, String, String, String, i32)> =
+            sqlx_core::query_as::query_as(
+                "SELECT DISTINCT ON (task_id) id, task_id, task_kind::text, folder_path, path, retry_number
+                   FROM activity.task_executions
+                  WHERE status = 'failed'
+                    AND error_message = 'orphaned: daemon restarted while task was running'
+                    AND parent_task_id IS NULL
+                    AND retry_number < $1
+                  ORDER BY task_id, started_at DESC",
+            )
+            .bind(max_retries)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("orphaned_task_rows: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, task_id, kind, folder_path, path, retry_number)| {
+                serde_json::json!({
+                    "id": id, "taskId": task_id, "kind": kind,
+                    "folderPath": folder_path, "path": path, "retryNumber": retry_number,
+                })
+            })
+            .collect())
     }
 
     // ── Knowledge Sources (federation endpoints) ──────────────────────

@@ -100,7 +100,10 @@ Where things stand on develop (`c25d1a930`):
     that every registry id has one).
   - It runs on first run (the wizard's assistants stage posts `POST /api/assistants/detect` on entry, and the
     daemon runs it once at startup when `assistant_installs` is empty), after every configure / remove /
-    upgrade (so `configured` follows), and from Settings → Assistants "Detect again".
+    upgrade (so `configured` follows), and from Settings → Assistants "Detect again". Detection only
+    observes: `configured_at` / `configured_version` move only for the tools the triggering configure (or an
+    upgrade that re-pushed the plugin) just configured, so a tool configured under an older sensei keeps its
+    stamp and one first seen configured has none (review of PR #506).
   - Settings → Assistants reads the stored rows joined to the catalogue (`GET /api/assistants/installs`) instead
     of probing on every load, and shows when they were detected. The wizard's family cards keep their live
     probe for the configure flow (unchanged).
@@ -110,6 +113,9 @@ Where things stand on develop (`c25d1a930`):
   (`crates/senseid/src/assistants/mod.rs:33-115`, plus `ClaudeCodeAssistant::name` in
   `assistants/claude_code.rs:435`), and nowhere for kind. After this change the seeded catalogue owns them. The
   registry keeps its ids and probes only; the names it serves come from the catalogue through the install rows.
+  A setup family card (the `claude` family groups Claude Code and Claude Desktop) is named after the members its
+  switch acts on — the installed ones, or all when none is — joined from their catalogue names ("Claude Code and
+  Claude Desktop"), never the family id's own row (review of PR #506).
   `assistantLabel` is fed from four relay reads, not one, and each must carry the served name before
   `FAMILY_NAMES` can go:
   - the Now lane (`now_lane_json`, `crates/senseid/src/db/pg_store/relay.rs:1497-1531`): `family_name` and
@@ -178,6 +184,19 @@ Where things stand on develop (`c25d1a930`):
     B -->|vscode| V[vscode]
     B -->|anything else or absent| N[no detection]
   ```
+
+  Checked on this machine (task 5.1, 2026-11-20), by a stdio MCP server that logs its `initialize` and
+  environment:
+  - Claude Code 2.1.325 sends `clientInfo.name` `claude-code`; started from Terminal.app its server sees
+    `TERM_PROGRAM=Apple_Terminal` and no `CURSOR_TRACE_ID` (no detection, as the flowchart says).
+  - Zed sends `clientInfo.name` `Zed` (matched case-insensitively). A server Zed starts sees no `TERM_PROGRAM`;
+    Zed's own terminal sets `TERM_PROGRAM=zed` (the Zed binary pairs the two).
+  - VS Code names its MCP client after the product's long name, `Visual Studio Code`, and its terminal sets
+    `TERM_PROGRAM=vscode`.
+  - Cursor, Windsurf and Kiro are not installed here, so their values are not observed: Cursor's published client
+    name is `cursor-vscode` and its terminal adds `CURSOR_TRACE_ID` to VS Code's `TERM_PROGRAM=vscode`. The prefix
+    match (`cursor*`, `windsurf*`, `kiro*`) covers a renamed client; a value that matches nothing gives no
+    detection, so the self-report stands.
 
   The daemon resolves the lane's host with a pure `resolve_host(reported, detected, catalogue)`:
   1. a `host_detected` that the catalogue knows as an `editor` → that is the host;
