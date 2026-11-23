@@ -28,6 +28,12 @@ are marked **BREAKING**.
   died on a missing `codesign` after copying the binaries, leaving the daemon
   down; the script now reports the skip and exits 0.
 
+### Security
+
+- **`cookie` 0.18.2 → 0.18.3** in the desktop app (RUSTSEC-2026-0594,
+  private cookie nonces can repeat in processes that fork). Reached through
+  Tauri; lockfile-only update.
+
 ## [0.27.0] — 2026-11-23
 
 ### Added
