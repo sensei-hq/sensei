@@ -1,11 +1,18 @@
 ## ADDED Requirements
 
 ### Requirement: Archive schema
-The database SHALL hold a `relay_archive` schema, defined as dbd DDL files and deployed only in the
-daemon's default scope, with one table for each of `relay.crews`, `relay.lanes`, `relay.leases`,
-`relay.runs`, `relay.run_items`, `relay.tasks` and `relay.actions`. Each archive table SHALL carry
-every column of its live twin plus `archived_at`; archived runs and crews SHALL carry `delete_after`.
-No archive table SHALL hold a foreign key, and no live table SHALL reference an archive table.
+The database SHALL hold a `relay_archive` schema, defined as dbd DDL files, with one table for
+each of `relay.crews`, `relay.lanes`, `relay.leases`, `relay.runs`, `relay.run_items`,
+`relay.tasks` and `relay.actions`. Each archive table SHALL carry every column of its live twin
+plus `archived_at`, `lanes.token_hash` copied verbatim (a re-close authenticates
+its caller lane against the archive; UUID-v4 preimages make a retained hash
+useless to anyone holding it)
+(auth material stays live-only). No archive table SHALL hold a foreign key, and no live table
+SHALL reference an archive table. Retention keys on `archived_at`, not a `delete_after` column:
+archival stamps the move, and the displayed delete date still derives from `completed_at`.
+The schema deploys wherever `relay` deploys (default and `dojo` scopes): the shared history
+views read it, so excluding it would break them in the dōjō plane; it sits empty there (the
+daemon writes its own database) under the same owner-read RLS posture.
 
 #### Scenario: Schema deployed and diff-clean
 - **GIVEN** a database deployed from `database/` with dbd
@@ -13,9 +20,10 @@ No archive table SHALL hold a foreign key, and no live table SHALL reference an 
 - **THEN** the seven archive tables exist with their live columns plus `archived_at`
 - **AND** `dbd diff` reports no difference
 
-#### Scenario: The dōjō never gets the archive
+#### Scenario: History views resolve in both planes
 - **WHEN** the `dojo` scope deploys
-- **THEN** no `relay_archive` object is created
+- **THEN** `relay.run_list` and the `*_all` union views resolve (against empty
+  archive tables), exactly as in the default scope
 
 ### Requirement: Live references survive archival
 `relay.items.added_by` and `relay.actions.reply_to` SHALL be plain ids with no foreign key, so a
@@ -58,14 +66,15 @@ transaction, re-checking the run's state under a row lock, and SHALL emit `run.a
 ### Requirement: Archive a closed crew
 On each relay sweep pass the daemon SHALL move every `closed` crew that has no `draft`, `planning`
 or `active` run bound to it, with its lanes, leases, crew-level actions and runless tasks (and their
-actions), to `relay_archive`, and SHALL delete its `lane_waiters` rows. An archived lane SHALL NOT
-keep its `token_hash`. The archived crew's `delete_after` SHALL be its `archived_at` plus 30 days.
+actions), to `relay_archive`, and SHALL delete its `lane_waiters` rows. An archived lane SHALL keep
+its `token_hash` (re-close authentication; see above). Retention counts from `archived_at` plus
+30 days (no `delete_after` column).
 
 #### Scenario: Closing a crew empties it from relay
 - **GIVEN** a crew with two lanes, a lease, crew-level messages and a runless task
 - **WHEN** the person closes the crew and a sweep pass runs
 - **THEN** no `relay.*` table holds a row with that crew's id
-- **AND** `relay_archive` holds a complete copy, its lanes with `token_hash` null
+- **AND** `relay_archive` holds a complete copy, its lanes with `token_hash` intact
 - **AND** `app/e2e/tests/relay-archive.spec.ts` sees the crew leave the Crew view with no refresh
 
 #### Scenario: A closed crew with an open run waits
