@@ -618,6 +618,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Relay janitor: the `relay_janitor` schedule owns the hourly cadence;
     // the sweep also triggers a pass when a run ends.
     crate::tasks::relay_janitor::spawn(Arc::new(state.pg.clone()));
+    // Relay health sentinel: the `relay_health` schedule owns the 15 s
+    // cadence; it warns, cleans, and throttles claims when the host fills.
+    crate::tasks::relay_health::spawn(
+        Arc::new(state.pg.clone()),
+        state.event_tx.clone(),
+        Arc::new(crate::notifications::DesktopNotifier),
+    );
     // Tracker integrations: mirror connected boards, drain removed credentials.
     crate::tasks::tracker_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
 

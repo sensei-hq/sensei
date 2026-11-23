@@ -96,7 +96,8 @@ fn err(e: RelayError) -> (StatusCode, Json<serde_json::Value>) {
         | RelayError::Validation(m)
         | RelayError::NotImplemented(m)
         | RelayError::DepsUnmet(m)
-        | RelayError::PlanInvalid(m) => m.clone(),
+        | RelayError::PlanInvalid(m)
+        | RelayError::ServiceUnavailable(m) => m.clone(),
         RelayError::SignInRequired => "this machine never signed into a dōjō".to_string(),
         RelayError::NoActiveCrew => {
             "no active crew to join: a coordinator mints one, or name crew_id".to_string()
@@ -421,6 +422,7 @@ pub(crate) async fn claim_next(
     Json(body): Json<LaneBody>,
 ) -> RelayResult {
     let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    crate::tasks::relay_health::gate_claims().map_err(err)?;
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let claim = state
         .pg
@@ -448,6 +450,7 @@ pub(crate) async fn claim_task(
     Json(body): Json<LaneBody>,
 ) -> RelayResult {
     let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    crate::tasks::relay_health::gate_claims().map_err(err)?;
     let lane_id = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
     let task_id = parse_uuid(&task_id, "task_id").map_err(err)?;
     let task = state

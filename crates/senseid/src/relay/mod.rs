@@ -1093,6 +1093,9 @@ pub enum RelayError {
     /// shape, cycle…): the review is refused and the task stays in review
     /// for a `changes_requested` instead. The message is `PlanError::message`.
     PlanInvalid(String),
+    /// The host cannot take work (health sentinel: disk or swap critical).
+    /// Retry later — the janitor is already reclaiming.
+    ServiceUnavailable(String),
 }
 
 impl RelayError {
@@ -1110,6 +1113,7 @@ impl RelayError {
             | RelayError::PlanInvalid(_) => 409,
             RelayError::Validation(_) => 422,
             RelayError::NotImplemented(_) => 501,
+            RelayError::ServiceUnavailable(_) => 503,
             RelayError::Internal(_) => 500,
         }
     }
@@ -1131,6 +1135,7 @@ impl RelayError {
             RelayError::NoActiveCrew => "relay_no_active_crew",
             RelayError::CrewAmbiguous => "relay_crew_ambiguous",
             RelayError::PlanInvalid(_) => "relay_plan_invalid",
+            RelayError::ServiceUnavailable(_) => "relay_host_disk_exhausted",
         }
     }
 }
