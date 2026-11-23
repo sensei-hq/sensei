@@ -39,7 +39,11 @@ test('AddMember lists the assistants and editors this machine has seen, and pick
   test.setTimeout(180_000);
   tauri = tauriPage;
   await seedSetupComplete(tauriPage);
-  await navigateToScreen(tauriPage, '/relay', '[data-screen="relay"] [data-screen-tools]');
+  // Launch templates (#513) resolve against the workspace's first repo, so the
+  // screen opens with the e2e workspace in context.
+  const workspaces = (await (await fetch(`${DAEMON_URL}/api/workspaces`)).json()) as Array<{ id: string; name: string }>;
+  const ws = workspaces.find((w) => w.name === 'repo') ?? workspaces[0];
+  await navigateToScreen(tauriPage, `/relay?workspace=${ws.id}`, '[data-screen="relay"] [data-screen-tools]');
   await tauriPage.locator('[data-screen-tools] [aria-label^="Crew"]').click();
   await expect(tauriPage.locator('[data-add-member]')).toBeVisible({ timeout: STREAM });
 
@@ -72,6 +76,11 @@ test('AddMember lists the assistants and editors this machine has seen, and pick
   await expect.poll(() => attrOf(claude, 'aria-pressed'), { timeout: STREAM }).toBe('true');
   await expect.poll(() => textOf('[data-command-note]'), { timeout: STREAM }).toContain('Paste it into a Claude Code session');
   expect(await textOf('[data-paste-text]')).toBe(line);
+
+  // Picking Claude Code: its launch block shows the resolved command (#513).
+  // The repo path is the e2e workspace's first checkout — asserted by shape.
+  await expect.poll(() => textOf('[data-launch-text]'), { timeout: STREAM }).toContain('&& claude');
+  expect(await textOf('[data-launch-text]')).toMatch(/^cd ".+" && claude$/);
 
   // Away to Queue (with no crew, Now draws Crew); a later Claude Code session starts.
   // Back on Crew, with no reload, the count is the new one.
