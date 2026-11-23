@@ -351,13 +351,29 @@ test.describe('Crash recovery matrix', () => {
       await navigateToScreen(tauriPage, '/operations', '[data-component="ops-alerts"]');
       await waitFor(async () => (await tauriPage.locator('[data-alert-ack="task:330201"]').count()) === 0, 60_000, 1000);
       // The clear write is async — wait for it to land before recurring,
-      // or the re-derive reads stale memory and the test flakes.
-      await waitFor(async () => {
-        const n = psqlE2e(
-          `SELECT seen_clears FROM activity.alert_acks WHERE class = 'task' AND alert_key = '330201'`,
-        ).trim();
-        return n !== '' && Number(n) >= 1;
-      }, 30_000, 500);
+      // or the re-derive reads stale memory and the test flakes. Budget is
+      // 120s, not 30: the poll runs every 30s and the e2e daemon shares its
+      // Postgres cluster with whatever the prod install is scanning, so a
+      // single poll cycle of slack flakes under a loaded cluster.
+      try {
+        await waitFor(async () => {
+          const n = psqlE2e(
+            `SELECT seen_clears FROM activity.alert_acks WHERE class = 'task' AND alert_key = '330201'`,
+          ).trim();
+          // Keep-awake read: the e2e window is backgrounded, so its timers
+          // only tick reliably while socket traffic flows. A DB-only wait
+          // starves the 30s alert poll and the write never fires (2/2 pass
+          // with this read, 0/11 without). The read itself asserts nothing.
+          await tauriPage.locator('[data-component="ops-alerts"]').textContent();
+          return n !== '' && Number(n) >= 1;
+        }, 120_000, 1000);
+      } catch (e) {
+        const row = await tauriPage.locator('[data-failure-row="330201"]').count();
+        const rows = await tauriPage.locator('[data-failure-row]').count();
+        const atext = await tauriPage.locator('[data-component="ops-alerts"]').textContent();
+        console.log(`[4.4-diag] row330201=${row} totalRows=${rows} alertStands=${(atext ?? '').includes('e2e ack crash')}`);
+        throw e;
+      }
       psqlE2e(
         `INSERT INTO activity.task_executions(task_id, task_kind, folder_path, path, status, error_message) VALUES
          (330201, 'process_file', '/r', '/r/ack-crash.ts', 'failed', 'e2e ack crash again')`,

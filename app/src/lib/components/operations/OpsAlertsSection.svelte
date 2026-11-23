@@ -5,7 +5,7 @@
   // the daemon, so they survive reloads; a refused write says why.
   import { EmptyState, Notice } from '@sensei/ui';
   import { Button } from '@rokkit/ui';
-  import { failureReason, type AlertClass } from '@sensei/state';
+  import { failureReason, OPS_LIST_CAP, type AlertClass } from '@sensei/state';
   import { alertsState } from '$lib/ops.js';
 
   const alerts = alertsState;
@@ -35,7 +35,7 @@
       <Notice tone="refusal" size="inline" expanded title="Ack refused">{notice}</Notice>
     {/if}
     <ul>
-      {#each alerts.alerts as alert (`${alert.class}:${alert.key}`)}
+      {#each alerts.alerts.slice(0, OPS_LIST_CAP) as alert (`${alert.class}:${alert.key}`)}
         <li data-alert-row data-alert-level={alert.level}>
           <span>{alert.title}</span>
           <span>{alert.detail}</span>
@@ -55,6 +55,9 @@
           {/if}
         </li>
       {/each}
+      {#if alerts.alerts.length > OPS_LIST_CAP}
+        <li data-alerts-overflow>showing {OPS_LIST_CAP} of {alerts.alerts.length}</li>
+      {/if}
     </ul>
   {/if}
 </section>

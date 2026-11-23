@@ -3,7 +3,7 @@
   // open pass waves, and transient per-persona plan/push activity. Reads the
   // sync singleton; the remedy text is the daemon's, never a local copy.
   import { EmptyState } from '@sensei/ui';
-  import { waveProgress } from '@sensei/state';
+  import { OPS_LIST_CAP, waveProgress } from '@sensei/state';
   import { syncState } from '$lib/ops.js';
 
   const sync = syncState;
@@ -63,13 +63,16 @@
     {#if sync.waveHistory.length > 0}
       <p>Recent passes</p>
       <ul>
-        {#each sync.waveHistory as run (run.id)}
+        {#each sync.waveHistory.slice(0, OPS_LIST_CAP) as run (run.id)}
           <li data-sync-history>
             <span>pass {run.key}</span>
             <span>{run.settled} of {run.total}</span>
             <span>{run.outcome}</span>
           </li>
         {/each}
+        {#if sync.waveHistory.length > OPS_LIST_CAP}
+          <li data-sync-history-overflow>showing {OPS_LIST_CAP} of {sync.waveHistory.length}</li>
+        {/if}
       </ul>
     {/if}
   {/if}

@@ -8,7 +8,7 @@
   import { Notice, EmptyState } from '@sensei/ui';
   import { Button } from '@rokkit/ui';
   import type { OpsQueuedTaskDetail, OpsTaskDetail } from '@sensei/state';
-  import { failureReason } from '@sensei/state';
+  import { failureReason, OPS_LIST_CAP } from '@sensei/state';
   import { jobsState, opsApi } from '$lib/ops.js';
 
   const jobs = jobsState;
@@ -78,7 +78,7 @@
     {/if}
     {#if jobs.failed.length > 0}
       <ul>
-        {#each jobs.failed as row (row.id)}
+        {#each jobs.failed.slice(0, OPS_LIST_CAP) as row (row.id)}
           <li>
             <button data-failure-row={row.taskId} onclick={() => toggle(row.taskId)} aria-expanded={expanded === row.taskId}>
               <span>{row.kind}</span>
@@ -119,6 +119,9 @@
             {/if}
           </li>
         {/each}
+        {#if jobs.failed.length > OPS_LIST_CAP}
+          <li data-failures-overflow>showing {OPS_LIST_CAP} of {jobs.failed.length}</li>
+        {/if}
       </ul>
     {/if}
     {#if (jobs.abandoned?.worst.length ?? 0) > 0}
@@ -130,9 +133,12 @@
     {/if}
     {#if jobs.indexErrors.length > 0}
       <ul>
-        {#each jobs.indexErrors as row (row.id)}
+        {#each jobs.indexErrors.slice(0, OPS_LIST_CAP) as row (row.id)}
           <li data-failure-index-error>{row.file_path} — {row.error}</li>
         {/each}
+        {#if jobs.indexErrors.length > OPS_LIST_CAP}
+          <li data-index-errors-overflow>showing {OPS_LIST_CAP} of {jobs.indexErrors.length}</li>
+        {/if}
       </ul>
     {/if}
     <Button

@@ -926,6 +926,15 @@ pub(crate) struct ReadQuery {
     repo_key: Option<String>,
 }
 
+/// `GET /relay/catalogue` (#513): the context launch templates resolve
+/// against. Both optional; both absent leaves every `launch` null.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CatalogueQuery {
+    workspace_id: Option<String>,
+    crew_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct TriageBody {
     title: String,
@@ -1808,11 +1817,33 @@ pub(crate) async fn now(
 }
 
 /// `GET /relay/catalogue` (#455): the assistants and editors this machine has
-/// seen, for AddMember's picker. `workspace_id` is accepted for launch templates
-/// (deferred) and unused. A failed read is a 500, never empty lists.
-pub(crate) async fn catalogue(State(state): State<AppState>) -> RelayResult {
-    person_user(&state).await.map_err(err)?;
-    let catalogue = state.pg.relay_catalogue().await.map_err(|e| err(RelayError::Internal(e)))?;
+/// seen, for AddMember's picker. `workspace_id` + `crew_id` resolve the repo
+/// launch templates start in (#513): the crew's repo, else the workspace's
+/// first; without either, every `launch` is null. A failed read is a 500,
+/// never empty lists.
+pub(crate) async fn catalogue(
+    State(state): State<AppState>,
+    Query(query): Query<CatalogueQuery>,
+) -> RelayResult {
+    let user_id = person_user(&state).await.map_err(err)?;
+    let crew_id =
+        query.crew_id.as_deref().map(|c| parse_uuid(c, "crew_id")).transpose().map_err(err)?;
+    let workspace_id = query
+        .workspace_id
+        .as_deref()
+        .map(|w| parse_uuid(w, "workspace_id"))
+        .transpose()
+        .map_err(err)?;
+    let repo = state
+        .pg
+        .launch_repo_path(user_id, crew_id, workspace_id)
+        .await
+        .map_err(|e| err(RelayError::Internal(e)))?;
+    let catalogue = state
+        .pg
+        .relay_catalogue(repo.as_deref())
+        .await
+        .map_err(|e| err(RelayError::Internal(e)))?;
     ok(catalogue)
 }
 
@@ -7220,6 +7251,11 @@ mod tests {
         assert_eq!(assistants[0]["name"], "Claude Code");
         assert_eq!(assistants[0]["kind"], "assistant");
         assert_eq!(assistants[0]["sessions_week"], 1);
+        assert_eq!(
+            assistants[0]["launch"],
+            Value::Null,
+            "no workspace/crew context, no launch (#513)"
+        );
         assert_eq!(assistants[0]["installed"], Value::Null, "never detected reads null");
         assert!(assistants[0]["last_used_at"].is_string());
         assert_eq!(assistants[1]["name"], "Codex");
@@ -7259,6 +7295,148 @@ mod tests {
         assert_eq!(zed["last_used_at"], Value::Null);
         assert_eq!(zed["models"], json!([]));
         assert_eq!(zed["mcp_config"], Value::Null, "sensei is not configured there");
+    }
+
+    #[tokio::test]
+    async fn catalogue_launch_resolves_the_crew_repo_then_the_workspace_first() {
+        let h = harness().await;
+        clean_slate(&h).await;
+        seed_session(&h, "cat-launch", "claude", None, None, 0).await;
+        let (_, _, crew_id) = register_coordinator(&h).await;
+        let ws: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "insert into sensei.workspaces (name) values ('launch-probe-ep-ws') returning id",
+        )
+        .fetch_one(h.state.pg.pool())
+        .await
+        .unwrap();
+        for (tag, join_ws) in ["crew", "ws"].iter().map(|t| (*t, *t == "ws")) {
+            let key = format!("launch-probe-ep-{tag}");
+            let path = format!("/tmp/launch-probe-ep-{tag}");
+            let repo: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "insert into sensei.repositories (repo_key, name) values ($1, $2)
+                 on conflict (repo_key) do update set repo_key = excluded.repo_key returning id",
+            )
+            .bind(&key)
+            .bind(format!("probe-ep-{tag}"))
+            .fetch_one(h.state.pg.pool())
+            .await
+            .unwrap();
+            let root: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "insert into sensei.folders_to_watch (path, name) values ($1, $2)
+                 on conflict (path) do update set path = excluded.path returning id",
+            )
+            .bind(&path)
+            .bind(format!("probe-ep-{tag}"))
+            .fetch_one(h.state.pg.pool())
+            .await
+            .unwrap();
+            sqlx_core::query::query(
+                "insert into sensei.folders (root_id, repository_id, name, path, abs_path, kind)
+                 values ($1, $2, $3, $4, $5, 'git') on conflict (abs_path) do nothing",
+            )
+            .bind(root.0)
+            .bind(repo.0)
+            .bind(format!("probe-ep-{tag}"))
+            .bind(&path)
+            .bind(&path)
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+            if join_ws {
+                sqlx_core::query::query(
+                    "insert into sensei.repositories_in_workspaces (workspace_id, repository_id)
+                     values ($1, $2) on conflict do nothing",
+                )
+                .bind(ws.0)
+                .bind(repo.0)
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap();
+            }
+        }
+        sqlx_core::query::query(
+            "update relay.crews set repo_key = 'launch-probe-ep-crew' where id = $1",
+        )
+        .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        // The crew's checkout wins.
+        let uri = format!("/relay/catalogue?workspace_id={}&crew_id={crew_id}", ws.0);
+        let (status, body) = call(&h, "GET", &uri, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let claude = body["assistants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == "claude")
+            .unwrap()
+            .clone();
+        assert_eq!(claude["launch"], json!("cd \"/tmp/launch-probe-ep-crew\" && claude"), "{body}");
+        // No crew repo: the workspace's first checkout.
+        sqlx_core::query::query("update relay.crews set repo_key = null where id = $1")
+            .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        let (status, body) = call(&h, "GET", &uri, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let claude = body["assistants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == "claude")
+            .unwrap()
+            .clone();
+        assert_eq!(claude["launch"], json!("cd \"/tmp/launch-probe-ep-ws\" && claude"), "{body}");
+        // Cleanup: leases, then lanes, then the crew.
+        sqlx_core::query::query(
+            "delete from relay.leases where lane_id in (select id from relay.lanes where crew_id = $1)",
+        )
+        .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query("delete from relay.lanes where crew_id = $1")
+            .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("delete from relay.crews where id = $1")
+            .bind(uuid::Uuid::parse_str(&crew_id).unwrap())
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "delete from sensei.repositories_in_workspaces where workspace_id = $1",
+        )
+        .bind(ws.0)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query("delete from sensei.workspaces where id = $1")
+            .bind(ws.0)
+            .execute(h.state.pg.pool())
+            .await
+            .unwrap();
+        for tag in ["crew", "ws"] {
+            let path = format!("/tmp/launch-probe-ep-{tag}");
+            sqlx_core::query::query("delete from sensei.folders where abs_path = $1")
+                .bind(&path)
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap();
+            sqlx_core::query::query("delete from sensei.folders_to_watch where path = $1")
+                .bind(&path)
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap();
+            sqlx_core::query::query("delete from sensei.repositories where repo_key = $1")
+                .bind(format!("launch-probe-ep-{tag}"))
+                .execute(h.state.pg.pool())
+                .await
+                .unwrap();
+        }
     }
 
     #[tokio::test]

@@ -68,6 +68,7 @@ mod tests {
             name: name.into(),
             kind: kind.into(),
             joins_crew: true,
+            launch_template: None,
         };
         CatalogueNames::from_rows(vec![
             row("zed", "zed", "Zed", "editor"),

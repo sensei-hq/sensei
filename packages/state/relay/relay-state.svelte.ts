@@ -65,8 +65,9 @@ export interface RelaySource {
   startRun(runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>>;
   cancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
   /** What this machine has seen, for AddMember's picker (#455). Only the desktop has a
-   *  machine: a surface without one leaves it out, and the picker is not shown. */
-  readCatalogue?(): Promise<ApiResult<RelayCatalogue>>;
+   *  machine: a surface without one leaves it out, and the picker is not shown.
+   *  The context resolves launch templates (#513). */
+  readCatalogue?(query: { workspace_id?: string; crew_id?: string }): Promise<ApiResult<RelayCatalogue>>;
   /** Subscribe to the stream: every event, and every open — the first and each
    *  reconnect (a broadcast has no replay). Returns the teardown. */
   events: RelayEvents;
@@ -593,7 +594,10 @@ export class RelayState {
    *  a surface with no catalogue reads nothing. */
   async readCatalogue(): Promise<void> {
     if (!this.source.readCatalogue) return;
-    const answer = await this.source.readCatalogue();
+    const answer = await this.source.readCatalogue({
+      workspace_id: this.filter.workspace_id,
+      crew_id: this.crew?.id,
+    });
     if (!answer.ok) {
       this.catalogueError = failureReason(answer.error);
       return;

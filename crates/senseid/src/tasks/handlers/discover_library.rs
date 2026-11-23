@@ -220,7 +220,7 @@ mod tests {
             })
             .await
             .unwrap();
-        pg.complete_task_execution(&run, 0, 10).await.unwrap();
+        pg.complete_task_execution(&run, 0, 10, None).await.unwrap();
         // `local`: a library this machine scans, from a working copy under a
         // watched folder. `stale`: a working copy no watched folder holds.
         let watched = format!("/tmp/watched-{uniq}");

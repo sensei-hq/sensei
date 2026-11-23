@@ -40,8 +40,9 @@ export interface RelayApi {
   tryGetRun(runId: string): Promise<ApiResult<RelayRunDetail>>;
   tryStartRun(runId: string, crewId: string | null): Promise<ApiResult<RelayCreatedRun>>;
   tryCancelRun(runId: string): Promise<ApiResult<RelayCancelledRun>>;
-  /** What this machine has seen, for AddMember's picker (#455). */
-  tryGetCatalogue(): Promise<ApiResult<RelayCatalogue>>;
+  /** What this machine has seen, for AddMember's picker (#455). The context resolves
+   *  launch templates (#513); absent, every `launch` is null. */
+  tryGetCatalogue(query?: { workspace_id?: string; crew_id?: string }): Promise<ApiResult<RelayCatalogue>>;
 }
 
 /** `?workspace_id=…&repo_key=…`, empty when nothing narrows the read. */
@@ -73,7 +74,13 @@ export const relayClient = (base: string): RelayApi => {
 
   return {
     tryGetNow: (filter) => call<RelayNow>('GET', `/relay/now${filterQuery(filter)}`),
-    tryGetCatalogue: () => call<RelayCatalogue>('GET', '/relay/catalogue'),
+    tryGetCatalogue: (query) => {
+      const params = new URLSearchParams();
+      if (query?.workspace_id) params.set('workspace_id', query.workspace_id);
+      if (query?.crew_id) params.set('crew_id', query.crew_id);
+      const q = params.toString();
+      return call<RelayCatalogue>('GET', `/relay/catalogue${q ? `?${q}` : ''}`);
+    },
     tryGetQueue: (filter) => call<RelayQueue>('GET', `/relay/queue${filterQuery(filter)}`),
     tryGetTask: (crewId, taskId) =>
       call<RelayTaskView>('GET', `/relay/tasks/${encodeURIComponent(crewId)}/${encodeURIComponent(taskId)}`),

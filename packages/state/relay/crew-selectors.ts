@@ -84,6 +84,9 @@ export interface RelayAddMemberView {
   catalogue: RelayCatalogueView | null;
   /** Why the catalogue could not be read; never shown as empty groups. */
   catalogueError: string | null;
+  /** The picked tool's resolved launch, for the block under the paste line
+   *  (#513); null with nothing picked or nothing resolved. */
+  launch: string | null;
 }
 
 /** One tool AddMember offers (#455): its name, when it was last used, what else is known. */
@@ -95,6 +98,8 @@ export interface RelayCatalogueItemView {
   /** Assistant: its sessions this week. Editor: the models seen, where sensei's tools are. */
   details: string[];
   pressed: boolean;
+  /** The resolved launch (#513); null when the tool has no template or no repo resolved. */
+  launch: string | null;
 }
 
 export interface RelayCatalogueView {
@@ -138,6 +143,7 @@ function catalogueView(c: RelayCatalogue, picked: string | null, at: number): Re
       used: usedLine(a.last_used_at, at),
       details: [sessionsLine(a.sessions_week)],
       pressed: a.id === picked,
+      launch: a.launch,
     })),
     editors: c.editors.map((e) => ({
       id: e.id,
@@ -148,6 +154,7 @@ function catalogueView(c: RelayCatalogue, picked: string | null, at: number): Re
         e.mcp_config ? `sensei's tools in ${e.mcp_config}` : "sensei's tools not set up here",
       ],
       pressed: e.id === picked,
+      launch: e.launch,
     })),
   };
 }
@@ -384,9 +391,17 @@ export function toAddMember(
     text: line,
     note: pasteNote(catalogue.data, catalogue.picked),
   };
+  const pickedLaunch = ((): string | null => {
+    if (!catalogue.data || !catalogue.picked) return null;
+    const hit =
+      catalogue.data.assistants.find((a) => a.id === catalogue.picked) ??
+      catalogue.data.editors.find((e) => e.id === catalogue.picked);
+    return hit?.launch ?? null;
+  })();
   const picker = {
     catalogue: catalogue.data ? catalogueView(catalogue.data, catalogue.picked, at) : null,
     catalogueError: catalogue.error,
+    launch: pickedLaunch,
   };
   if (setup) {
     return {

@@ -647,6 +647,18 @@ describe('RelayState · the catalogue AddMember picks from (#455)', () => {
     expect(s.pickedTool).toBeNull();
   });
 
+  it('the read carries the workspace and crew, so launches resolve (#513)', async () => {
+    const readCatalogue = vi.fn(async () => F.ok(catalogue));
+    const { source } = fakeSource({
+      readCatalogue,
+      readNow: vi.fn(async () => F.ok(F.now({ crews: [{ ...F.crew(), id: 'crew-9' }] }))),
+    });
+    const s = new RelayState(source, { workspace_id: 'ws-1' }, reads());
+    await s.reReadNow();
+    await s.readCatalogue();
+    expect(readCatalogue).toHaveBeenCalledWith({ workspace_id: 'ws-1', crew_id: 'crew-9' });
+  });
+
   it('a failed read says so and invents no groups', async () => {
     const { source } = fakeSource({ readCatalogue: vi.fn(async () => F.fail(500, 'internal error')) });
     const s = new RelayState(source, {}, reads());

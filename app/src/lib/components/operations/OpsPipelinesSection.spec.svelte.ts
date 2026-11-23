@@ -89,6 +89,17 @@ describe('OpsPipelinesSection', () => {
     expect(m.container.querySelectorAll('[data-pipeline-history]')).toHaveLength(2);
   });
 
+  it('caps history at 200 rows with an honest count', () => {
+    jobsState.waveHistory = Array.from({ length: 201 }, (_, i) => ({
+      id: `h-${i}`, wave: 'metric', key: `${i}`, parent_task_id: i, total: 1, settled: 1,
+      outcome: 'done' as const, opened_at: '', closed_at: '',
+    }));
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-pipeline-history]')).toHaveLength(200);
+    expect(m.container.querySelector('[data-pipeline-history-overflow]')?.textContent).toContain('200 of 201');
+  });
+
   it('an already-running backfill says so instead of naming no wave', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok({ ok: true, queued: false, running: true })));
     const m = mount();

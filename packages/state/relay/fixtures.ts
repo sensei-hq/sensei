@@ -878,9 +878,9 @@ export const runNow = (): RelayNow =>
 /** What this machine has seen (#455), as `GET /relay/catalogue` serves it. */
 export function catalogue(over: Partial<RelayCatalogue> = {}): RelayCatalogue {
   return {
-    assistants: [{ id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: minutesAgo(120), sessions_week: 1 }],
+    assistants: [{ id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: minutesAgo(120), sessions_week: 1, launch: 'cd "/w/sensei" && claude' }],
     editors: [
-      { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: minutesAgo(5), models: ['claude-sonnet-4-5'], mcp_config: '~/.cursor/mcp.json' },
+      { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: minutesAgo(5), models: ['claude-sonnet-4-5'], mcp_config: '~/.cursor/mcp.json', launch: null },
     ],
     unknown: [],
     ...over,

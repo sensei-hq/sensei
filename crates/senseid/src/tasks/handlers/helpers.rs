@@ -267,6 +267,29 @@ pub(crate) async fn mark_folder_indexed_fail_closed(
     }
 }
 
+/// Prune a folder that vanished from disk. Returns true when the caller
+/// should skip (row deleted if present — cascades carry nodes, edges, and
+/// files). Schedulers list rows, then run, and a folder deleted in between
+/// must converge, not fail ×3 and alert per path. Uses scan's
+/// `dir_present`: an errored existence check reads as present, so
+/// permission errors never delete a live index. A present path returns
+/// false — a missing ROW for a live path is still the caller's error.
+pub(crate) async fn prune_if_folder_vanished(
+    pg: &crate::db::pg_store::PgStore,
+    folder_path: &str,
+) -> Result<bool, String> {
+    if super::scan::dir_present(std::path::Path::new(folder_path)) {
+        return Ok(false);
+    }
+    if let Some(row) = pg.get_repo_by_path(folder_path).await?
+        && let Some(id) = crate::api::util::json_uuid(&row["id"])
+    {
+        pg.delete_folder_tree(&id).await?;
+        tracing::info!(path = folder_path, "pruned vanished folder tree (dir gone)");
+    }
+    Ok(true)
+}
+
 /// Decide whether a file can be indexed as source text, and if not, why.
 ///
 /// `None` means "index it". `Some(reason)` is recorded on the file's

@@ -300,12 +300,12 @@ describe('toArchivedRun (CONTRACT §1i: a past run, read-only)', () => {
 describe('toAddMember · the catalogue picker (#455)', () => {
   const catalogue = (): RelayCatalogue => ({
     assistants: [
-      { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: F.minutesAgo(120), sessions_week: 3 },
-      { id: 'codex', name: 'Codex', kind: 'assistant', installed: null, last_used_at: null, sessions_week: 0 },
+      { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: F.minutesAgo(120), sessions_week: 3, launch: 'cd "/w" && claude' },
+      { id: 'codex', name: 'Codex', kind: 'assistant', installed: null, last_used_at: null, sessions_week: 0, launch: null },
     ],
     editors: [
-      { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: F.minutesAgo(5), models: ['claude-sonnet-4-5', 'gpt-5'], mcp_config: '~/.cursor/mcp.json' },
-      { id: 'zed', name: 'Zed', kind: 'editor', installed: true, last_used_at: null, models: [], mcp_config: null },
+      { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: F.minutesAgo(5), models: ['claude-sonnet-4-5', 'gpt-5'], mcp_config: '~/.cursor/mcp.json', launch: null },
+      { id: 'zed', name: 'Zed', kind: 'editor', installed: true, last_used_at: null, models: [], mcp_config: null, launch: null },
     ],
     unknown: [{ id: 'cowork', name: 'Cowork', kind: 'unknown', last_used_at: F.minutesAgo(30) }],
   });
@@ -316,16 +316,16 @@ describe('toAddMember · the catalogue picker (#455)', () => {
   it('two groups: assistants with when they were last used and their sessions this week', () => {
     const view = add(null).catalogue!;
     expect(view.assistants).toEqual([
-      { id: 'claude', name: 'Claude Code', used: 'last used 2h ago', details: ['3 sessions this week'], pressed: false },
-      { id: 'codex', name: 'Codex', used: 'not used yet', details: ['no sessions this week'], pressed: false },
+      { id: 'claude', name: 'Claude Code', used: 'last used 2h ago', details: ['3 sessions this week'], pressed: false, launch: 'cd "/w" && claude' },
+      { id: 'codex', name: 'Codex', used: 'not used yet', details: ['no sessions this week'], pressed: false, launch: null },
     ]);
   });
 
   it('editors with the models seen and where sensei’s tools were found', () => {
     const view = add(null).catalogue!;
     expect(view.editors).toEqual([
-      { id: 'cursor', name: 'Cursor', used: 'last used 5 min ago', details: ['claude-sonnet-4-5, gpt-5', "sensei's tools in ~/.cursor/mcp.json"], pressed: false },
-      { id: 'zed', name: 'Zed', used: 'not used yet', details: ['no models seen', "sensei's tools not set up here"], pressed: false },
+      { id: 'cursor', name: 'Cursor', used: 'last used 5 min ago', details: ['claude-sonnet-4-5, gpt-5', "sensei's tools in ~/.cursor/mcp.json"], pressed: false, launch: null },
+      { id: 'zed', name: 'Zed', used: 'not used yet', details: ['no models seen', "sensei's tools not set up here"], pressed: false, launch: null },
     ]);
   });
 
@@ -373,5 +373,35 @@ describe('toAddMember · the catalogue picker (#455)', () => {
     const view = toAddMember(F.now(), 'contributor');
     expect(view.catalogue).toBeNull();
     expect(view.catalogueError).toBeNull();
+  });
+});
+
+describe('toAddMember · the picked tool’s launch (#513)', () => {
+  const catalogue = (): RelayCatalogue => ({
+    assistants: [
+      { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: F.minutesAgo(120), sessions_week: 3, launch: 'cd "/w/sensei" && claude' },
+      { id: 'codex', name: 'Codex', kind: 'assistant', installed: null, last_used_at: null, sessions_week: 0, launch: null },
+    ],
+    editors: [
+      { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: F.minutesAgo(5), models: [], mcp_config: null, launch: null },
+    ],
+    unknown: [],
+  });
+  const add = (picked: string | null) => toAddMember(F.now(), 'contributor', { data: catalogue(), error: null, picked }, AT);
+
+  it('the picked tool’s resolved launch, for the block under the paste line', () => {
+    expect(add('claude').launch).toBe('cd "/w/sensei" && claude');
+  });
+
+  it('nothing picked, or a null launch: no block', () => {
+    expect(add(null).launch).toBeNull();
+    expect(add('codex').launch).toBeNull();
+    expect(add('cursor').launch).toBeNull();
+  });
+
+  it('items carry their launch for the picker', () => {
+    const view = add('claude').catalogue!;
+    expect(view.assistants[0].launch).toBe('cd "/w/sensei" && claude');
+    expect(view.assistants[1].launch).toBeNull();
   });
 });

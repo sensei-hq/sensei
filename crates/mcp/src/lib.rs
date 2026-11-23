@@ -489,12 +489,11 @@ pub fn detect_host(
     };
     by_client.or_else(|| {
         let set = |k: &str| env.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
-        match set("TERM_PROGRAM")? {
-            "zed" => Some("zed"),
-            "vscode" if set("CURSOR_TRACE_ID").is_some() => Some("cursor"),
-            "vscode" => Some("vscode"),
-            _ => None,
-        }
+        // The env half is the shared table (#512): one mapping, both binaries.
+        sensei_bootstrap::host::detect_host_from_env(
+            set("TERM_PROGRAM"),
+            set("CURSOR_TRACE_ID").is_some(),
+        )
     })
 }
 

@@ -38,4 +38,11 @@ describe('relayClient · the catalogue (#455)', () => {
     expect(r).toEqual({ ok: true, data: { assistants: [], editors: [], unknown: [] } });
     expect(fetchSpy).toHaveBeenCalledWith('http://daemon/relay/catalogue', { method: 'GET' });
   });
+
+  it('the workspace and crew ride along, so launches resolve (#513)', async () => {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ assistants: [], editors: [], unknown: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    await relayClient('http://daemon').tryGetCatalogue({ workspace_id: 'ws-1', crew_id: 'crew-9' });
+    expect(fetchSpy).toHaveBeenCalledWith('http://daemon/relay/catalogue?workspace_id=ws-1&crew_id=crew-9', { method: 'GET' });
+  });
 });

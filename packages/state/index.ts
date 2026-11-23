@@ -202,6 +202,7 @@ export type {
   OpsAlertAck,
   OpsWaveRun,
 } from './ops/types.js';
+export { OPS_LIST_CAP } from './ops/types.js';
 export { opsClient, opsEvents, parseOpsFrame, type OpsApi } from './ops/client.js';
 export {
   alertsSource,

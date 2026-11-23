@@ -82,6 +82,17 @@ describe('OpsSyncSection', () => {
     expect(m.container.textContent).toContain('1 of 2');
   });
 
+  it('caps history at 200 rows with an honest count', () => {
+    syncState.waveHistory = Array.from({ length: 201 }, (_, i) => ({
+      id: `s-${i}`, wave: 'sync', key: `${i}`, parent_task_id: null, total: 1, settled: 1,
+      outcome: 'done' as const, opened_at: '', closed_at: '',
+    }));
+    flushSync();
+    const m = mount();
+    expect(m.container.querySelectorAll('[data-sync-history]')).toHaveLength(200);
+    expect(m.container.querySelector('[data-sync-history-overflow]')?.textContent).toContain('200 of 201');
+  });
+
   it('history passes with a repeated key render once each (keys restart per session)', () => {
     syncState.waveHistory = [
       { id: '33333333-3333-4333-8333-333333333333', wave: 'sync', key: 'boot', parent_task_id: null, total: 2, settled: 2, outcome: 'done', opened_at: '2026-11-21T10:00:00.000Z', closed_at: '2026-11-21T10:01:00.000Z' },

@@ -92,7 +92,7 @@ async fn run_task(
     worker_id: usize,
     task: Task,
 ) -> Option<tokio::task::JoinHandle<Option<u64>>> {
-    match execute_task(ctx, &task).await {
+    match crate::indexer::phases::scope(execute_task(ctx, &task)).await {
         Ok(_items) => {
             ctx.queue.complete(task.id).await;
             tracing::debug!("[task-worker-{}] completed {} #{}", worker_id, task.kind, task.id);
@@ -222,9 +222,12 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // Update task_executions. Only terminal failures log to public.logs (#194).
     match &result {
         Ok(items) => {
+            let phases = crate::indexer::phases::PhaseSplits::take_json();
             if let Some(eid) = &exec_id
-                && let Err(e) =
-                    ctx.pg().complete_task_execution(eid, *items as i32, duration_ms).await
+                && let Err(e) = ctx
+                    .pg()
+                    .complete_task_execution(eid, *items as i32, duration_ms, phases.as_ref())
+                    .await
             {
                 tracing::warn!(error = %e, task_id = task.id, kind = %task.kind, "failed to record task_execution completion");
             }

@@ -587,7 +587,13 @@ pub fn index_file(input: FileInput<'_>) -> FileIndex {
     // COUNTS, and it is also the one empty result a caller must NOT hand to
     // reconcile — `reconcile(F, nothing)` demotes every node the file claimed,
     // and applying that to a failed parse is the defect R10.3 exists for.
-    match adapter.read(&source, &TypeHomes::unknown()) {
+    let _parse_span = tracing::debug_span!("indexer.phase", phase = "parse", file = path).entered();
+    let t0 = std::time::Instant::now();
+    let read = adapter.read(&source, &TypeHomes::unknown());
+    let parse_ms = t0.elapsed().as_millis() as i64;
+    crate::indexer::phases::PhaseSplits::record(|p| p.parse_ms = Some(parse_ms));
+    drop(_parse_span);
+    match read {
         // **THE LADDER RUNS HERE, AND IT DID NOT BEFORE.** The walk emits every
         // reference `Unplaced` with the identities it minted as evidence;
         // placing them is what turns an `Observation::Named(fqn)` into a
@@ -598,6 +604,9 @@ pub fn index_file(input: FileInput<'_>) -> FileIndex {
         // repo-wide table (S5). The LADDER may, because that is its job and the
         // world is handed to it rather than fetched.
         Ok(facts) => {
+            let _span =
+                tracing::debug_span!("indexer.phase", phase = "resolve", file = path).entered();
+            let t1 = std::time::Instant::now();
             // THE COMPILER STEP, for a language that has one, BEFORE the ladder:
             // every call placed by what its compiler resolved (or named as not
             // run). Before, because the walk's raw call site carries the name
@@ -610,6 +619,9 @@ pub fn index_file(input: FileInput<'_>) -> FileIndex {
                 facts.references = lang::compiler::place_with(engine, compiled, references, text);
             }
             let placed = super::resolve::resolve(facts, adapter.grammar(), world);
+            let resolve_ms = t1.elapsed().as_millis() as i64;
+            crate::indexer::phases::PhaseSplits::record(|p| p.resolve_ms = Some(resolve_ms));
+            drop(_span);
             stamp(language, Indexed::Read(placed))
         }
         Err(rejected) => {
