@@ -1523,6 +1523,28 @@ impl PgStore {
         Ok(done.rows_affected() > 0)
     }
 
+    /// Fill a session's editor host when none is set (#512). `COALESCE` keeps
+    /// a host the transcript — or any earlier event — already set: a later
+    /// write with a different host, or none, never clears it. True when the
+    /// session has a row (whether or not the host moved).
+    pub async fn fill_session_host(
+        &self,
+        client_session_id: &str,
+        host: &str,
+    ) -> Result<bool, String> {
+        let done = sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET host = COALESCE(host, $2)
+              WHERE client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .bind(host)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(done.rows_affected() > 0)
+    }
+
     /// Write enrichment metrics onto a session (#66). Sets the derived fields
     /// and merges `tool_usage` into `props` — deliberately does NOT touch
     /// `completed_at` (owned by the hook-stream session derivation, #31).

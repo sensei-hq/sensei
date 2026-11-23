@@ -16,6 +16,7 @@ pub mod database;
 pub mod engines;
 pub mod hardware;
 pub mod health;
+pub mod host;
 pub mod models;
 pub mod startup_error;
 pub mod tracing_init;

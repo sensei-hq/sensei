@@ -42,9 +42,18 @@ send_telemetry() {
 
   local enriched="$payload"
   if command -v jq >/dev/null 2>&1; then
-    enriched=$(printf '%s' "$payload" | jq -c '. + {
+    # The terminal env for host detection (#512): the program's name, and
+    # whether a cursor trace is set — never the trace value.
+    local traced="false"
+    [ -n "${CURSOR_TRACE_ID:-}" ] && traced="true"
+    enriched=$(printf '%s' "$payload" | jq -c \
+      --arg term_program "${TERM_PROGRAM:-}" \
+      --argjson cursor_trace "$traced" \
+      '. + {
       assistant_family: (.assistant_family // "claude"),
-      event_type: (.event_type // .hook_event_name // "unknown")
+      event_type: (.event_type // .hook_event_name // "unknown"),
+      term_program: (if $term_program == "" then null else $term_program end),
+      cursor_trace: $cursor_trace
     }' 2>/dev/null) || enriched="$payload"
   fi
 
