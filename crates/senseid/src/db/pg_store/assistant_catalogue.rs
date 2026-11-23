@@ -344,11 +344,13 @@ mod tests {
         let got = pg.launch_repo_path(user, Some(crewless), Some(ws.0)).await.unwrap();
         assert_eq!(got.as_deref(), Some(ws_path.as_str()));
         // A remote-less repository (null key) still resolves by id.
-        sqlx_core::query::query("update sensei.repositories set repo_key = null where repo_key = $1")
-            .bind(&ws_key)
-            .execute(pg.pool())
-            .await
-            .unwrap();
+        sqlx_core::query::query(
+            "update sensei.repositories set repo_key = null where repo_key = $1",
+        )
+        .bind(&ws_key)
+        .execute(pg.pool())
+        .await
+        .unwrap();
         let got = pg.launch_repo_path(user, Some(crewless), Some(ws.0)).await.unwrap();
         assert_eq!(got.as_deref(), Some(ws_path.as_str()));
         // Neither: no repo, every launch stays null.
