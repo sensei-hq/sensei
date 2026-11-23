@@ -912,7 +912,6 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             .await
             .map_err(|e| format!("delete_edges_from_sources: {e}"))?;
 
-
         // Call edges. The FQN path emits RESOLVED node→node edges AT EMIT: the
         // target is get-or-created by FQN (a stub if its definition isn't indexed
         // yet — enriched later, keeping the same id; a `lib_symbol` for an external
@@ -926,7 +925,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 .copied()
                 .unwrap_or(file_node_id);
             ctx.pg()
-                .insert_edge(&folder_id, &source, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(&call.callee_name), file: None }, "calls")
+                .insert_edge(
+                    &folder_id,
+                    &source,
+                    crate::db::pg_store::EdgeTarget::Unresolved {
+                        name: Some(&call.callee_name),
+                        file: None,
+                    },
+                    "calls",
+                )
                 .await
                 .map_err(|e| format!("insert_edge (calls): {e}"))?;
         }
@@ -964,12 +971,25 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 match target {
                     Some(t) => ctx
                         .pg()
-                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Node(&t), "references")
+                        .insert_edge(
+                            &folder_id,
+                            &file_node_id,
+                            crate::db::pg_store::EdgeTarget::Node(&t),
+                            "references",
+                        )
                         .await
                         .map_err(|e| format!("insert_edge (references, file resolved): {e}"))?,
                     None => ctx
                         .pg()
-                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(file_ref), file: None }, "references")
+                        .insert_edge(
+                            &folder_id,
+                            &file_node_id,
+                            crate::db::pg_store::EdgeTarget::Unresolved {
+                                name: Some(file_ref),
+                                file: None,
+                            },
+                            "references",
+                        )
                         .await
                         .map_err(|e| format!("insert_edge (references, file): {e}"))?,
                 };
@@ -988,13 +1008,26 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .map_err(|e| format!("sole_definition_id_by_name({fn_ref}): {e}"))?
                 {
                     ctx.pg()
-                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Node(&t), "references")
+                        .insert_edge(
+                            &folder_id,
+                            &file_node_id,
+                            crate::db::pg_store::EdgeTarget::Node(&t),
+                            "references",
+                        )
                         .await
                         .map_err(|e| format!("insert_edge (references, symbol resolved): {e}"))?;
                     continue;
                 }
                 ctx.pg()
-                    .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(fn_ref), file: None }, "references")
+                    .insert_edge(
+                        &folder_id,
+                        &file_node_id,
+                        crate::db::pg_store::EdgeTarget::Unresolved {
+                            name: Some(fn_ref),
+                            file: None,
+                        },
+                        "references",
+                    )
                     .await
                     .map_err(|e| format!("insert_edge (references, symbol): {e}"))?;
             }
