@@ -15,6 +15,61 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.27.1] — 2026-11-23
+
+### Fixed
+
+- **Ticket URLs link sessions** (#504). A session that names its ticket by
+  URL (GitLab `/-/work_items/N` or `/-/issues/N`, GitHub `/issues/N`) now
+  links to the task whose scope is that `host/path` and whose iid is that
+  number, so the ticket shows its time and tokens. Previously only `path#n`
+  and a bare `#n` matched.
+- **`codesign-local` skips signing off macOS.** On Linux, `make install-debug`
+  died on a missing `codesign` after copying the binaries, leaving the daemon
+  down; the script now reports the skip and exits 0.
+
+### Security
+
+- **`cookie` 0.18.2 → 0.18.3** in the desktop app (RUSTSEC-2026-0594,
+  private cookie nonces can repeat in processes that fork). Reached through
+  Tauri; lockfile-only update.
+
+## [0.27.0] — 2026-11-23
+
+### Added
+
+- **Relay launch templates** (#513). Each catalogue tool carries a seeded
+  `launch_template`; `GET /relay/catalogue` takes `workspace_id` + `crew_id`
+  and resolves `{repo}` to the crew's checkout, else the workspace's first
+  repo. AddMember renders the resolved launch as its own copyable block
+  under the paste line.
+- **Hook sessions report their host** (#512). A shared env-to-host table in
+  `sensei-bootstrap`; the plugin forwards `TERM_PROGRAM` and cursor-trace
+  presence, and the daemon fills a missing `sessions.host` through the
+  catalogue gate without ever clearing a transcript-derived host.
+- **Indexer phase timing.** Per-file parse/resolve/write splits persist to
+  the new `task_executions.phases_ms` column, so a slow file says where its
+  seconds went.
+
+### Changed
+
+- **Indexer compile governor.** At most two concurrent compiler subprocess
+  spawns; callers for the same (engine, root) share one in-flight compile
+  instead of piling up.
+- **Ops center list caps.** Alerts, failures, pipelines and sync render at
+  most 200 rows with an honest overflow count, so large scan storms no
+  longer choke the webview.
+- **Ops alert clears redeliver.** Uncleared drops stay pending and retry on
+  every refresh until one lands; each write has its own timeout, a
+  recurrence cancels the stale pending write, and late responses from
+  superseded attempts are dropped.
+
+### Fixed
+
+- **Stale folders stop failing.** A vanished directory deletes its tree and
+  skips cleanly instead of failing and alerting; community detection and
+  git-history scans share the same live-folder gate.
+
 ## [0.26.0] — 2026-11-22
 
 ### Added

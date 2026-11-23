@@ -5,6 +5,8 @@
 //! - A **bare** `#<n>` in a prompt, or a branch starting `<n>-`, resolves only to a
 //!   task whose scope is the session's own `repo_key`; a NULL `repo_key` resolves
 //!   nothing.
+//! - A ticket URL (`<host>/<path>/issues/<n>`, GitLab's `/-/issues/` or
+//!   `/-/work_items/`) matches in any session, only a task whose scope is `<host>/<path>`.
 //! - A path with an empty, `.` or `..` segment is not a key.
 
 use crate::tracker::{KnownTask, Link, LinkSource, SessionText};
@@ -58,6 +60,40 @@ fn references(text: &str) -> Vec<Found> {
     out
 }
 
+/// The segments that end a ticket URL's repo part, before `<n>`: GitHub's `/issues/`,
+/// GitLab's `/-/issues/` and `/-/work_items/` (the `/-` is dropped from the repo).
+const URL_MARKERS: [&str; 2] = ["/issues/", "/work_items/"];
+
+/// Every ticket URL in `text`: its path is the `host/repo` before the marker (the run
+/// of path characters, so a scheme's `://` ends it), compared against a task's scope;
+/// the digits must not be followed by a digit.
+fn url_references(text: &str) -> Vec<Found> {
+    let lower = text.to_ascii_lowercase(); // ASCII lowercasing keeps byte offsets
+    let b = text.as_bytes();
+    let mut out = Vec::new();
+    for marker in URL_MARKERS {
+        for (m, _) in lower.match_indices(marker) {
+            let digits = m + marker.len();
+            let end = b[digits..]
+                .iter()
+                .position(|c| !c.is_ascii_digit())
+                .map_or(b.len(), |p| digits + p);
+            let Ok(n) = text[digits..end].parse::<u64>() else {
+                continue;
+            };
+            let repo_end = if text[..m].ends_with("/-") { m - 2 } else { m };
+            let start = b[..repo_end].iter().rposition(|c| !is_path_byte(*c)).map_or(0, |p| p + 1);
+            // `/` is a path character, so a scheme's `//` is left on the front.
+            let start = start + text[start..repo_end].bytes().take_while(|c| *c == b'/').count();
+            let path = &text[start..repo_end];
+            if path.contains('/') && is_key_path(path) {
+                out.push(Found { path: path.to_string(), n, text: text[start..end].to_string() });
+            }
+        }
+    }
+    out
+}
+
 /// The `<n>` of a branch named `<n>-…`.
 fn branch_number(branch: &str) -> Option<u64> {
     let (digits, _) = branch.split_once('-')?;
@@ -88,8 +124,24 @@ pub fn match_links(session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
             }
         }
     }
+    // A ticket URL names its host and repo, so it resolves by scope, in any session.
+    let mut by_scope: HashMap<(String, u64), Vec<&KnownTask>> = HashMap::new();
+    for k in known {
+        if let (Some(scope), Some(n)) = (k.scope.as_deref(), iid(&k.key)) {
+            by_scope.entry((scope.to_ascii_lowercase(), n)).or_default().push(k);
+        }
+    }
     let tasks_in = |text: &str, source: LinkSource| -> Vec<(&str, String)> {
         let mut found: Vec<(&str, String)> = Vec::new();
+        for r in url_references(text) {
+            found.extend(
+                by_scope
+                    .get(&(r.path.to_ascii_lowercase(), r.n))
+                    .into_iter()
+                    .flatten()
+                    .map(|t| (t.external_id.as_str(), r.text.clone())),
+            );
+        }
         for r in references(text) {
             let tasks = if r.path.is_empty() {
                 // A bare `#n` counts in prompts; a branch names its number as `<n>-`.
@@ -398,6 +450,58 @@ mod tests {
         let links =
             match_links(&session(Some(REPO_B), &["fix/acme/platform#12"], &[]), &two_repos());
         assert!(links.is_empty());
+    }
+
+    #[test]
+    fn a_ticket_url_links_in_any_session() {
+        for url in [
+            "https://gitlab.com/acme/platform/-/work_items/12",
+            "https://GitLab.com/Acme/Platform/-/issues/12#note_7",
+            "see gitlab.com/acme/platform/-/issues/12.",
+        ] {
+            let links = match_links(&session(None, &[], &[url]), &two_repos());
+            assert_eq!(
+                links.iter().map(|l| (l.task_external_id.as_str(), l.source)).collect::<Vec<_>>(),
+                [("1", LinkSource::Prompt)],
+                "{url}"
+            );
+        }
+        let github = [task("9", "acme/web#7", "github.com/acme/web")];
+        let links =
+            match_links(&session(None, &[], &["https://github.com/acme/web/issues/7"]), &github);
+        assert_eq!(linked(&links), [("9", LinkSource::Prompt, "github.com/acme/web/issues/7", 1)]);
+    }
+
+    #[test]
+    fn a_ticket_url_links_only_its_own_host_repo_and_number() {
+        for url in [
+            "https://gitlab.example.com/acme/platform/-/issues/12", // another host
+            "https://gitlab.com/acme/other/-/issues/12",            // another repo
+            "https://gitlab.com/acme/platform/-/issues/1234",       // a longer number
+            "https://gitlab.com/acme/platform/-/merge_requests/12", // not a ticket
+            "https://gitlab.com/acme/platform/-/issues/",           // no number
+        ] {
+            assert!(match_links(&session(None, &[], &[url]), &two_repos()).is_empty(), "{url}");
+        }
+        let links = match_links(
+            &session(None, &[], &["https://gitlab.com/acme/platform/-/issues/123"]),
+            &two_repos(),
+        );
+        assert_eq!(links.iter().map(|l| l.task_external_id.as_str()).collect::<Vec<_>>(), ["3"]);
+    }
+
+    #[test]
+    fn a_ticket_url_and_its_key_count_as_mentions_of_one_link() {
+        let links = match_links(
+            &session(
+                Some(REPO_A),
+                &[],
+                &["https://gitlab.com/acme/platform/-/work_items/12 and #12"],
+            ),
+            &two_repos(),
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].mentions, 2);
     }
 
     #[test]
