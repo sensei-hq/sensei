@@ -23,7 +23,6 @@ create table if not exists relay.actions (
   constraint actions_crew_fk foreign key (user_id, crew_id) references relay.crews (user_id, id),
   constraint actions_task_fk foreign key (user_id, task_id) references relay.tasks (user_id, id),
   constraint actions_lane_fk foreign key (user_id, lane_id) references relay.lanes (user_id, id),
-  constraint actions_reply_fk foreign key (user_id, reply_to) references relay.actions (user_id, id),
   constraint actions_summary_short check
     (kind not in ('reported', 'reviewed') or body_md is null or char_length(body_md) <= 600)
 );
@@ -34,4 +33,4 @@ comment on table relay.actions is
 'The event log: briefs, turns, reviews, decisions, messages, receipts, merges. props keys are fixed per kind, daemon-validated.';
 comment on column relay.actions.body_md is 'The shared text. Capped at 600 chars for reported/reviewed summaries.';
 comment on column relay.actions.report_md is 'The full report. Dōjō-bound only when sharing is on.';
-comment on column relay.actions.reply_to is 'Answers and receipts point at what they answer. Null otherwise.';
+comment on column relay.actions.reply_to is 'Answers and receipts point at what they answer. Null otherwise. Plain id, no FK: the target may have archived (#393).';

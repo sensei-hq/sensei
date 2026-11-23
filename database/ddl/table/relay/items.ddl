@@ -20,8 +20,7 @@ create table if not exists relay.items (
   constraint items_pkey primary key (user_id, id),
   constraint items_id_v7 check (substring(id::text from 15 for 1) = '7'),
   constraint items_ticket_atomic check ((ticket_provider is null) = (ticket_key is null)),
-  constraint items_tags_manual check (ticket_provider is null or tags is null),
-  constraint items_adder_fk foreign key (user_id, added_by) references relay.lanes (user_id, id)
+  constraint items_tags_manual check (ticket_provider is null or tags is null)
 );
 
 alter table relay.items enable row level security;
@@ -31,4 +30,4 @@ comment on table relay.items is
 comment on column relay.items.ticket_provider is 'jira/ado/github, free text so providers extend without a migration.';
 comment on column relay.items.tags is 'Manual items only. Null for tickets — and for untagged manual items.';
 comment on column relay.items.position is 'Backlog order; the coordinator takes the lowest next. Null until ranked.';
-comment on column relay.items.added_by is 'The lane that added it; null when the person did (the + button).';
+comment on column relay.items.added_by is 'The lane that added it; null when the person did (the + button). Plain id, no FK: the lane may have archived (#393).';
