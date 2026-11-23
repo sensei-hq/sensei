@@ -13,7 +13,8 @@ fn script() -> PathBuf {
 }
 
 /// Fakes: `security find-identity` lists `sensei-dev` when `$HAS_DEV_ID=1`;
-/// `codesign` appends its arguments to `$CODESIGN_LOG`.
+/// `codesign` appends its arguments to `$CODESIGN_LOG`; `uname` reports
+/// `$FAKE_UNAME` (default `Darwin`), so the signing path runs on any host.
 fn run(dir: &Path, has_dev_id: bool, extra: &[(&str, &str)]) -> (std::process::Output, String) {
     run_on(dir, "senseid", has_dev_id, extra)
 }
@@ -36,6 +37,7 @@ fn run_on(
             "#!/bin/sh\n[ \"$HAS_DEV_ID\" = 1 ] && echo '  1) ABCDEF \"sensei-dev\"'\n[ \"$HAS_DEVELOPER_ID\" = 1 ] && echo '  2) 123456 \"Developer ID Application: Example Co (TEAM123456)\"'\ni=0; while [ $i -lt 20000 ]; do echo \"  $i) 0000 \\\"other\\\"\"; i=$((i+1)); done\necho '     1 valid identities found'\n",
         ),
         ("codesign", "#!/bin/sh\necho \"$@\" >> \"$CODESIGN_LOG\"\n"),
+        ("uname", "#!/bin/sh\necho \"${FAKE_UNAME:-Darwin}\"\n"),
     ] {
         let p = bin.join(name);
         std::fs::write(&p, body).unwrap();
@@ -69,6 +71,19 @@ fn a_dev_identity_in_the_keychain_signs_with_a_stable_identifier() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(log.contains("--sign sensei-dev"), "{log}");
     assert!(log.contains("--identifier dev.sensei.senseid"), "{log}");
+}
+
+/// Signing is a macOS concept: off macOS the script says it skipped and exits 0,
+/// so a Linux `make install*` is not stopped (with the daemon down) by a missing
+/// `codesign`.
+#[test]
+fn off_macos_it_skips_signing_and_succeeds() {
+    let t = tempfile::tempdir().unwrap();
+    let (o, log) = run(t.path(), true, &[("FAKE_UNAME", "Linux")]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("skipped"), "says it skipped");
+    assert!(log.is_empty(), "codesign never ran: {log}");
+    assert_eq!(std::fs::read_to_string(t.path().join("senseid")).unwrap(), "x");
 }
 
 #[test]
