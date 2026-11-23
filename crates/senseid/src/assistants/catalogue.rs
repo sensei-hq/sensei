@@ -18,6 +18,9 @@ pub struct CatalogueWordRow {
     /// A `sensei.tool_kind` label: `assistant` or `editor`.
     pub kind: String,
     pub joins_crew: bool,
+    /// One command string that starts this tool, with a `{repo}` placeholder
+    /// (#513). `None` when the invocation is not known.
+    pub launch_template: Option<String>,
 }
 
 /// The kind a word with no catalogue row reads as.
@@ -88,12 +91,14 @@ struct Seen {
 /// `GET /relay/catalogue` (#455): the crew-capable catalogue tools this machine
 /// has seen (installed, or named by a session), split by kind, and the words
 /// sessions named that the catalogue does not know. Pure: the store reads, this
-/// shapes. `models` is `(word, model)` newest first.
+/// shapes. `models` is `(word, model)` newest first. `repo` is the local path
+/// `{repo}` resolves against (#513); `None` leaves every `launch` null.
 pub fn assemble_catalogue(
     names: &CatalogueNames,
     installs: &[ToolInstall],
     usage: &[WordUsage],
     models: &[(String, String)],
+    repo: Option<&str>,
 ) -> serde_json::Value {
     use std::collections::BTreeMap;
     let mut seen: BTreeMap<String, Seen> = BTreeMap::new();
@@ -125,6 +130,12 @@ pub fn assemble_catalogue(
         let Some(e) = names.entry(id).filter(|e| e.joins_crew) else { continue };
         let install = install_of(id);
         let installed = install.map(|i| i.installed);
+        // The launch resolves only when both halves exist: a template the seed
+        // vouches for, and a repo the request resolved (#513).
+        let launch = match (repo, e.launch_template.as_deref()) {
+            (Some(path), Some(tpl)) => Some(tpl.replace("{repo}", path)),
+            _ => None,
+        };
         match e.kind.as_str() {
             "assistant" => assistants.push((
                 s.sessions_week,
@@ -132,6 +143,7 @@ pub fn assemble_catalogue(
                 serde_json::json!({
                     "id": id, "name": e.name, "kind": e.kind, "installed": installed,
                     "last_used_at": iso(s.last_used_at), "sessions_week": s.sessions_week,
+                    "launch": launch,
                 }),
             )),
             "editor" => editors.push((
@@ -140,6 +152,7 @@ pub fn assemble_catalogue(
                     "id": id, "name": e.name, "kind": e.kind, "installed": installed,
                     "last_used_at": iso(s.last_used_at), "models": s.models,
                     "mcp_config": install.filter(|i| i.configured).and_then(|i| i.config_path.clone()),
+                    "launch": launch,
                 }),
             )),
             other => tracing::warn!(id, kind = other, "relay catalogue: a tool of an unexpected kind"),
@@ -175,6 +188,7 @@ mod tests {
             name: name.into(),
             kind: kind.into(),
             joins_crew,
+            launch_template: None,
         }
     }
 
@@ -217,5 +231,51 @@ mod tests {
         assert_eq!(readable(""), "");
         assert_eq!(readable("--"), "");
         assert_eq!(readable("gemini-cli"), "Gemini cli");
+    }
+
+    fn templated_names() -> CatalogueNames {
+        CatalogueNames::from_rows(vec![
+            CatalogueWordRow {
+                word: "claude".into(),
+                id: "claude".into(),
+                name: "Claude Code".into(),
+                kind: "assistant".into(),
+                joins_crew: true,
+                launch_template: Some("cd \"{repo}\" && claude".into()),
+            },
+            CatalogueWordRow {
+                word: "zed".into(),
+                id: "zed".into(),
+                name: "Zed".into(),
+                kind: "editor".into(),
+                joins_crew: true,
+                launch_template: None,
+            },
+        ])
+    }
+
+    fn usage_of(word: &str) -> WordUsage {
+        WordUsage { word: word.into(), last_used_at: None, sessions_week: 1 }
+    }
+
+    #[test]
+    fn launch_template_resolves_against_the_repo() {
+        let usage = vec![usage_of("claude"), usage_of("zed")];
+        let out = assemble_catalogue(&templated_names(), &[], &usage, &[], Some("/w/sensei"));
+        let assistants = out["assistants"].as_array().unwrap();
+        assert_eq!(assistants.len(), 1);
+        assert_eq!(assistants[0]["launch"], serde_json::json!("cd \"/w/sensei\" && claude"));
+        // No template, no launch — a wrong command is worse than none (#513).
+        let editors = out["editors"].as_array().unwrap();
+        assert_eq!(editors.len(), 1);
+        assert!(editors[0].get("launch").is_none_or(|v| v.is_null()));
+    }
+
+    #[test]
+    fn launch_is_null_with_no_repo() {
+        let usage = vec![usage_of("claude")];
+        let out = assemble_catalogue(&templated_names(), &[], &usage, &[], None);
+        let assistants = out["assistants"].as_array().unwrap();
+        assert!(assistants[0].get("launch").is_none_or(|v| v.is_null()));
     }
 }

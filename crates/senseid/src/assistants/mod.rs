@@ -1286,6 +1286,7 @@ mod tests {
             name: name.into(),
             kind: "assistant".into(),
             joins_crew: id != "claude-desktop",
+            launch_template: None,
         };
         CatalogueNames::from_rows(vec![
             row("claude", "claude", "Claude Code"),

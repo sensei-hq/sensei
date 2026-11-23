@@ -6,6 +6,7 @@ create table if not exists assistant_catalogue (
 , kind                     tool_kind         not null
 , aliases                  text[]            not null default '{}'
 , joins_crew               boolean           not null default true
+, launch_template          text
 , sequence                 integer
 , modified_at              timestamptz       not null default now()
 );
@@ -25,6 +26,8 @@ comment on column assistant_catalogue.aliases
      is 'Other spellings the system writes for this tool (claude-code, copilot_cli, gemini-cli).';
 comment on column assistant_catalogue.joins_crew
      is 'Whether a session of it can join a relay crew. False for Claude Desktop, which does not run in a repository.';
+comment on column assistant_catalogue.launch_template
+     is 'One command string that starts this tool, with a {repo} placeholder for the repository (#513). Null when the invocation is not known — a wrong command is worse than none.';
 comment on column assistant_catalogue.sequence
      is 'Display order within its kind.';
 comment on column assistant_catalogue.modified_at
