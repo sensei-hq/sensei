@@ -615,6 +615,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         state.event_tx.clone(),
         Arc::new(crate::relay::gate::GitGateRunner),
     );
+    // Relay janitor: the `relay_janitor` schedule owns the hourly cadence;
+    // the sweep also triggers a pass when a run ends.
+    crate::tasks::relay_janitor::spawn(Arc::new(state.pg.clone()));
     // Tracker integrations: mirror connected boards, drain removed credentials.
     crate::tasks::tracker_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
 

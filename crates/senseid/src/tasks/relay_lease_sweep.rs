@@ -27,6 +27,16 @@ pub async fn tick<G: GateRunner>(
 ) -> Result<(), String> {
     match pass(&pg, event_tx, gate, chrono::Utc::now()).await {
         Ok(rep) => {
+            // A run ended this pass: the janitor reclaims its droppings
+            // asynchronously — never on the sweep's own time (#444 §10.2).
+            // Pool tasks ending outside a run ride the hourly pass instead;
+            // triggering on every task change would run cleans constantly.
+            if !rep.completed_runs.is_empty() {
+                let store = pg.clone();
+                tokio::spawn(async move {
+                    crate::tasks::relay_janitor::run(&store).await;
+                });
+            }
             let resumed_lanes = rep.resumed_lanes.len() as u64;
             let completed_runs = rep.completed_runs.len() as u64;
             let gate_tasks = rep.gate_tasks.len() as u64;
