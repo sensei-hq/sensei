@@ -1,30 +1,27 @@
-# Checkpoint — 2026-11-23 (perf-indexer-storm landed)
+# Checkpoint — 2026-11-23 (#444 landed; epics report next)
 
-**Slice:** P1–P5 storm follow-ups + 4.4 harness fix.
-**Branch:** `develop` (pushed, 8 commits past v0.26.0 checkpoint).
-Tag `v0.26.0` on main; deploy-dojo still waits on user approval.
+**Slice:** relay + diagrams open issues.
+**Branch:** `develop` (4 #444 commits citing §10.1–10.3).
 
 ## Done
-- P1 governor (cap 2 + dedup; tsconfig skip reverted, regressed).
-- P2 stale prune (live-folder gate in community + git_history).
-- P3 phase timing (phases_ms JSONB; task-local outbox; spans).
-- P4 list caps (200 + overflow in 4 ops sections).
-- P5 clear redelivery (pending + timeout + ack-cancel + gens).
-- 4.4 root-caused (harness-side webview sleep; keep-awake read).
-- Gates: unit 4102, senseid exit-0, clippy clean, check clean,
-  crash 5/5 + ops-center 5/5 Tauri matrices green.
+- #312 (verified per D28 — ready to close), #433 (not repro —
+  ready to close), #513, #512, #393 (all landed).
+- #444: janitor (§10.2) → sentinel (§10.1) → serial-build
+  guard + `POST /api/relay/resources/execute` (§10.3, waits
+  behind the release, records props, frees the slot).
+  Relay suites 150 + 186 green; clippy/fmt clean.
 
 ## Remaining
-- User: approve deploy-dojo in GitHub.
-- Follow-ups (in tasks.md, not this change): 1.5 ts-driver hang,
-  5.5 event-driven alert derive (poll is sleep-prone backstop).
+- Push the 4 #444 commits.
+- Close #312/#433 on user confirmation.
+- Report on epics/blocked (#427 #428 #314 #299 #268 #246).
 
 ## Next command
-None — verify live, then pick a follow-up or cut 0.27.0.
+`git push origin develop`, then write the epics/blocked report.
 
 ## Open questions
-- 6 process.rs fmt spots: local 1.99.1/1.100.0 flag what CI
-  stable accepts. Left untouched (fixing flips CI red).
+- 6 process.rs fmt spots: local toolchains flag what CI stable
+  accepts. Left untouched.
 
 ## Known-broken
 - None.

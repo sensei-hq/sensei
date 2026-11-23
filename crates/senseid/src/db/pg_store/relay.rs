@@ -2455,6 +2455,58 @@ impl PgStore {
         Ok(RelayResourceRelease { lease_id: id, resource: resource.to_string(), granted_next })
     }
 
+    /// #444 §10.3: the lane's live `shared-build` claim — `Granted` runs
+    /// now, `Queued` waits for the release, anything else (or no row)
+    /// refuses. A grant wins over a stale queue row for the same lane.
+    pub async fn relay_resource_claim(
+        &self,
+        resource: &str,
+        lane: Uuid,
+    ) -> Result<Option<RelayLeaseState>, RelayError> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "select state::text from relay.leases
+             where kind = 'resource' and resource = $1 and lane_id = $2
+               and state in ('granted', 'queued')
+             order by case state when 'granted' then 0 else 1 end limit 1",
+        )
+        .bind(resource.trim())
+        .bind(lane)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(row.and_then(|(state,)| match state.as_str() {
+            "granted" => Some(RelayLeaseState::Granted),
+            "queued" => Some(RelayLeaseState::Queued),
+            _ => None,
+        }))
+    }
+
+    /// #444 §10.3: the finished build lands in the grant's `props`
+    /// (`last_build`) — output, memory, duration. A lapsed grant (the
+    /// sweeper reaped the hour-long TTL mid-build) is `NotFound`: the
+    /// record has nowhere to land and the caller must know.
+    pub async fn relay_record_build(
+        &self,
+        resource: &str,
+        lane: Uuid,
+        build: &serde_json::Value,
+    ) -> Result<(), RelayError> {
+        let hit = sqlx_core::query::query(
+            "update relay.leases set props = props || jsonb_build_object('last_build', $1::jsonb)
+             where kind = 'resource' and resource = $2 and lane_id = $3 and state = 'granted'",
+        )
+        .bind(build)
+        .bind(resource.trim())
+        .bind(lane)
+        .execute(self.pool())
+        .await
+        .map_err(db_err)?;
+        if hit.rows_affected() == 0 {
+            return Err(RelayError::NotFound("grant lapsed before the build landed".into()));
+        }
+        Ok(())
+    }
+
     /// Plan an item into an unassigned task (coordinator only). From an item,
     /// title/repo/workspace default from it and it moves to `planned`; manual
     /// plans name their own. A task without a repository is refused.
@@ -15083,6 +15135,53 @@ mod tests {
         let q2b = pg.relay_request_resource(u1, a3, req.clone(), now).await.unwrap();
         assert_eq!(q2b.lease_id, q2.lease_id);
         assert_eq!(q2b.position, Some(1));
+    }
+
+    #[tokio::test]
+    async fn shared_build_claim_reports_granted_queued_and_none() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, a2, _b1, u1) = fx_two_crews(&pg).await;
+        let req = RelayResourceRequest {
+            resource: "shared-build".into(),
+            floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+        };
+        let now = t0();
+        pg.relay_request_resource(u1, a1, req.clone(), now).await.unwrap();
+        pg.relay_request_resource(u1, a2, req.clone(), now).await.unwrap();
+        assert_eq!(
+            pg.relay_resource_claim("shared-build", a1).await.unwrap(),
+            Some(RelayLeaseState::Granted)
+        );
+        assert_eq!(
+            pg.relay_resource_claim("shared-build", a2).await.unwrap(),
+            Some(RelayLeaseState::Queued)
+        );
+        assert_eq!(pg.relay_resource_claim("shared-build", v7(0x99)).await.unwrap(), None);
+        assert_eq!(pg.relay_resource_claim("rust-build", a1).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn shared_build_record_lands_in_lease_props() {
+        let pg = PgStore::test_store().await;
+        let (_c1, _c3, a1, _a2, _b1, u1) = fx_two_crews(&pg).await;
+        let req = RelayResourceRequest {
+            resource: "shared-build".into(),
+            floors: Some(RelayFloors { disk_gb: 0, swap_gb: 0 }),
+        };
+        let held = pg.relay_request_resource(u1, a1, req, t0()).await.unwrap();
+        assert_eq!(held.state, RelayLeaseState::Granted);
+        pg.relay_record_build("shared-build", a1, &json!({"exit": 0, "peak_rss_mb": 7}))
+            .await
+            .unwrap();
+        let (_, _, props, _, _, _) = resource_row(&pg, u1, held.lease_id).await;
+        assert_eq!(props["last_build"]["exit"], 0);
+        assert_eq!(props["last_build"]["peak_rss_mb"], 7);
+        // The grant facts survive the merge: the record adds, never wipes.
+        assert!(props.get("disk_free_gb").is_some(), "{props}");
+        // A lane with no grant has nowhere to land: NotFound, not a write.
+        let err =
+            pg.relay_record_build("shared-build", v7(0x99), &json!({"exit": 0})).await.unwrap_err();
+        assert!(matches!(err, RelayError::NotFound(_)), "{err:?}");
     }
 
     #[tokio::test]

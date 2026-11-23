@@ -73,8 +73,8 @@ use crate::relay::rows::{
     with_task_row,
 };
 use crate::relay::{
-    DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLimitScope, RelayRole,
-    RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
+    DepsStatus, RelayError, RelayFindingSeverity, RelayItemKind, RelayLeaseState, RelayLimitScope,
+    RelayRole, RelayStepState, RelaySurface, RelayTaskPhase, RelayTicketProvider, ReviewVerdict,
     clamp_wait_timeout,
 };
 
@@ -231,6 +231,15 @@ pub(crate) struct LimitPauseBody {
 pub(crate) struct ResourceBody {
     lane_id: String,
     resource: String,
+}
+
+/// #444 §10.3: one `make` target offloaded into a volunteered worktree.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExecuteResourceBody {
+    lane_id: String,
+    manifest: String,
+    target: String,
+    worktree: String,
 }
 
 /// F11/#404: a misspelt or stray query key is refused (400), never ignored.
@@ -1095,6 +1104,158 @@ pub(crate) async fn release_resource(
         "state": "released",
         "granted_next": out.granted_next.map(|id| id.to_string()),
     }))
+}
+
+/// #444 §10.3: the holder of the `shared-build` lease offloads one `make`
+/// target into a worktree; the answer records exit, output, duration and
+/// peak RSS. No claim, no build (409 now); a queued waiter polls behind
+/// the holder's release (bounded 5 min). The record lands in the grant's
+/// `props` and the slot frees on completion. No shell anywhere — `make`
+/// is exec'd with argv, the manifest stays inside the worktree, and the
+/// pipes drain while the child runs so a chatty build never wedges on a
+/// full buffer.
+pub(crate) async fn execute_resource(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ExecuteResourceBody>,
+) -> RelayResult {
+    let session = auth_lane(&state, &body.lane_id, &headers).await.map_err(err)?;
+    let caller = parse_uuid(&body.lane_id, "lane_id").map_err(err)?;
+    // Bad input fails before any waiting: a hopeless build never queues.
+    let worktree = std::path::Path::new(&body.worktree);
+    if !worktree.is_dir() {
+        return Err(err(RelayError::Validation("worktree is not a directory".into())));
+    }
+    let manifest = std::path::Path::new(&body.manifest);
+    if manifest.is_absolute()
+        || manifest.components().any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(err(RelayError::Validation("manifest stays inside the worktree".into())));
+    }
+    let target = body.target.trim();
+    if target.is_empty() || target.chars().any(char::is_whitespace) {
+        return Err(err(RelayError::Validation("target is one word".into())));
+    }
+    // No claim, no build (409 now). A queued waiter polls behind the
+    // holder's release; the wait is bounded so a dead holder surfaces
+    // instead of hanging the lane past the lease TTL.
+    match state.pg.relay_resource_claim("shared-build", caller).await.map_err(err)? {
+        None => return Err(err(RelayError::Conflict("shared-build lease not held".into()))),
+        Some(RelayLeaseState::Queued) => {
+            let waiting_since = std::time::Instant::now();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                match state.pg.relay_resource_claim("shared-build", caller).await.map_err(err)? {
+                    Some(RelayLeaseState::Granted) => break,
+                    Some(RelayLeaseState::Queued) => {}
+                    _ => {
+                        return Err(err(RelayError::Conflict(
+                            "shared-build claim lapsed while waiting".into(),
+                        )));
+                    }
+                }
+                if waiting_since.elapsed() > std::time::Duration::from_secs(300) {
+                    return Err(err(RelayError::Conflict(
+                        "shared-build grant never arrived".into(),
+                    )));
+                }
+            }
+        }
+        Some(RelayLeaseState::Granted) => {}
+        Some(_) => {
+            return Err(err(RelayError::Conflict("shared-build lease not held".into())));
+        }
+    }
+    // One compile at a time across lanes AND the broker's own verify
+    // builds: the lease serializes lanes, this guard the daemon.
+    let _serial = crate::relay::gate::SharedBuildSerial::acquire().await;
+    let started = std::time::Instant::now();
+    let mut child = tokio::process::Command::new("make")
+        .arg("-C")
+        .arg(worktree)
+        .arg("-f")
+        .arg(manifest)
+        .arg(target)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| err(RelayError::ServiceUnavailable(format!("make did not start: {e}"))))?;
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    let drain_out = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(r) = stdout.as_mut() {
+            use tokio::io::AsyncReadExt as _;
+            let _ = r.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+    let drain_err = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(r) = stderr.as_mut() {
+            use tokio::io::AsyncReadExt as _;
+            let _ = r.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+    let pid = child.id().map(sysinfo::Pid::from_u32);
+    let mut sys = sysinfo::System::new();
+    let mut peak_bytes = 0u64;
+    let status = loop {
+        match tokio::time::timeout(std::time::Duration::from_millis(50), child.wait()).await {
+            Ok(Ok(status)) => break status,
+            Ok(Err(e)) => {
+                return Err(err(RelayError::Internal(format!("build wait failed: {e}"))));
+            }
+            Err(_) => {
+                if started.elapsed() > std::time::Duration::from_secs(600) {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    return Err(err(RelayError::ServiceUnavailable("build timed out".into())));
+                }
+                if let Some(pid) = pid {
+                    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+                    if let Some(proc) = sys.process(pid) {
+                        peak_bytes = peak_bytes.max(proc.memory());
+                    }
+                }
+            }
+        }
+    };
+    let mut combined = drain_out
+        .await
+        .map_err(|e| err(RelayError::Internal(format!("build stdout drain died: {e}"))))?;
+    let err_buf = drain_err
+        .await
+        .map_err(|e| err(RelayError::Internal(format!("build stderr drain died: {e}"))))?;
+    if !err_buf.is_empty() {
+        combined.extend_from_slice(b"\n--- stderr ---\n");
+        combined.extend_from_slice(&err_buf);
+    }
+    const OUTPUT_CAP: usize = 64 * 1024;
+    let truncated = combined.len() > OUTPUT_CAP;
+    combined.truncate(OUTPUT_CAP);
+    let build = serde_json::json!({
+        "exit": status.code(),
+        "output": String::from_utf8_lossy(&combined),
+        "truncated": truncated,
+        "duration_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "peak_rss_mb": peak_bytes / 1024 / 1024,
+    });
+    // The record lands before the slot frees: a lost record is a 500 the
+    // caller retries, while the release still runs so the next waiter
+    // never wedges behind a recorded build.
+    let recorded = state.pg.relay_record_build("shared-build", caller, &build).await.map_err(err);
+    if let Err(e) = state
+        .pg
+        .relay_release_resource(session.user_id, caller, "shared-build", chrono::Utc::now())
+        .await
+    {
+        tracing::warn!(error = ?e, "execute: slot release failed; the sweeper reaps the TTL");
+    }
+    recorded?;
+    emit(&state, "resources.execute");
+    ok(build)
 }
 
 pub(crate) async fn heartbeat(
@@ -2340,6 +2501,108 @@ mod tests {
             }
             s => panic!("a free slot never queues: {s:?} ({body})"),
         }
+    }
+
+    /// #444 §10.3: a lane offloads a build only while holding the
+    /// `shared-build` lease; the answer records output, duration and peak
+    /// RSS. Without the lease it is a 409, never a build.
+    #[tokio::test]
+    async fn resources_execute_needs_the_lease_then_reports_the_build() {
+        let h = harness().await;
+        let (lane_id, token, _) = register_coordinator(&h).await;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Makefile"), "hello:\n\t@echo built-ok\n").unwrap();
+        let body = || {
+            serde_json::json!({
+                "lane_id": lane_id,
+                "manifest": "Makefile",
+                "target": "hello",
+                "worktree": dir.path().to_string_lossy(),
+            })
+        };
+        let (status, refused) =
+            call(&h, "POST", "/api/relay/resources/execute", Some(body()), Some(&token)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        let (status, _) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/request",
+            Some(json!({"lane_id": lane_id, "resource": "shared-build"})),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, ran) =
+            call(&h, "POST", "/api/relay/resources/execute", Some(body()), Some(&token)).await;
+        assert_eq!(status, StatusCode::OK, "{ran}");
+        assert_eq!(ran["exit"], 0);
+        assert!(ran["output"].as_str().unwrap().contains("built-ok"), "{ran}");
+        assert!(ran["duration_ms"].as_u64().is_some(), "{ran}");
+        assert!(ran.get("peak_rss_mb").is_some(), "{ran}");
+    }
+
+    /// #444 §10.3: B queues behind A's build, waits for A's release,
+    /// then runs — and B's slot frees on completion, so A re-requests a
+    /// grant. Zero floors force the grant: the host's own disk never
+    /// decides this test.
+    #[tokio::test]
+    async fn resources_execute_waits_for_the_release_then_frees_the_slot() {
+        let h = harness().await;
+        let (coord_id, coord_token, crew_id) = register_coordinator(&h).await;
+        let (contrib_id, contrib_token) = register_contributor(&h, &crew_id).await;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Makefile"), "hello:\n\t@echo built-ok\n").unwrap();
+        let user = h.state.pg.relay_current_user().await.unwrap();
+        let req = || crate::db::pg_store::relay::RelayResourceRequest {
+            resource: "shared-build".into(),
+            floors: Some(crate::relay::RelayFloors { disk_gb: 0, swap_gb: 0 }),
+        };
+        let now = chrono::Utc::now();
+        let _a = h
+            .state
+            .pg
+            .relay_request_resource(user, coord_id.parse::<uuid::Uuid>().unwrap(), req(), now)
+            .await
+            .unwrap();
+        let _b = h
+            .state
+            .pg
+            .relay_request_resource(user, contrib_id.parse::<uuid::Uuid>().unwrap(), req(), now)
+            .await
+            .unwrap();
+        let b_body = json!({
+            "lane_id": contrib_id,
+            "manifest": "Makefile",
+            "target": "hello",
+            "worktree": dir.path().to_string_lossy(),
+        });
+        let b_exec =
+            call(&h, "POST", "/api/relay/resources/execute", Some(b_body), Some(&contrib_token));
+        let a_release = async {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            call(
+                &h,
+                "POST",
+                "/api/relay/resources/release",
+                Some(json!({"lane_id": coord_id, "resource": "shared-build"})),
+                Some(&coord_token),
+            )
+            .await
+        };
+        let ((b_status, b_ran), (r_status, _)) = tokio::join!(b_exec, a_release);
+        assert_eq!(r_status, StatusCode::OK);
+        assert_eq!(b_status, StatusCode::OK, "{b_ran}");
+        assert!(b_ran["output"].as_str().unwrap().contains("built-ok"), "{b_ran}");
+        let (status, again) = call(
+            &h,
+            "POST",
+            "/api/relay/resources/request",
+            Some(json!({"lane_id": coord_id, "resource": "shared-build"})),
+            Some(&coord_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{again}");
+        assert_eq!(again["state"], "granted", "{again}");
     }
 
     #[tokio::test]
