@@ -25,7 +25,7 @@ export function relaySseSource(api: RelayApi, stream: () => RelayEventStream): R
     readRuns: () => api.tryGetRuns(),
     startRun: (runId, crewId) => api.tryStartRun(runId, crewId),
     cancelRun: (runId) => api.tryCancelRun(runId),
-    readCatalogue: () => api.tryGetCatalogue(),
+    readCatalogue: (query) => api.tryGetCatalogue(query),
     events: sseEvents(stream),
   };
 }

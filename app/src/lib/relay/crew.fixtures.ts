@@ -69,6 +69,7 @@ export const setupStep1 = (): RelayAddMemberView => ({
   listening: 'Listening · 0 of 2 to start a run',
   catalogue: null,
   catalogueError: null,
+  launch: null,
 });
 
 /** The crew's id on the lines that name it (#419). */
@@ -101,12 +102,12 @@ const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString(
  *  and a word the catalogue does not list (never offered). */
 export const mockupCatalogue = (): RelayCatalogue => ({
   assistants: [
-    { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: minutesAgo(120), sessions_week: 12 },
-    { id: 'codex', name: 'Codex', kind: 'assistant', installed: null, last_used_at: minutesAgo(60 * 24 * 9), sessions_week: 0 },
+    { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: minutesAgo(120), sessions_week: 12, launch: 'cd "/w/sensei" && claude' },
+    { id: 'codex', name: 'Codex', kind: 'assistant', installed: null, last_used_at: minutesAgo(60 * 24 * 9), sessions_week: 0, launch: null },
   ],
   editors: [
-    { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: minutesAgo(5), models: ['claude-sonnet-4-5'], mcp_config: '~/.cursor/mcp.json' },
-    { id: 'zed', name: 'Zed', kind: 'editor', installed: true, last_used_at: null, models: [], mcp_config: null },
+    { id: 'cursor', name: 'Cursor', kind: 'editor', installed: true, last_used_at: minutesAgo(5), models: ['claude-sonnet-4-5'], mcp_config: '~/.cursor/mcp.json', launch: null },
+    { id: 'zed', name: 'Zed', kind: 'editor', installed: true, last_used_at: null, models: [], mcp_config: null, launch: null },
   ],
   unknown: [{ id: 'cowork', name: 'Cowork', kind: 'unknown', last_used_at: minutesAgo(30) }],
 });

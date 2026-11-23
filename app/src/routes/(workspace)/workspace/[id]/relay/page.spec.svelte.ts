@@ -1000,8 +1000,8 @@ describe('Relay — AddMember picks from what this machine has seen (#455)', () 
       F.ok(
         F.catalogue({
           assistants: [
-            { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: null, sessions_week: 1 },
-            { id: 'codex', name: 'Codex', kind: 'assistant', installed: true, last_used_at: null, sessions_week: 1 },
+            { id: 'claude', name: 'Claude Code', kind: 'assistant', installed: true, last_used_at: null, sessions_week: 1, launch: null },
+            { id: 'codex', name: 'Codex', kind: 'assistant', installed: true, last_used_at: null, sessions_week: 1, launch: null },
           ],
         }),
       ),
