@@ -15,6 +15,25 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.27.1] — 2026-11-23
+
+### Fixed
+
+- **Ticket URLs link sessions** (#504). A session that names its ticket by
+  URL (GitLab `/-/work_items/N` or `/-/issues/N`, GitHub `/issues/N`) now
+  links to the task whose scope is that `host/path` and whose iid is that
+  number, so the ticket shows its time and tokens. Previously only `path#n`
+  and a bare `#n` matched.
+- **`codesign-local` skips signing off macOS.** On Linux, `make install-debug`
+  died on a missing `codesign` after copying the binaries, leaving the daemon
+  down; the script now reports the skip and exits 0.
+
+### Security
+
+- **`cookie` 0.18.2 → 0.18.3** in the desktop app (RUSTSEC-2026-0594,
+  private cookie nonces can repeat in processes that fork). Reached through
+  Tauri; lockfile-only update.
+
 ## [0.27.0] — 2026-11-23
 
 ### Added
