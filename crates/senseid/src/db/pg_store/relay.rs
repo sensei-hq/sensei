@@ -777,6 +777,13 @@ pub struct RelaySweepReport {
     /// Sprint runs this pass completed (every task done or cancelled), as
     /// `(run_id, crew_id)`.
     pub completed_runs: Vec<(Uuid, Uuid)>,
+    /// Ended runs this pass archived, as `(run_id, crew_id)` (#393).
+    pub archived_runs: Vec<(Uuid, Uuid)>,
+    /// Archived runs this pass purged past 30 days (#393).
+    pub deleted_runs: Vec<Uuid>,
+    /// Closed crews this pass archived (#393). No event shape: the crew
+    /// already left Now on close.
+    pub archived_crews: u64,
     /// Ready broker tasks whose deps are all done, oldest first, at most
     /// one per pass — the gate (2.8) runs them after the commit; the pass
     /// itself moves nothing (a lost daemon leaves no stuck task).
@@ -1165,7 +1172,7 @@ where
         return Ok(Vec::new());
     }
     sqlx_core::query_scalar::query_scalar(
-        "select id from relay.tasks
+        "select id from relay.tasks_all
          where user_id = $1 and id = any ($2) and state <> 'done'
          order by id",
     )
@@ -1643,6 +1650,18 @@ impl PgStore {
                 .await
                 .map_err(db_err)?;
                 if exists.is_none() {
+                    // An archived crew is closed, not missing (#393).
+                    let archived: bool = sqlx_core::query_scalar::query_scalar(
+                        "select exists (select 1 from relay_archive.crews where user_id = $1 and id = $2)",
+                    )
+                    .bind(user_id)
+                    .bind(crew_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                    if archived {
+                        return Err(RelayError::Conflict("crew is closed".into()));
+                    }
                     return Err(RelayError::NotFound("crew not found".into()));
                 }
                 Self::relay_require_crew_open(&mut tx, user_id, crew_id).await?;
@@ -1783,10 +1802,14 @@ impl PgStore {
         lane_id: Uuid,
         token: &str,
     ) -> Result<RelayLaneSession, RelayError> {
+        // Live first, then the archive (#393): a closed crew's token still
+        // authenticates (the credentials are valid; the crew is closed), so
+        // downstream checks answer 409/410 instead of 401, and a re-close
+        // stays a 200 no-op.
         let row: Option<(Uuid, Uuid, String, String, Option<DateTime<Utc>>)> =
             sqlx_core::query_as::query_as(
                 "select user_id, crew_id, role::text, token_hash, unregistered_at
-                 from relay.lanes where id = $1",
+                 from relay.lanes_all where id = $1",
             )
             .bind(lane_id)
             .fetch_optional(self.pool())
@@ -1810,18 +1833,25 @@ impl PgStore {
         lane_id: Uuid,
         now: DateTime<Utc>,
     ) -> Result<RelayHeartbeatOutput, RelayError> {
-        let lane: Option<(Uuid, Uuid, Option<DateTime<Utc>>)> = sqlx_core::query_as::query_as(
-            "select user_id, crew_id, unregistered_at from relay.lanes where id = $1",
-        )
-        .bind(lane_id)
-        .fetch_optional(self.pool())
-        .await
-        .map_err(db_err)?;
-        let Some((user_id, crew_id, unregistered_at)) = lane else {
+        let lane: Option<(Uuid, Uuid, Option<DateTime<Utc>>, bool)> =
+            sqlx_core::query_as::query_as(
+                "select user_id, crew_id, unregistered_at, false from relay.lanes where id = $1
+                 union all
+                 select user_id, crew_id, unregistered_at, true from relay_archive.lanes where id = $1",
+            )
+            .bind(lane_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        let Some((user_id, crew_id, unregistered_at, archived)) = lane else {
             return Err(RelayError::NotFound("lane not found".into()));
         };
         if unregistered_at.is_some() {
             return Err(RelayError::Gone("lane unregistered; reregister to resume".into()));
+        }
+        if archived {
+            // The crew closed under a registered lane: gone, with the reason.
+            return Err(RelayError::Gone("crew is closed".into()));
         }
         let expires = now + Duration::seconds(LANE_LEASE_TTL_SECS as i64);
         let mut tx = self.pool().begin().await.map_err(db_err)?;
@@ -1945,7 +1975,7 @@ impl PgStore {
         // The handler verifies the token first: `relay_auth_lane` answers
         // `Gone` (valid token, unregistered lane) exactly for this resume.
         let lane: Option<(Uuid, Uuid, Option<serde_json::Value>)> = sqlx_core::query_as::query_as(
-            "select user_id, crew_id, checkpoint from relay.lanes where id = $1",
+            "select user_id, crew_id, checkpoint from relay.lanes_all where id = $1",
         )
         .bind(lane_id)
         .fetch_optional(self.pool())
@@ -2044,18 +2074,25 @@ impl PgStore {
         &self,
         lane_id: Uuid,
     ) -> Result<RelayUnregisterOutput, RelayError> {
-        let lane: Option<(Uuid, Uuid, Option<DateTime<Utc>>)> = sqlx_core::query_as::query_as(
-            "select user_id, crew_id, unregistered_at from relay.lanes where id = $1",
-        )
-        .bind(lane_id)
-        .fetch_optional(self.pool())
-        .await
-        .map_err(db_err)?;
-        let Some((user_id, crew_id, unregistered_at)) = lane else {
+        let lane: Option<(Uuid, Uuid, Option<DateTime<Utc>>, bool)> =
+            sqlx_core::query_as::query_as(
+                "select user_id, crew_id, unregistered_at, false from relay.lanes where id = $1
+                 union all
+                 select user_id, crew_id, unregistered_at, true from relay_archive.lanes where id = $1",
+            )
+            .bind(lane_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(db_err)?;
+        let Some((user_id, crew_id, unregistered_at, archived)) = lane else {
             return Err(RelayError::NotFound("lane not found".into()));
         };
         if unregistered_at.is_some() {
             return Err(RelayError::Gone("lane already unregistered".into()));
+        }
+        if archived {
+            // The crew closed under it: already gone with the crew (#393).
+            return Err(RelayError::Gone("crew is closed".into()));
         }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         // The crew row first, like every lane task write: a close holds it,
@@ -2429,8 +2466,10 @@ impl PgStore {
         user_id: Uuid,
         caller_lane: Uuid,
     ) -> Result<Uuid, RelayError> {
+        // Live or archived (#393): an archived coordinator still names its
+        // crew, so closed-crew writes answer 409 instead of 404.
         let row: Option<(Uuid, String)> = sqlx_core::query_as::query_as(
-            "select crew_id, role::text from relay.lanes where user_id = $1 and id = $2",
+            "select crew_id, role::text from relay.lanes_all where user_id = $1 and id = $2",
         )
         .bind(user_id)
         .bind(caller_lane)
@@ -2453,6 +2492,40 @@ impl PgStore {
     /// of the caller's transaction: a close (`for update`) racing it
     /// serializes, so the gate reads the status the close committed and a
     /// closed crew never gains a lane, lease or task.
+    /// True when the crew is closed: live with status closed, or archived
+    /// away (#393). For writes that look up live rows before they open the
+    /// transaction `relay_require_crew_open` needs — they refuse 409 here
+    /// instead of 404ing on the moved rows. Errors surface (D83): a failed
+    /// read never reads as open.
+    async fn relay_crew_closed(
+        pool: &sqlx_postgres::PgPool,
+        user_id: Uuid,
+        crew_id: Uuid,
+    ) -> Result<bool, RelayError> {
+        let live: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "select status from relay.crews where user_id = $1 and id = $2",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_err)?;
+        if live.as_deref() == Some("closed") {
+            return Ok(true);
+        }
+        if live.is_some() {
+            return Ok(false);
+        }
+        sqlx_core::query_scalar::query_scalar(
+            "select exists (select 1 from relay_archive.crews where user_id = $1 and id = $2)",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_one(pool)
+        .await
+        .map_err(db_err)
+    }
+
     async fn relay_require_crew_open(
         tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
         user_id: Uuid,
@@ -2468,6 +2541,20 @@ impl PgStore {
         .map_err(db_err)?;
         if status.as_deref() == Some("closed") {
             return Err(RelayError::Conflict("crew is closed".into()));
+        }
+        if status.is_none() {
+            // No live row: an archived crew is closed, not missing (#393).
+            let archived: bool = sqlx_core::query_scalar::query_scalar(
+                "select exists (select 1 from relay_archive.crews where user_id = $1 and id = $2)",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(db_err)?;
+            if archived {
+                return Err(RelayError::Conflict("crew is closed".into()));
+            }
         }
         Ok(())
     }
@@ -2657,6 +2744,9 @@ impl PgStore {
         input: RelayAssignInput,
     ) -> Result<RelayAssignOutput, RelayError> {
         let crew_id = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
+        if Self::relay_crew_closed(self.pool(), user_id, crew_id).await? {
+            return Err(RelayError::Conflict("crew is closed".into()));
+        }
         let to_lane: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
             "select id from relay.lanes where user_id = $1 and crew_id = $2 and id = $3",
         )
@@ -4188,7 +4278,7 @@ impl PgStore {
         let next = transition(cur, TaskEvent::Claimed)
             .map_err(|_| RelayError::Conflict(format!("cannot claim a {} task", word(cur))))?;
         let unmet_deps: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
-            "select id from relay.tasks
+            "select id from relay.tasks_all
              where user_id = $1 and id = any ($2) and state <> 'done'
              order by id",
         )
@@ -4334,7 +4424,7 @@ impl PgStore {
         if !Self::relay_lane_holds_worker_task(&mut tx, user_id, lane_id).await? {
             let ready: Option<(Uuid, bool)> = sqlx_core::query_as::query_as(
                 "select t.id, not exists (
-                          select 1 from relay.tasks d
+                          select 1 from relay.tasks_all d
                            where d.user_id = t.user_id and d.id = any (t.deps) and d.state <> 'done')
                         as unblocked
                    from relay.tasks t
@@ -5005,8 +5095,8 @@ impl PgStore {
                       where st->>'state' in ('done', 'skipped')),
                     jsonb_array_length(t.steps)::bigint,
                     l.id, l.code, l.suggested_name
-               from relay.tasks t
-               left join relay.lanes l on l.user_id = t.user_id and l.id = t.lane_id
+               from relay.tasks_all t
+               left join relay.lanes_all l on l.user_id = t.user_id and l.id = t.lane_id
               where t.user_id = $1 and t.run_id = $2
               order by t.state_changed_at, t.id",
         )
@@ -5067,11 +5157,11 @@ impl PgStore {
             Option<String>,
         )> = sqlx_core::query_as::query_as(
             "select l.id, l.code, l.role::text, l.title, l.suggested_name, l.family, l.model
-                   from relay.lanes l
+                   from relay.lanes_all l
                   where l.user_id = $1
                     and (exists (
-                           select 1 from relay.actions a
-                             join relay.tasks t on t.user_id = a.user_id and t.id = a.task_id
+                           select 1 from relay.actions_all a
+                             join relay.tasks_all t on t.user_id = a.user_id and t.id = a.task_id
                             where a.user_id = l.user_id and a.lane_id = l.id and t.run_id = $2)
                          or ($3 and l.crew_id = $4 and l.unregistered_at is null))",
         )
@@ -5206,6 +5296,269 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         Ok(inserted)
+    }
+
+    /// Move completed runs out of the live schema (#393): for each run, its
+    /// row, its tasks, its run_items and its tasks' actions go to
+    /// `relay_archive` (same columns + `archived_at`), then the live rows go.
+    /// Queue items stay live — they are the person's backlog, not the run's.
+    /// Idempotent: re-archiving moves nothing (the archive insert skips
+    /// present rows, the live deletes match nothing). Runs in the sweep's
+    /// transaction, right after [`Self::relay_complete_runs`].
+    pub(crate) async fn relay_archive_runs(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        run_ids: &[Uuid],
+        now: DateTime<Utc>,
+    ) -> Result<(), RelayError> {
+        for run_id in run_ids {
+            let user: Option<Uuid> = sqlx_core::query_scalar::query_scalar(
+                "select user_id from relay.runs where id = $1",
+            )
+            .bind(run_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_err)?;
+            let Some(user_id) = user else { continue };
+            Self::relay_archive_one_run(tx, user_id, *run_id, now).await?;
+        }
+        Ok(())
+    }
+
+    /// Move one run's rows. Children first on the way out (the live FKs);
+    /// the archive has none, so insert order is free.
+    async fn relay_archive_one_run(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        run_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<(), RelayError> {
+        for sql in [
+            "insert into relay_archive.runs (user_id, id, crew_id, title, goal, state, repo_key, \
+                    workspace_id, config, created_at, started_at, completed_at, archived_at) \
+             select user_id, id, crew_id, title, goal, state, repo_key, \
+                    workspace_id, config, created_at, started_at, completed_at, $3 \
+               from relay.runs where user_id = $1 and id = $2 \
+               on conflict (user_id, id) do nothing",
+            "insert into relay_archive.tasks (user_id, id, crew_id, run_id, item_id, repo_key, \
+                    workspace_id, lane_id, review_claimed_by, review_claimed_at, title, phase, \
+                    state, round, executor, deterministic, owned_paths, acceptance, resources, \
+                    deps, blocked_from_state, assigned_at, state_changed_at, completed_at, \
+                    checkpoint, steps, archived_at) \
+             select user_id, id, crew_id, run_id, item_id, repo_key, \
+                    workspace_id, lane_id, review_claimed_by, review_claimed_at, title, phase, \
+                    state, round, executor, deterministic, owned_paths, acceptance, resources, \
+                    deps, blocked_from_state, assigned_at, state_changed_at, completed_at, \
+                    checkpoint, steps, $3 \
+               from relay.tasks where user_id = $1 and run_id = $2 \
+               on conflict (user_id, id) do nothing",
+            "insert into relay_archive.run_items (user_id, run_id, item_id, position, added_at, archived_at) \
+             select user_id, run_id, item_id, position, added_at, $3 \
+               from relay.run_items where user_id = $1 and run_id = $2 \
+               on conflict (user_id, run_id, item_id) do nothing",
+            "insert into relay_archive.actions (user_id, id, crew_id, task_id, lane_id, kind, round, \
+                    phase, body_md, report_md, props, reply_to, created_at, archived_at) \
+             select user_id, id, crew_id, task_id, lane_id, kind, round, \
+                    phase, body_md, report_md, props, reply_to, created_at, $3 \
+               from relay.actions \
+              where user_id = $1 and task_id in \
+                    (select id from relay.tasks where user_id = $1 and run_id = $2) \
+               on conflict (user_id, id) do nothing",
+        ] {
+            sqlx_core::query::query(sql)
+                .bind(user_id)
+                .bind(run_id)
+                .bind(now)
+                .execute(&mut **tx)
+                .await
+                .map_err(db_err)?;
+        }
+        for sql in [
+            "delete from relay.actions where user_id = $1 and task_id in \
+                    (select id from relay.tasks where user_id = $1 and run_id = $2)",
+            "delete from relay.run_items where user_id = $1 and run_id = $2",
+            "delete from relay.tasks where user_id = $1 and run_id = $2",
+            "delete from relay.runs where user_id = $1 and id = $2",
+        ] {
+            sqlx_core::query::query(sql)
+                .bind(user_id)
+                .bind(run_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(db_err)?;
+        }
+        Ok(())
+    }
+
+    /// Move a closing crew's rows (#393): every run still live in it (via the
+    /// run archiver — an open run of a closing crew ends by the close), then
+    /// pool tasks and crew actions, lanes and leases, then the crew. Waiters
+    /// are ephemeral holds, dropped, never archived. Token hashes are
+    /// copied, not nulled: a re-close must still authenticate its caller
+    /// lane to answer its documented 200 no-op, and UUID-v4 preimages make
+    /// a retained hash useless to anyone holding it. Runs in the close's
+    /// transaction, after the status flip. Idempotent.
+    pub(crate) async fn relay_archive_crew(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        user_id: Uuid,
+        crew_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<(), RelayError> {
+        let runs: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "select id from relay.runs where user_id = $1 and crew_id = $2",
+        )
+        .bind(user_id)
+        .bind(crew_id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        for run_id in runs {
+            Self::relay_archive_one_run(tx, user_id, run_id, now).await?;
+        }
+        for sql in [
+            "insert into relay_archive.tasks (user_id, id, crew_id, run_id, item_id, repo_key, \
+                    workspace_id, lane_id, review_claimed_by, review_claimed_at, title, phase, \
+                    state, round, executor, deterministic, owned_paths, acceptance, resources, \
+                    deps, blocked_from_state, assigned_at, state_changed_at, completed_at, \
+                    checkpoint, steps, archived_at) \
+             select user_id, id, crew_id, run_id, item_id, repo_key, \
+                    workspace_id, lane_id, review_claimed_by, review_claimed_at, title, phase, \
+                    state, round, executor, deterministic, owned_paths, acceptance, resources, \
+                    deps, blocked_from_state, assigned_at, state_changed_at, completed_at, \
+                    checkpoint, steps, $3 \
+               from relay.tasks where user_id = $1 and crew_id = $2 \
+               on conflict (user_id, id) do nothing",
+            "insert into relay_archive.actions (user_id, id, crew_id, task_id, lane_id, kind, round, \
+                    phase, body_md, report_md, props, reply_to, created_at, archived_at) \
+             select user_id, id, crew_id, task_id, lane_id, kind, round, \
+                    phase, body_md, report_md, props, reply_to, created_at, $3 \
+               from relay.actions where user_id = $1 and crew_id = $2 \
+               on conflict (user_id, id) do nothing",
+            "insert into relay_archive.leases (user_id, id, crew_id, lane_id, kind, resource, state, \
+                    expires_at, granted_at, released_at, props, archived_at) \
+             select user_id, id, crew_id, lane_id, kind, resource, state, \
+                    expires_at, granted_at, released_at, props, $3 \
+               from relay.leases where user_id = $1 and crew_id = $2 \
+               on conflict (user_id, id) do nothing",
+            "insert into relay_archive.lanes (user_id, id, crew_id, code, title, suggested_name, role, \
+                    family, version, model, host, capabilities, repo, worktree, token_hash, \
+                    checkpoint, registered_at, unregistered_at, limit_paused_at, limit_scope, \
+                    limit_resumes_at, limit_note, archived_at) \
+             select user_id, id, crew_id, code, title, suggested_name, role, \
+                    family, version, model, host, capabilities, repo, worktree, token_hash, \
+                    checkpoint, registered_at, unregistered_at, limit_paused_at, limit_scope, \
+                    limit_resumes_at, limit_note, $3 \
+               from relay.lanes where user_id = $1 and crew_id = $2 \
+               on conflict (user_id, id) do nothing",
+            "insert into relay_archive.crews (user_id, id, workspace_id, repo_key, goal, status, \
+                    heartbeat_at, started_at, completed_at, archived_at) \
+             select user_id, id, workspace_id, repo_key, goal, status, \
+                    heartbeat_at, started_at, completed_at, $3 \
+               from relay.crews where user_id = $1 and id = $2 \
+               on conflict (user_id, id) do nothing",
+        ] {
+            sqlx_core::query::query(sql)
+                .bind(user_id)
+                .bind(crew_id)
+                .bind(now)
+                .execute(&mut **tx)
+                .await
+                .map_err(db_err)?;
+        }
+        for sql in [
+            "delete from relay.lane_waiters where user_id = $1 and crew_id = $2",
+            "delete from relay.leases where user_id = $1 and crew_id = $2",
+            "delete from relay.actions where user_id = $1 and crew_id = $2",
+            "delete from relay.tasks where user_id = $1 and crew_id = $2",
+            "delete from relay.lanes where user_id = $1 and crew_id = $2",
+            "delete from relay.crews where user_id = $1 and id = $2",
+        ] {
+            sqlx_core::query::query(sql)
+                .bind(user_id)
+                .bind(crew_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(db_err)?;
+        }
+        Ok(())
+    }
+
+    /// Archive ended runs still live (#393): completed or cancelled, whether
+    /// they ended this pass or before this deployed — ten per pass, so a
+    /// big backfill drains over passes instead of one long transaction.
+    /// Drafts never archive (live user content, even crewless). Returns
+    /// `(run, crew)` per run moved, for the `run.archived` events.
+    pub(crate) async fn relay_archive_ended_runs(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<(Uuid, Uuid)>, RelayError> {
+        let ended: Vec<(Uuid, Option<Uuid>)> = sqlx_core::query_as::query_as(
+            "select id, crew_id from relay.runs where state in ('completed', 'cancelled') \
+             order by completed_at nulls last, id limit 10",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        let ids: Vec<Uuid> = ended.iter().map(|(id, _)| *id).collect();
+        Self::relay_archive_runs(tx, &ids, now).await?;
+        Ok(ended.into_iter().filter_map(|(id, crew)| crew.map(|c| (id, c))).collect())
+    }
+
+    /// Archive closed crews still live (#393): backfill for crews that closed
+    /// before this deployed (live closes archive in their own transaction).
+    /// Ten per pass, like runs. Returns crew ids moved.
+    pub(crate) async fn relay_archive_closed_crews(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Uuid>, RelayError> {
+        let crews: Vec<(Uuid, Uuid)> = sqlx_core::query_as::query_as(
+            "select user_id, id from relay.crews where status = 'closed' \
+             order by completed_at nulls last, id limit 10",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        for (user_id, crew_id) in &crews {
+            Self::relay_archive_crew(tx, *user_id, *crew_id, now).await?;
+        }
+        Ok(crews.into_iter().map(|(_, id)| id).collect())
+    }
+
+    /// Purge archived rows past 30 days (#393): at most `batch` per table per
+    /// call, children before parents. Live rows are never touched. Returns
+    /// (rows purged, purged run ids for the `run.deleted` events). Runs in
+    /// the sweep's transaction.
+    pub(crate) async fn relay_purge_archive(
+        tx: &mut sqlx_core::transaction::Transaction<'_, sqlx_postgres::Postgres>,
+        now: DateTime<Utc>,
+        batch: i64,
+    ) -> Result<(u64, Vec<Uuid>), RelayError> {
+        let mut purged = 0u64;
+        for table in ["actions", "run_items", "tasks", "leases", "lanes", "crews"] {
+            let done = sqlx_core::query::query(&format!(
+                "delete from relay_archive.{table} where ctid in \
+                    (select ctid from relay_archive.{table} \
+                      where archived_at < $1 order by archived_at limit $2)"
+            ))
+            .bind(now - chrono::Duration::days(30))
+            .bind(batch)
+            .execute(&mut **tx)
+            .await
+            .map_err(db_err)?;
+            purged += done.rows_affected();
+        }
+        let deleted_runs: Vec<Uuid> = sqlx_core::query_scalar::query_scalar(
+            "delete from relay_archive.runs where ctid in \
+                (select ctid from relay_archive.runs \
+                  where archived_at < $1 order by archived_at limit $2) \
+             returning id",
+        )
+        .bind(now - chrono::Duration::days(30))
+        .bind(batch)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        purged += deleted_runs.len() as u64;
+        Ok((purged, deleted_runs))
     }
 
     /// Complete every active run whose tasks are all done or cancelled (and
@@ -6300,10 +6653,6 @@ impl PgStore {
         caller_lane: Uuid,
         crew_id: Uuid,
     ) -> Result<RelayCloseOutput, RelayError> {
-        let own_crew = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
-        if own_crew != crew_id {
-            return Err(RelayError::NotFound("crew not found".into()));
-        }
         let mut tx = self.pool().begin().await.map_err(db_err)?;
         // Lock order matches the person close: the crew, then its lanes.
         let status: Option<String> = sqlx_core::query_scalar::query_scalar(
@@ -6315,8 +6664,36 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         let Some(status) = status else {
+            // No live row: an archived crew is already closed, not missing —
+            // a re-close stays a 200 no-op, but only its coordinator lane
+            // may ask (#393). Anything else is not found.
+            let was_coordinator: bool = sqlx_core::query_scalar::query_scalar(
+                "select exists (select 1 from relay_archive.crews c
+                                 join relay_archive.lanes l
+                                   on l.user_id = c.user_id and l.crew_id = c.id
+                                where c.user_id = $1 and c.id = $2
+                                  and l.id = $3 and l.role = 'coordinator')",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .bind(caller_lane)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if was_coordinator {
+                tx.commit().await.map_err(db_err)?;
+                return Ok(RelayCloseOutput {
+                    crew_id,
+                    status: "closed".to_string(),
+                    released: vec![],
+                });
+            }
             return Err(RelayError::NotFound("crew not found".into()));
         };
+        let own_crew = self.relay_crew_of_coordinator(user_id, caller_lane).await?;
+        if own_crew != crew_id {
+            return Err(RelayError::NotFound("crew not found".into()));
+        }
         let mut released = Vec::new();
         if status != "closed" {
             let live = Self::relay_crew_has_live_lane(
@@ -6353,6 +6730,8 @@ impl PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
+            // The closed crew leaves the live schema for the archive (#393).
+            Self::relay_archive_crew(&mut tx, user_id, crew_id, chrono::Utc::now()).await?;
         }
         tx.commit().await.map_err(db_err)?;
         Ok(RelayCloseOutput { crew_id, status: "closed".to_string(), released })
@@ -6378,6 +6757,19 @@ impl PgStore {
         .await
         .map_err(db_err)?;
         let Some(status) = status else {
+            // No live row: an archived crew is already closed, not missing (#393).
+            let archived: bool = sqlx_core::query_scalar::query_scalar(
+                "select exists (select 1 from relay_archive.crews where user_id = $1 and id = $2)",
+            )
+            .bind(user_id)
+            .bind(crew_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if archived {
+                tx.commit().await.map_err(db_err)?;
+                return Ok(RelayPersonCloseOutput { crew_id, closed_now: false, released: vec![] });
+            }
             return Err(RelayError::NotFound("crew not found".into()));
         };
         let mut released = Vec::new();
@@ -6421,6 +6813,8 @@ impl PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
+            // The closed crew leaves the live schema for the archive (#393).
+            Self::relay_archive_crew(&mut tx, user_id, crew_id, chrono::Utc::now()).await?;
         }
         tx.commit().await.map_err(db_err)?;
         Ok(RelayPersonCloseOutput { crew_id, closed_now: status != "closed", released })
@@ -7179,7 +7573,7 @@ impl PgStore {
             "select t.id from relay.tasks t
              where t.executor = 'broker' and t.state = 'ready'
                and not exists (
-                 select 1 from relay.tasks d
+                 select 1 from relay.tasks_all d
                  where d.user_id = t.user_id and d.id = any (t.deps) and d.state <> 'done')
              order by t.state_changed_at, t.id
              for update of t skip locked
@@ -7190,6 +7584,14 @@ impl PgStore {
         .map_err(db_err)?;
         // Sprint runs complete themselves once every task is done.
         let completed_runs = Self::relay_complete_runs(&mut tx, now).await?;
+        // Ended work leaves the live schema for the archive (#393): every
+        // completed or cancelled run still live (not only this pass's —
+        // backfill for runs that ended before this deployed), every closed
+        // crew still live, and archive rows past 30 days go. All ride this
+        // transaction.
+        let archived_runs = Self::relay_archive_ended_runs(&mut tx, now).await?;
+        let archived_crews = Self::relay_archive_closed_crews(&mut tx, now).await?;
+        let (_purged_rows, deleted_runs) = Self::relay_purge_archive(&mut tx, now, 1000).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(RelaySweepReport {
             expired_leases,
@@ -7204,6 +7606,9 @@ impl PgStore {
             nudged,
             task_changes,
             completed_runs,
+            archived_runs,
+            deleted_runs,
+            archived_crews: archived_crews.len() as u64,
             gate_tasks,
         })
     }
@@ -7388,6 +7793,11 @@ impl PgStore {
         .fetch_optional(&mut *tx)
         .await
         .map_err(db_err)?;
+        // No archived fallback: an ended run's events go id-only by design —
+        // the app re-reads Now (which no longer lists it) and the run list
+        // (which spans live and archive), dropping the band and keeping
+        // Past runs. Attaching an archived row would merge it into the live
+        // entity state instead (#393).
         tx.commit().await.map_err(db_err)?;
         Ok(row.map(|(crew_id, payload)| now_run_json(&crew_id, payload)))
     }
@@ -7923,7 +8333,8 @@ impl PgStore {
             "select title, repo_key, phase::text, workspace_id, state::text, round,
                     item_id, lane_id, assigned_at, completed_at, state_changed_at, steps,
                     review_claimed_by, run_id, deps
-             from relay.tasks where user_id = $1 and crew_id = $2 and id = $3",
+             from relay.tasks_all t
+             where user_id = $1 and crew_id = $2 and id = $3",
         )
         .bind(user_id)
         .bind(crew_id)
@@ -7960,7 +8371,7 @@ impl PgStore {
         let reviewer_json = match review_claimed_by {
             Some(reviewer_id) => {
                 let code: String = sqlx_core::query_scalar::query_scalar(
-                    "select code from relay.lanes where user_id = $1 and id = $2",
+                    "select code from relay.lanes_all where user_id = $1 and id = $2",
                 )
                 .bind(user_id)
                 .bind(reviewer_id)
@@ -8008,7 +8419,7 @@ impl PgStore {
                 )> = sqlx_core::query_as::query_as(
                     "select code, title, family, version, model, limit_scope::text,
                             limit_resumes_at, limit_note, suggested_name
-                     from relay.lanes
+                     from relay.lanes_all
                      where user_id = $1 and id = $2",
                 )
                 .bind(user_id)
@@ -8050,7 +8461,7 @@ impl PgStore {
         // Rounds group reported turns by phase (canonical order); a turn
         // without its own phase reads under the task's.
         let mut rounds: Vec<(String, i64)> = sqlx_core::query_as::query_as(
-            "select coalesce(a.phase::text, $1), count(*) from relay.actions a
+            "select coalesce(a.phase::text, $1), count(*) from relay.actions_all a
              where a.user_id = $2 and a.task_id = $3 and a.kind = 'reported'
              group by coalesce(a.phase::text, $1)",
         )
@@ -8065,11 +8476,11 @@ impl PgStore {
         // person ask on the task or blocking it.
         let needs_answer: bool = sqlx_core::query_scalar::query_scalar(
             "select exists (
-               select 1 from relay.actions a
+               select 1 from relay.actions_all a
                where a.user_id = $1 and a.kind = 'asked' and a.props->>'asked_of' = 'person'
                  and (a.task_id = $2 or a.props->'blocks' @> to_jsonb($3::text))
                  and not exists (
-                   select 1 from relay.actions an
+                   select 1 from relay.actions_all an
                    where an.user_id = $1 and an.kind = 'answered' and an.reply_to = a.id))",
         )
         .bind(user_id)
@@ -8081,7 +8492,7 @@ impl PgStore {
         // ── run totals, over the task's turns (the screen adds nothing up).
         let reported: Vec<(serde_json::Value, DateTime<Utc>, Option<i32>)> =
             sqlx_core::query_as::query_as(
-                "select props, created_at, round from relay.actions
+                "select props, created_at, round from relay.actions_all
                  where user_id = $1 and task_id = $2 and kind = 'reported'
                  order by created_at desc, id desc",
             )
@@ -8091,7 +8502,7 @@ impl PgStore {
             .await
             .map_err(db_err)?;
         let reviewed: Vec<(DateTime<Utc>, Option<i32>)> = sqlx_core::query_as::query_as(
-            "select created_at, round from relay.actions
+            "select created_at, round from relay.actions_all
              where user_id = $1 and task_id = $2 and kind = 'reviewed'",
         )
         .bind(user_id)
@@ -8232,11 +8643,11 @@ impl PgStore {
             serde_json::Value,
             DateTime<Utc>,
         )> = sqlx_core::query_as::query_as(
-            "select a.id, a.task_id, a.body_md, a.props, a.created_at from relay.actions a
+            "select a.id, a.task_id, a.body_md, a.props, a.created_at from relay.actions_all a
                  where a.user_id = $1 and a.task_id = $2 and a.kind = 'asked'
                    and a.props->>'asked_of' = 'person'
                    and not exists (
-                     select 1 from relay.actions an
+                     select 1 from relay.actions_all an
                      where an.user_id = $1 and an.kind = 'answered' and an.reply_to = a.id)
                  order by a.created_at desc, a.id desc limit 1",
         )
@@ -8264,7 +8675,7 @@ impl PgStore {
         };
         let handoff_row: Option<(Option<String>, serde_json::Value, DateTime<Utc>, Option<Uuid>)> =
             sqlx_core::query_as::query_as(
-                "select body_md, props, created_at, lane_id from relay.actions
+                "select body_md, props, created_at, lane_id from relay.actions_all
                  where user_id = $1 and task_id = $2 and kind in ('assigned', 'brief_updated')
                  order by created_at desc, id desc limit 1",
             )
@@ -8280,7 +8691,7 @@ impl PgStore {
                 // at the same moment that names both lanes; any other brief was written
                 // by the lane that handed it off, to the lane holding the task now.
                 let over: Option<serde_json::Value> = sqlx_core::query_scalar::query_scalar(
-                    "select props from relay.actions
+                    "select props from relay.actions_all
                      where user_id = $1 and task_id = $2 and kind = 'handed_over'
                        and created_at >= $3
                      order by created_at desc, id desc limit 1",
@@ -8350,7 +8761,7 @@ impl PgStore {
             .collect();
         let mut lane_refs: Vec<(Uuid, String, Option<String>, Option<String>)> =
             sqlx_core::query_as::query_as(
-                "select id, code, title, suggested_name from relay.lanes
+                "select id, code, title, suggested_name from relay.lanes_all
              where user_id = $1 and crew_id = $2",
             )
             .bind(user_id)
@@ -10846,6 +11257,332 @@ mod tests {
         let mut tx = pg.pool().begin().await.unwrap();
         assert!(PgStore::relay_complete_runs(&mut tx, t0()).await.unwrap().is_empty());
         tx.commit().await.unwrap();
+    }
+
+    /// #393: completing a run archives its rows — the run, its tasks, its
+    /// run_items, its tasks' actions — and the queue items stay live.
+    ///
+    /// MUTATION: drop the archive call from the sweep — rows stay live.
+    #[tokio::test]
+    async fn completing_a_run_archives_its_rows_and_keeps_items_live() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let r1 = fxid();
+        fx_run(&pg, u1(), r1, c1, "active").await;
+        let t1 = fxid();
+        fx_task(&pg, u1(), t1, c1, Some(a2), "done", "impl", 1).await;
+        sqlx_core::query::query("update relay.tasks set run_id = $1 where id = $2")
+            .bind(r1)
+            .bind(t1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let item = fxid();
+        fx_item(&pg, u1(), item, "backlog", Some("github.com/o/r"), Some(0)).await;
+        sqlx_core::query::query(
+            "insert into relay.run_items (user_id, run_id, item_id, position) values ($1, $2, $3, 0)",
+        )
+        .bind(u1())
+        .bind(r1)
+        .bind(item)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let action = fx_action(
+            &pg,
+            u1(),
+            c1,
+            ActionFx {
+                task: Some(t1),
+                lane: Some(a2),
+                kind: "reported",
+                body: Some("did it"),
+                report_md: None,
+                props: serde_json::json!({}),
+                reply_to: None,
+                round: Some(1),
+                phase: Some("impl"),
+            },
+        )
+        .await;
+
+        let mut tx = pg.pool().begin().await.unwrap();
+        let completed = PgStore::relay_complete_runs(&mut tx, t0()).await.unwrap();
+        assert!(completed.iter().any(|(id, _)| *id == r1));
+        // Only this test's run: another test's completed run is not ours to move.
+        PgStore::relay_archive_runs(&mut tx, &[r1], t0()).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let live: (i64,) =
+            sqlx_core::query_as::query_as("select count(*) from relay.runs where id = $1")
+                .bind(r1)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(live.0, 0, "the run left the live schema");
+        let archived: (i64,) = sqlx_core::query_as::query_as(
+            "select count(*) from relay_archive.runs where id = $1 and archived_at is not null",
+        )
+        .bind(r1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(archived.0, 1, "the run sits in the archive");
+        for (table, col, id) in
+            [("tasks", "id", t1), ("run_items", "run_id", r1), ("actions", "id", action)]
+        {
+            let live: (i64,) = sqlx_core::query_as::query_as(&format!(
+                "select count(*) from relay.{table} where {col} = $1"
+            ))
+            .bind(id)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(live.0, 0, "{table} left live");
+            let kept: (i64,) = sqlx_core::query_as::query_as(&format!(
+                "select count(*) from relay_archive.{table} where {col} = $1"
+            ))
+            .bind(id)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(kept.0, 1, "{table} archived");
+        }
+        let item_live: (i64,) =
+            sqlx_core::query_as::query_as("select count(*) from relay.items where id = $1")
+                .bind(item)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(item_live.0, 1, "the queue item stays live");
+
+        // Scrub the archive rows so later runs start clean.
+        for (table, col, id) in [
+            ("runs", "id", r1),
+            ("tasks", "id", t1),
+            ("run_items", "run_id", r1),
+            ("actions", "id", action),
+        ] {
+            sqlx_core::query::query(&format!("delete from relay_archive.{table} where {col} = $1"))
+                .bind(id)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        sqlx_core::query::query("delete from relay.items where id = $1")
+            .bind(item)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// #393: the sweep archives every ended run still live — including a
+    /// cancelled run that ended before archival deployed — and reports it.
+    ///
+    /// MUTATION: archive only newly completed runs — the old cancelled run stays live.
+    #[tokio::test]
+    async fn sweep_archives_cancelled_runs_left_live() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, _, _, _) = fx_two_crews(&pg).await;
+        let r1 = fxid();
+        fx_run(&pg, u1(), r1, c1, "cancelled").await;
+        sqlx_core::query::query("update relay.runs set completed_at = $1 where id = $2")
+            .bind(t0())
+            .bind(r1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let r2 = fxid();
+        fx_run(&pg, u1(), r2, c1, "active").await;
+
+        let rep = pg.relay_sweep_leases(t0()).await.unwrap();
+        assert!(rep.archived_runs.iter().any(|(id, _)| *id == r1));
+
+        let live: (i64,) =
+            sqlx_core::query_as::query_as("select count(*) from relay.runs where id = $1")
+                .bind(r1)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(live.0, 0);
+        let open: (i64,) =
+            sqlx_core::query_as::query_as("select count(*) from relay.runs where id = $1")
+                .bind(r2)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        assert_eq!(open.0, 1, "active runs stay live");
+        sqlx_core::query::query("delete from relay_archive.runs where id = $1")
+            .bind(r1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("delete from relay.runs where id = $1")
+            .bind(r2)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// #393: the sweep purges archive rows past 30 days and keeps younger
+    /// ones; live rows are never purged.
+    ///
+    /// MUTATION: drop the purge call from the sweep — old rows stay.
+    #[tokio::test]
+    async fn sweep_purges_archive_rows_past_30_days() {
+        let pg = PgStore::test_store().await;
+        let (old, young, live) = (fxid(), fxid(), fxid());
+        for (id, days) in [(old, 31), (young, 29)] {
+            sqlx_core::query::query(
+                "insert into relay_archive.runs (user_id, id, title, goal, state, archived_at) \
+                 values ($1, $2, 'R', 'G', 'completed', $3)",
+            )
+            .bind(u1())
+            .bind(id)
+            .bind(t0() - chrono::Duration::days(days))
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        sqlx_core::query::query(
+            "insert into relay_archive.tasks (user_id, id, crew_id, run_id, repo_key, title, phase, \
+                    state, archived_at) \
+             values ($1, $2, $3, $4, 'github.com/o/r', 'T', 'impl', 'cancelled', $5)",
+        )
+        .bind(u1())
+        .bind(live)
+        .bind(v7(0xc1))
+        .bind(old)
+        .bind(t0() - chrono::Duration::days(31))
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let mut tx = pg.pool().begin().await.unwrap();
+        let (purged, deleted) = PgStore::relay_purge_archive(&mut tx, t0(), 1000).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(purged, 2, "the old run and its task");
+        assert_eq!(deleted, vec![old]);
+
+        for (table, id, want) in [("runs", old, 0), ("runs", young, 1), ("tasks", live, 0)] {
+            let n: (i64,) = sqlx_core::query_as::query_as(&format!(
+                "select count(*) from relay_archive.{table} where id = $1"
+            ))
+            .bind(id)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(n.0, want, "{table} {id}");
+        }
+        sqlx_core::query::query("delete from relay_archive.runs where id = $1")
+            .bind(young)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// #393: PastRuns survives archival — an archived run still lists with
+    /// its task counts and delete_after.
+    ///
+    /// MUTATION: read run_list from live only — the archived run vanishes.
+    #[tokio::test]
+    async fn archived_runs_still_list_with_counts_and_delete_after() {
+        let pg = PgStore::test_store().await;
+        let (c1, _, _, a2, _, _) = fx_two_crews(&pg).await;
+        let r1 = fxid();
+        fx_run(&pg, u1(), r1, c1, "active").await;
+        let t1 = fxid();
+        fx_task(&pg, u1(), t1, c1, Some(a2), "done", "impl", 1).await;
+        sqlx_core::query::query("update relay.tasks set run_id = $1 where id = $2")
+            .bind(r1)
+            .bind(t1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let mut tx = pg.pool().begin().await.unwrap();
+        let completed = PgStore::relay_complete_runs(&mut tx, t0()).await.unwrap();
+        assert!(completed.iter().any(|(id, _)| *id == r1));
+        PgStore::relay_archive_runs(&mut tx, &[r1], t0()).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let runs = pg.relay_runs(u1()).await.unwrap();
+        let hit = runs["archived"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == r1.to_string())
+            .unwrap_or_else(|| panic!("archived run missing: {runs}"))
+            .clone();
+        assert_eq!(hit["total_tasks"], 1);
+        assert_eq!(hit["done_tasks"], 1);
+        assert!(hit["delete_after"].is_string(), "{hit}");
+
+        let detail = pg.relay_run_detail(u1(), r1).await.unwrap();
+        assert_eq!(detail["tasks_by_state"]["done"].as_array().unwrap().len(), 1);
+        assert_eq!(detail["tasks_by_state"]["done"][0]["id"], t1.to_string());
+        let task = pg.relay_task_view(u1(), c1, t1).await.unwrap();
+        assert_eq!(task["task"]["title"], "T");
+        assert_eq!(task["task"]["state"], "done");
+
+        // An archived run's events go id-only: the app re-reads Now
+        // (band drops) and the run list (Past runs keeps it).
+        let row = pg.relay_run_row(r1).await.unwrap();
+        assert!(row.is_none());
+
+        // A live task depending on the archived done task reads unblocked.
+        let t2 = fxid();
+        fx_task(&pg, u1(), t2, c1, None, "ready", "impl", 1).await;
+        sqlx_core::query::query("update relay.tasks set deps = $1 where id = $2")
+            .bind(vec![t1])
+            .bind(t2)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let unmet: (i64,) = sqlx_core::query_as::query_as(
+            "select count(*) from relay.task_queue where task_id = $1 and claim_eligibility = 'ready_unblocked'",
+        )
+        .bind(t2)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(unmet.0, 1, "dep on archived done task is met");
+        sqlx_core::query::query("delete from relay.tasks where id = $1")
+            .bind(t2)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+
+        // Cancelled is not done, archived or not.
+        let tc = fxid();
+        sqlx_core::query::query(
+            "insert into relay_archive.tasks (user_id, id, crew_id, repo_key, title, phase, state) \
+             values ($1, $2, $3, 'github.com/o/r', 'T', 'impl', 'cancelled')",
+        )
+        .bind(u1())
+        .bind(tc)
+        .bind(c1)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let unmet = unmet_deps(pg.pool(), u1(), &[t1, tc]).await.unwrap();
+        assert_eq!(unmet, vec![tc], "only the cancelled dep is unmet");
+        sqlx_core::query::query("delete from relay_archive.tasks where id = $1")
+            .bind(tc)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+
+        // An archived task is read-only: a lane write on it answers 404.
+        let err = pg.relay_claim_task(u1(), a2, t1, t0()).await.unwrap_err();
+        assert!(matches!(err, RelayError::NotFound(_)), "{err:?}");
+
+        for (table, col, id) in [("runs", "id", r1), ("tasks", "id", t1)] {
+            sqlx_core::query::query(&format!("delete from relay_archive.{table} where {col} = $1"))
+                .bind(id)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
     }
 
     // ── 2.6: report gate, F04 guards, F01 read-only envelope, F08 crew scope,
@@ -14755,7 +15492,7 @@ mod tests {
         assert_eq!(out.crew_id, c1);
         assert_eq!(out.status, "closed");
         let row: (String, Option<DateTime<Utc>>) = sqlx_core::query_as::query_as(
-            "select status, completed_at from relay.crews where id = $1",
+            "select status, completed_at from relay_archive.crews where id = $1",
         )
         .bind(c1)
         .fetch_one(pg.pool())
@@ -14763,6 +15500,106 @@ mod tests {
         .unwrap();
         assert_eq!(row.0, "closed");
         assert!(row.1.is_some());
+    }
+
+    /// #393: closing a crew archives everything of it — its open runs via
+    /// the run archiver, pool tasks, lanes, leases and waiters — and leaves
+    /// zero of its rows live.
+    ///
+    /// MUTATION: drop the archive call from the close — rows stay live.
+    #[tokio::test]
+    async fn closing_a_crew_archives_everything_of_it() {
+        let pg = PgStore::test_store().await;
+        // A crew of this test's own: zero-counts on shared fixed ids would
+        // race concurrent tests.
+        let (c9, a9, a8) = (fxid(), fxid(), fxid());
+        fx_crew(&pg, u1(), c9).await;
+        fx_lane(&pg, u1(), a9, c9, "L1", "coordinator", "tok-a9").await;
+        fx_lane(&pg, u1(), a8, c9, "L2", "contributor", "tok-a8").await;
+        fx_lease(&pg, u1(), c9, a8, "granted", Some(t0() + chrono::Duration::seconds(300))).await;
+        let r1 = fxid();
+        fx_run(&pg, u1(), r1, c9, "active").await;
+        let t1 = fxid();
+        fx_task(&pg, u1(), t1, c9, None, "ready", "impl", 1).await;
+        let _seeded = (r1, t1);
+        sqlx_core::query::query(
+            "update relay.lanes set unregistered_at = current_timestamp where id = $1",
+        )
+        .bind(a8)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query(
+            "insert into relay.lane_waiters (user_id, lane_id, crew_id) values ($1, $2, $3)",
+        )
+        .bind(u1())
+        .bind(a9)
+        .bind(c9)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        pg.relay_close_crew(u1(), a9, c9).await.unwrap();
+        let c1 = c9;
+
+        for (table, col, id) in [
+            ("crews", "id", c1),
+            ("lanes", "crew_id", c1),
+            ("leases", "crew_id", c1),
+            ("lane_waiters", "crew_id", c1),
+            ("runs", "crew_id", c1),
+            ("tasks", "crew_id", c1),
+        ] {
+            let live: (i64,) = sqlx_core::query_as::query_as(&format!(
+                "select count(*) from relay.{table} where user_id = $1 and {col} = $2"
+            ))
+            .bind(u1())
+            .bind(id)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert_eq!(live.0, 0, "{table} left live");
+        }
+        for (table, col, id) in [
+            ("crews", "id", c1),
+            ("lanes", "crew_id", c1),
+            ("leases", "crew_id", c1),
+            ("runs", "crew_id", c1),
+            ("tasks", "crew_id", c1),
+        ] {
+            let kept: (i64,) = sqlx_core::query_as::query_as(&format!(
+                "select count(*) from relay_archive.{table} where user_id = $1 and {col} = $2"
+            ))
+            .bind(u1())
+            .bind(id)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert!(kept.0 >= 1, "{table} archived");
+        }
+        // Token hashes are copied, not nulled: a re-close must still
+        // authenticate its caller lane for its 200 no-op.
+        let hashed: (i64,) = sqlx_core::query_as::query_as(
+            "select count(*) from relay_archive.lanes where user_id = $1 and crew_id = $2 and token_hash is not null",
+        )
+        .bind(u1())
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(hashed.0, 2, "both lanes keep their hashes");
+
+        for table in ["crews", "lanes", "leases", "runs", "tasks"] {
+            let col = if table == "crews" { "id" } else { "crew_id" };
+            sqlx_core::query::query(&format!(
+                "delete from relay_archive.{table} where user_id = $1 and {col} = $2"
+            ))
+            .bind(u1())
+            .bind(c1)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
     }
 
     // ── #398: the lane close passes over dead-lease lanes and releases them ──
@@ -14794,6 +15631,32 @@ mod tests {
         .unwrap()
     }
 
+    /// `lane_gone` for a closed crew (#393): close archives the lanes, so the
+    /// release evidence reads from the archive.
+    async fn archived_lane_gone(pg: &PgStore, lane: Uuid) -> (bool, String) {
+        sqlx_core::query_as::query_as(
+            "select l.unregistered_at is not null,
+                    (select state::text from relay_archive.leases
+                     where lane_id = l.id and kind = 'lane'
+                     order by granted_at desc nulls last, id desc limit 1)
+             from relay_archive.lanes l where l.id = $1",
+        )
+        .bind(lane)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    async fn archived_task_state(pg: &PgStore, id: Uuid) -> String {
+        sqlx_core::query_scalar::query_scalar::<_, String>(
+            "select state::text from relay_archive.tasks where id = $1",
+        )
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
     /// C1 with a second contributor A3 whose lease is dead (fixture time).
     async fn fx_dead_second_contributor(pg: &PgStore, c1: Uuid) -> Uuid {
         let a3 = v7(0x14);
@@ -14814,16 +15677,17 @@ mod tests {
         assert_eq!(released, vec![a2, a3]);
         assert!(out.released.iter().all(|(_, task)| task.is_none()));
         for lane in [a2, a3] {
-            assert_eq!(lane_gone(&pg, lane).await, (true, "released".to_string()));
+            assert_eq!(archived_lane_gone(&pg, lane).await, (true, "released".to_string()));
         }
         // The caller is not released by close: it unregisters next itself.
-        assert!(!lane_gone(&pg, a1).await.0);
-        let status: String =
-            sqlx_core::query_scalar::query_scalar("select status from relay.crews where id = $1")
-                .bind(c1)
-                .fetch_one(pg.pool())
-                .await
-                .unwrap();
+        assert!(!archived_lane_gone(&pg, a1).await.0);
+        let status: String = sqlx_core::query_scalar::query_scalar(
+            "select status from relay_archive.crews where id = $1",
+        )
+        .bind(c1)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
         assert_eq!(status, "closed");
     }
 
@@ -14855,16 +15719,11 @@ mod tests {
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
         let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
         assert_eq!(out.released, vec![(a2, Some(t))]);
-        let state: String = sqlx_core::query_scalar::query_scalar(
-            "select state::text from relay.tasks where id = $1",
-        )
-        .bind(t)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
-        assert_eq!(state, "interrupted");
+        // Close archives the crew (#393): the interrupt evidence reads back
+        // from the archive.
+        assert_eq!(archived_task_state(&pg, t).await, "interrupted");
         let actions: i64 = sqlx_core::query_scalar::query_scalar(
-            "select count(*) from relay.actions
+            "select count(*) from relay_archive.actions
              where task_id = $1 and lane_id = $2 and kind = 'interrupted'",
         )
         .bind(t)
@@ -14886,9 +15745,10 @@ mod tests {
         fx_task(&pg, u1(), t, c1, Some(a2), "working", "tests", 1).await;
         let out = pg.relay_close_crew(u1(), a1, c1).await.unwrap();
         assert_eq!(out.released, vec![(a2, Some(t))]);
-        // The grace has run out on close's `interrupted` action.
+        // The grace has run out on close's `interrupted` action (in the
+        // archive now — close moves the crew, #393).
         sqlx_core::query::query(
-            "update relay.actions set created_at = $1
+            "update relay_archive.actions set created_at = $1
              where task_id = $2 and kind = 'interrupted'",
         )
         .bind(t0() - chrono::Duration::seconds(REOFFER_GRACE_SECS as i64 + 1))
@@ -14898,7 +15758,7 @@ mod tests {
         .unwrap();
         let rep = pg.relay_sweep_leases(t0()).await.unwrap();
         assert_eq!(rep.reoffered_tasks, 0, "{:?}", rep.task_changes);
-        assert_eq!(task_state(&pg, t).await, "interrupted");
+        assert_eq!(archived_task_state(&pg, t).await, "interrupted");
         let reoffers: i64 = sqlx_core::query_scalar::query_scalar(
             "select count(*) from relay.actions where task_id = $1 and kind = 'reoffered'",
         )
@@ -15576,7 +16436,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.released, vec![(a2, None)]);
-        assert_eq!(task_state(&pg, t).await, "cancelled");
+        // Close archives the crew (#393): the cancelled task reads back from
+        // the archive, and no interrupt was written anywhere.
+        assert_eq!(archived_task_state(&pg, t).await, "cancelled");
         assert_eq!(kind_count(&pg, t, "interrupted").await, 0);
     }
 

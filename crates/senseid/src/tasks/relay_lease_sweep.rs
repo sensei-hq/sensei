@@ -149,7 +149,15 @@ fn sweep_events(report: &RelaySweepReport) -> Vec<StateEvent> {
         .completed_runs
         .iter()
         .map(|(run_id, crew_id)| StateEvent::relay_run(RunChange::Completed, run_id, crew_id));
-    suspended.chain(resumed).chain(tasks).chain(runs).collect()
+    let archived = report
+        .archived_runs
+        .iter()
+        .map(|(run_id, crew_id)| StateEvent::relay_run(RunChange::Archived, run_id, crew_id));
+    let deleted = report
+        .deleted_runs
+        .iter()
+        .map(|run_id| StateEvent::relay_run_crewless(RunChange::Deleted, run_id));
+    suspended.chain(resumed).chain(tasks).chain(runs).chain(archived).chain(deleted).collect()
 }
 
 fn is_missing_schema(detail: &str) -> bool {
@@ -207,12 +215,15 @@ mod tests {
                 (tasks[2], RelaySweptTask::ReviewReleased),
             ],
             completed_runs: vec![(run, crew)],
+            archived_runs: vec![(run, crew)],
+            deleted_runs: vec![run],
+            archived_crews: 0,
             gate_tasks: vec![],
         };
         let events: Vec<serde_json::Value> =
             sweep_events(&report).iter().map(|e| serde_json::to_value(e).unwrap()).collect();
         // Lanes (suspended, then resumed), tasks, runs — in pass order.
-        assert_eq!(events.len(), 6);
+        assert_eq!(events.len(), 8);
         assert_eq!(
             events[0],
             serde_json::to_value(StateEvent::relay_lane(
@@ -242,6 +253,14 @@ mod tests {
             events[5],
             serde_json::to_value(StateEvent::relay_run(RunChange::Completed, &run, &crew)).unwrap()
         );
+        assert_eq!(
+            events[6],
+            serde_json::to_value(StateEvent::relay_run(RunChange::Archived, &run, &crew)).unwrap()
+        );
+        assert_eq!(
+            events[7],
+            serde_json::to_value(StateEvent::relay_run_crewless(RunChange::Deleted, &run)).unwrap()
+        );
     }
 
     #[test]
@@ -259,6 +278,9 @@ mod tests {
             nudged: 0,
             task_changes: vec![],
             completed_runs: vec![],
+            archived_runs: vec![],
+            deleted_runs: vec![],
+            archived_crews: 0,
             gate_tasks: vec![],
         };
         assert!(sweep_events(&report).is_empty());
