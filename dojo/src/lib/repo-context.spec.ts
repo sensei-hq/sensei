@@ -4,19 +4,22 @@
 // ?branch= when tracked else the tracked default. Unknown org/repo redirects
 // out; the diagrams and repo pages (and later the workspace screen) share it.
 import { describe, it, expect, vi } from 'vitest';
-import { loadRepoContext } from './repo-context';
+import { loadRepoContext, type RepoContextRow } from './repo-context';
+import type { DojoOrg } from './dojo-data';
 
-const ORG = { id: 'acme', kanji: '監', name: 'Acme', kind: 'Organization', url: 'organization/acme', role: 'admin', from: 'github' };
-const REPO = {
+const ORG: DojoOrg = { id: 'acme', kanji: '監', name: 'Acme', kind: 'Organization', url: 'organization/acme', role: 'admin', from: 'github' };
+const REPO: RepoContextRow = {
 	repository_id: 'r1',
 	repo_key: 'github.com/acme/api',
 	name: 'api',
 	tenant: 'organization/acme',
+	forge_visibility: 'public',
 	graph_branches: [
 		{ branch: 'main', is_default: true },
 		{ branch: 'dev', is_default: false }
 	],
-	configurable_by_me: true
+	configurable_by_me: true,
+	last_activity_at: null
 };
 
 const ctx = (over: Record<string, unknown> = {}) => ({
@@ -43,7 +46,8 @@ describe('loadRepoContext', () => {
 				name: 'api',
 				branches: REPO.graph_branches,
 				configurable: true,
-				last_activity_at: null
+				last_activity_at: null,
+				visibility: 'public'
 			},
 			branch: 'main'
 		});

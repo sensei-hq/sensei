@@ -29,6 +29,7 @@ export const load: PageLoad = async ({ parent, params, url, fetch }) => {
 		});
 		metricsView = toWorkspaceMetricsView({
 			...wire,
+			rows: wire.rows.map((r) => ({ ...r, repo_key: ctx.repo.key })),
 			activity: [{ repository_id: ctx.repo.id, last_activity_at: ctx.repo.last_activity_at }]
 		});
 	} catch (e) {

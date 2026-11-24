@@ -6,7 +6,8 @@
 // the tracked default. The diagrams page owns this logic today; the repo
 // screen (and later the workspace screen) shares it instead of copying it.
 import { redirect } from '@sveltejs/kit';
-import { orgBySlug, type DojoOrg } from './chrome';
+import { orgBySlug } from './chrome';
+import type { DojoOrg } from './dojo-data';
 import { listMyRepos, type MyRepoWire } from './client-data';
 import type { DojoCallOpts } from './dojo-api';
 
@@ -22,9 +23,23 @@ export interface RepoContext {
 		branches: MyRepoWire['graph_branches'];
 		configurable: boolean;
 		last_activity_at: string | null;
+		visibility: MyRepoWire['forge_visibility'];
 	};
 	branch: string | null;
 }
+
+/** The repo fields the context reads — a subset of the wire row. */
+export type RepoContextRow = Pick<
+	MyRepoWire,
+	| 'repository_id'
+	| 'repo_key'
+	| 'name'
+	| 'tenant'
+	| 'graph_branches'
+	| 'configurable_by_me'
+	| 'forge_visibility'
+	| 'last_activity_at'
+>;
 
 export async function loadRepoContext(opts: {
 	slug: string;
@@ -33,11 +48,11 @@ export async function loadRepoContext(opts: {
 	memberships: DojoOrg[];
 	accessToken: string | null;
 	fetch: DojoCallOpts['fetch'];
-	listRepos?: (o: DojoCallOpts) => Promise<MyRepoWire[]>;
+	listRepos?: (o: DojoCallOpts) => Promise<RepoContextRow[]>;
 }): Promise<RepoContext> {
 	const org = orgBySlug(opts.memberships, opts.slug);
 	if (!org) redirect(307, '/you');
-	let repos: MyRepoWire[];
+	let repos: RepoContextRow[];
 	try {
 		repos = await (opts.listRepos ?? listMyRepos)({ fetch: opts.fetch, accessToken: opts.accessToken ?? undefined });
 	} catch {
@@ -59,7 +74,8 @@ export async function loadRepoContext(opts: {
 			name: repo.name ?? repo.repo_key,
 			branches,
 			configurable: repo.configurable_by_me,
-			last_activity_at: repo.last_activity_at ?? null
+			last_activity_at: repo.last_activity_at ?? null,
+			visibility: repo.forge_visibility
 		},
 		branch
 	};
