@@ -10,9 +10,11 @@ TDD: red test first for each item.
       fixture rows. (Layering + L0/L1 math ported from the daemon and
       diffed byte/semantically equal against it; modules are folders,
       the grain the synced rows support.)
-- [ ] 3. Screens: repo diagram route + branch picker (`is_default`
+- [x] 3. Screens: repo diagram route + branch picker (`is_default`
       default) + lens switcher on `CodeMap`; team scoping for the
-      world view.
+      world view. (Route: org/[slug]/repositories/[id]/diagrams/[lens];
+      tenant-scoped navigation, `can_read_repository` the read gate;
+      world/neighbourhood ride L0 + focus, no separate aggregate.)
 - [ ] 4. Tracked branches: authority-gated add/remove screen through
       `set_graph_branch`; the picker reflects the change.
 - [ ] 5. Schema view: ER canvas over `graph_schema_*`.

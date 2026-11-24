@@ -50,6 +50,7 @@
 		"@rokkit/app": "^1.16.1",
 		"@rokkit/core": "^1.16.1",
 		"@rokkit/forms": "^1.16.1",
+		"@rokkit/graph": "^1.16.1",
 		"@rokkit/icons": "^1.16.1",
 		"@rokkit/states": "^1.16.1",
 		"@rokkit/themes": "^1.16.1",

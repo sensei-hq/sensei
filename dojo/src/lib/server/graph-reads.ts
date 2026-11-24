@@ -90,6 +90,26 @@ export async function readBranchGraph(db: DojoClient, repoId: string, branch: st
 	};
 }
 
+/**
+ * The caller's one repository id under `repoKey`, or a refusal:
+ *   404 — not among the caller's repositories. ONE answer for "never
+ *         registered" and "another tenant's": telling them apart is an
+ *         existence oracle.
+ *   409 — registered under two of the caller's tenants; picking one would
+ *         read a graph under an arbitrary governance boundary.
+ * Deliberately NOT sync-gated (unlike the ingest's resolver): a member who
+ * reads but never synced still sees diagrams, and the graph tables' RLS —
+ * not this function — decides what the read returns.
+ */
+export async function readableRepository(db: DojoClient, repoKey: string): Promise<string> {
+	const read = await db.rpc('my_repositories').select('repository_id, tenant_id, repo_key, sync_enabled').in('repo_key', [repoKey]);
+	if (read.error) throw new AdminError(500, read.error.message);
+	const ours = (read.data ?? []) as { repository_id: string }[];
+	if (ours.length === 0) throw new AdminError(404, `unknown_repository: ${repoKey}`);
+	if (ours.length > 1) throw new AdminError(409, `ambiguous: ${repoKey} is registered under two of your tenants`);
+	return ours[0].repository_id;
+}
+
 export interface GraphBranch {
 	branch: string;
 	is_default: boolean;

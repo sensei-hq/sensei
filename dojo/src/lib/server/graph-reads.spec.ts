@@ -3,7 +3,7 @@
 // kept as externals, and the branch list with its tracked default.
 // Fail-closed on error; an unsynced branch is an honest empty.
 import { describe, it, expect } from 'vitest';
-import { readBranchGraph, listBranches, AdminError, type DojoClient } from './graph-reads';
+import { readBranchGraph, listBranches, readableRepository, AdminError, type DojoClient } from './graph-reads';
 
 // Table-keyed fake: each `.from(table)` chain resolves that table's canned rows
 // at `.range()` (paged reads) or `.order()` (small reads), recording every
@@ -40,6 +40,11 @@ function makeDb(tables: Record<string, { data?: unknown[]; error?: { message: st
 		r.range = (from: number, to: number) => {
 			const t = tables[`rpc:${fn}`] ?? { data: [] };
 			return Promise.resolve({ data: (t.data ?? []).slice(from, to + 1), error: t.error ?? null });
+		};
+		r.in = () => r;
+		r.then = (ok: (v: unknown) => unknown) => {
+			const t = tables[`rpc:${fn}`] ?? { data: [] };
+			return Promise.resolve({ data: t.data ?? [], error: t.error ?? null }).then(ok);
 		};
 		return r;
 	};
@@ -134,5 +139,26 @@ describe('listBranches', () => {
 	it('no flagged default is null, not a guess', async () => {
 		const { db } = makeDb({ 'rpc:my_graph_branches': { data: [{ repository_id: 'r1', branch: 'dev', is_default: false }] } });
 		expect(await listBranches(db, 'r1')).toEqual({ branches: [{ branch: 'dev', is_default: false }], def: null });
+	});
+});
+
+describe('readableRepository', () => {
+	const row = (repository_id: string) => ({ repository_id, tenant_id: 't', repo_key: 'github.com/acme/api', sync_enabled: false });
+
+	it('resolves the caller\u2019s repository id without a sync gate — reads are the tables\u2019 RLS', async () => {
+		const { db } = makeDb({ 'rpc:my_repositories': { data: [row('r1')] } });
+		// sync_enabled false and still resolved: a member who reads but never
+		// synced sees diagrams; the graph tables' RLS does the authorizing.
+		expect(await readableRepository(db, 'github.com/acme/api')).toBe('r1');
+	});
+
+	it('unknown key is one 404 for never-registered and another tenant\u2019s', async () => {
+		const { db } = makeDb({ 'rpc:my_repositories': { data: [] } });
+		await expect(readableRepository(db, 'github.com/acme/nope')).rejects.toThrow(expect.objectContaining({ status: 404 }));
+	});
+
+	it('two tenants registering the key is 409, never a guess', async () => {
+		const { db } = makeDb({ 'rpc:my_repositories': { data: [row('r1'), row('r2')] } });
+		await expect(readableRepository(db, 'github.com/acme/api')).rejects.toThrow(expect.objectContaining({ status: 409 }));
 	});
 });

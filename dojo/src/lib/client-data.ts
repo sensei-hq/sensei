@@ -9,6 +9,7 @@
 // cleanly under SSR/prerender and unit tests without a live backend.
 
 import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from './dojo-api';
+import type { Focus, GroupBy, Level0, Level1, Level2, Read, Zones } from '@sensei/codemap';
 import type { MyMetricsWire } from './my-metrics';
 import type { RelayConstitution } from './constitution-map';
 import type { ContributionRow, DownstreamRow } from './contributions-map';
@@ -374,4 +375,49 @@ export async function getWorkspaceConstitution(
 		opts
 	);
 	return data.constitution ?? null;
+}
+
+/** What every graph read needs: the repository's key and the tracked branch.
+ *  The key (not the uuid) travels so the server resolves it caller-side. */
+export interface GraphReadOpts extends DojoCallOpts {
+	repoKey: string;
+	branch: string;
+}
+
+function graphQuery(opts: GraphReadOpts, extra: Record<string, string | undefined>): string {
+	const q = new URLSearchParams({ repo_key: opts.repoKey, branch: opts.branch });
+	for (const [k, v] of Object.entries(extra)) if (v !== undefined) q.set(k, v);
+	return q.toString();
+}
+
+/** `GET /v1/you/graph/level0` — one branch's L0, grouped and focused. */
+export async function getGraphLevel0(
+	opts: GraphReadOpts & { groupBy: GroupBy; focus?: Focus | null }
+): Promise<Read<Level0>> {
+	const { focus, ...rest } = opts;
+	return getJson<Read<Level0>>(
+		youUrl(
+			`/graph/level0?${graphQuery(rest, {
+				groupBy: opts.groupBy,
+				focus: focus?.kind === 'module' ? focus.id : undefined,
+				segment: focus?.kind === 'segment' ? focus.id : undefined
+			})}`
+		),
+		opts
+	);
+}
+
+/** `GET /v1/you/graph/module` — one module's files with its neighbours. */
+export async function getGraphModule(opts: GraphReadOpts & { id: string }): Promise<Read<Level1>> {
+	return getJson<Read<Level1>>(youUrl(`/graph/module?${graphQuery(opts, { id: opts.id })}`), opts);
+}
+
+/** `GET /v1/you/graph/file` — one file's symbols with callers and callees. */
+export async function getGraphFile(opts: GraphReadOpts & { id: string }): Promise<Read<Level2>> {
+	return getJson<Read<Level2>>(youUrl(`/graph/file?${graphQuery(opts, { id: opts.id })}`), opts);
+}
+
+/** `GET /v1/you/graph/zones` — Martin points per module. */
+export async function getGraphZones(opts: GraphReadOpts): Promise<Read<Zones>> {
+	return getJson<Read<Zones>>(youUrl(`/graph/zones?${graphQuery(opts, {})}`), opts);
 }
