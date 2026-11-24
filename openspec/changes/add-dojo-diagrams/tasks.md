@@ -23,4 +23,5 @@ TDD: red test first for each item.
       ported byte-exact vs the daemon; dangling refs dropped like its
       inner join; enums named without values — values are not synced;
       schema is a lens on the repo diagrams route.)
-- [ ] 6. Gates green, commit, push.
+- [x] 6. Gates green, commit, push. (Dojo 2527 green,
+      svelte-check clean, vite build green, DB dojo 83 files green.)

@@ -1,27 +1,31 @@
-# Checkpoint — 2026-11-23 (#444 landed; epics report next)
+# Checkpoint — 2026-11-23 (#268 landed; #246 discussion next)
 
 **Slice:** relay + diagrams open issues.
-**Branch:** `develop` (4 #444 commits citing §10.1–10.3).
+**Branch:** `develop` (pushed: 4 #444 + 6 #268 commits).
 
 ## Done
-- #312 (verified per D28 — ready to close), #433 (not repro —
-  ready to close), #513, #512, #393 (all landed).
-- #444: janitor (§10.2) → sentinel (§10.1) → serial-build
-  guard + `POST /api/relay/resources/execute` (§10.3, waits
-  behind the release, records props, frees the slot).
-  Relay suites 150 + 186 green; clippy/fmt clean.
+- Splits filed: #427 → #522–#526; #428 → #527–#530.
+  New: #531 sort, #532/#533 repo/workspace screens, #534 muse.
+- #299 verified done as workspaces (default 1/repo, multi
+  capable) — ready to close. #312/#433 still await close confirm.
+- #444: janitor, sentinel, serial guard, execute endpoint.
+- #268: dojo graph reads, CodeMapPort (diffed vs daemon),
+  repo diagrams route + picker + lenses, branch manager,
+  schema ER lens. Dojo 2527, DB 83 files, build green.
 
 ## Remaining
-- Push the 4 #444 commits.
-- Close #312/#433 on user confirmation.
-- Report on epics/blocked (#427 #428 #314 #299 #268 #246).
+- Push the #268 commits (task 6 tick).
+- REMIND USER: discuss #246 (docs ring design).
+- User owes: mobile layout specifics for a new issue.
 
 ## Next command
-`git push origin develop`, then write the epics/blocked report.
+`git add openspec/changes/add-dojo-diagrams/tasks.md docs/CHECKPOINT.md && git commit && git push origin develop`.
 
 ## Open questions
 - 6 process.rs fmt spots: local toolchains flag what CI stable
   accepts. Left untouched.
+- Package `ZonePoint` type lies about nulls (daemon sends
+  them) — follow-up issue proposed, not filed.
 
 ## Known-broken
 - None.
