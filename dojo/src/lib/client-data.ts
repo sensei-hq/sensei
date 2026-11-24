@@ -170,6 +170,9 @@ export interface MyRepoWire {
 	reason_actor: string | null;
 	last_synced_at: string | null;
 	metric_rows: number | null;
+	/** Newest reading landed or graph sync filed (#531) — the timestamp the
+	 *  lists sort by AND show, so the two can never disagree. */
+	last_activity_at: string | null;
 	/** The branches whose code graph this repository shares. Empty → the graph
 	 *  does not sync, never a guessed `main`. */
 	graph_branches: GraphBranchWire[];

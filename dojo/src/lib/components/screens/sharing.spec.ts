@@ -27,6 +27,7 @@ function repo(over: Partial<MyRepoWire> = {}): MyRepoWire {
 		reason_actor: 'user',
 		last_synced_at: null,
 		metric_rows: 0,
+		last_activity_at: null,
 		graph_branches: [],
 		billing_hidden: false,
 		...over
@@ -230,5 +231,20 @@ describe('ScrSharing — empty is not the same as broken', () => {
 	it('renders the empty state only when there is genuinely nothing', () => {
 		const { getByText } = render(ScrSharing, { props: { repos: [] } });
 		expect(getByText(/No repositories yet/)).toBeTruthy();
+	});
+});
+
+describe('ScrSharing — activity recency (#531)', () => {
+	it('shows each row’s recency from the sort key, quiet rows say so', () => {
+		const { getByText } = render(ScrSharing, {
+			props: {
+				repos: [
+					repo({ repository_id: 'r1', last_activity_at: new Date(Date.now() - 5 * 60_000).toISOString() }),
+					repo({ repository_id: 'r2', repo_key: 'github.com/acme/old', name: 'old', last_activity_at: null })
+				]
+			}
+		});
+		expect(getByText(/Active 5m/)).toBeTruthy();
+		expect(getByText(/No activity yet/)).toBeTruthy();
 	});
 });

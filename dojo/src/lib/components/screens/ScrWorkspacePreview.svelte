@@ -6,6 +6,7 @@
 	import Spark from '$lib/components/kit/Spark.svelte';
 	import type { KitConflict, KitLadderRung, KitWorkspace } from '$lib/components/kit/types';
 	import type { WorkspaceMetricsView } from '$lib/workspace-metrics-view';
+	import { relativeAge } from '$lib/admin-view';
 	import { createWorkspacePreview, type PreviewView } from '$lib/preview/state.svelte';
 	import { untrack } from 'svelte';
 
@@ -185,7 +186,12 @@
 					<div class="flex flex-col gap-5">
 						{#each metrics.repos as repo (repo.repository_id)}
 							<div>
-								<div class="mono text-ink-soft text-xs mb-2">{repo.name}</div>
+								<div class="mono text-ink-soft text-xs mb-2">
+									{repo.name}
+									{#if repo.last_activity_at}
+										<span class="text-ink-faint"> · Active {relativeAge(repo.last_activity_at)}</span>
+									{/if}
+								</div>
 								<ul class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
 									{#each repo.cards as c (c.key)}
 										<li class="flex flex-col gap-2 rounded border border-paper-edge p-4">

@@ -26,8 +26,13 @@ function row(over: Partial<WorkspaceMetricPoint> = {}): WorkspaceMetricPoint {
 	};
 }
 
-function wire(rows: WorkspaceMetricPoint[], days = 30, since = '2026-10-05'): WorkspaceMetricsWire {
-	return { since, days, rows };
+function wire(
+	rows: WorkspaceMetricPoint[],
+	days = 30,
+	since = '2026-10-05',
+	activity: Array<{ repository_id: string; last_activity_at: string | null }> = []
+): WorkspaceMetricsWire {
+	return { since, days, rows, activity };
 }
 
 describe('toWorkspaceMetricsView', () => {
@@ -82,6 +87,25 @@ describe('toWorkspaceMetricsView', () => {
 		expect(view.repos.map((r) => r.name)).toEqual(['acme/api', 'acme/web']);
 		expect(view.repos[0].cards.find((c) => c.key === 'throughput')?.value).toBe('4');
 		expect(view.repos[1].cards.find((c) => c.key === 'throughput')?.value).toBe('2');
+	});
+
+	it('sorts repos most-recently-active first and carries the sort key (#531)', () => {
+		const view = toWorkspaceMetricsView(
+			wire(
+				[
+					row({ repository_id: 'r2', repo_key: 'github.com/acme/web', value: 2 }),
+					row({ repository_id: 'r1', repo_key: 'github.com/acme/api', value: 4 })
+				],
+				30,
+				'2026-10-05',
+				[
+					{ repository_id: 'r2', last_activity_at: '2026-11-06T10:00:00Z' },
+					{ repository_id: 'r1', last_activity_at: '2026-11-04T10:00:00Z' }
+				]
+			)
+		);
+		expect(view.repos.map((r) => r.name)).toEqual(['acme/web', 'acme/api']);
+		expect(view.repos[0].last_activity_at).toBe('2026-11-06T10:00:00Z');
 	});
 
 	it('a maintainer who is also a viewer is not double-counted: a pooled day reads the pool', () => {
