@@ -17,7 +17,7 @@ pub fn process(
     let title =
         frontmatter.title.or(frontmatter.name).or_else(|| doc_indexer::extract_title(content));
 
-    let file_refs = doc_indexer::extract_file_refs(content, repo_path);
+    let links = doc_indexer::extract_doc_links(content, rel_path, repo_path);
     let fn_mentions = doc_indexer::extract_fn_mentions(content);
     // D5b: decompose the doc into heading sections (nested section nodes written
     // downstream via the D3 upsert/prune path) + design-rationale markers.
@@ -37,7 +37,8 @@ pub fn process(
         symbols: vec![],
         unresolved_imports: vec![],
         unresolved_calls: vec![],
-        file_refs,
+        file_refs: links.internal,
+        external_refs: links.external,
         fn_mentions,
         sections,
         rationales,

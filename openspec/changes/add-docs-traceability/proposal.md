@@ -14,10 +14,13 @@ module" is unanswerable and docs sit beside the graph instead of in it.
 - **Routing.** `rst` and `adoc` route to the doc processor, completing the
   `file_role` convention (`md | mdx | rst | adoc | txt`, decided with the
   user 2026-11-24).
-- **Traceability edges.** `file_refs` resolve against the checkout's indexed
-  files: an intra-repo link becomes a `documents` edge from the doc's node
-  to the file's; an external URL stays a named external, never dropped.
-  `fn_mentions` resolve against the file's symbols where they name one.
+- **Traceability edges.** Doc links resolve against the checkout's indexed
+  files through the D2 path: an intra-repo link becomes a `references` edge
+  (the edge-kind contract's kind for doc refs) from the doc's node to the
+  file's; an external URL becomes a named-unresolved `references` edge,
+  never dropped. Link syntaxes grow past backticks (markdown links, rst and
+  adoc targets) and `../` resolves against the doc's own dir, contained to
+  the repo. `fn_mentions` keep the sole-definition rule.
 - **Map accounting.** Docs files and section nodes flow into the Code map's
   counts with the `docs` role; the documented-share shade stays code-only
   (docstring-based, per code declaration — the decided middle path).

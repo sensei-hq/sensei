@@ -957,7 +957,9 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // edges do — 241,514 of these sat at 0% because nothing tried.
             //
             // A file reference is repo-relative (the extractor stores it that
-            // way now) and `nodes.file_path` is too, so the two match directly.
+            // way now) and `nodes.file_path` is too, so the two match directly
+            // onto the file's MODULE node — v2 mints no `kind = 'file'` node,
+            // and the old lookup by that kind answered None for every file.
             // A miss stays unresolved and keeps `target_name`; unlike an import,
             // a doc reference must NOT create a stub, because a doc naming a file
             // that does not exist is a broken link — that is a fact about the
@@ -965,9 +967,9 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             for file_ref in &result.file_refs {
                 let target = ctx
                     .pg()
-                    .file_node_id_by_path(&folder_id, file_ref)
+                    .module_node_id_by_file(&folder_id, file_ref)
                     .await
-                    .map_err(|e| format!("file_node_id_by_path({file_ref}): {e}"))?;
+                    .map_err(|e| format!("module_node_id_by_file({file_ref}): {e}"))?;
                 match target {
                     Some(t) => ctx
                         .pg()
@@ -993,6 +995,23 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                         .await
                         .map_err(|e| format!("insert_edge (references, file): {e}"))?,
                 };
+            }
+            // External URLs (#246) are facts about the doc, not broken links:
+            // each becomes a NAMED unresolved edge, pruned with the rest when
+            // the link leaves the doc.
+            for external in &result.external_refs {
+                ctx.pg()
+                    .insert_edge(
+                        &folder_id,
+                        &file_node_id,
+                        crate::db::pg_store::EdgeTarget::Unresolved {
+                            name: Some(external),
+                            file: None,
+                        },
+                        "references",
+                    )
+                    .await
+                    .map_err(|e| format!("insert_edge (references, external): {e}"))?;
             }
             // A symbol mention resolves ONLY when the name is unambiguous in this
             // folder. A doc writes `` `handleAuth` `` with no signature and no
@@ -2013,9 +2032,70 @@ mod tests {
             "a nonexistent file is filtered at extraction, not carried as a ref: {unresolved:?}"
         );
         assert_eq!(
-            ctx.pg().file_node_id_by_path(&fid, "src/missing.rs").await.unwrap(),
+            ctx.pg().module_node_id_by_file(&fid, "src/missing.rs").await.unwrap(),
             None,
             "a doc naming a nonexistent file is never evidence the file exists"
+        );
+
+        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    /// #246: a markdown link to a source file resolves to a `references`
+    /// edge on that file's node; an external URL becomes a NAMED unresolved
+    /// edge rather than vanishing.
+    #[tokio::test]
+    async fn doc_markdown_links_resolve_and_externals_stay_named() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("doclinks");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"doclinks\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn only_once() -> i32 { 1 }\n").unwrap();
+        std::fs::write(
+            repo.join("README.md"),
+            "# Doc\n\nSee [the lib](src/lib.rs) and [the site](https://example.com/x).\n",
+        )
+        .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "doclinks", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "doclinks", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        for f in ["src/lib.rs", "README.md"] {
+            let abs = repo.join(f).to_string_lossy().to_string();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
+        }
+
+        let rows: Vec<(Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT e.target_id, e.target_name FROM sensei.edges e
+               JOIN sensei.nodes n ON n.id = e.source_id
+              WHERE e.folder_id = $1 AND e.kind = 'references'::sensei.edge_kind
+                AND EXISTS (SELECT 1 FROM sensei.node_paths np
+                            WHERE np.node_id = n.id AND np.file_path = 'README.md')",
+        )
+        .bind(fid)
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+        let resolved: Vec<uuid::Uuid> = rows.iter().filter_map(|(t, _)| *t).collect();
+        assert_eq!(resolved.len(), 1, "the markdown link resolved: {rows:?}");
+        let (fp,): (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT np.file_path FROM sensei.node_paths np WHERE np.node_id = $1",
+        )
+        .bind(resolved[0])
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(fp.as_deref(), Some("src/lib.rs"));
+        let unresolved: Vec<&str> =
+            rows.iter().filter(|(t, _)| t.is_none()).filter_map(|(_, n)| n.as_deref()).collect();
+        assert!(
+            unresolved.contains(&"https://example.com/x"),
+            "the external URL stays named: {unresolved:?}"
         );
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
