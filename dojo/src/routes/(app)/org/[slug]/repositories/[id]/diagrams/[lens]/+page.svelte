@@ -13,6 +13,7 @@
 	import { ErDiagram, Neighborhood } from '@rokkit/graph';
 	import { Tabs } from '@rokkit/ui';
 	import { messages } from '@rokkit/states';
+	import { Notice } from '@sensei/ui';
 	import type { DiagramLens } from './+page.js';
 
 	// One repository's diagrams (#268): the shared Code map over the dōjō's
@@ -180,10 +181,10 @@
 				<button type="submit" disabled={tracked.working}>Track</button>
 			</form>
 			{#if tracked.problem}
-				<p role="alert">{tracked.problem}</p>
+				<Notice size="inline" title={tracked.problem} />
 			{/if}
 			{#if tracked.error}
-				<p role="alert">{tracked.error}</p>
+				<Notice size="inline" title={tracked.error} />
 			{/if}
 		</details>
 	{/if}
