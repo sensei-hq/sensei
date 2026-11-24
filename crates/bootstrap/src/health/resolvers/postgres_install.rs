@@ -128,10 +128,12 @@ mod tests {
 
     #[test]
     fn a_failed_pgvector_install_surfaces_its_remedy() {
-        let remedy =
-            Remedy { message: "m".into(), script: "brew install pgvector".into(), url: None };
-        let out = then_install_extensions(ResolveOutcome::Resolved, |_| {
-            ResolveOutcome::NeedsHumanAction(remedy.clone())
+        let out = then_install_extensions(ResolveOutcome::Resolved, |f| {
+            ResolveOutcome::NeedsHumanAction(Remedy {
+                message: "m".into(),
+                script: format!("brew install {f}"),
+                url: None,
+            })
         });
         let ResolveOutcome::NeedsHumanAction(r) = out else { panic!("expected a remedy") };
         assert_eq!(r.script, "brew install pgvector");
