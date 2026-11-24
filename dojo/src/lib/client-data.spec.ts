@@ -6,6 +6,7 @@ import {
 	getGraphModule,
 	getGraphFile,
 	getGraphZones,
+	getGraphSchema,
 	listWorkspaces,
 	listUserWorkspaces,
 	getWorkspaceConstitution,
@@ -216,6 +217,12 @@ describe('graph reads — one branch\u2019s diagrams (#268)', () => {
 		const zones = fakeFetch(200, { ok: true });
 		await getGraphZones({ ...ctx, fetch: zones.fn });
 		expect(zones.calls[0].url).toBe(`${dojoApiUrl}/v1/you/graph/zones?repo_key=github.com%2Facme%2Fapi&branch=main`);
+	});
+
+	it('getGraphSchema GETs the v3 payload for repo and branch', async () => {
+		const { fn, calls } = fakeFetch(200, { version: 3 });
+		expect(await getGraphSchema({ ...ctx, fetch: fn })).toEqual({ version: 3 });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/graph/schema?repo_key=github.com%2Facme%2Fapi&branch=main`);
 	});
 });
 

@@ -5,8 +5,15 @@
 	import { CodeMap, CodeMapState, type Lens } from '@sensei/codemap';
 	import { graphPortClient } from '$lib/graph-port-client';
 	import { GraphBranchesState } from '$lib/graph-branches-state.svelte';
-	import { setGraphBranch } from '$lib/client-data';
+	import { getGraphSchema, setGraphBranch } from '$lib/client-data';
 	import { GRAPH_LABELS } from '$lib/graph-labels';
+	import { GraphSchemaState } from '$lib/graph-schema-state.svelte';
+	import { toErGraph } from '$lib/er-graph';
+	import { designTabs, EntitiesView, EnumView, ObjectView, OverviewView, TableView, toGraphInput } from '@rokkit/graph/schema';
+	import { ErDiagram, Neighborhood } from '@rokkit/graph';
+	import { Tabs } from '@rokkit/ui';
+	import { messages } from '@rokkit/states';
+	import type { DiagramLens } from './+page.js';
 
 	// One repository's diagrams (#268): the shared Code map over the dōjō's
 	// graph reads, with the branch picker and the lens switcher. The map's
@@ -15,14 +22,15 @@
 	// switching, as the app's page: drilling in must not climb back out.
 	let { data } = $props();
 
-	const LENSES: { id: Lens; label: string }[] = [
+	const LENSES: { id: DiagramLens; label: string }[] = [
 		{ id: 'structure', label: 'Structure' },
 		{ id: 'wheel', label: 'Wheel' },
 		{ id: 'zones', label: 'Zones' },
 		{ id: 'matrix', label: 'Matrix' },
 		{ id: 'cycles', label: 'Cycles' },
 		{ id: 'coupling', label: 'Coupling' },
-		{ id: 'complexity', label: 'Complexity' }
+		{ id: 'complexity', label: 'Complexity' },
+		{ id: 'schema', label: 'Database · ER' }
 	];
 
 	const mapKey = $derived(`${data.repo.id}:${data.branch}`);
@@ -36,9 +44,36 @@
 	);
 
 	$effect(() => {
+		if (data.lens === 'schema') return;
 		const [map, lens] = [state, data.lens as Lens];
 		untrack(() => void map.showLens(port, lens));
 	});
+
+	// The schema ER view reads its own payload, keyed by repository + branch
+	// like the map: switching branch re-reads the design.
+	const schemaApi = {
+		tryGetSchema: async () => {
+			try {
+				const payload = await getGraphSchema({ repoKey: data.repo.key, branch: data.branch ?? '', fetch, accessToken: data.accessToken });
+				return { ok: true as const, data: payload as unknown as Record<string, unknown> };
+			} catch (e) {
+				const err = e as { status?: number; message?: string };
+				return { ok: false as const, error: { status: typeof err.status === 'number' ? err.status : 0, message: err.message ?? 'the request failed' } };
+			}
+		}
+	};
+	let schemaCurrent: { key: string; view: GraphSchemaState } | null = null;
+	const schema = $derived.by(() => {
+		if (schemaCurrent?.key !== mapKey) schemaCurrent = { key: mapKey, view: new GraphSchemaState(schemaApi) };
+		return (schemaCurrent as { view: GraphSchemaState }).view;
+	});
+	$effect(() => {
+		if (data.lens !== 'schema') return;
+		void mapKey;
+		untrack(() => void schema.load());
+	});
+	const erGraph = $derived(schema.model ? toErGraph(schema.model) : null);
+	const erEntities = $derived(schema.model ? toGraphInput(schema.model, 'er') : null);
 
 	const hrefFor = (lens: string) => {
 		const q = data.branch ? `?branch=${encodeURIComponent(data.branch)}` : '';
@@ -155,6 +190,73 @@
 
 	{#if data.branch === null}
 		<p data-testid="no-branch">This repository tracks no branch, so it shares no graph. Track one to see diagrams.</p>
+	{:else if data.lens === 'schema'}
+		<div class="min-h-0 flex-1" data-testid="schema-screen">
+			{#if schema.view === 'loading'}
+				<p class="text-sm text-ink-soft" data-testid="schema-loading">Reading the branch schema.</p>
+			{:else if schema.view === 'error'}
+				<div class="rounded border border-warning p-4" data-testid="schema-error">
+					<p class="text-sm text-warning">{schema.failure}</p>
+					<button type="button" class="mt-2 cursor-pointer rounded border border-paper-edge bg-transparent px-3 py-1 text-sm" data-testid="schema-retry" onclick={() => schema.load()}>Retry</button>
+				</div>
+			{:else if schema.view === 'none'}
+				<p class="text-sm text-ink-soft" data-testid="schema-none">No database structure is described on this branch.</p>
+			{:else if schema.model}
+				{@const model = schema.model}
+				{#if schema.page && schema.selected}
+					<nav class="flex items-center gap-2 text-sm">
+						<button class="cursor-pointer border-none bg-transparent p-0 text-ink-mute hover:underline" onclick={() => schema.select(null)} data-testid="schema-back">‹ {data.repo.name}</button>
+					</nav>
+					<div data-testid="schema-page" data-page={schema.page}>
+						{#if schema.page === 'table'}
+							<TableView {model} entityKey={schema.selected} onselect={(k) => schema.select(k)} />
+						{:else if schema.page === 'object'}
+							<ObjectView {model} entityKey={schema.selected} onselect={(k) => schema.select(k)} />
+						{:else}
+							<EnumView {model} entityKey={schema.selected} onselect={(k) => schema.select(k)} />
+						{/if}
+					</div>
+				{:else}
+					<div data-testid="schema-tabs">
+						<Tabs options={designTabs()} value={schema.tab} name={messages.graph.designTabs} tabPanel={undefined} onchange={(v) => (schema.tab = String(v) as 'overview' | 'diagram' | 'entities')} />
+					</div>
+					{#if schema.tab === 'overview'}
+						<OverviewView {model} counts={false} />
+					{:else if schema.tab === 'diagram' && erGraph}
+						<div class="h-[70vh] min-w-0 shrink-0" data-testid="schema-diagram">
+							{#if schema.focus}
+								<Neighborhood
+									nodes={erGraph.nodes}
+									edges={erGraph.edges}
+									fields={erGraph.fields}
+									focus={schema.focus}
+									depth={1}
+									bind:edgeStyle={schema.edgeStyle}
+									controls
+									legend
+									label="Neighbours"
+									onselect={(id) => id && id !== schema.focus && schema.focusOn(id)}
+								/>
+							{:else}
+								<ErDiagram
+									nodes={erGraph.nodes}
+									edges={erGraph.edges}
+									fields={erGraph.fields}
+									bind:density={schema.density}
+									bind:edgeStyle={schema.edgeStyle}
+									controls
+									legend
+									label="Tables, views and what they reach"
+									onselect={(id) => id && schema.focusOn(id)}
+								/>
+							{/if}
+						</div>
+					{:else if erEntities}
+						<EntitiesView nodes={erEntities.nodes} edges={erEntities.edges} fields={erEntities.fields} />
+					{/if}
+				{/if}
+			{/if}
+		</div>
 	{:else}
 		<div class="min-h-0 flex-1">
 			{#key mapKey}

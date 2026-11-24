@@ -66,6 +66,10 @@ describe('the repository-diagrams loader', () => {
 		await expect(run({ ...params, lens: 'nope' })).rejects.toMatchObject({ status: 404 });
 	});
 
+	it('schema is a lens: the ER view over the branch', async () => {
+		expect((await run({ ...params, lens: 'schema' })).lens).toBe('schema');
+	});
+
 	it('an unknown repo id redirects to the org page', async () => {
 		await expect(run({ ...params, id: 'nope' })).rejects.toMatchObject({ status: 307 });
 	});

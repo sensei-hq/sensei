@@ -19,5 +19,8 @@ TDD: red test first for each item.
       `set_graph_branch`; the picker reflects the change. (Manager on
       the diagrams page behind `configurable_by_me`; two-step untrack;
       untracking the viewed branch moves to the tracked default.)
-- [ ] 5. Schema view: ER canvas over `graph_schema_*`.
+- [x] 5. Schema view: ER canvas over `graph_schema_*`. (Assemble
+      ported byte-exact vs the daemon; dangling refs dropped like its
+      inner join; enums named without values — values are not synced;
+      schema is a lens on the repo diagrams route.)
 - [ ] 6. Gates green, commit, push.

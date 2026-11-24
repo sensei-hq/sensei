@@ -421,3 +421,19 @@ export async function getGraphFile(opts: GraphReadOpts & { id: string }): Promis
 export async function getGraphZones(opts: GraphReadOpts): Promise<Read<Zones>> {
 	return getJson<Read<Zones>>(youUrl(`/graph/zones?${graphQuery(opts, {})}`), opts);
 }
+
+/** `GET /v1/you/graph/schema` — one branch's schema as dbd's v3 payload. */
+export async function getGraphSchema(opts: GraphReadOpts): Promise<SchemaPayloadWire> {
+	return getJson<SchemaPayloadWire>(youUrl(`/graph/schema?${graphQuery(opts, {})}`), opts);
+}
+
+/** dbd's SchemaModel v3, as the rokkit ER views read it. Declared here so
+ *  the loader and the screen never import a `$lib/server/*` module. */
+export interface SchemaPayloadWire {
+	version: number;
+	tables: Array<Record<string, unknown>>;
+	refs: Array<Record<string, unknown>>;
+	entities: Array<Record<string, unknown>>;
+	deps: Array<Record<string, unknown>>;
+	enums: Array<Record<string, unknown>>;
+}
