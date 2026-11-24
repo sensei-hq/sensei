@@ -33,7 +33,9 @@ const config = {
 			// Svelte components shared with the desktop app (#293).
 			'@sensei/ui': '../packages/ui/index.js',
 			// Domain state shared with the desktop app: the relay state and its sources (#414).
-			'@sensei/state': '../packages/state/index.ts'
+			'@sensei/state': '../packages/state/index.ts',
+			// The Code map shared with the desktop app: canvas, lenses, wire types (#268).
+			'@sensei/codemap': '../packages/codemap/index.ts'
 		},
 		typescript: {
 			// As in app/svelte.config.js: packages/ui imports rokkit, which each host
