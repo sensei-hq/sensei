@@ -15,7 +15,9 @@ TDD: red test first for each item.
       world view. (Route: org/[slug]/repositories/[id]/diagrams/[lens];
       tenant-scoped navigation, `can_read_repository` the read gate;
       world/neighbourhood ride L0 + focus, no separate aggregate.)
-- [ ] 4. Tracked branches: authority-gated add/remove screen through
-      `set_graph_branch`; the picker reflects the change.
+- [x] 4. Tracked branches: authority-gated add/remove screen through
+      `set_graph_branch`; the picker reflects the change. (Manager on
+      the diagrams page behind `configurable_by_me`; two-step untrack;
+      untracking the viewed branch moves to the tracked default.)
 - [ ] 5. Schema view: ER canvas over `graph_schema_*`.
 - [ ] 6. Gates green, commit, push.

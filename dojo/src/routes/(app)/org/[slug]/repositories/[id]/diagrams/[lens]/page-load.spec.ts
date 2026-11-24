@@ -21,7 +21,8 @@ const REPO = {
 	graph_branches: [
 		{ branch: 'main', is_default: true },
 		{ branch: 'dev', is_default: false }
-	]
+	],
+	configurable_by_me: true
 };
 
 function run(params: Record<string, string>, query = '') {
@@ -45,7 +46,7 @@ describe('the repository-diagrams loader', () => {
 		const data = await run(params);
 		expect(data.orgName).toBe('Acme');
 		expect(data.lens).toBe('structure');
-		expect(data.repo).toMatchObject({ id: 'r1', key: 'github.com/acme/api', name: 'api' });
+		expect(data.repo).toMatchObject({ id: 'r1', key: 'github.com/acme/api', name: 'api', configurable: true });
 		expect(data.branch).toBe('main');
 		expect((data.repo as { branches: unknown }).branches).toEqual([
 			{ branch: 'main', is_default: true },

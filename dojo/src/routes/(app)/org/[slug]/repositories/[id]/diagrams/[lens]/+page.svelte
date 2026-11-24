@@ -4,6 +4,9 @@
 	import { untrack } from 'svelte';
 	import { CodeMap, CodeMapState, type Lens } from '@sensei/codemap';
 	import { graphPortClient } from '$lib/graph-port-client';
+	import { GraphBranchesState } from '$lib/graph-branches-state.svelte';
+	import { setGraphBranch } from '$lib/client-data';
+	import { GRAPH_LABELS } from '$lib/graph-labels';
 
 	// One repository's diagrams (#268): the shared Code map over the dōjō's
 	// graph reads, with the branch picker and the lens switcher. The map's
@@ -47,6 +50,28 @@
 		url.searchParams.set('branch', branch);
 		await goto(url, { invalidateAll: true });
 	}
+
+	// Tracked branches, for whoever may configure the repository (#268 §4).
+	// The picker reads this same list, so tracking reflects immediately;
+	// untracking the viewed branch moves the view to the tracked default.
+	// Derived by repository: navigating repos resets the draft and list.
+	const tracked = $derived.by(
+		() =>
+			new GraphBranchesState(data.repo.key, data.repo.branches, (k, b, t, l) =>
+				setGraphBranch(k, b, t, l, { fetch, accessToken: data.accessToken })
+			)
+	);
+
+	async function confirmUntrack() {
+		const gone = tracked.pendingUntrack;
+		await tracked.confirmUntrack();
+		if (gone !== null && gone === data.branch && tracked.error === null) {
+			const fallback =
+				tracked.branches.find((b) => b.is_default)?.branch ?? tracked.branches[0]?.branch ?? null;
+			if (fallback !== null && fallback !== gone) await pickBranch(fallback);
+			else await goto(page.url, { invalidateAll: true });
+		}
+	}
 </script>
 
 <svelte:head><title>{data.repo.name} diagrams · {data.orgName} · Dōjō</title></svelte:head>
@@ -63,12 +88,12 @@
 				data-testid="branch-picker"
 				value={data.branch ?? ''}
 				onchange={(e) => void pickBranch(e.currentTarget.value)}
-				disabled={data.repo.branches.length === 0}
+				disabled={tracked.branches.length === 0}
 			>
 				{#if data.branch === null}
 					<option value="">No tracked branch</option>
 				{/if}
-				{#each data.repo.branches as b (b.branch)}
+				{#each tracked.branches as b (b.branch)}
 					<option value={b.branch}>{b.branch}{b.is_default ? ' (default)' : ''}</option>
 				{/each}
 			</select>
@@ -86,6 +111,47 @@
 			</a>
 		{/each}
 	</nav>
+
+	{#if data.repo.configurable}
+		<details data-testid="branch-manager">
+			<summary>Tracked branches</summary>
+			<ul>
+				{#each tracked.branches as b (b.branch)}
+					<li>
+						<span class="font-mono">{b.branch}</span>{b.is_default ? ' (default)' : ''}
+						{#if tracked.pendingUntrack === b.branch}
+							<span>Untracking deletes this branch's graph.</span>
+							<button type="button" onclick={() => void confirmUntrack()} disabled={tracked.working}>Delete it</button>
+							<button type="button" onclick={() => tracked.cancelUntrack()}>Keep</button>
+						{:else}
+							<button type="button" onclick={() => tracked.askUntrack(b.branch)}>Untrack</button>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					void tracked.track();
+				}}
+			>
+				<input data-testid="track-branch" placeholder="Branch to track" bind:value={tracked.draft.branch} aria-label="Branch to track" />
+				<select bind:value={tracked.draft.label} aria-label="Environment label">
+					<option value="">No label</option>
+					{#each GRAPH_LABELS as l (l)}
+						<option value={l}>{l}</option>
+					{/each}
+				</select>
+				<button type="submit" disabled={tracked.working}>Track</button>
+			</form>
+			{#if tracked.problem}
+				<p role="alert">{tracked.problem}</p>
+			{/if}
+			{#if tracked.error}
+				<p role="alert">{tracked.error}</p>
+			{/if}
+		</details>
+	{/if}
 
 	{#if data.branch === null}
 		<p data-testid="no-branch">This repository tracks no branch, so it shares no graph. Track one to see diagrams.</p>

@@ -37,7 +37,7 @@ export const load: PageLoad = async ({ parent, params, url, fetch }) => {
 	return {
 		slug: params.slug,
 		orgName: org.name,
-		repo: { id: repo.repository_id, key: repo.repo_key, name: repo.name ?? repo.repo_key, branches },
+		repo: { id: repo.repository_id, key: repo.repo_key, name: repo.name ?? repo.repo_key, branches, configurable: repo.configurable_by_me },
 		lens,
 		branch
 	};
