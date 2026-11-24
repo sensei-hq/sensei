@@ -13,4 +13,5 @@ TDD: red test first for each item.
 - [x] 3. Language slugs for `rst`/`adoc`; map visibility deferred to
       the docs-adapter follow-up (doc nodes carry no fqn; decided with
       the user 2026-11-24).
-- [ ] 4. Gates green, commit, push; close #246 with the World note.
+- [x] 4. Gates green, commit, push; close #246 with the World note.
+      (Adapter follow-up filed as #536; #246 ready to close.)

@@ -1,31 +1,27 @@
-# Checkpoint — 2026-11-23 (#268 landed; #246 discussion next)
+# Checkpoint — 2026-11-24 (#246 slices done; close + #536 next)
 
 **Slice:** relay + diagrams open issues.
-**Branch:** `develop` (pushed: 4 #444 + 6 #268 commits).
+**Branch:** `develop` (3 #246 commits local, pushing).
 
 ## Done
-- Splits filed: #427 → #522–#526; #428 → #527–#530.
-  New: #531 sort, #532/#533 repo/workspace screens, #534 muse.
-- #299 verified done as workspaces (default 1/repo, multi
-  capable) — ready to close. #312/#433 still await close confirm.
-- #444: janitor, sentinel, serial guard, execute endpoint.
-- #268: dojo graph reads, CodeMapPort (diffed vs daemon),
-  repo diagrams route + picker + lenses, branch manager,
-  schema ER lens. Dojo 2527, DB 83 files, build green.
+- Splits: #427 → #522–#526; #428 → #527–#530.
+  New: #531–#534, #536 (docs adapter follow-up).
+- #299 verified done as workspaces — ready to close.
+- #444 (4 commits) and #268 (7 commits) pushed.
+- #246: rst/adoc route + headings (slice 1); doc links
+  resolve, externals named, module-node fix (slice 2);
+  rst/adoc slugs (slice 3). Suites + clippy + fmt green.
 
 ## Remaining
-- Push the #268 commits (task 6 tick).
-- REMIND USER: discuss #246 (docs ring design).
-- User owes: mobile layout specifics for a new issue.
+- Push #246 commits; close #246 (+ #312, #433, #299)
+  on user confirmation.
 
 ## Next command
-`git add openspec/changes/add-dojo-diagrams/tasks.md docs/CHECKPOINT.md && git commit && git push origin develop`.
+`git add openspec/changes/add-docs-traceability/tasks.md docs/CHECKPOINT.md && git commit && git push origin develop`.
 
 ## Open questions
 - 6 process.rs fmt spots: local toolchains flag what CI stable
   accepts. Left untouched.
-- Package `ZonePoint` type lies about nulls (daemon sends
-  them) — follow-up issue proposed, not filed.
 
 ## Known-broken
 - None.
