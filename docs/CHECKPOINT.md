@@ -1,23 +1,23 @@
-# Checkpoint — 2026-11-24 (#246 slices done; close + #536 next)
+# Checkpoint — 2026-11-24 (pause; #246 done, triage proposed)
 
-**Slice:** relay + diagrams open issues.
-**Branch:** `develop` (3 #246 commits local, pushing).
+**Slice:** relay + diagrams + docs-traceability.
+**Branch:** `develop` (in sync with remote; merged v0.28.0).
 
 ## Done
-- Splits: #427 → #522–#526; #428 → #527–#530.
-  New: #531–#534, #536 (docs adapter follow-up).
-- #299 verified done as workspaces — ready to close.
-- #444 (4 commits) and #268 (7 commits) pushed.
-- #246: rst/adoc route + headings (slice 1); doc links
-  resolve, externals named, module-node fix (slice 2);
-  rst/adoc slugs (slice 3). Suites + clippy + fmt green.
+- Closed: #246, #312, #433, #299 (user-confirmed).
+- Filed: #522–#534, #536 (docs adapter).
+- #246: rst/adoc routing + headings, link resolution,
+  externals named, module-node fix, slugs. Pushed.
+- Overlap check: v0.28.0 "dōjō repo diagrams" IS our #268;
+  no conflict with #532 (it will embed the route).
 
 ## Remaining
-- Push #246 commits; close #246 (+ #312, #433, #299)
-  on user confirmation.
+- 4–5h plan proposed (awaiting go): #531, #532, #430.
+- #513/#512/#444/#393/#268 close on next main merge.
+- #292 → verify stale vs #536, link or close.
 
 ## Next command
-`git add openspec/changes/add-docs-traceability/tasks.md docs/CHECKPOINT.md && git commit && git push origin develop`.
+Await user go on the ranked plan, then start #531.
 
 ## Open questions
 - 6 process.rs fmt spots: local toolchains flag what CI stable
