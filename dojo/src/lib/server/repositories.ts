@@ -367,7 +367,7 @@ export function isBillingHiddenRepo(
  * One reader for both consumers — the plan AND the screen — so what a user is
  * shown and what the daemon pushes cannot disagree.
  */
-async function graphBranchesByRepo(db: DojoClient): Promise<Map<string, GraphBranch[]>> {
+export async function graphBranchesByRepo(db: DojoClient): Promise<Map<string, GraphBranch[]>> {
 	const branchRows = await readAllPages<{ repository_id: string; branch: string; is_default: boolean }>(
 		(from, to) =>
 			db.rpc('my_graph_branches').select('repository_id, branch, is_default').order('repository_id').order('branch').range(from, to)
