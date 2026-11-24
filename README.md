@@ -47,6 +47,22 @@ brew install --cask sensei-hq/tap/senseihq # Desktop app
 
 Homebrew formulae live in [sensei-hq/homebrew-tap](https://github.com/sensei-hq/homebrew-tap).
 
+## Install (Linux)
+
+The desktop app ships as a `.deb` (Ubuntu 22.04 or newer, x86_64) on each
+[release](https://github.com/sensei-hq/sensei/releases). Its first-run health check installs
+the rest through Homebrew — PostgreSQL 17 with pgvector, Ollama and the sensei binaries — then
+creates the database and starts the daemon. It needs Homebrew itself first:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> ~/.bashrc && source ~/.bashrc
+brew tap sensei-hq/tap && brew trust sensei-hq/tap
+sudo apt install ./Sensei_<version>_amd64.deb   # then open Sensei from the app menu
+```
+
+Without the desktop app: `brew install sensei-hq/tap/sensei pgvector`, then `sensei start`.
+
 ### Indexing engines
 
 The indexer places call edges with each language's own compiler:
