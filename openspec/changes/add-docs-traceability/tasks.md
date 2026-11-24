@@ -10,6 +10,7 @@ TDD: red test first for each item.
       sole-definition rule; prune rides the D2/D3 reconcile; tests per
       case. (Also fixed: file_ref arm was dead — `kind='file'` is never
       minted — now resolves the file's sole module node.)
-- [ ] 3. Accounting: docs in map counts with the `docs` role; documented
-      shade stays code-only; verification tests.
+- [x] 3. Language slugs for `rst`/`adoc`; map visibility deferred to
+      the docs-adapter follow-up (doc nodes carry no fqn; decided with
+      the user 2026-11-24).
 - [ ] 4. Gates green, commit, push; close #246 with the World note.

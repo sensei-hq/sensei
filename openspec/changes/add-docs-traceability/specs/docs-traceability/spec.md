@@ -40,14 +40,16 @@ stay a named-unresolved `references` edge, never a fabricated edge.
 - **WHEN** it is indexed
 - **THEN** an unresolved `references` edge carries the mention by name
 
-### Requirement: Docs count with the docs role; the documented shade stays code-only
-Docs files and section nodes SHALL flow into the Code map's file and
-symbol counts under the `docs` role. The documented-share shade SHALL
-keep measuring code declarations only (docstring-based); docs nodes
-SHALL NOT dilute it.
+### Requirement: Rst and asciidoc nodes stamp their language
+`language_for_ext_slug` SHALL answer `restructuredtext` for `rst` and
+`asciidoc` for `adoc`, so doc nodes stamp honestly instead of null.
+Map visibility (docs in Code map counts) is NOT this change: doc nodes
+carry no fqn and the map's universe requires one, so that needs the
+docs language adapter (follow-up, decided with the user 2026-11-24) —
+with the middle-path ruling recorded there (docs count under the `docs`
+role; the documented shade stays code-only).
 
-#### Scenario: A docs-heavy module
-- **GIVEN** a module with one code file and one docs file
-- **WHEN** its block is read
-- **THEN** roles count both files by role and the documented share
-  reflects the code file alone
+#### Scenario: An rst node's language
+- **GIVEN** an `.rst` file indexed as a document
+- **WHEN** its nodes are read
+- **THEN** `language` reads `restructuredtext`, not null

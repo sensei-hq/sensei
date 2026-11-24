@@ -30,3 +30,6 @@ module" is unanswerable and docs sit beside the graph instead of in it.
   add. #246 closes on the graph work with that note.
 - Heading semantics: D5b's section nodes (heading-path identity, sibling
   disambiguation, prune on re-index) stand as decided.
+- Map visibility for docs: needs fqns, which needs the docs language
+  adapter (follow-up issue). The middle-path ruling (docs role counts,
+  code-only shade) is recorded there.
