@@ -430,6 +430,37 @@ export async function getGraphSchema(opts: GraphReadOpts): Promise<SchemaPayload
 	return getJson<SchemaPayloadWire>(youUrl(`/graph/schema?${graphQuery(opts, {})}`), opts);
 }
 
+/** `GET …/repositories/{id}/metrics[?days=]` — one repository's series (#532).
+ *  Read as the caller; a failure throws, so the screen carries it as an error
+ *  state, never as empty charts. */
+export async function getRepoMetrics(
+	tenantKey: string,
+	repoId: string,
+	opts: DojoCallOpts & { days?: number } = {}
+): Promise<RepoMetricsWire> {
+	const query = opts.days === undefined ? '' : `?days=${opts.days}`;
+	return getJson<RepoMetricsWire>(
+		clientUrl(tenantKey, `/repositories/${encodeURIComponent(repoId)}/metrics${query}`),
+		opts
+	);
+}
+
+/** One repository's series on the wire — the same row shape the workspace
+ *  rollup carries, for one repo, so the shared cards shape both. */
+export interface RepoMetricsWire {
+	since: string;
+	days: number;
+	rows: Array<{
+		repository_id: string;
+		metric_key: string;
+		scope: string;
+		principal_id: string | null;
+		day: string;
+		value: number;
+		props: unknown;
+	}>;
+}
+
 /** dbd's SchemaModel v3, as the rokkit ER views read it. Declared here so
  *  the loader and the screen never import a `$lib/server/*` module. */
 export interface SchemaPayloadWire {

@@ -7,6 +7,7 @@ import {
 	getGraphFile,
 	getGraphZones,
 	getGraphSchema,
+	getRepoMetrics,
 	listWorkspaces,
 	listUserWorkspaces,
 	getWorkspaceConstitution,
@@ -223,6 +224,12 @@ describe('graph reads — one branch\u2019s diagrams (#268)', () => {
 		const { fn, calls } = fakeFetch(200, { version: 3 });
 		expect(await getGraphSchema({ ...ctx, fetch: fn })).toEqual({ version: 3 });
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/graph/schema?repo_key=github.com%2Facme%2Fapi&branch=main`);
+	});
+
+	it('getRepoMetrics GETs the tenant repo series with the window (#532)', async () => {
+		const { fn, calls } = fakeFetch(200, { rows: [] });
+		await getRepoMetrics('organization/acme', 'r1', { days: 30, fetch: fn });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/organization/acme/repositories/r1/metrics?days=30`);
 	});
 });
 
