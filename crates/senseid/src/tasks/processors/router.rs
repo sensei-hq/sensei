@@ -41,8 +41,10 @@ pub fn process_file(
 
     // Route by file type
     match ext {
-        // Documents
-        "md" | "mdx" => Ok(doc::process(abs_path, &rel_path, &content, repo_id, repo_path)),
+        // Documents — the `file_role` docs convention (#246).
+        "md" | "mdx" | "rst" | "adoc" => {
+            Ok(doc::process(abs_path, &rel_path, &content, repo_id, repo_path))
+        }
 
         // Plain text docs (llms.txt, etc.)
         "txt" => Ok(doc::process(abs_path, &rel_path, &content, repo_id, repo_path)),
@@ -113,5 +115,22 @@ mod tests {
             parsed.sections.iter().map(|s| &s.heading).collect::<Vec<_>>()
         );
         assert_eq!(parsed.title.as_deref(), Some("Title"));
+    }
+
+    /// #246: rst and adoc route to the doc processor (the `file_role` docs
+    /// convention: md | mdx | rst | adoc | txt), not the minimal fallback.
+    #[test]
+    fn rst_and_adoc_route_to_the_doc_processor() {
+        let dir = tempfile::tempdir().unwrap();
+        let rst = dir.path().join("guide.rst");
+        std::fs::write(&rst, "Guide\n=====\n\nSetup\n-----\n").unwrap();
+        let parsed = process_file(&rst.to_string_lossy(), dir.path().to_str().unwrap(), "repo")
+            .expect("rst processes");
+        assert_eq!(parsed.sections.len(), 2, "rst headings decompose");
+        let adoc = dir.path().join("guide.adoc");
+        std::fs::write(&adoc, "= Guide\n\n== Setup\n").unwrap();
+        let parsed = process_file(&adoc.to_string_lossy(), dir.path().to_str().unwrap(), "repo")
+            .expect("adoc processes");
+        assert_eq!(parsed.sections.len(), 2, "adoc headings decompose");
     }
 }

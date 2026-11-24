@@ -369,15 +369,38 @@ fn is_word_byte(b: u8) -> bool {
 /// Extract sections split by headings.
 fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
     let lines: Vec<&str> = content.lines().collect();
+    // YAML frontmatter is metadata, not content: skip the fenced block so a
+    // `---` fence never reads as a heading adornment.
+    let mut start = 0;
+    if lines.first().is_some_and(|l| l.trim() == "---")
+        && let Some(end) = lines.iter().skip(1).position(|l| l.trim() == "---")
+    {
+        start = end + 2;
+    }
     let mut sections = Vec::new();
     let mut current_heading: Option<(String, u8, u32)> = None;
 
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if let Some((level, text)) = parse_heading(trimmed) {
+    let mut i = start;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        // rst underline adornment: a text line capped by a run of one
+        // punctuation char at least as long (setext `===`/`---` included —
+        // valid markdown too, same reading).
+        let found = if !trimmed.is_empty()
+            && parse_heading(trimmed).is_none()
+            && let Some(next) = lines.get(i + 1).map(|l| l.trim())
+            && let Some(level) = adornment_level(next)
+            && next.len() >= trimmed.len()
+        {
+            i += 1; // the adornment line is consumed with its text
+            Some((level, trimmed.to_string(), i - 1))
+        } else {
+            parse_heading(trimmed).map(|(level, text)| (level, text, i))
+        };
+        if let Some((level, text, at)) = found {
             // Close previous section
             if let Some((heading, lvl, start)) = current_heading.take() {
-                let end = i as u32;
+                let end = at as u32;
                 let preview = make_preview(&lines, start as usize + 1, end as usize);
                 sections.push(crate::ir::IRSection {
                     heading,
@@ -387,8 +410,9 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
                     content_preview: preview,
                 });
             }
-            current_heading = Some((text, level, i as u32));
+            current_heading = Some((text, level, at as u32));
         }
+        i += 1;
     }
 
     // Close last section
@@ -414,7 +438,30 @@ fn parse_heading(line: &str) -> Option<(u8, String)> {
             return Some((n, rest.trim().into()));
         }
     }
+    // Asciidoc: `= ` is H1 through `====== ` H6.
+    let run = line.bytes().take_while(|&b| b == b'=').count();
+    if (1..=6).contains(&run) && line.as_bytes().get(run) == Some(&b' ') {
+        return Some((run as u8, line[run + 1..].trim().into()));
+    }
     None
+}
+
+/// An rst underline adornment's level: one repeated punctuation char.
+/// `=` is the title, then `-`, `~`, `^`, `"`; anything else runs deepest.
+fn adornment_level(line: &str) -> Option<u8> {
+    let mut chars = line.chars();
+    let first = chars.next()?;
+    if !"=-~^\"#*+".contains(first) || chars.any(|c| c != first) {
+        return None;
+    }
+    Some(match first {
+        '=' => 1,
+        '-' => 2,
+        '~' => 3,
+        '^' => 4,
+        '"' => 5,
+        _ => 6,
+    })
 }
 
 fn make_preview(lines: &[&str], start: usize, end: usize) -> Option<String> {
@@ -563,15 +610,9 @@ fn infer_category_from_path(rel_path: &str) -> Option<String> {
     }
 }
 
-/// Extract the first H1 title from markdown.
+/// Extract the first H1 title — markdown, asciidoc, or rst underlined.
 pub fn extract_title(content: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(title) = trimmed.strip_prefix("# ") {
-            return Some(title.trim().to_string());
-        }
-    }
-    None
+    extract_sections(content).into_iter().find(|s| s.level == 1).map(|s| s.heading)
 }
 
 /// Extract file path references from markdown content — from INSIDE backticks
@@ -656,6 +697,31 @@ mod tests {
         assert_eq!(extract_title("# Hello World\nsome text"), Some("Hello World".to_string()));
         assert_eq!(extract_title("no heading here"), None);
         assert_eq!(extract_title("## Not H1"), None);
+    }
+
+    /// #246: asciidoc headings decompose like markdown's (`= Title` is H1).
+    #[test]
+    fn asciidoc_headings_become_sections() {
+        let secs = extract_sections_pub("= Guide\n\n== Setup\n\nbody\n");
+        assert_eq!(
+            secs.iter().map(|s| (s.heading.as_str(), s.level)).collect::<Vec<_>>(),
+            [("Guide", 1), ("Setup", 2)]
+        );
+        assert_eq!(extract_title("= Guide\n\nbody\n"), Some("Guide".to_string()));
+    }
+
+    /// #246: rst underline adornments decompose (`===` is H1, `---` H2).
+    /// The adornment must be one repeated char at least as long as the text;
+    /// a `---` with no text above it (frontmatter fence) is not a heading.
+    #[test]
+    fn rst_underline_headings_become_sections() {
+        let secs = extract_sections_pub("Guide\n=====\n\nSetup\n-----\n\nbody\n");
+        assert_eq!(
+            secs.iter().map(|s| (s.heading.as_str(), s.level)).collect::<Vec<_>>(),
+            [("Guide", 1), ("Setup", 2)]
+        );
+        assert_eq!(extract_title("Guide\n=====\n\nbody\n"), Some("Guide".to_string()));
+        assert!(extract_sections_pub("---\ntitle: x\n---\n\nno headings\n").is_empty());
     }
 
     #[test]
