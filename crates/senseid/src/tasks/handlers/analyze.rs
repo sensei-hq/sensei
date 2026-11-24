@@ -947,7 +947,9 @@ fn prompt_snippet(prompt: &str) -> String {
 /// events. Tool failures aren't captured by the hooks, so the signals are
 /// behavioral:
 ///   - **re-edit churn** — a file re-edited `>= CHURN_MIN_EDITS` times in one
-///     session (anti-pattern, file-scoped) — the agent kept returning to it;
+///     session (anti-pattern, file-scoped) — the agent kept returning to it.
+///     The session's first `Write` to a file is its creation, not a re-edit
+///     (#430), and is excluded from the count;
 ///   - **correction-prone** — folders with `>= CORRECTION_MIN` corrective
 ///     prompts (anti-pattern); and
 ///   - **rule-candidates** — imperative-principle prompts ("you should always",
@@ -2670,6 +2672,109 @@ mod tests {
             1,
             "a re-run while the plan is still in flight does not stack a duplicate (enqueue_unique)",
         );
+
+        // cleanup
+        let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
+            .bind(&csid)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+            .bind(sid)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1")
+            .bind(root)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
+            .bind(root)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pool)
+            .await
+            .ok();
+    }
+
+    /// #430: a session's first `Write` to a file is its CREATION, not a
+    /// re-edit — authoring a big new file must not read as churn. The
+    /// creation event is excluded from the count; later edits still count.
+    #[tokio::test]
+    async fn churn_excludes_the_creation_write() {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg.ensure_test_workspace("churn-creation").await.unwrap();
+        let root = pg
+            .add_watch_root(
+                &format!("/_test/churn-creation-{}", uuid::Uuid::now_v7()),
+                "t",
+                &serde_json::json!([]),
+            )
+            .await
+            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "sig-repo",
+            &format!("/_test/sig-{}", uuid::Uuid::now_v7()),
+        )
+        .await
+        .unwrap();
+        let csid = format!("_test-sid-{}", uuid::Uuid::now_v7());
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
+
+        async fn tool(
+            pg: &crate::db::pg_store::PgStore,
+            csid: &str,
+            name: &str,
+            ts: i64,
+            fp: &str,
+        ) {
+            pg.insert_hook_event(&crate::db::pg_store::HookEventRow {
+                session_id: csid,
+                assistant_family: "claude",
+                event_type: "PostToolUse",
+                tool_name: Some(name),
+                cwd: None,
+                ts,
+                success: None,
+                payload: &serde_json::json!({ "tool_input": {"file_path": fp} }),
+            })
+            .await
+            .unwrap();
+        }
+        // new.md: created then touched 4 times — 4 re-edits, below threshold.
+        tool(pg, &csid, "Write", 100, "docs/new.md").await;
+        for ts in [200, 300, 400, 500] {
+            tool(pg, &csid, "Edit", ts, "docs/new.md").await;
+        }
+        // busy.md: created then revised 5 times — 5 re-edits, flagged, and
+        // the count says 5 (creation excluded), not 6.
+        tool(pg, &csid, "Write", 100, "docs/busy.md").await;
+        for ts in [200, 300, 400, 500, 600] {
+            tool(pg, &csid, "Edit", ts, "docs/busy.md").await;
+        }
+
+        let rows = pg.get_file_churn_stats(&pid, 5).await.unwrap();
+        let names: Vec<&str> = rows.iter().map(|(_, f, _, _)| f.as_str()).collect();
+        assert!(!names.contains(&"docs/new.md"), "creation + 4 edits is not churn: {names:?}");
+        let busy = rows.iter().find(|(_, f, _, _)| f == "docs/busy.md").expect("busy flags");
+        assert_eq!(busy.2, 5, "max counts re-edits, not the creation: {busy:?}");
 
         // cleanup
         let pool = pg.pool();
