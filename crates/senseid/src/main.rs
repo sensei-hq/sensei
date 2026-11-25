@@ -150,6 +150,11 @@ async fn main() {
             std::env::set_var("SENSEI_INSTANCE", inst);
         }
     }
+    // Database credentials from `~/.sensei/.env` (#505), under the same
+    // contract: before the log writer's thread starts. Reported once logging
+    // is up.
+    // SAFETY: as above — no thread that reads the environment is running yet.
+    let credentials = unsafe { sensei_bootstrap::credentials::load_into_env() };
 
     // LOGGING IS INSTALLED HERE, NOT AT THE TOP OF `main`, and the ordering is
     // load-bearing: the log directory hangs off the instance's data dir, and
@@ -173,6 +178,10 @@ async fn main() {
         // Never leave the daemon silent: an unwritable log directory costs the
         // rolling file, not the log itself.
         sensei_bootstrap::tracing_init::install_daemon_console(DEFAULT_LOG_FILTER);
+    }
+
+    if let Err(e) = credentials {
+        tracing::error!(error = %e, "could not read the database credentials file");
     }
 
     let startup_cfg = sensei_bootstrap::SenseiConfig::from_env();
@@ -224,13 +233,7 @@ fn start_daemon(port: u16) {
         && let Ok(pid_str) = std::fs::read_to_string(&pid_path)
         && let Ok(pid) = pid_str.trim().parse::<u32>()
     {
-        // Check if process is alive
-        let alive = Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if alive {
+        if sensei_bootstrap::util::pid_alive(pid) {
             fail_start(&format!("senseid: already running (pid {pid})"));
         }
         // Stale PID file — clean up and continue
@@ -262,6 +265,7 @@ fn start_daemon(port: u16) {
     {
         cmd.args(["--instance", &inst]);
     }
+    detach_from_console(&mut cmd);
 
     let mut child = cmd
         .stdout(log_file)
@@ -277,6 +281,21 @@ fn start_daemon(port: u16) {
         let _ = child.wait();
     });
     println!("senseid: started (pid {})", pid);
+}
+
+/// On Windows the daemon gets no console window, and its own process group so
+/// a Ctrl+C in the console that ran `senseid start` does not reach it. On Unix
+/// it already outlives that terminal: its output goes to the log file.
+fn detach_from_console(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+    #[cfg(unix)]
+    let _ = cmd;
 }
 
 async fn run_foreground(port: u16) {
@@ -320,14 +339,19 @@ async fn stop_daemon(port: u16) {
     }
     let pid_path = sensei_dir().join("serve.pid");
     if let Ok(pid_str) = std::fs::read_to_string(&pid_path)
-        && let Ok(_pid) = pid_str.trim().parse::<u32>()
+        && let Ok(pid) = pid_str.trim().parse::<u32>()
     {
-        // Send SIGTERM via nix or command
-        if let Err(e) = std::process::Command::new("kill").arg(pid_str.trim()).status() {
-            tracing::warn!(error = %e, pid = %pid_str.trim(), "stop_daemon: failed to send SIGTERM");
-        }
-        println!("senseid: sent SIGTERM to pid {}", pid_str.trim());
+        // The daemon did not answer /stop. SIGTERM on Unix still shuts it down
+        // gracefully; on Windows it is terminated (see `util::terminate`).
+        let ended = sensei_bootstrap::util::terminate(pid);
         std::fs::remove_file(&pid_path).ok();
+        match ended {
+            Ok(()) => println!("senseid: did not answer /stop; ended pid {pid}"),
+            Err(e) => {
+                eprintln!("senseid: not running ({e}; removed the stale pid file)");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     eprintln!("senseid: not running");

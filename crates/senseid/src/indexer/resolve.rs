@@ -4574,9 +4574,9 @@ mod tests {
         // this slice to earn a print for that reason.
         println!(
             "  dangling first-party references: {other} of {resolved} over {} identities \
-             (ceiling 1,190, headroom {})",
+             (ceiling 1,188, headroom {})",
             elsewhere.len(),
-            1_190_i64 - other as i64
+            1_188_i64 - other as i64
         );
         // Lowered from 1,300 on 2026-10-26: the store's row types moved to the
         // path their callers name (`pg_store::FolderRow`), so the re-exports the
@@ -4736,8 +4736,14 @@ mod tests {
         // build offload) and first red on develop at 0c77b335c. Same
         // documented class, same backlog cure (follow the alias), not a
         // lower number.
+        // Lowered 1,190 -> 1,188 on 2026-11-25, measured 1,188 over 228
+        // identities (develop base 1,190/230): the Windows prerequisite slice
+        // (#505) names the declaring modules (`checkers::composite::`,
+        // `resolvers::db_setup::`, `checkers::port::`) rather than the
+        // re-exports, which also takes the moved port probe's reaches off the
+        // list.
         assert!(
-            other <= 1_190,
+            other <= 1_188,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
              identity no declaration mints, up from the 1,045 measured 2026-10-26. Worst: {:?}",
             elsewhere.len(),

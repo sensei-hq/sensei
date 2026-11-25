@@ -373,7 +373,4 @@ mod tests {
             assert_eq!(libc::utimes(c.as_ptr(), tvs.as_ptr()), 0);
         }
     }
-
-    #[cfg(not(unix))]
-    fn filetime_set(_path: &Path, _t: SystemTime) {}
 }
