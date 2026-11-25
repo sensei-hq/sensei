@@ -52,7 +52,8 @@
   defines the Windows install)
 
 ## 5. Distribution (slice 5, depends on 2–4)
-- [ ] 5.1 `release.yml`: `windows-latest` job building `sensei-windows-x86_64.zip`, attached to the release
+- [x] 5.1 `release.yml`: `windows-latest` leg of `build-daemon` building `sensei-windows-x86_64.zip`, attached
+  to the release (first exercised by the next tag)
 - [ ] 5.2 Tauri NSIS installer (unsigned), shipping the three binaries on the user `PATH`; Windows fallback for
   `titleBarStyle: Overlay` / `macOSPrivateApi`
 - [ ] 5.3 Hooks end to end on Windows through `run-hook.cmd` → Git Bash (session-start, forward, nudge, pre-compact)

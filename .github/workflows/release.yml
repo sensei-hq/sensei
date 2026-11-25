@@ -79,6 +79,19 @@ jobs:
             os: ubuntu-24.04-arm
             artifact: sensei-linux-arm64
             embedded: false
+          # Native Windows (#505): a zip of the three `.exe`s, unsigned (the
+          # README states the SmartScreen prompt). `embedded: false` for the
+          # same reason as aarch64-linux: llama.cpp on MSVC is its own change.
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: sensei-windows-x86_64
+            embedded: false
+
+    # bash on every leg: the steps below are bash, and a Windows runner's
+    # default shell is PowerShell, where `$BUILD_TARGET` is not the variable.
+    defaults:
+      run:
+        shell: bash
 
     runs-on: ${{ matrix.os }}
     # Fail fast if a runner type ever goes silent again — v0.2.15 sat 24h
@@ -151,16 +164,27 @@ jobs:
           ARTIFACT: ${{ matrix.artifact }}
         run: |
           mkdir -p "$ARTIFACT"
+          # Windows binaries carry `.exe`; a missing one fails the step rather
+          # than shipping an archive without it.
+          ext=""
+          [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
           for bin in senseid sensei sensei-mcp; do
-            src="target/${BUILD_TARGET}/release/${bin}"
-            [ -f "$src" ] && cp "$src" "$ARTIFACT/"
+            cp "target/${BUILD_TARGET}/release/${bin}${ext}" "$ARTIFACT/"
           done
-          tar czf "${ARTIFACT}.tar.gz" "$ARTIFACT"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a -tzip "${ARTIFACT}.zip" "$ARTIFACT"
+          else
+            tar czf "${ARTIFACT}.tar.gz" "$ARTIFACT"
+          fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.tar.gz
+          # One of the two exists: `.zip` on Windows, `.tar.gz` elsewhere.
+          path: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.zip
+          if-no-files-found: error
 
   # ── Desktop app (macOS universal) ──────────────────────────────────────────
   build-app:
@@ -284,6 +308,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/*.tar.gz
+            artifacts/*.zip
             artifacts/*.dmg
             artifacts/*.deb
 
