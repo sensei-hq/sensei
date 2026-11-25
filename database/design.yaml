@@ -197,6 +197,9 @@ apply:
     # Adds `classify_turn_intent` to an existing sensei.task_execution_kind (#447).
     # No-op on a fresh database and once the value is there.
     - apply/before/sensei_task_kind_classify_turn_intent.sql
+    # Drops the items.added_by and actions.reply_to FKs (#393): live rows may
+    # name archived lanes and actions. No-op afterwards.
+    - apply/before/relay_archive_fks_loosened.sql
   after:
     - apply/after/realtime_publication.sql
     # USAGE on `dojo` for the API roles (+ service_role's table grants) — what

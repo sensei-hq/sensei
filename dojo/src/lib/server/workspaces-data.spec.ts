@@ -287,6 +287,7 @@ describe('getWorkspaceMetrics', () => {
 		canRead: boolean;
 		inTenant: boolean;
 		series: unknown[] | { error: { message: string } };
+		activity?: unknown[];
 	}) {
 		const calls: string[] = [];
 		const orders: Array<{ column: string; nullsFirst?: boolean }> = [];
@@ -294,6 +295,9 @@ describe('getWorkspaceMetrics', () => {
 			calls.push(`rpc:${fn}`);
 			if (fn === 'can_read_workspace') {
 				return Promise.resolve({ data: opts.canRead, error: null });
+			}
+			if (fn === 'repository_activity') {
+				return Promise.resolve({ data: opts.activity ?? [], error: null });
 			}
 			const chain: Record<string, unknown> = {};
 			chain.select = () => chain;
@@ -353,6 +357,7 @@ describe('getWorkspaceMetrics', () => {
 		await expect(getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY })).resolves.toEqual({
 			since: '2026-10-05',
 			days: 30,
+			activity: [],
 			rows: [
 				{
 					repository_id: 'r1',
@@ -376,6 +381,17 @@ describe('getWorkspaceMetrics', () => {
 				}
 			]
 		});
+	});
+
+	it('attaches per-repo activity for the cards’ recency sort (#531)', async () => {
+		const { db } = makeMetricsDb({
+			canRead: true,
+			inTenant: true,
+			series: ROWS,
+			activity: [{ repository_id: 'r1', last_activity_at: '2026-11-06T10:00:00Z' }]
+		});
+		const out = await getWorkspaceMetrics(db, 't-acme', 'w1', { days: 30, today: TODAY });
+		expect(out.activity).toEqual([{ repository_id: 'r1', last_activity_at: '2026-11-06T10:00:00Z' }]);
 	});
 
 	it('refuses a caller who may not read the workspace, before touching its rows', async () => {

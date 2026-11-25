@@ -106,14 +106,12 @@ begin
   exception when check_violation then null;
   end;
 
-  -- `added_by` names a lane of this user, or null for the person.
-  begin
-    insert into relay.items (user_id, id, title, kind, state, added_by) values
-      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f536',
-       'Ghost adder', 'bug', 'backlog', '11111111-1111-7000-8000-00000000f599');
-    raise exception 'an added_by pointing at no lane was accepted.';
-  exception when foreign_key_violation then null;
-  end;
+  -- `added_by` names a lane of this user, or null for the person — or a lane
+  -- that has archived away (#393): plain id, no FK.
+  insert into relay.items (user_id, id, title, kind, state, added_by) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f536',
+     'Ghost adder', 'bug', 'backlog', '11111111-1111-7000-8000-00000000f599');
+  delete from relay.items where id = '11111111-1111-7000-8000-00000000f536';
 
   -- Ids are v7.
   begin

@@ -1100,24 +1100,34 @@ impl PgStore {
                   ORDER BY f.repository_id, length(f.abs_path) ASC
              ), edits AS (
                  SELECT DISTINCT s.folder_id AS session_folder, ae.session_id, ae.ts,
-                        ae.payload->'tool_input'->>'file_path' AS path
+                        ae.tool_name, ae.payload->'tool_input'->>'file_path' AS path
                    FROM activity.assistant_events ae
                    JOIN activity.sessions s ON s.client_session_id = ae.session_id
                   WHERE s.workspace_id = $1
                     AND ae.event_type = 'PostToolUse'
                     AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
                     AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
+             ), ranked AS (
+                 -- A session's first `Write` to a file is its CREATION, not a
+                 -- re-edit (#430): authoring a big new file reads as churn
+                 -- otherwise. Excluded from the count; later edits still
+                 -- count. Same-ts ties break on tool name for determinism.
+                 SELECT *, row_number() OVER (
+                     PARTITION BY session_id, path ORDER BY ts, tool_name) AS rn
+                   FROM edits
              ), placed AS (
                  (SELECT DISTINCT ON (e.session_id, e.ts, e.path)
                          r.folder_id, e.session_id,
                          substr(e.path, length(r.abs_path) + 2) AS file
-                    FROM edits e
+                    FROM ranked e
                     JOIN roots r ON starts_with(e.path, r.abs_path || '/')
+                   WHERE NOT (e.rn = 1 AND e.tool_name = 'Write')
                    ORDER BY e.session_id, e.ts, e.path, length(r.abs_path) DESC)
                  UNION ALL
                  SELECT session_folder, session_id, path
-                   FROM edits
+                   FROM ranked
                   WHERE left(path, 1) <> '/' AND session_folder IS NOT NULL
+                    AND NOT (rn = 1 AND tool_name = 'Write')
              ), per_session AS (
                  SELECT folder_id, file, session_id, count(*) AS edits
                    FROM placed

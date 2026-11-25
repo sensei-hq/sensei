@@ -17,8 +17,9 @@ pub struct FileProcessResult {
     pub symbols: Vec<SymbolResult>,
     pub unresolved_imports: Vec<String>,
     pub unresolved_calls: Vec<UnresolvedCall>,
-    pub file_refs: Vec<String>,   // doc: backtick file references
-    pub fn_mentions: Vec<String>, // doc: backtick function mentions
+    pub file_refs: Vec<String>,     // doc: repo-relative file references
+    pub external_refs: Vec<String>, // doc (#246): external URLs, kept by name
+    pub fn_mentions: Vec<String>,   // doc: backtick function mentions
     /// doc (D5b): heading sections, in document order. Written as a nested
     /// `section` node tree (file → H1 → H2 → H3) via the D3 upsert/prune path.
     pub sections: Vec<crate::ir::IRSection>,
@@ -74,6 +75,7 @@ impl FileProcessResult {
             unresolved_imports: vec![],
             unresolved_calls: vec![],
             file_refs: vec![],
+            external_refs: vec![],
             fn_mentions: vec![],
             sections: vec![],
             rationales: vec![],

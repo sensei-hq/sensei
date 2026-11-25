@@ -1,30 +1,32 @@
-# Checkpoint — 2026-11-23 (perf-indexer-storm landed)
+# Checkpoint — 2026-11-24 (pause; #531 #532 #430 done)
 
-**Slice:** P1–P5 storm follow-ups + 4.4 harness fix.
-**Branch:** `develop` (pushed, 8 commits past v0.26.0 checkpoint).
-Tag `v0.26.0` on main; deploy-dojo still waits on user approval.
+**Slice:** 4–5h prioritized batch.
+**Branch:** `develop` (in sync, pushed).
 
 ## Done
-- P1 governor (cap 2 + dedup; tsconfig skip reverted, regressed).
-- P2 stale prune (live-folder gate in community + git_history).
-- P3 phase timing (phases_ms JSONB; task-local outbox; spans).
-- P4 list caps (200 + overflow in 4 ops sections).
-- P5 clear redelivery (pending + timeout + ack-cancel + gens).
-- 4.4 root-caused (harness-side webview sleep; keep-awake read).
-- Gates: unit 4102, senseid exit-0, clippy clean, check clean,
-  crash 5/5 + ops-center 5/5 Tauri matrices green.
+- #531: repo lists sort by activity (new
+  `repository_activity` fn + gated tests); recency
+  shown from the same key; dojo 2533, DB 84 green.
+- #532: per-repo screen (header, metric cards,
+  diagrams link, branch preserved); shared loader
+  context + `RepoMetricCards`; dojo 2549 green.
+- #430: churn excludes the creation Write; new
+  files never flag as rework. Suites green.
+- #246/#312/#433/#299 closed (confirmed).
 
-## Remaining
-- User: approve deploy-dojo in GitHub.
-- Follow-ups (in tasks.md, not this change): 1.5 ts-driver hang,
-  5.5 event-driven alert derive (poll is sleep-prone backstop).
+## Remaining (post-travel)
+- #513/#512/#444/#393/#268/#531/#532/#430 close
+  on the next main merge (release cut).
+- #292 → verify stale vs #536, link or close.
+- Next candidates: #522 (relay-dōjō chain start),
+  #533 (workspace screen), #301/#283 (sync).
 
 ## Next command
-None — verify live, then pick a follow-up or cut 0.27.0.
+None — paused for travel. Resume: pick from Remaining.
 
 ## Open questions
-- 6 process.rs fmt spots: local 1.99.1/1.100.0 flag what CI
-  stable accepts. Left untouched (fixing flips CI red).
+- 6 process.rs fmt spots: local toolchains flag what CI stable
+  accepts. Left untouched.
 
 ## Known-broken
 - None.

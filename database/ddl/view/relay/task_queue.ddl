@@ -25,13 +25,13 @@ select
     when t.state = 'in_review' and t.review_claimed_by is null then 'review_floating'
     when t.state = 'in_review' then 'review_claimed'
     when not exists (
-      select 1 from relay.tasks d
+      select 1 from relay.tasks_all d
        where d.user_id = t.user_id and d.id = any (t.deps) and d.state <> 'done')
       then 'ready_unblocked'
     else 'ready_claim_early'
   end as claim_eligibility,
   array(
-    select d.id from relay.tasks d
+    select d.id from relay.tasks_all d
      where d.user_id = t.user_id and d.id = any (t.deps) and d.state <> 'done'
      order by d.id) as unmet_deps,
   t.state_changed_at
@@ -39,4 +39,4 @@ from relay.tasks t
 where t.state in ('ready', 'in_review');
 
 comment on view relay.task_queue is
-'The claim queue: review_floating, review_claimed, ready_unblocked, ready_claim_early. Read-only; claims go through the daemon.';
+'The claim queue: review_floating, review_claimed, ready_unblocked, ready_claim_early. Read-only; claims go through the daemon. Dep checks span live and archive (#393).';

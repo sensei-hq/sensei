@@ -44,6 +44,8 @@ pub fn language_for_ext_slug(ext: &str) -> Option<&'static str> {
         "rb" => Some("ruby"),
         "sh" | "bash" => Some("shell"),
         "md" | "markdown" | "mdx" => Some("markdown"),
+        "rst" | "rest" => Some("restructuredtext"),
+        "adoc" | "asciidoc" => Some("asciidoc"),
         // NOTE: `txt` is deliberately absent — see `text_language_from_content`.
         // The extension cannot decide (llms corpus vs a licence), so this abstains.
         "toml" => Some("toml"),
@@ -229,6 +231,15 @@ mod tests {
     #[test]
     fn txt_abstains_because_the_extension_cannot_decide() {
         assert_eq!(language_for_ext_slug("txt"), None);
+    }
+
+    /// #246: rst and asciidoc are unambiguous like markdown, so their nodes
+    /// stamp honestly instead of null.
+    #[test]
+    fn rst_and_adoc_stamp_their_language() {
+        assert_eq!(language_for_ext_slug("rst"), Some("restructuredtext"));
+        assert_eq!(language_for_ext_slug("adoc"), Some("asciidoc"));
+        assert_eq!(language_for_ext_slug("asciidoc"), Some("asciidoc"));
     }
 
     /// The llms corpus is markdown despite the extension — headings, tables, fenced

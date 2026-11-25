@@ -1,11 +1,13 @@
 //! PostgresInstallResolver — resolves ComponentId::Postgres via
-//! `brew install postgresql@17` AND `brew services start postgresql@17`.
+//! `brew install postgresql@17` AND `brew services start postgresql@17`,
+//! then `brew install pgvector` (the schema's `vector` extension).
 //! Install alone leaves the server stopped — every downstream checker
 //! (PortChecker for 5432, database setup) would then fail. Both steps are
 //! idempotent: brew skips installed formulas and treats "already started"
 //! as success.
 
 use crate::health::resolver::{ResolveOutcome, Resolver};
+use crate::health::resolvers::brew_helpers::brew_install_to_outcome;
 use crate::health::resolvers::service_cascade::{ServiceCascadeSpec, resolve_service_cascade};
 use crate::health::types::{ComponentId, Remedy};
 
@@ -34,12 +36,35 @@ impl Resolver for PostgresInstallResolver {
     }
 
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
-        resolve_service_cascade(&SPEC)
+        then_install_extensions(resolve_service_cascade(&SPEC), |f| brew_install_to_outcome(f, &[]))
     }
 
     fn fallback_remedy(&self) -> Remedy {
         postgres_fallback_remedy()
     }
+}
+
+/// Extensions the sensei schema needs that Homebrew ships as their own
+/// formulas — `postgresql@17` alone has no pgvector, so `CREATE EXTENSION
+/// vector` in the database step would fail on a fresh machine.
+const EXTENSION_FORMULAS: &[&str] = &["pgvector"];
+
+/// Once postgres is up, install each extension formula (idempotent: brew
+/// skips an installed one). A cascade that did not bring postgres up keeps
+/// its own remedy; the first extension that fails to install returns its.
+fn then_install_extensions(
+    cascade: ResolveOutcome,
+    install: impl Fn(&str) -> ResolveOutcome,
+) -> ResolveOutcome {
+    if !matches!(cascade, ResolveOutcome::Resolved) {
+        return cascade;
+    }
+    for formula in EXTENSION_FORMULAS {
+        if let failed @ ResolveOutcome::NeedsHumanAction(_) = install(formula) {
+            return failed;
+        }
+    }
+    ResolveOutcome::Resolved
 }
 
 /// Most likely cause of a post-resolve check still failing: `postgresql@17`
@@ -78,6 +103,40 @@ mod tests {
         assert!(!t.contains(&ComponentId::Sensei));
         assert!(!t.contains(&ComponentId::Database));
         assert!(!t.contains(&ComponentId::Daemon));
+    }
+
+    #[test]
+    fn a_running_postgres_then_gets_pgvector_installed() {
+        let installed = std::cell::RefCell::new(Vec::new());
+        let out = then_install_extensions(ResolveOutcome::Resolved, |f| {
+            installed.borrow_mut().push(f.to_string());
+            ResolveOutcome::Resolved
+        });
+        assert!(matches!(out, ResolveOutcome::Resolved));
+        assert_eq!(installed.into_inner(), ["pgvector"]);
+    }
+
+    #[test]
+    fn a_failed_cascade_installs_no_extension_and_keeps_its_remedy() {
+        let remedy = Remedy { message: "m".into(), script: "cascade".into(), url: None };
+        let out = then_install_extensions(ResolveOutcome::NeedsHumanAction(remedy), |_| {
+            panic!("no extension install when postgres did not come up")
+        });
+        let ResolveOutcome::NeedsHumanAction(r) = out else { panic!("expected a remedy") };
+        assert_eq!(r.script, "cascade");
+    }
+
+    #[test]
+    fn a_failed_pgvector_install_surfaces_its_remedy() {
+        let out = then_install_extensions(ResolveOutcome::Resolved, |f| {
+            ResolveOutcome::NeedsHumanAction(Remedy {
+                message: "m".into(),
+                script: format!("brew install {f}"),
+                url: None,
+            })
+        });
+        let ResolveOutcome::NeedsHumanAction(r) = out else { panic!("expected a remedy") };
+        assert_eq!(r.script, "brew install pgvector");
     }
 
     #[test]

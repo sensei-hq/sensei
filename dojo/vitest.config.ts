@@ -30,7 +30,7 @@ export default defineConfig({
 	},
 	resolve: {
 		// As vite.config.ts: the shared packages take rokkit from this host.
-		dedupe: ['@rokkit/ui', '@rokkit/states', '@rokkit/core', '@rokkit/app'],
+		dedupe: ['@rokkit/ui', '@rokkit/states', '@rokkit/core', '@rokkit/app', '@rokkit/graph'],
 		alias: {
 			$lib: new URL('./src/lib', import.meta.url).pathname,
 			// Mirrors svelte.config.js: the vocabulary shared with the app (#133).
@@ -38,6 +38,7 @@ export default defineConfig({
 			'@sensei/sdlc-figures': new URL('../packages/sdlc-figures/index.js', import.meta.url).pathname,
 			'@sensei/ui': new URL('../packages/ui/index.js', import.meta.url).pathname,
 			'@sensei/state': new URL('../packages/state/index.ts', import.meta.url).pathname,
+			'@sensei/codemap': new URL('../packages/codemap/index.ts', import.meta.url).pathname,
 			// $env/dynamic/public isn't generated outside the SvelteKit plugin; point
 			// it at a stub so the triage API client imports cleanly under vitest.
 			'$env/dynamic/public': new URL(

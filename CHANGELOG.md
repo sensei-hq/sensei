@@ -15,6 +15,98 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-11-24
+
+### Added
+
+- **Linux desktop app** (`.deb`, Ubuntu 22.04 or newer, x86_64). `release.yml`
+  gains `build-app-linux`, built on `ubuntu-22.04` and attached to the GitHub
+  release; README gains an *Install (Linux)* section.
+- **Relay archive** (#393). Ended runs and closed crews move to
+  `relay_archive` mirror tables (10 per sweep pass while backfilling) and are
+  purged 30 days after `archived_at`, with archived/deleted events. History
+  reads span live and archive through union views; auth, gates, close,
+  unregister and reregister keep their documented answers on archived rows.
+- **Dōjō repo diagrams** (#268). A repository route draws one tracked
+  branch's files, nodes and edges (resolved at read time), with a branch
+  picker, a lens switcher and a schema ER lens. A tracked-branch manager
+  tracks and untracks branches behind an authority check and an in-page
+  confirm; its errors render through `Notice`.
+- **Relay health sentinel** (#444 §10.1). A scheduled task watches disk and
+  swap: at ≤ 25 GB free or ≥ 60 % swap it warns and cleans up; below 15 GB or
+  above 80 % swap relay claims are refused (`relay_host_disk_exhausted`).
+
+### Changed
+
+- **Relay builds share compiler caches** (#444 §10.3). Broker builds are
+  serialized process-wide; a lane's build offload waits for the shared build
+  to finish, records its properties and frees its slot.
+- **Dead worktrees are reclaimed** (#444 §10.2) by the relay janitor, hourly
+  and when a run ends.
+
+### Fixed
+
+- **First-run setup installs pgvector.** The desktop app's health check
+  started PostgreSQL 17 but never installed pgvector, so `CREATE EXTENSION
+  vector` failed on a fresh machine. The postgres step now runs `brew install
+  pgvector` once postgres is up, and the database step's remedy names it
+  (instead of `createdb`) when the extension is missing.
+
+## [0.27.1] — 2026-11-23
+
+### Fixed
+
+- **Ticket URLs link sessions** (#504). A session that names its ticket by
+  URL (GitLab `/-/work_items/N` or `/-/issues/N`, GitHub `/issues/N`) now
+  links to the task whose scope is that `host/path` and whose iid is that
+  number, so the ticket shows its time and tokens. Previously only `path#n`
+  and a bare `#n` matched.
+- **`codesign-local` skips signing off macOS.** On Linux, `make install-debug`
+  died on a missing `codesign` after copying the binaries, leaving the daemon
+  down; the script now reports the skip and exits 0.
+
+### Security
+
+- **`cookie` 0.18.2 → 0.18.3** in the desktop app (RUSTSEC-2026-0594,
+  private cookie nonces can repeat in processes that fork). Reached through
+  Tauri; lockfile-only update.
+
+## [0.27.0] — 2026-11-23
+
+### Added
+
+- **Relay launch templates** (#513). Each catalogue tool carries a seeded
+  `launch_template`; `GET /relay/catalogue` takes `workspace_id` + `crew_id`
+  and resolves `{repo}` to the crew's checkout, else the workspace's first
+  repo. AddMember renders the resolved launch as its own copyable block
+  under the paste line.
+- **Hook sessions report their host** (#512). A shared env-to-host table in
+  `sensei-bootstrap`; the plugin forwards `TERM_PROGRAM` and cursor-trace
+  presence, and the daemon fills a missing `sessions.host` through the
+  catalogue gate without ever clearing a transcript-derived host.
+- **Indexer phase timing.** Per-file parse/resolve/write splits persist to
+  the new `task_executions.phases_ms` column, so a slow file says where its
+  seconds went.
+
+### Changed
+
+- **Indexer compile governor.** At most two concurrent compiler subprocess
+  spawns; callers for the same (engine, root) share one in-flight compile
+  instead of piling up.
+- **Ops center list caps.** Alerts, failures, pipelines and sync render at
+  most 200 rows with an honest overflow count, so large scan storms no
+  longer choke the webview.
+- **Ops alert clears redeliver.** Uncleared drops stay pending and retry on
+  every refresh until one lands; each write has its own timeout, a
+  recurrence cancels the stale pending write, and late responses from
+  superseded attempts are dropped.
+
+### Fixed
+
+- **Stale folders stop failing.** A vanished directory deletes its tree and
+  skips cleanly instead of failing and alerting; community detection and
+  git-history scans share the same live-folder gate.
+
 ## [0.26.0] — 2026-11-22
 
 ### Added

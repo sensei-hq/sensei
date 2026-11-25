@@ -369,15 +369,38 @@ fn is_word_byte(b: u8) -> bool {
 /// Extract sections split by headings.
 fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
     let lines: Vec<&str> = content.lines().collect();
+    // YAML frontmatter is metadata, not content: skip the fenced block so a
+    // `---` fence never reads as a heading adornment.
+    let mut start = 0;
+    if lines.first().is_some_and(|l| l.trim() == "---")
+        && let Some(end) = lines.iter().skip(1).position(|l| l.trim() == "---")
+    {
+        start = end + 2;
+    }
     let mut sections = Vec::new();
     let mut current_heading: Option<(String, u8, u32)> = None;
 
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if let Some((level, text)) = parse_heading(trimmed) {
+    let mut i = start;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        // rst underline adornment: a text line capped by a run of one
+        // punctuation char at least as long (setext `===`/`---` included —
+        // valid markdown too, same reading).
+        let found = if !trimmed.is_empty()
+            && parse_heading(trimmed).is_none()
+            && let Some(next) = lines.get(i + 1).map(|l| l.trim())
+            && let Some(level) = adornment_level(next)
+            && next.len() >= trimmed.len()
+        {
+            i += 1; // the adornment line is consumed with its text
+            Some((level, trimmed.to_string(), i - 1))
+        } else {
+            parse_heading(trimmed).map(|(level, text)| (level, text, i))
+        };
+        if let Some((level, text, at)) = found {
             // Close previous section
             if let Some((heading, lvl, start)) = current_heading.take() {
-                let end = i as u32;
+                let end = at as u32;
                 let preview = make_preview(&lines, start as usize + 1, end as usize);
                 sections.push(crate::ir::IRSection {
                     heading,
@@ -387,8 +410,9 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
                     content_preview: preview,
                 });
             }
-            current_heading = Some((text, level, i as u32));
+            current_heading = Some((text, level, at as u32));
         }
+        i += 1;
     }
 
     // Close last section
@@ -414,7 +438,30 @@ fn parse_heading(line: &str) -> Option<(u8, String)> {
             return Some((n, rest.trim().into()));
         }
     }
+    // Asciidoc: `= ` is H1 through `====== ` H6.
+    let run = line.bytes().take_while(|&b| b == b'=').count();
+    if (1..=6).contains(&run) && line.as_bytes().get(run) == Some(&b' ') {
+        return Some((run as u8, line[run + 1..].trim().into()));
+    }
     None
+}
+
+/// An rst underline adornment's level: one repeated punctuation char.
+/// `=` is the title, then `-`, `~`, `^`, `"`; anything else runs deepest.
+fn adornment_level(line: &str) -> Option<u8> {
+    let mut chars = line.chars();
+    let first = chars.next()?;
+    if !"=-~^\"#*+".contains(first) || chars.any(|c| c != first) {
+        return None;
+    }
+    Some(match first {
+        '=' => 1,
+        '-' => 2,
+        '~' => 3,
+        '^' => 4,
+        '"' => 5,
+        _ => 6,
+    })
 }
 
 fn make_preview(lines: &[&str], start: usize, end: usize) -> Option<String> {
@@ -563,15 +610,9 @@ fn infer_category_from_path(rel_path: &str) -> Option<String> {
     }
 }
 
-/// Extract the first H1 title from markdown.
+/// Extract the first H1 title — markdown, asciidoc, or rst underlined.
 pub fn extract_title(content: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(title) = trimmed.strip_prefix("# ") {
-            return Some(title.trim().to_string());
-        }
-    }
-    None
+    extract_sections(content).into_iter().find(|s| s.level == 1).map(|s| s.heading)
 }
 
 /// Extract file path references from markdown content — from INSIDE backticks
@@ -592,32 +633,156 @@ pub fn extract_title(content: &str) -> Option<String> {
 ///   layout into the graph and cannot be a reference to anything IN the repo.
 ///   A doc reference is repo-relative by definition, so an absolute specifier is
 ///   rejected rather than silently re-rooted.
+#[cfg(test)]
 pub fn extract_file_refs(content: &str, repo_path: &str) -> Vec<String> {
-    let mut refs = HashSet::new();
-    let repo = Path::new(repo_path);
+    // Test-only back-compat: the old backtick-only entry, kept so the
+    // defect-history tests below keep pinning their cases verbatim.
+    // Production calls `extract_doc_links`.
+    extract_doc_links(content, "", repo_path).internal
+}
 
-    for (i, cap) in content.split('`').enumerate() {
-        // Odd segments are between a pair of backticks; even ones are prose.
+/// A doc's link targets, split (#246): repo-relative paths that exist in
+/// the checkout, and external URLs kept by name.
+pub struct DocLinks {
+    pub internal: Vec<String>,
+    pub external: Vec<String>,
+}
+
+/// Every link a doc makes, in every syntax we index: backticked paths
+/// (rst's double-backtick literals normalized to single), markdown
+/// `[text](target)`, rst `` `text <target>`_ ``, asciidoc `link:`/`xref:`.
+/// Each target resolves repo-root first — a hit there keeps the meaning
+/// `extract_file_refs` always gave it — then against the doc's own dir.
+/// Anchors strip; absolute paths, root escapes, and broken links resolve to
+/// nothing; URLs stay named externals.
+pub fn extract_doc_links(content: &str, rel_path: &str, repo_path: &str) -> DocLinks {
+    let mut raws: Vec<String> = Vec::new();
+    let normalized = content.replace("``", "`");
+    for (i, cap) in normalized.split('`').enumerate() {
         if i % 2 == 0 {
             continue;
         }
         let trimmed = cap.trim();
-        if trimmed.starts_with('/') {
-            continue; // absolute: `join` would discard the repo root entirely
-        }
         if trimmed.contains('/') && !trimmed.contains(' ') && trimmed.len() < 200 {
-            // Existence is checked against the ABSOLUTE path, but what is STORED
-            // is the repo-relative one. A machine-absolute target can never match
-            // a node's `file_path` — 666,511 of 673,929 of those (98.9%) are
-            // repo-relative — which is why doc references resolved at 0%, and it
-            // also kept a local filesystem layout out of a shared graph.
-            if repo.join(trimmed).exists() {
-                refs.insert(trimmed.trim_start_matches("./").to_string());
+            raws.push(trimmed.to_string());
+        }
+    }
+    raws.extend(markdown_link_targets(content));
+    raws.extend(rst_link_targets(content));
+    raws.extend(adoc_link_targets(content));
+
+    let repo = Path::new(repo_path);
+    let canonical_repo = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
+    let doc_dir = repo.join(Path::new(rel_path).parent().unwrap_or_else(|| Path::new("")));
+    let mut internal = HashSet::new();
+    let mut external = HashSet::new();
+    for raw in raws {
+        match resolve_doc_target(&doc_dir, &canonical_repo, repo, &raw) {
+            Resolved::Internal(path) => {
+                internal.insert(path);
+            }
+            Resolved::External(url) => {
+                external.insert(url);
+            }
+            Resolved::Nowhere => {}
+        }
+    }
+    let mut internal: Vec<String> = internal.into_iter().collect();
+    internal.sort();
+    let mut external: Vec<String> = external.into_iter().collect();
+    external.sort();
+    DocLinks { internal, external }
+}
+
+enum Resolved {
+    Internal(String),
+    External(String),
+    Nowhere,
+}
+
+fn resolve_doc_target(doc_dir: &Path, canonical_repo: &Path, repo: &Path, raw: &str) -> Resolved {
+    let target = raw.split('#').next().unwrap_or("").trim();
+    if target.is_empty() || target.contains(' ') || target.len() >= 200 {
+        return Resolved::Nowhere;
+    }
+    if target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.starts_with("mailto:")
+        || target.starts_with("ftp://")
+    {
+        return Resolved::External(target.to_string());
+    }
+    if target.starts_with('/') {
+        return Resolved::Nowhere;
+    }
+    // Repo-root first (existing meanings never shift), then the doc's dir.
+    for base in [repo, doc_dir] {
+        let candidate = base.join(target);
+        if !candidate.exists() {
+            continue;
+        }
+        let Ok(canonical) = candidate.canonicalize() else { continue };
+        if !canonical.starts_with(canonical_repo) {
+            continue;
+        }
+        if let Ok(rel) = canonical.strip_prefix(canonical_repo) {
+            return Resolved::Internal(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Resolved::Nowhere
+}
+
+/// Markdown `[text](target)` link targets, raw (anchors intact).
+fn markdown_link_targets(content: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let mut remaining = line;
+        while let Some(start) = remaining.find("](") {
+            let after = &remaining[start + 2..];
+            let Some(end) = after.find(')') else { break };
+            out.push(after[..end].to_string());
+            remaining = &after[end..];
+        }
+    }
+    out
+}
+
+/// rst `` `text <target>`_ `` link targets.
+fn rst_link_targets(content: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = content;
+    while let Some(open) = rest.find('`') {
+        rest = &rest[open + 1..];
+        let (Some(lt), Some(gt), Some(close)) = (rest.find('<'), rest.find('>'), rest.find("`_"))
+        else {
+            continue;
+        };
+        if lt < gt && gt < close {
+            out.push(rest[lt + 1..gt].to_string());
+            rest = &rest[close + 2..];
+        }
+    }
+    out
+}
+
+/// Asciidoc `link:target[text]` and `xref:target[text]` targets.
+fn adoc_link_targets(content: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in content.lines() {
+        for prefix in ["link:", "xref:"] {
+            let mut rest = line;
+            while let Some(at) = rest.find(prefix) {
+                rest = &rest[at + prefix.len()..];
+                if let Some(end) = rest.find('[') {
+                    out.push(rest[..end].to_string());
+                    rest = &rest[end..];
+                } else {
+                    break;
+                }
             }
         }
     }
-
-    refs.into_iter().collect()
+    out
 }
 
 /// Extract function mentions: `functionName` in backticks.
@@ -656,6 +821,31 @@ mod tests {
         assert_eq!(extract_title("# Hello World\nsome text"), Some("Hello World".to_string()));
         assert_eq!(extract_title("no heading here"), None);
         assert_eq!(extract_title("## Not H1"), None);
+    }
+
+    /// #246: asciidoc headings decompose like markdown's (`= Title` is H1).
+    #[test]
+    fn asciidoc_headings_become_sections() {
+        let secs = extract_sections_pub("= Guide\n\n== Setup\n\nbody\n");
+        assert_eq!(
+            secs.iter().map(|s| (s.heading.as_str(), s.level)).collect::<Vec<_>>(),
+            [("Guide", 1), ("Setup", 2)]
+        );
+        assert_eq!(extract_title("= Guide\n\nbody\n"), Some("Guide".to_string()));
+    }
+
+    /// #246: rst underline adornments decompose (`===` is H1, `---` H2).
+    /// The adornment must be one repeated char at least as long as the text;
+    /// a `---` with no text above it (frontmatter fence) is not a heading.
+    #[test]
+    fn rst_underline_headings_become_sections() {
+        let secs = extract_sections_pub("Guide\n=====\n\nSetup\n-----\n\nbody\n");
+        assert_eq!(
+            secs.iter().map(|s| (s.heading.as_str(), s.level)).collect::<Vec<_>>(),
+            [("Guide", 1), ("Setup", 2)]
+        );
+        assert_eq!(extract_title("Guide\n=====\n\nbody\n"), Some("Guide".to_string()));
+        assert!(extract_sections_pub("---\ntitle: x\n---\n\nno headings\n").is_empty());
     }
 
     #[test]
@@ -873,6 +1063,78 @@ This is IMPORTANT: keep it.
         let refs = extract_file_refs(content, &dir.path().to_string_lossy());
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0], "src/main.py", "repo-relative");
+    }
+
+    /// #246: markdown links resolve like backticked paths — including source
+    /// files, anchors stripped, `../` against the doc's own dir.
+    #[test]
+    fn markdown_links_resolve_against_the_docs_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("shop")).unwrap();
+        std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+        std::fs::write(dir.path().join("shop/cart.ts"), "x").unwrap();
+        std::fs::write(dir.path().join("shop/README.md"), "x").unwrap();
+        std::fs::write(dir.path().join("docs/guide.md"), "x").unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+
+        let links = extract_doc_links(
+            "See [the cart](../shop/cart.ts#Cart) for it.",
+            "docs/guide.md",
+            &root,
+        );
+        assert_eq!(links.internal, ["shop/cart.ts".to_string()]);
+        assert!(links.external.is_empty());
+        // A doc beside its target resolves doc-relative.
+        let links = extract_doc_links("See [the cart](cart.ts).", "shop/README.md", &root);
+        assert_eq!(links.internal, ["shop/cart.ts".to_string()]);
+    }
+
+    /// #246: rst and asciidoc link targets resolve; externals are named.
+    #[test]
+    fn rst_and_adoc_targets_resolve_and_externals_stay_named() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.py"), "pass").unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+
+        let links = extract_doc_links("See `the code <src/a.py>`_ here.", "guide.rst", &root);
+        assert_eq!(links.internal, ["src/a.py".to_string()]);
+        let links = extract_doc_links("See link:src/a.py[the code].", "guide.adoc", &root);
+        assert_eq!(links.internal, ["src/a.py".to_string()]);
+        let links = extract_doc_links("See xref:src/a.py[].", "guide.adoc", &root);
+        assert_eq!(links.internal, ["src/a.py".to_string()]);
+        // Double-backtick rst literals count as backticked paths.
+        let links = extract_doc_links("See ``src/a.py`` here.", "guide.rst", &root);
+        assert_eq!(links.internal, ["src/a.py".to_string()]);
+        // Externals are named, never resolved or dropped.
+        let links = extract_doc_links("See [x](https://example.com/y).", "g.md", &root);
+        assert!(links.internal.is_empty());
+        assert_eq!(links.external, ["https://example.com/y".to_string()]);
+    }
+
+    /// #246: absolute paths, root escapes, and broken links resolve to
+    /// nothing — and a repo-root hit keeps its meaning over a doc-dir one.
+    #[test]
+    fn link_resolution_rejects_escapes_and_prefers_repo_root() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("docs/shop")).unwrap();
+        std::fs::create_dir_all(dir.path().join("shop")).unwrap();
+        std::fs::write(dir.path().join("docs/shop/cart.ts"), "decoy").unwrap();
+        std::fs::write(dir.path().join("shop/cart.ts"), "real").unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+
+        let links = extract_doc_links("See [c](shop/cart.ts).", "docs/guide.md", &root);
+        assert_eq!(
+            links.internal,
+            ["shop/cart.ts".to_string()],
+            "repo-root wins, the doc-local decoy loses"
+        );
+        let links = extract_doc_links("See [c](../../etc/passwd).", "docs/guide.md", &root);
+        assert!(links.internal.is_empty() && links.external.is_empty(), "escapes are dropped");
+        let links = extract_doc_links("See [c](/abs/path).", "docs/guide.md", &root);
+        assert!(links.internal.is_empty() && links.external.is_empty(), "absolute is dropped");
+        let links = extract_doc_links("See [c](nope/missing.ts).", "docs/guide.md", &root);
+        assert!(links.internal.is_empty() && links.external.is_empty(), "broken links stay silent");
     }
 
     // index_docs and marketplace tests moved to tasks/processors/doc.rs and tests.rs

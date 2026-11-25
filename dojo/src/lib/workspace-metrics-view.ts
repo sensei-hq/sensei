@@ -30,13 +30,17 @@ export interface WorkspaceRepoMetrics {
 	repo_key: string;
 	/** The key without its forge host (`acme/api`), for the card heading. */
 	name: string;
+	/** Newest reading landed or graph sync filed (#531) — the recency the
+	 *  cards sort by AND show. Null when the gate withholds it: quiet. */
+	last_activity_at: string | null;
 	cards: WorkspaceMetricCard[];
 }
 
 export interface WorkspaceMetricsView {
 	since: string;
 	days: number;
-	/** By repository, sorted by key; empty when nothing was sent, never an error. */
+	/** By repository, most-recently-active first (key tiebreak); empty when
+	 *  nothing was sent, never an error. */
 	repos: WorkspaceRepoMetrics[];
 }
 
@@ -123,12 +127,25 @@ export function toWorkspaceMetricsView(wire: WorkspaceMetricsWire): WorkspaceMet
 		mine.rows.push(r);
 		byRepo.set(r.repository_id, mine);
 	}
+	// Most-recently-active first (#531) — the same activity the repo lists
+	// sort by, so the two orders never disagree. A repo the gate withholds
+	// reads as quiet (null), sorting last; ties break on key.
+	const at = new Map((wire.activity ?? []).map((a) => [a.repository_id, a.last_activity_at] as const));
+	const stamp = (id: string): number => {
+		const t = at.get(id);
+		const n = t ? Date.parse(t) : NaN;
+		return Number.isNaN(n) ? Number.NEGATIVE_INFINITY : n;
+	};
 	const repos = [...byRepo.entries()]
-		.sort(([, a], [, b]) => (a.repo_key < b.repo_key ? -1 : a.repo_key > b.repo_key ? 1 : 0))
+		.sort(
+			([ida, a], [idb, b]) =>
+				stamp(idb) - stamp(ida) || (a.repo_key < b.repo_key ? -1 : a.repo_key > b.repo_key ? 1 : 0)
+		)
 		.map(([repository_id, { repo_key, rows }]) => ({
 			repository_id,
 			repo_key,
 			name: shortName(repo_key),
+			last_activity_at: at.get(repository_id) ?? null,
 			cards: TEAM_METRICS.map((def) => {
 				const byDay = new Map<string, WorkspaceMetricPoint[]>();
 				for (const r of rows.filter((x) => x.metric_key === def.key)) {

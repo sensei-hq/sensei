@@ -70,5 +70,7 @@ test('a crew with a dead contributor closes from the coordinator; its lanes leav
   // The dead session comes back: its lane is gone and the crew is closed to it.
   const beat = await RelayLane.attempt(() => worker.heartbeat());
   expect(beat).toMatchObject({ ok: false, status: 410, error: 'relay_lane_gone' });
-  await coord.unregister();
+  // Leaving after the close: already gone with the crew (#393).
+  const leave = await RelayLane.attempt(() => coord.unregister());
+  expect(leave).toMatchObject({ ok: false, status: 410 });
 });

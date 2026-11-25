@@ -130,6 +130,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/relay/messages", post(relay::lane_message))
         .route("/api/relay/resources/request", post(relay::request_resource))
         .route("/api/relay/resources/release", post(relay::release_resource))
+        .route("/api/relay/resources/execute", post(relay::execute_resource))
         .route("/relay/now", get(relay::now))
         .route("/relay/catalogue", get(relay::catalogue))
         .route("/relay/queue", get(relay::queue))

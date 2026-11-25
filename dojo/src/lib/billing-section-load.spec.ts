@@ -25,6 +25,7 @@ const repo = (id: string, org: string, billing_hidden: boolean): MyRepoWire => (
 	remedy: null,
 	reason_actor: null,
 	last_synced_at: null,
+	last_activity_at: null,
 	metric_rows: 0,
 	graph_branches: [],
 	billing_hidden

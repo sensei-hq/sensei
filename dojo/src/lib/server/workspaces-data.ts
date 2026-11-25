@@ -143,6 +143,8 @@ export interface WorkspaceMetricsWire {
 	since: string;
 	days: number;
 	rows: WorkspaceMetricRow[];
+	/** Per-repo activity (#531) — the recency the cards sort by AND show. */
+	activity: Array<{ repository_id: string; last_activity_at: string | null }>;
 }
 
 /**
@@ -182,6 +184,19 @@ export async function getWorkspaceMetrics(
 			.order('principal_id', { nullsFirst: true })
 			.range(from, to)
 	);
+	const repoIds = [...new Set(rows.map((r) => r.repository_id))];
+	// Per-repo activity for the cards' recency sort (#531) — the same
+	// definition the repo lists sort by, so the two orders never disagree. A
+	// repo the activity gate withholds reads as quiet, never an error: the
+	// metrics read already passed this workspace's gate.
+	let activity: Array<{ repository_id: string; last_activity_at: string | null }> = [];
+	if (repoIds.length > 0) {
+		const { data, error } = await db.rpc('repository_activity', { p_ids: repoIds });
+		if (error) throw new AdminError(500, error.message);
+		activity = ((data ?? []) as Array<{ repository_id: string; last_activity_at: string | null }>)
+			.filter((a) => repoIds.includes(a.repository_id))
+			.map((a) => ({ repository_id: a.repository_id, last_activity_at: a.last_activity_at }));
+	}
 	return {
 		since,
 		days: opts.days,
@@ -194,7 +209,8 @@ export async function getWorkspaceMetrics(
 			day: r.computed_on,
 			value: num(r.value),
 			props: r.props
-		}))
+		})),
+		activity
 	};
 }
 

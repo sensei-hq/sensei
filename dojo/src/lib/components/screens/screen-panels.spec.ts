@@ -43,6 +43,7 @@ const repo: MyRepoWire = {
 	remedy: null,
 	reason_actor: null,
 	last_synced_at: null,
+	last_activity_at: null,
 	metric_rows: 0,
 	graph_branches: [],
 	billing_hidden: false

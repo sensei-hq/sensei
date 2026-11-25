@@ -598,6 +598,7 @@ pub(crate) use personas::ForgeTokenRow;
 mod playbook;
 mod reasons;
 pub(crate) mod relay;
+pub(crate) mod relay_janitor;
 pub(crate) mod repo_key;
 mod runs;
 mod schedules;

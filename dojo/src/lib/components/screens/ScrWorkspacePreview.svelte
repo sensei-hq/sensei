@@ -6,6 +6,7 @@
 	import Spark from '$lib/components/kit/Spark.svelte';
 	import type { KitConflict, KitLadderRung, KitWorkspace } from '$lib/components/kit/types';
 	import type { WorkspaceMetricsView } from '$lib/workspace-metrics-view';
+	import RepoMetricCards from '$lib/components/RepoMetricCards.svelte';
 	import { createWorkspacePreview, type PreviewView } from '$lib/preview/state.svelte';
 	import { untrack } from 'svelte';
 
@@ -182,30 +183,7 @@
 				{:else if metrics && metrics.repos.length === 0}
 					<p class="text-sm text-ink-faint">Nothing sent in this window.</p>
 				{:else if metrics}
-					<div class="flex flex-col gap-5">
-						{#each metrics.repos as repo (repo.repository_id)}
-							<div>
-								<div class="mono text-ink-soft text-xs mb-2">{repo.name}</div>
-								<ul class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
-									{#each repo.cards as c (c.key)}
-										<li class="flex flex-col gap-2 rounded border border-paper-edge p-4">
-											<span class="text-xs text-ink-mute">{c.label}</span>
-											{#if c.empty}
-												<span class="text-sm text-ink-faint">Nothing sent in this window</span>
-											{:else}
-												<div class="flex items-end justify-between gap-3">
-													<span class="text-2xl text-ink">{c.value}</span>
-													{#if c.points.length > 1}
-														<Spark data={c.points} />
-													{/if}
-												</div>
-											{/if}
-										</li>
-									{/each}
-								</ul>
-							</div>
-						{/each}
-					</div>
+					<RepoMetricCards repos={metrics.repos} />
 				{/if}
 			</div>
 		{/if}
