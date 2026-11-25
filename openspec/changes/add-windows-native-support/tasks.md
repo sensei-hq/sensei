@@ -57,7 +57,8 @@
 - [ ] 5.2 Tauri NSIS installer (unsigned), shipping the three binaries on the user `PATH`; Windows fallback for
   `titleBarStyle: Overlay` / `macOSPrivateApi`
 - [ ] 5.3 Hooks end to end on Windows through `run-hook.cmd` → Git Bash (session-start, forward, nudge, pre-compact)
-- [ ] 5.4 README: Windows install (Git for Windows, Docker, the installer, SmartScreen prompt, `sensei doctor --fix`)
+- [x] 5.4 README: Windows install (Git for Windows, Docker, `.env` credentials, the installer, SmartScreen
+  prompt, `sensei doctor --fix`, `sensei start`)
 
 ## 6. Verification
 - [ ] 6.1 Clean Windows 11 VM: follow the README only, end with `sensei doctor` all green, a workspace indexed,

@@ -2,22 +2,23 @@
 
 ### Requirement: Windows prerequisites are checked
 `sensei doctor` on Windows SHALL check Git for Windows, the Docker engine, the `sensei-pg` Postgres
-container, Ollama, the daemon and the database, and SHALL report each component's real status instead of
-"not yet implemented".
+container, Ollama, the daemon and the database, resolve what it can (as it does on every platform), and
+SHALL report each component's real status instead of "not yet implemented".
 
 #### Scenario: A fresh Windows host
 - **GIVEN** a Windows host with none of the prerequisites installed
 - **WHEN** `sensei doctor` runs
-- **THEN** each missing component is listed as failed with its remedy, and the command exits non-zero
+- **THEN** each component it cannot resolve itself (Docker, the credentials) is listed as failed with its
+  remedy, and the command exits non-zero
 
 ### Requirement: Postgres runs in a Docker container on Windows
 On Windows the Postgres prerequisite SHALL be the `sensei-pg` container from `pgvector/pgvector:pg17`,
-published on port 5432 with a named data volume. `sensei doctor --fix` SHALL create the container when it
-is missing and start it when it is stopped. The daemon SHALL NOT start or stop the container.
+published on port 5432 with a named data volume. `sensei doctor` SHALL create the container when it is
+missing and start it when it is stopped. The daemon SHALL NOT start or stop the container.
 
 #### Scenario: Container stopped
 - **GIVEN** Docker is running and `sensei-pg` exists but is stopped
-- **WHEN** `sensei doctor --fix` runs
+- **WHEN** `sensei doctor` runs
 - **THEN** the container is started, port 5432 answers, and the Postgres check passes
 
 #### Scenario: Docker not running
@@ -53,7 +54,7 @@ Missing Git for Windows and Ollama SHALL each have a remedy that installs them w
 
 #### Scenario: Ollama missing
 - **GIVEN** a Windows host without Ollama
-- **WHEN** `sensei doctor --fix` runs
+- **WHEN** `sensei doctor` runs
 - **THEN** it runs `winget install Ollama.Ollama` and re-checks Ollama
 
 ### Requirement: Postgres tools need no host install on Windows
@@ -63,5 +64,5 @@ to the host.
 
 #### Scenario: Database created without host tools
 - **GIVEN** a Windows host with `sensei-pg` running and no PostgreSQL tools installed
-- **WHEN** `sensei doctor --fix` sets up the database
+- **WHEN** `sensei doctor` sets up the database
 - **THEN** the database is created and its schema deployed
