@@ -98,7 +98,7 @@ jobs:
   # x86_64-pc-windows-msvc so Unix-only code (a `tokio::signal::unix`, a
   # `libc::statvfs`, a bare `HOME`) fails here instead of on a user's machine.
   # Clippy rather than `check` so a Unix-only helper left dead on Windows is
-  # reported too. No Postgres: the suite on Windows is a later step of #505.
+  # reported too. No Postgres: the DB-coupled suite stays on Linux.
   windows:
     runs-on: windows-latest
     steps:
@@ -110,6 +110,10 @@ jobs:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
+        with:
+          workspaces: |
+            .
+            app/src-tauri
       - name: Clippy (Windows)
         run: cargo clippy --workspace --all-targets -- -D warnings
       # Tests that need no database. GitHub's Windows runners cannot start the
@@ -125,6 +129,26 @@ jobs:
         env:
           PYTHON: python
         run: scripts/senseid-pure-coverage.sh --test-only
+      # The desktop app is its own workspace (`app/src-tauri`), so the steps
+      # above do not compile it. Its frontend is built first: Tauri embeds
+      # `app/build` at compile time, as `release.yml` builds it.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: ${{ !cancelled() }}
+      - name: Build the desktop app's frontend (Windows)
+        if: ${{ !cancelled() }}
+        working-directory: app
+        shell: bash
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - name: Clippy the desktop app (Windows)
+        if: ${{ !cancelled() }}
+        working-directory: app/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test the desktop app (Windows)
+        if: ${{ !cancelled() }}
+        working-directory: app/src-tauri
+        run: cargo test --no-fail-fast
 
   test:
     runs-on: ubuntu-latest

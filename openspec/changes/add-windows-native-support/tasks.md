@@ -8,7 +8,8 @@
 - [x] 1.6 Remaining items from 1.1 until the Windows check is green (4 rounds: Unix-only script/symlink tests
   gated, exec-bit check split; green on PR #507)
 - [ ] 1.7 Make the `windows` job a required check on develop/main (branch protection — the user's call)
-- [ ] 1.8 Extend the Windows job to `app/src-tauri` (its own workspace; not covered by 1.1)
+- [x] 1.8 Extend the Windows job to `app/src-tauri` (its own workspace; not covered by 1.1): frontend build,
+  clippy and tests
 
 ## 2. Runtime on Windows (slice 2, depends on 1)
 - [x] 2.1 POSIX shell lookup in `bootstrap::util` (Git `sh.exe` on Windows; a miss names Git for Windows)
