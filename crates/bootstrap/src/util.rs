@@ -109,6 +109,14 @@ fn first_existing(
     candidates.iter().find(|p| exists(p)).cloned()
 }
 
+/// The directory holding `exe`, then its `bin` subdirectory: the installed
+/// app sits in the first and sensei's binaries in the second, and a binary in
+/// `bin` finds its siblings in the first.
+#[cfg_attr(unix, allow(dead_code))]
+fn exe_relative_dirs(exe: &std::path::Path) -> Vec<std::path::PathBuf> {
+    exe.parent().map(|dir| vec![dir.to_path_buf(), dir.join("bin")]).unwrap_or_default()
+}
+
 /// Find a binary on PATH (and well-known directories).
 ///
 /// Uses `which` on Unix and `where` on Windows; falls back to scanning
@@ -136,6 +144,19 @@ pub fn which_binary(name: &str) -> Option<String> {
         let candidate = format!("{dir}/{name}");
         if std::path::Path::new(&candidate).exists() {
             return Some(candidate);
+        }
+    }
+
+    // Windows: beside this executable, and in `bin` beside it — where the
+    // installer puts sensei's binaries. A process the installer started still
+    // has the PATH from before the install.
+    #[cfg(windows)]
+    if let Ok(exe) = std::env::current_exe() {
+        for dir in exe_relative_dirs(&exe) {
+            let candidate = dir.join(format!("{name}.exe"));
+            if candidate.exists() {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
         }
     }
 
@@ -448,5 +469,14 @@ mod tests {
         child.wait().expect("reap");
         let err = super::terminate(pid).expect_err("nothing left to end");
         assert!(err.contains(&pid.to_string()), "{err}");
+    }
+
+    #[test]
+    fn exe_relative_dirs_are_the_exes_own_and_its_bin() {
+        let exe = Path::new("/apps/Sensei/sensei-desktop.exe");
+        assert_eq!(
+            super::exe_relative_dirs(exe),
+            [PathBuf::from("/apps/Sensei"), PathBuf::from("/apps/Sensei/bin")]
+        );
     }
 }

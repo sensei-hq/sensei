@@ -34,15 +34,15 @@
 </script>
 
 <div data-component="workspace-shell" class="flex flex-col h-screen overflow-hidden bg-paper-soft text-ink">
-    <!-- Titlebar / drag region. Left inset (pl-[80px]) clears the macOS overlay
-         traffic lights that float top-left, so the workspace name is never hidden
-         behind them. `data-tauri-drag-region` is Tauri's drag mechanism; it needs
+    <!-- Titlebar / drag region. Left inset (`titlebar-inset`, app.css) clears the
+         macOS overlay traffic lights that float top-left, so the workspace name is
+         never hidden behind them; with a native title bar it is a normal gutter. `data-tauri-drag-region` is Tauri's drag mechanism; it needs
          the `core:window:allow-start-dragging` capability (granted for workspace-*
          windows in capabilities/default.json) — without it startDragging is denied
          and the window won't move. Tauri's handler walks ancestors (closest) so
          clicking the glyph/name drags too. (No decorative accent stripe: it did
          not aid dragging and read as a stray highlighted top border.) -->
-    <div data-component="workspace-titlebar" data-tauri-drag-region class="h-9 flex items-center gap-2 pl-[80px] pr-4 shrink-0">
+    <div data-component="workspace-titlebar" data-tauri-drag-region class="titlebar-inset h-9 flex items-center gap-2 pr-4 shrink-0">
         <RailMenuButton />
         <WorkspaceGlyph {icon} />
         <span data-component="workspace-name" class="text-sm font-semibold">{data.workspace?.name ?? '…'}</span>

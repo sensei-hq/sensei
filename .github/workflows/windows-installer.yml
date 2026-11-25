@@ -1,0 +1,70 @@
+name: Windows installer
+
+# The Windows desktop installer (#505, design D4): an unsigned NSIS setup .exe
+# that installs the app, puts senseid/sensei/sensei-mcp in its `bin` folder and
+# adds that folder to the user's Path.
+#
+# One definition, three callers: `release.yml` calls it for a tagged release;
+# a pull request that changes the installer runs it, so a broken installer is
+# found before a tag; and it can be run by hand to get a test build.
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/windows-installer.yml
+      - app/src-tauri/installer.windows.conf.json
+      - app/src-tauri/windows/**
+
+# Least-privilege: the job only reads the repo and uploads an artifact.
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    # bash: a Windows runner's default shell is PowerShell, which checks only a
+    # multi-line step's last exit code.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      # no-cache, and no rust-cache: a release calls this job, and a cache a
+      # pull request poisoned must not reach a release build.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          no-cache: true
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+
+      - name: Build the CLI tools
+        run: cargo build --release -p senseid -p sensei-cli -p sensei-mcp
+
+      # installer.windows.conf.json maps these into the installer's `bin`.
+      - name: Stage them for the installer
+        run: |
+          mkdir -p app/src-tauri/binaries
+          for bin in senseid sensei sensei-mcp; do
+            cp "target/release/${bin}.exe" app/src-tauri/binaries/
+          done
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: bun install --frozen-lockfile
+
+      - name: Build the installer
+        working-directory: app
+        run: bun run tauri build --config src-tauri/installer.windows.conf.json --bundles nsis
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sensei-app-windows
+          path: app/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

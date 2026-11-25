@@ -89,6 +89,20 @@ body {
     -webkit-app-region: no-drag;
     app-region: no-drag;
 }
+
+/* The overlay title bar exists only on macOS (`data-titlebar`, set before first
+ * paint in app.html). Elsewhere the OS draws its own title bar above the page,
+ * so an empty strip reserved for dragging is blank space, and the inset that
+ * clears the traffic lights is a normal gutter. */
+html[data-titlebar="native"] .drag-region:empty {
+    display: none;
+}
+.titlebar-inset {
+    padding-left: 80px;
+}
+html[data-titlebar="native"] .titlebar-inset {
+    padding-left: 1rem;
+}
 button {
     -webkit-user-select: none;
     user-select: none;

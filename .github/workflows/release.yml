@@ -287,9 +287,16 @@ jobs:
           name: sensei-app-deb
           path: app/src-tauri/target/release/bundle/deb/*.deb
 
+  # ── Desktop app (Windows installer, unsigned) ──────────────────────────────
+  # Defined once in windows-installer.yml, which pull requests touching the
+  # installer also run.
+  build-app-windows:
+    needs: on-main
+    uses: ./.github/workflows/windows-installer.yml
+
   # ── GitHub Release (all artifacts) ─────────────────────────────────────────
   release:
-    needs: [build-daemon, build-app, build-app-linux]
+    needs: [build-daemon, build-app, build-app-linux, build-app-windows]
     runs-on: ubuntu-latest
     # Elevated above the read-only top-level default: this job creates the
     # GitHub Release and uploads assets via softprops/action-gh-release.
@@ -309,6 +316,7 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
+            artifacts/*.exe
             artifacts/*.dmg
             artifacts/*.deb
 
