@@ -1071,6 +1071,43 @@ impl PgStore {
         }).collect())
     }
 
+    /// A workspace's TOP-LEVEL repo anchors (`kind` git/standalone/subtree,
+    /// minus anchors nested under another member anchor) with their
+    /// repositories — what name-based rules resolution must decide over (#541).
+    /// A nested subtree is not a second repo (it follows its enclosing root);
+    /// structural `folder`/`module` rows never are (#62). Two checkouts of one
+    /// repository share a `repository_id`, so the caller counts DISTINCT
+    /// repositories for ambiguity, not rows. Ordered by folder name.
+    pub async fn get_workspace_top_level_repos(
+        &self,
+        workspace_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, uuid::Uuid)> =
+            sqlx_core::query_as::query_as(
+                "SELECT f.id, f.name, f.abs_path, f.kind::text, f.repository_id FROM sensei.folders f
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+                 WHERE fp.workspace_id = $1 AND f.kind::text NOT IN ('folder', 'module')
+                   AND f.repository_id IS NOT NULL
+                   AND NOT EXISTS (
+                     SELECT 1 FROM sensei.folders g
+                     JOIN sensei.folder_workspaces gp ON gp.folder_id = g.id
+                    WHERE gp.workspace_id = $1
+                      AND g.kind::text NOT IN ('folder', 'module')
+                      AND g.id <> f.id
+                      AND starts_with(f.abs_path, g.abs_path || '/')
+                   )
+                 ORDER BY f.name",
+            )
+            .bind(workspace_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, path, kind, repository_id)| {
+            serde_json::json!({ "id": id, "name": name, "path": path, "kind": kind, "repository_id": repository_id })
+        }).collect())
+    }
+
     /// The distinct git-remote owner slugs across a workspace's folders (lowercased,
     /// first-seen order) — e.g. a workspace whose repos are `github.com/sensei-hq/*`
     /// yields `["sensei-hq"]`. Feeds `dojo::routing::infer_binding` for the R3

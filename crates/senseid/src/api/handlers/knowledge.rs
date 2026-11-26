@@ -1366,6 +1366,11 @@ async fn resolve_adopted_pack_raws(
 
 /// Resolve `folder=<abs_path>` OR `workspace=<name|uuid>` → `(folder_path,
 /// folder_id)`. Shared by the rules + constitution endpoints.
+///
+/// A name spanning more than one DISTINCT repository is ambiguous → 409 with
+/// one candidate per repository, never an arbitrary pick's rules (#541). One
+/// repository in several checkouts resolves (identical rules either way), as
+/// does a single top-level anchor (a nested subtree follows its root).
 pub(crate) async fn resolve_folder(
     state: &AppState,
     folder: Option<&str>,
@@ -1383,9 +1388,31 @@ pub(crate) async fn resolve_folder(
                 .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown workspace"))?;
             let repos = state
                 .pg
-                .get_workspace_repos(&pid)
+                .get_workspace_top_level_repos(&pid)
                 .await
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+            let mut seen: Vec<&str> = Vec::new();
+            let mut candidates: Vec<serde_json::Value> = Vec::new();
+            for r in &repos {
+                if let Some(rid) = r["repository_id"].as_str()
+                    && !seen.contains(&rid)
+                {
+                    seen.push(rid);
+                    candidates.push(serde_json::json!({ "name": r["name"], "path": r["path"] }));
+                }
+            }
+            if seen.len() > 1 {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "workspace '{workspace}' spans {} repositories — pass folder=<abs_path> of one",
+                            seen.len()
+                        ),
+                        "candidates": candidates,
+                    })),
+                ));
+            }
             repos
                 .first()
                 .and_then(|r| r["path"].as_str())
