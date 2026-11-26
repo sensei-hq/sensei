@@ -1,32 +1,26 @@
-# Checkpoint — 2026-11-24 (pause; #531 #532 #430 done)
+# Checkpoint — 2026-11-26 (#541 deployed + verified)
 
-**Slice:** 4–5h prioritized batch.
-**Branch:** `develop` (in sync, pushed).
+**Slice:** #541 merged-workspace governance fix (4 parts).
+**Branch:** `develop` (pushed). Daemon 0.28.0 live via brew.
 
 ## Done
-- #531: repo lists sort by activity (new
-  `repository_activity` fn + gated tests); recency
-  shown from the same key; dojo 2533, DB 84 green.
-- #532: per-repo screen (header, metric cards,
-  diagrams link, branch preserved); shared loader
-  context + `RepoMetricCards`; dojo 2549 green.
-- #430: churn excludes the creation Write; new
-  files never flag as rework. Suites green.
-- #246/#312/#433/#299 closed (confirmed).
+- All 4 fixes merged; full suite green.
+- Deployed: release binaries built, installed over Cellar
+  (fresh inodes — truncate-in-place trips macOS CS_KILL).
+- Indexer crash fixed en route (Vue multibyte slice).
+- Live heal split 3 merged workspaces; doctor reads 0;
+  website session followed its repo; rules resolve.
 
-## Remaining (post-travel)
-- #513/#512/#444/#393/#268/#531/#532/#430 close
-  on the next main merge (release cut).
-- #292 → verify stale vs #536, link or close.
-- Next candidates: #522 (relay-dōjō chain start),
-  #533 (workspace screen), #301/#283 (sync).
+## Remaining
+- Close #541 after user confirms.
+- Next release tags a signed build (this deploy is adhoc-signed;
+  Keychain-backed remote features may degrade until then).
 
 ## Next command
-None — paused for travel. Resume: pick from Remaining.
+None — slice complete and live.
 
 ## Open questions
-- 6 process.rs fmt spots: local toolchains flag what CI stable
-  accepts. Left untouched.
+- None.
 
 ## Known-broken
 - None.

@@ -3,9 +3,9 @@ use std::io::{BufRead, Write};
 
 use sensei_mcp::{
     ActiveWorkspace, DaemonRequest, HttpMethod, NEEDS_WORKSPACE, WORKSPACES_FOR_RESOLUTION,
-    WorkspaceResolution, build_log_event_body, build_relay_wait_request, daemon_request_for,
+    WorkspaceResolution, build_log_event_body, build_relay_wait_request, daemon_request_for_cwd,
     detect_host, handle_initialize, handle_list_tools, record_outcome_body,
-    resolve_active_workspace_in, resolve_default_workspace, resolve_from_cwd_in,
+    resolve_active_workspace_in, resolve_cwd_match_in, resolve_default_workspace,
     resolve_workspace_in,
 };
 
@@ -276,10 +276,14 @@ fn handle_call_tool(
         }
     };
     // Only read the pin + resolve cwd when there's no explicit arg (explicit wins).
-    let (pin, cwd_name) = if explicit.is_some() {
-        (None, String::default())
+    // The cwd match carries BOTH the workspace name and the matched folder's
+    // abs_path (#541) from a SINGLE workspace-list fetch.
+    let (pin, cwd_name, cwd_folder) = if explicit.is_some() {
+        (None, String::default(), String::default())
     } else {
-        (ACTIVE_PIN.lock().unwrap().clone(), resolve_workspace_from_cwd(cwd, client, base))
+        let pin = ACTIVE_PIN.lock().unwrap().clone();
+        let (name, folder) = resolve_cwd_from_daemon(cwd, client, base);
+        (pin, name, folder)
     };
     // A resolved cwd beats a conflicting (stale) pin; the override is surfaced, not silent.
     let (repo_id, resolution_note) =
@@ -293,7 +297,7 @@ fn handle_call_tool(
     // / patterns / workflow / mcp-proxy). Send it here and pipe through the
     // standard response conversion — prepending a stale-pin note so a mis-resolution
     // is visible to the caller instead of silently returning the wrong workspace's state.
-    if let Some(req) = daemon_request_for(tool_name, &args, cwd, resolved) {
+    if let Some(req) = daemon_request_for_cwd(tool_name, &args, cwd, resolved, &cwd_folder) {
         let mut result = daemon_result(send_daemon_request(client, &req, base));
         if let Some(note) = resolution_note {
             prepend_note(&mut result, &format!("⟦workspace: {repo_id} — {note}⟧"));
@@ -626,15 +630,21 @@ fn resolve_workspace(
     Ok(resolve_workspace_in(&get_workspaces(client, base)?, hint))
 }
 
-/// Resolve current workspace name from CWD by matching against registered workspace
-/// folder paths. Best-effort: a daemon error yields "" (→ Unresolved, handled by
-/// the caller), logged to stderr — never a fabricated match.
-fn resolve_workspace_from_cwd(cwd: &str, client: &reqwest::blocking::Client, base: &str) -> String {
+/// Resolve current workspace (name, folder) from CWD by matching against
+/// registered workspace folder paths. Best-effort: a daemon error yields
+/// ("", "") (→ Unresolved, handled by the caller), logged to stderr — never a
+/// fabricated match. One fetch serves both halves (#541 needs the folder's
+/// abs_path as well as the name).
+fn resolve_cwd_from_daemon(
+    cwd: &str,
+    client: &reqwest::blocking::Client,
+    base: &str,
+) -> (String, String) {
     match get_workspaces(client, base) {
-        Ok(workspaces) => resolve_from_cwd_in(&workspaces, cwd),
+        Ok(workspaces) => resolve_cwd_match_in(&workspaces, cwd),
         Err(e) => {
             eprintln!("sensei-mcp: cwd workspace resolution skipped — {e}");
-            String::default()
+            (String::default(), String::default())
         }
     }
 }

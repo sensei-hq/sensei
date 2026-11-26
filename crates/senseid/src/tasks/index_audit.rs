@@ -78,6 +78,8 @@ pub struct AuditSamples {
     /// same files, rendered as `inner (n files) inside outer`.
     pub contained_duplicate_folders: Vec<String>,
     pub misrooted_folders: Vec<String>,
+    /// Merged workspaces, rendered as `name (N repos)`.
+    pub merged_workspaces: Vec<String>,
 }
 
 impl AuditSamples {
@@ -126,6 +128,8 @@ pub struct AuditReport {
     /// `abs_path` sits under. REPORTED ONLY: which half is wrong — the stamp or
     /// the path — is not knowable here.
     pub misrooted_folders: u64,
+    /// Workspaces holding unrelated same-named repos (split / to split, #541).
+    pub merged_workspaces: u64,
     /// A few example paths/ids per class.
     pub samples: AuditSamples,
 }
@@ -140,6 +144,7 @@ impl AuditReport {
             || self.duplicate_repository_paths > 0
             || self.contained_duplicate_folders > 0
             || self.misrooted_folders > 0
+            || self.merged_workspaces > 0
     }
 }
 
@@ -268,6 +273,34 @@ pub async fn audit_index_integrity(
             Err(e) => {
                 tracing::warn!(error = %e, "index_audit: heal_duplicate_name_workspaces failed")
             }
+        }
+    }
+
+    // Class 8 — MERGED WORKSPACES: unrelated same-named repos sharing one
+    // workspace (the #541 scan accident — fixed at the source by fix 3,
+    // healed here). Split one-per-top-level-repo; nested anchors follow
+    // their root. Detected after the nested-heal so the count reflects
+    // post-re-absorption tops.
+    match pg.detect_merged_workspaces().await {
+        Ok(merged) => {
+            report.merged_workspaces = merged.len() as u64;
+            AuditSamples::extend_capped(
+                &mut report.samples.merged_workspaces,
+                merged.iter().map(|m| {
+                    format!(
+                        "{} ({} repos)",
+                        m["name"].as_str().unwrap_or("?"),
+                        m["repos"].as_u64().unwrap_or(0)
+                    )
+                }),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "index_audit: detect_merged_workspaces failed"),
+    }
+    if repair && report.merged_workspaces > 0 {
+        match pg.heal_merged_workspaces().await {
+            Ok(n) => tracing::info!(healed = n, "index_audit: split merged workspaces"),
+            Err(e) => tracing::warn!(error = %e, "index_audit: heal_merged_workspaces failed"),
         }
     }
 
@@ -757,6 +790,81 @@ mod tests {
         assert!(pg.get_workspace(&phantom).await.unwrap().is_none(), "phantom merged away");
         assert!(pg.get_workspace(&survivor).await.unwrap().is_some(), "survivor kept");
 
+        pg.remove_watch_root(&root_id).await.unwrap();
+    }
+
+    /// #541 fix 4 (Class 8): the repair audit splits merged workspaces and
+    /// the report counts them, so `sensei index doctor` reads zero afterwards.
+    #[tokio::test]
+    async fn audit_repairs_merged_workspaces() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let dir_a = tmp.path().join("a").join("site");
+        let dir_b = tmp.path().join("b").join("site");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+
+        let (root, root_id) = present_root(&pg, tmp.path()).await;
+        // The workspace carries the colliding folder name (as `website` does live).
+        let name = format!("mgsplit-{uniq}");
+        let ws = pg.create_workspace(&name, None, None).await.unwrap();
+        let (fa, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            &pg,
+            &name,
+            &dir_a.to_string_lossy(),
+            &format!("test/mgsplit-{uniq}/a"),
+            "git",
+        )
+        .await;
+        let (fb, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            &pg,
+            &name,
+            &dir_b.to_string_lossy(),
+            &format!("test/mgsplit-{uniq}/b"),
+            "git",
+        )
+        .await;
+        pg.set_folder_workspace(&fa, &ws, "root", None).await.unwrap();
+        pg.set_folder_workspace(&fb, &ws, "root", None).await.unwrap();
+
+        let report = audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;
+        assert!(
+            report.merged_workspaces >= 1,
+            "the repair pass counts the merged workspace it split"
+        );
+        // Assert OUR rows: the name now rides two workspaces, one repo each.
+        let ids: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.workspaces WHERE name = $1 ORDER BY id",
+        )
+        .bind(&name)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(ids.len(), 2, "one workspace per top-level repo");
+        for (wid,) in &ids {
+            let tops = pg.get_workspace_top_level_repos(wid).await.unwrap();
+            assert_eq!(tops.len(), 1, "each split holds exactly one top-level repo");
+        }
+        // A read-only pass afterwards reports no drift OF OURS: detect no
+        // longer lists our name (global count may include others' rows).
+        let again = audit_index_integrity(&pg, std::slice::from_ref(&root), false).await;
+        assert!(
+            !again.samples.merged_workspaces.iter().any(|s| s.contains(&name)),
+            "our workspace is healed; samples: {:?}",
+            again.samples.merged_workspaces
+        );
+
+        for fid in [&fa, &fb] {
+            sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+                .bind(fid)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        for (wid,) in &ids {
+            pg.delete_workspace(wid).await.ok();
+        }
         pg.remove_watch_root(&root_id).await.unwrap();
     }
 
