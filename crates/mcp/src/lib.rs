@@ -2215,6 +2215,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolve_folder_from_cwd_returns_the_matched_root() {
+        // #541: the daemon resolves rules per FOLDER, so the MCP must forward
+        // the matched root's abs_path — not just the workspace name (which is
+        // ambiguous when same-named repos merged into one workspace).
+        let workspaces = vec![json!({
+            "id": "11111111-1111-1111-1111-111111111111",
+            "name": "sensei",
+            "folders": [
+                {"abs_path": "/Users/x/dev/sensei", "kind": "git", "name": "sensei"}
+            ]
+        })];
+        assert_eq!(
+            resolve_folder_from_cwd_in(&workspaces, "/Users/x/dev/sensei/crates/senseid/src/api"),
+            "/Users/x/dev/sensei".to_string(),
+            "a deep cwd resolves to its repo-root folder",
+        );
+        assert_eq!(
+            resolve_folder_from_cwd_in(&workspaces, "/Users/x/dev/sensei"),
+            "/Users/x/dev/sensei".to_string(),
+            "the repo root itself resolves",
+        );
+        assert_eq!(
+            resolve_folder_from_cwd_in(&workspaces, "/Users/x/dev/other"),
+            "".to_string(),
+            "a cwd outside every root matches no folder",
+        );
+        let no_folders = vec![json!({ "id": "a", "name": "x" })];
+        assert_eq!(
+            resolve_folder_from_cwd_in(&no_folders, "/anywhere"),
+            "".to_string(),
+            "a workspace with no folders matches no folder",
+        );
+    }
+
+    #[test]
+    fn resolve_folder_from_cwd_auto_picks_single_repo_under_parent() {
+        // #109 meets #541: cwd is the PARENT of exactly one repo → that repo's
+        // abs_path (never the cwd itself — the parent is not an indexed folder).
+        let one = vec![
+            json!({"id":"a","name":"only","folders":[{"abs_path":"/wrap/only","name":"only"}]}),
+        ];
+        assert_eq!(resolve_folder_from_cwd_in(&one, "/wrap"), "/wrap/only");
+        // Ambiguous parent (several repos under cwd) → no folder (never guess).
+        let many = vec![
+            json!({"id":"a","name":"one","folders":[{"abs_path":"/wrap/one"}]}),
+            json!({"id":"b","name":"two","folders":[{"abs_path":"/wrap/two"}]}),
+        ];
+        assert_eq!(resolve_folder_from_cwd_in(&many, "/wrap"), "");
+        // One workspace but TWO folders under cwd: the NAME still resolves (the
+        // #109 contract) while the folder stays empty (ambiguous).
+        let two_folders = vec![json!({"id":"a","name":"only","folders":[
+            {"abs_path":"/wrap/first"}, {"abs_path":"/wrap/second"}
+        ]})];
+        assert_eq!(resolve_from_cwd_in(&two_folders, "/wrap"), "only");
+        assert_eq!(
+            resolve_folder_from_cwd_in(&two_folders, "/wrap"),
+            "",
+            "two folders under cwd → folder ambiguous even though the name resolves",
+        );
+    }
+
     // ── MCP↔daemon seam: the knowledge params the proxy sends ─────────────
     // These pin the request SHAPE that the (fixed) daemon accepts. They go RED
     // on the original bug, which sent the workspace NAME as `workspace_id` (context)
@@ -2235,11 +2297,18 @@ mod tests {
     }
 
     #[test]
-    fn rules_param_prefers_workspace_name_over_cwd() {
-        // Fixed: send the resolved workspace NAME so the daemon finds the repo.
-        assert_eq!(rules_query_param("sensei", "/mcp/proc/cwd"), ("workspace", "sensei"));
-        // Fall back to folder=cwd ONLY when no workspace resolved.
-        assert_eq!(rules_query_param("", "/mcp/proc/cwd"), ("folder", "/mcp/proc/cwd"));
+    fn rules_param_prefers_cwd_folder_then_workspace_name() {
+        // #541: the cwd matched a folder → send its abs_path, even when a
+        // workspace name also resolved (the name is ambiguous across merged
+        // same-named repos; the folder is exact).
+        assert_eq!(
+            rules_query_param("sensei", "/mcp/proc/cwd", "/repo/sensei"),
+            ("folder", "/repo/sensei")
+        );
+        // No cwd match (pin / explicit name) → the workspace NAME.
+        assert_eq!(rules_query_param("sensei", "/mcp/proc/cwd", ""), ("workspace", "sensei"));
+        // Fall back to folder=cwd ONLY when nothing resolved at all.
+        assert_eq!(rules_query_param("", "/mcp/proc/cwd", ""), ("folder", "/mcp/proc/cwd"));
     }
 
     // ── Tool catalog contract ────────────────────────────────────────────
@@ -2666,6 +2735,28 @@ mod tests {
         let fb = daemon_request_for("get_rules", &json!({}), "/mcp/cwd", None).unwrap();
         assert_eq!(q(&fb, "folder"), Some("/mcp/cwd"));
         assert_eq!(q(&fb, "workspace"), None);
+    }
+
+    #[test]
+    fn rules_request_sends_cwd_folder_when_cwd_matched() {
+        // #541: the binary forwards the cwd-matched folder → ?folder=<abs_path>,
+        // never the (possibly merged) workspace name.
+        let req = daemon_request_for_cwd(
+            "get_rules",
+            &json!({}),
+            "/mcp/cwd",
+            Some("sensei"),
+            "/repo/sensei",
+        )
+        .unwrap();
+        assert_eq!(req.path, "/api/knowledge/rules");
+        assert_eq!(q(&req, "folder"), Some("/repo/sensei"));
+        assert_eq!(q(&req, "workspace"), None);
+        // No cwd match (pin / explicit name) → the workspace name still rides.
+        let named = daemon_request_for_cwd("get_rules", &json!({}), "/mcp/cwd", Some("sensei"), "")
+            .unwrap();
+        assert_eq!(q(&named, "workspace"), Some("sensei"));
+        assert_eq!(q(&named, "folder"), None);
     }
 
     #[test]
