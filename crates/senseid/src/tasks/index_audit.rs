@@ -78,6 +78,8 @@ pub struct AuditSamples {
     /// same files, rendered as `inner (n files) inside outer`.
     pub contained_duplicate_folders: Vec<String>,
     pub misrooted_folders: Vec<String>,
+    /// Merged workspaces, rendered as `name (N repos)`.
+    pub merged_workspaces: Vec<String>,
 }
 
 impl AuditSamples {
@@ -126,6 +128,8 @@ pub struct AuditReport {
     /// `abs_path` sits under. REPORTED ONLY: which half is wrong — the stamp or
     /// the path — is not knowable here.
     pub misrooted_folders: u64,
+    /// Workspaces holding unrelated same-named repos (split / to split, #541).
+    pub merged_workspaces: u64,
     /// A few example paths/ids per class.
     pub samples: AuditSamples,
 }
@@ -140,6 +144,7 @@ impl AuditReport {
             || self.duplicate_repository_paths > 0
             || self.contained_duplicate_folders > 0
             || self.misrooted_folders > 0
+            || self.merged_workspaces > 0
     }
 }
 
@@ -268,6 +273,34 @@ pub async fn audit_index_integrity(
             Err(e) => {
                 tracing::warn!(error = %e, "index_audit: heal_duplicate_name_workspaces failed")
             }
+        }
+    }
+
+    // Class 8 — MERGED WORKSPACES: unrelated same-named repos sharing one
+    // workspace (the #541 scan accident — fixed at the source by fix 3,
+    // healed here). Split one-per-top-level-repo; nested anchors follow
+    // their root. Detected after the nested-heal so the count reflects
+    // post-re-absorption tops.
+    match pg.detect_merged_workspaces().await {
+        Ok(merged) => {
+            report.merged_workspaces = merged.len() as u64;
+            AuditSamples::extend_capped(
+                &mut report.samples.merged_workspaces,
+                merged.iter().map(|m| {
+                    format!(
+                        "{} ({} repos)",
+                        m["name"].as_str().unwrap_or("?"),
+                        m["repos"].as_u64().unwrap_or(0)
+                    )
+                }),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "index_audit: detect_merged_workspaces failed"),
+    }
+    if repair && report.merged_workspaces > 0 {
+        match pg.heal_merged_workspaces().await {
+            Ok(n) => tracing::info!(healed = n, "index_audit: split merged workspaces"),
+            Err(e) => tracing::warn!(error = %e, "index_audit: heal_merged_workspaces failed"),
         }
     }
 

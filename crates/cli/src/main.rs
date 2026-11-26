@@ -1445,6 +1445,11 @@ fn print_index_doctor(r: &serde_json::Value) {
         ("ghost folders (directory gone)", "ghost_folders", "ghost_folders"),
         ("nested standalone (mis-scoped in a repo)", "nested_standalone", "nested_standalone"),
         ("duplicate-name workspaces", "duplicate_name_workspaces", "duplicate_name_workspaces"),
+        (
+            "merged workspaces (same-named repos sharing one)",
+            "merged_workspaces",
+            "merged_workspaces",
+        ),
     ];
     let total: u64 = classes.iter().map(|(_, count_key, _)| n(count_key)).sum();
     // Advisory classes — surfaced separately below because the daemon does NOT

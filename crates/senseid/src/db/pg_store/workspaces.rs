@@ -747,6 +747,208 @@ impl PgStore {
             .collect())
     }
 
+    /// Read-only detection counterpart to [`Self::heal_merged_workspaces`]:
+    /// workspaces holding MORE THAN ONE distinct top-level repository behind
+    /// the same-name collision signature (>1 top-level anchor sharing the
+    /// workspace's name) — the #541 merge the scan used to produce. Opt-in
+    /// multi-repo grouping (anchor names differ from the workspace's) and
+    /// one-repo checkouts are NOT merged. Used by the index audit's Class 8
+    /// (read-only doctor pass + repair). Returns `{id, name, repos}` per
+    /// merged workspace, ordered by name.
+    pub async fn detect_merged_workspaces(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, i64)> = sqlx_core::query_as::query_as(
+            "WITH tops AS (
+               SELECT fp.workspace_id, f.name, f.abs_path, f.repository_id
+                 FROM sensei.folders f
+                 JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+                WHERE f.kind::text NOT IN ('folder', 'module')
+                  AND f.repository_id IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM sensei.folders g
+                    JOIN sensei.folder_workspaces gp ON gp.folder_id = g.id
+                   WHERE gp.workspace_id = fp.workspace_id
+                     AND g.kind::text NOT IN ('folder', 'module')
+                     AND g.id <> f.id
+                     AND starts_with(f.abs_path, g.abs_path || '/')
+                  )
+             )
+             SELECT w.id, w.name, COUNT(DISTINCT t.repository_id)
+               FROM sensei.workspaces w
+               JOIN tops t ON t.workspace_id = w.id
+              GROUP BY w.id, w.name
+             HAVING COUNT(DISTINCT t.repository_id) > 1
+                AND COUNT(*) FILTER (WHERE t.name = w.name) > 1
+              ORDER BY w.name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, repos)| serde_json::json!({ "id": id, "name": name, "repos": repos }))
+            .collect())
+    }
+
+    /// Split every merged workspace (#541 fix 4) one-per-top-level-REPOSITORY.
+    /// The original row survives with the first repository (by anchor path —
+    /// deterministic); each further repository moves to a freshly minted
+    /// same-name row (identity is the path). Nested anchors follow their
+    /// enclosing root's partition; sessions follow their folder's repository;
+    /// memories cannot be attributed to one repo and stay with the survivor.
+    /// Derived workspace rows are left for their recompute (membership edits
+    /// do not trim them either). Idempotent: split workspaces hold one
+    /// top-level repo each, so a re-run detects nothing. Returns the number
+    /// of workspaces split.
+    pub async fn heal_merged_workspaces(&self) -> Result<u64, String> {
+        let merged = self.detect_merged_workspaces().await?;
+        let mut healed = 0u64;
+        for m in &merged {
+            let Some(id) = m["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) else {
+                continue;
+            };
+            match self.split_merged_workspace(&id).await {
+                Ok(true) => {
+                    healed += 1;
+                    tracing::info!(workspace = %id, "heal_merged_workspaces: split merged workspace");
+                }
+                Ok(false) => {}
+                Err(e) => tracing::warn!(workspace = %id, error = %e,
+                    "heal_merged_workspaces: split failed"),
+            }
+        }
+        Ok(healed)
+    }
+
+    /// Split one merged workspace; `Ok(true)` when a split happened,
+    /// `Ok(false)` when a concurrent pass healed it first. One transaction
+    /// per workspace (atomic move), serialized per workspace id.
+    async fn split_merged_workspace(&self, ws: &uuid::Uuid) -> Result<bool, String> {
+        let tops = self.get_workspace_top_level_repos(ws).await?;
+        // Distinct repositories in first-anchor-path order; index 0 survives.
+        let mut sorted = tops.clone();
+        sorted.sort_by(|a, b| {
+            a["path"].as_str().unwrap_or_default().cmp(b["path"].as_str().unwrap_or_default())
+        });
+        let mut order: Vec<uuid::Uuid> = Vec::new();
+        for t in &sorted {
+            let rid = t["repository_id"]
+                .as_str()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                .ok_or_else(|| {
+                    "heal_merged_workspaces: top-level row without a repository".to_string()
+                })?;
+            if !order.contains(&rid) {
+                order.push(rid);
+            }
+        }
+        if order.len() < 2 {
+            return Ok(false);
+        }
+        // Pure-nested repositories (no top anchor of their own) follow the top
+        // enclosing their anchor. Nested under no top of THIS workspace = a
+        // class-3 shape owned elsewhere — left alone.
+        let nested: Vec<(String, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT f.abs_path, f.repository_id FROM sensei.folders f
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+              WHERE fp.workspace_id = $1
+                AND f.kind::text NOT IN ('folder', 'module')
+                AND f.repository_id IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM sensei.folders g
+                  JOIN sensei.folder_workspaces gp ON gp.folder_id = g.id
+                 WHERE gp.workspace_id = $1
+                   AND g.kind::text NOT IN ('folder', 'module')
+                   AND g.id <> f.id
+                   AND starts_with(f.abs_path, g.abs_path || '/')
+                )",
+        )
+        .bind(ws)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        // followers[i] = extra repository ids joining partition i.
+        let mut followers: Vec<Vec<uuid::Uuid>> = vec![Vec::new(); order.len()];
+        for (nabs, nrid) in &nested {
+            if order.contains(nrid) {
+                continue;
+            }
+            for t in &sorted {
+                let tabs = t["path"].as_str().unwrap_or_default();
+                if tabs.is_empty() || !nabs.starts_with(&format!("{tabs}/")) {
+                    continue;
+                }
+                // Tops don't nest, so the first (only) enclosing top wins.
+                let trid = t["repository_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
+                if let Some(idx) = trid.and_then(|r| order.iter().position(|o| *o == r))
+                    && !followers[idx].contains(nrid)
+                {
+                    followers[idx].push(*nrid);
+                }
+                break;
+            }
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("SELECT pg_advisory_xact_lock(hashtext($1)::int8)")
+            .bind(ws.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        let name_row: Option<(String,)> =
+            sqlx_core::query_as::query_as("SELECT name FROM sensei.workspaces WHERE id = $1")
+                .bind(ws)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+        let Some((wname,)) = name_row else {
+            // Deleted concurrently — nothing to split.
+            tx.rollback().await.map_err(|e| e.to_string())?;
+            return Ok(false);
+        };
+        for (i, rid) in order.iter().enumerate().skip(1) {
+            let (new_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.workspaces(name) VALUES($1) RETURNING id",
+            )
+            .bind(&wname)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            let mut moving = vec![*rid];
+            moving.extend(followers[i].iter().copied());
+            // Move (never copy) this workspace's claim on those repositories;
+            // other workspaces' claims on the same repos are untouched.
+            sqlx_core::query::query(
+                "DELETE FROM sensei.repositories_in_workspaces WHERE workspace_id = $1 AND repository_id = ANY($2::uuid[])",
+            )
+            .bind(ws)
+            .bind(&moving)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            sqlx_core::query::query(
+                "INSERT INTO sensei.repositories_in_workspaces(workspace_id, repository_id) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING",
+            )
+            .bind(new_id)
+            .bind(&moving)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            // Sessions follow their folder's repository; unresolvable ones
+            // (NULL folder, folder elsewhere) stay with the survivor.
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET workspace_id = $1 WHERE workspace_id = $2 AND folder_id IN (SELECT id FROM sensei.folders WHERE repository_id = ANY($3::uuid[]))",
+            )
+            .bind(new_id)
+            .bind(ws)
+            .bind(&moving)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
     /// Self-heal Bug 3: re-absorb a `standalone` workspace root that was
     /// mis-scoped INSIDE an existing git repo (e.g. a moved `crates/*` sub-crate
     /// registered as its own workspace instead of a folder of the monorepo). For
