@@ -2052,8 +2052,11 @@ mod tests {
         print_index_doctor(&serde_json::json!({
             "roots_checked": 2, "roots_present": 1, "roots_absent": 1,
             "orphan_files": 2, "ghost_folders": 1, "nested_standalone": 0,
-            "duplicate_name_workspaces": 0,
-            "samples": { "orphan_files": ["/a/b.rs", "/a/c.rs"], "ghost_folders": ["/a/gone"] }
+            "duplicate_name_workspaces": 0, "merged_workspaces": 1,
+            "samples": {
+                "orphan_files": ["/a/b.rs", "/a/c.rs"], "ghost_folders": ["/a/gone"],
+                "merged_workspaces": ["website (4 repos)"]
+            }
         }));
     }
 

@@ -760,6 +760,81 @@ mod tests {
         pg.remove_watch_root(&root_id).await.unwrap();
     }
 
+    /// #541 fix 4 (Class 8): the repair audit splits merged workspaces and
+    /// the report counts them, so `sensei index doctor` reads zero afterwards.
+    #[tokio::test]
+    async fn audit_repairs_merged_workspaces() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let dir_a = tmp.path().join("a").join("site");
+        let dir_b = tmp.path().join("b").join("site");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+
+        let (root, root_id) = present_root(&pg, tmp.path()).await;
+        // The workspace carries the colliding folder name (as `website` does live).
+        let name = format!("mgsplit-{uniq}");
+        let ws = pg.create_workspace(&name, None, None).await.unwrap();
+        let (fa, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            &pg,
+            &name,
+            &dir_a.to_string_lossy(),
+            &format!("test/mgsplit-{uniq}/a"),
+            "git",
+        )
+        .await;
+        let (fb, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            &pg,
+            &name,
+            &dir_b.to_string_lossy(),
+            &format!("test/mgsplit-{uniq}/b"),
+            "git",
+        )
+        .await;
+        pg.set_folder_workspace(&fa, &ws, "root", None).await.unwrap();
+        pg.set_folder_workspace(&fb, &ws, "root", None).await.unwrap();
+
+        let report = audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;
+        assert!(
+            report.merged_workspaces >= 1,
+            "the repair pass counts the merged workspace it split"
+        );
+        // Assert OUR rows: the name now rides two workspaces, one repo each.
+        let ids: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.workspaces WHERE name = $1 ORDER BY id",
+        )
+        .bind(&name)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(ids.len(), 2, "one workspace per top-level repo");
+        for (wid,) in &ids {
+            let tops = pg.get_workspace_top_level_repos(wid).await.unwrap();
+            assert_eq!(tops.len(), 1, "each split holds exactly one top-level repo");
+        }
+        // A read-only pass afterwards reports no drift OF OURS: detect no
+        // longer lists our name (global count may include others' rows).
+        let again = audit_index_integrity(&pg, std::slice::from_ref(&root), false).await;
+        assert!(
+            !again.samples.merged_workspaces.iter().any(|s| s.contains(&name)),
+            "our workspace is healed; samples: {:?}",
+            again.samples.merged_workspaces
+        );
+
+        for fid in [&fa, &fb] {
+            sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+                .bind(fid)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+        for (wid,) in &ids {
+            pg.delete_workspace(wid).await.ok();
+        }
+        pg.remove_watch_root(&root_id).await.unwrap();
+    }
+
     #[tokio::test]
     async fn empty_present_roots_is_a_no_op() {
         let pg = PgStore::connect_test().await.unwrap();
