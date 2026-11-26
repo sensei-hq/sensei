@@ -2266,4 +2266,106 @@ mod tests {
         assert!(has_title(&json["rules"], "Never log tokens"));
         assert!(has_title(&json["rules"], LOCAL_MANDATORY));
     }
+
+    // ── #541 fix 2: ambiguous workspace resolution ─────────────────────────
+
+    /// Seed a git folder with explicit identity into a workspace. Returns
+    /// (folder_id, abs_path). Same-name/different-path and shared-repository
+    /// shapes are both expressible (the pack fixture is not).
+    async fn seed_merged_folder(
+        pg: &crate::db::pg_store::PgStore,
+        ws: &uuid::Uuid,
+        name: &str,
+        abs_path: &str,
+        repo_key: &str,
+    ) -> (uuid::Uuid, String) {
+        let (fid, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            pg, name, abs_path, repo_key, "git",
+        )
+        .await;
+        pg.set_folder_workspace(&fid, ws, "root", None).await.unwrap();
+        (fid, abs_path.to_string())
+    }
+
+    async fn drop_merged_folder(pg: &crate::db::pg_store::PgStore, fid: &uuid::Uuid) {
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// A workspace spanning two REPOSITORIES is ambiguous: 409 listing the
+    /// candidates — never the first repo's rules served as the workspace's.
+    #[tokio::test]
+    async fn resolve_folder_ambiguous_workspace_returns_409_with_candidates() {
+        let state = pack_state().await;
+        let uniq = uuid::Uuid::new_v4().to_string();
+        let ws_name = format!("_test:merge409:{uniq}");
+        let ws = state.pg.create_workspace(&ws_name, None, None).await.unwrap();
+        let abs_a = format!("/_test/merge409-{uniq}/a/site");
+        let abs_b = format!("/_test/merge409-{uniq}/b/site");
+        let (f1, _) =
+            seed_merged_folder(&state.pg, &ws, "site", &abs_a, &format!("test/m409-{uniq}/a"))
+                .await;
+        let (f2, _) =
+            seed_merged_folder(&state.pg, &ws, "site", &abs_b, &format!("test/m409-{uniq}/b"))
+                .await;
+
+        let err = resolve_folder(&state, None, Some(&ws_name)).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::CONFLICT);
+        let body = err.1.0;
+        let candidates = body["candidates"].as_array().unwrap();
+        assert_eq!(candidates.len(), 2, "both repos listed as candidates");
+        let paths: Vec<&str> = candidates.iter().filter_map(|c| c["path"].as_str()).collect();
+        assert!(paths.contains(&abs_a.as_str()) && paths.contains(&abs_b.as_str()));
+        assert!(
+            body["error"].as_str().unwrap_or("").contains("folder="),
+            "the error tells the caller how to disambiguate: {}",
+            body["error"]
+        );
+
+        drop_merged_folder(&state.pg, &f1).await;
+        drop_merged_folder(&state.pg, &f2).await;
+        state.pg.delete_workspace(&ws).await.ok();
+    }
+
+    /// Two checkouts of ONE repository are one repo, not ambiguity: every
+    /// folder resolves identical rules, so resolution succeeds.
+    #[tokio::test]
+    async fn resolve_folder_same_repository_checkouts_resolve_without_conflict() {
+        let state = pack_state().await;
+        let uniq = uuid::Uuid::new_v4().to_string();
+        let ws_name = format!("_test:onerepo:{uniq}");
+        let ws = state.pg.create_workspace(&ws_name, None, None).await.unwrap();
+        let repo = format!("test/onerepo-{uniq}");
+        let abs_a = format!("/_test/onerepo-{uniq}/a/site");
+        let abs_b = format!("/_test/onerepo-{uniq}/b/site");
+        let (f1, _) = seed_merged_folder(&state.pg, &ws, "site", &abs_a, &repo).await;
+        let (f2, _) = seed_merged_folder(&state.pg, &ws, "site", &abs_b, &repo).await;
+
+        let (path, _) = resolve_folder(&state, None, Some(&ws_name)).await.unwrap();
+        assert!(
+            path == abs_a || path == abs_b,
+            "resolves to one of the same-repo checkouts: {path}"
+        );
+
+        drop_merged_folder(&state.pg, &f1).await;
+        drop_merged_folder(&state.pg, &f2).await;
+        state.pg.delete_workspace(&ws).await.ok();
+    }
+
+    /// An empty workspace keeps its 404 (the 409 is for ambiguity, not absence).
+    #[tokio::test]
+    async fn resolve_folder_empty_workspace_stays_not_found() {
+        let state = pack_state().await;
+        let uniq = uuid::Uuid::new_v4();
+        let ws_name = format!("_test:empty409:{uniq}");
+        let ws = state.pg.create_workspace(&ws_name, None, None).await.unwrap();
+
+        let err = resolve_folder(&state, None, Some(&ws_name)).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+
+        state.pg.delete_workspace(&ws).await.ok();
+    }
 }

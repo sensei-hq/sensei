@@ -1049,3 +1049,71 @@ async fn a_repository_whose_code_is_all_tests_is_tagged_quality() {
     assert_eq!(role(chosen).as_deref(), Some("library"), "a chosen role is never overridden");
     assert_eq!(role(empty), None, "no code is not 'all tests'");
 }
+
+/// #541 fix 2: the rules resolver must see only TOP-LEVEL anchors — a nested
+/// subtree is not a second repo, and structural `folder` rows never are. Each
+/// row carries its repository so the resolver can count distinct repos.
+#[tokio::test]
+async fn get_workspace_top_level_repos_excludes_nested_anchors() {
+    let s = PgStore::test_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let ws = s.create_workspace(&format!("_test:toplevel:{uniq}"), None, None).await.unwrap();
+    let root = format!("/_test/toplevel-{uniq}");
+    let (one, _) = create_test_repo_folder(
+        &s,
+        "one",
+        &format!("{root}/one"),
+        &format!("test/tl-{uniq}/one"),
+        "git",
+    )
+    .await;
+    let (nested, _) = create_test_repo_folder(
+        &s,
+        "nested",
+        &format!("{root}/one/nested"),
+        &format!("test/tl-{uniq}/nested"),
+        "subtree",
+    )
+    .await;
+    let (two, _) = create_test_repo_folder(
+        &s,
+        "two",
+        &format!("{root}/two"),
+        &format!("test/tl-{uniq}/two"),
+        "git",
+    )
+    .await;
+    let (docs, _) = create_test_repo_folder(
+        &s,
+        "docs",
+        &format!("{root}/one/docs"),
+        &format!("test/tl-{uniq}/one"),
+        "folder",
+    )
+    .await;
+    for fid in [&one, &nested, &two, &docs] {
+        s.set_folder_workspace(fid, &ws, "root", None).await.unwrap();
+    }
+
+    let tops = s.get_workspace_top_level_repos(&ws).await.unwrap();
+    let names: Vec<String> =
+        tops.iter().filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
+    assert_eq!(
+        names,
+        vec!["one".to_string(), "two".to_string()],
+        "nested subtree + structural folder excluded"
+    );
+    assert!(
+        tops.iter().all(|r| r.get("repository_id").and_then(|v| v.as_str()).is_some()),
+        "each top-level row carries its repository"
+    );
+    assert_ne!(
+        tops[0]["repository_id"], tops[1]["repository_id"],
+        "the two tops are distinct repositories"
+    );
+
+    for fid in [&one, &nested, &two, &docs] {
+        drop_folder(&s, fid).await;
+    }
+    s.delete_workspace(&ws).await.ok();
+}
