@@ -718,6 +718,12 @@ async fn write_file_rows(
 /// FAILS rather than fabricating: minting a synthetic `p-<name>` id here once
 /// pushed a phantom workspace into the UI that matched no row and never
 /// reconciled. An error aborts this repo and the scan retries next tick.
+///
+/// Reuse is by NAME only when the grouping is certain: an explicit README
+/// `workspace:` (opt-in) or a subtree inheriting its parent's workspace.
+/// The default folder-name path reuses only a same-name workspace the new
+/// repo nests with — otherwise it mints a distinct row, so unrelated
+/// same-named repos never merge (#541).
 pub(crate) async fn resolve_workspace(
     pg: &crate::db::pg_store::PgStore,
     repo_path: &Path,
@@ -725,7 +731,7 @@ pub(crate) async fn resolve_workspace(
 ) -> Result<(uuid::Uuid, bool), String> {
     crate::tasks::processors::metadata::migrate_readme_workspace_key(repo_path)?;
     let fm = crate::tasks::processors::metadata::read_frontmatter(repo_path).unwrap_or_default();
-    let name: String = match folder_name.split_once(':') {
+    let (name, reuse_by_name): (String, bool) = match folder_name.split_once(':') {
         Some((parent_repo, _)) if fm.workspace.is_none() => {
             let parent_workspace = pg
                 .get_repo_by_name(parent_repo)
@@ -733,7 +739,7 @@ pub(crate) async fn resolve_workspace(
                 .ok()
                 .flatten()
                 .and_then(|f| crate::api::util::json_uuid(&f["workspace_id"]));
-            match parent_workspace {
+            let parent_name = match parent_workspace {
                 Some(pid) => pg
                     .get_workspace(&pid)
                     .await
@@ -742,11 +748,19 @@ pub(crate) async fn resolve_workspace(
                     .and_then(|p| p["name"].as_str().map(String::from))
                     .unwrap_or_else(|| parent_repo.to_string()),
                 None => parent_repo.to_string(),
-            }
+            };
+            (parent_name, true)
         }
-        _ => fm.workspace.clone().unwrap_or_else(|| folder_name.to_string()),
+        _ => (
+            fm.workspace.clone().unwrap_or_else(|| folder_name.to_string()),
+            fm.workspace.is_some(),
+        ),
     };
-    pg.get_or_create_workspace_by_name(&name).await
+    if reuse_by_name {
+        pg.get_or_create_workspace_by_name(&name).await
+    } else {
+        pg.get_or_create_workspace_for_repo(&name, &repo_path.to_string_lossy()).await
+    }
 }
 
 /// THE REPO SCAN. `ScanRoot` enqueues one of these per repository it found.

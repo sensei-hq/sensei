@@ -78,6 +78,81 @@ impl PgStore {
         Ok((id, true))
     }
 
+    /// Nesting-aware get-or-create for the scan's DEFAULT (folder-name) path
+    /// (#541): a same-name workspace is reused ONLY when one of its anchors
+    /// nests with `repo_abs_path` (either direction, incl. equality — a
+    /// re-scan always reuses its own workspace). Otherwise a DISTINCT row is
+    /// minted under the same name: a workspace's identity is its folder path,
+    /// not its name (see [`Self::heal_duplicate_name_workspaces`], which
+    /// deliberately leaves two folder-bearing same-name workspaces alone).
+    ///
+    /// The explicit frontmatter path does NOT come here — a README
+    /// `workspace:` declaration is opt-in grouping and reuses by name
+    /// unconditionally, as does a subtree inheriting its parent's workspace
+    /// (see the scan's `resolve_workspace`).
+    ///
+    /// Race behaviour mirrors [`Self::get_or_create_workspace_by_name`]: the
+    /// advisory lock on the name serializes concurrent minters. Two workers
+    /// first-scanning two same-named non-nested repos both mint — correct,
+    /// each repo joins the row it minted. (A same-repo concurrent re-scan
+    /// landing between another worker's mint and link could mint a second row
+    /// the repo then also joins; that needs one repo scanned twice
+    /// concurrently with an unlucky interleave, and the dual membership is
+    /// union-harmless.)
+    ///
+    /// Returns `(id, created)` like the by-name primitive.
+    pub async fn get_or_create_workspace_for_repo(
+        &self,
+        name: &str,
+        repo_abs_path: &str,
+    ) -> Result<(uuid::Uuid, bool), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("SELECT pg_advisory_xact_lock(hashtext($1)::int8)")
+            .bind(name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // The same-name workspace (if any) whose anchors the new path nests
+        // with — `id` is the stable tiebreak when several nest (converging
+        // nested paths, e.g. a subtree scanned before its parent).
+        let existing: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT w.id FROM sensei.workspaces w
+              WHERE w.name = $1
+                AND EXISTS (
+                  SELECT 1 FROM sensei.folders f
+                  JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+                 WHERE fp.workspace_id = w.id
+                   AND f.kind::text NOT IN ('folder', 'module')
+                   AND (f.abs_path = $2
+                        OR starts_with($2, f.abs_path || '/')
+                        OR starts_with(f.abs_path, $2 || '/'))
+                )
+              ORDER BY w.id
+              LIMIT 1",
+        )
+        .bind(name)
+        .bind(repo_abs_path)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some((id,)) = existing {
+            tx.commit().await.map_err(|e| e.to_string())?;
+            return Ok((id, false));
+        }
+
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.workspaces(name) VALUES($1) RETURNING id",
+        )
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok((id, true))
+    }
+
     /// Update a workspace's derived identity props (from README frontmatter or
     /// best-guess). Only overwrites description/client when provided; replaces
     /// stack only when a non-empty stack is given; unions tags.
