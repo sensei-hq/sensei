@@ -1445,6 +1445,11 @@ fn print_index_doctor(r: &serde_json::Value) {
         ("ghost folders (directory gone)", "ghost_folders", "ghost_folders"),
         ("nested standalone (mis-scoped in a repo)", "nested_standalone", "nested_standalone"),
         ("duplicate-name workspaces", "duplicate_name_workspaces", "duplicate_name_workspaces"),
+        (
+            "merged workspaces (same-named repos sharing one)",
+            "merged_workspaces",
+            "merged_workspaces",
+        ),
     ];
     let total: u64 = classes.iter().map(|(_, count_key, _)| n(count_key)).sum();
     // Advisory classes — surfaced separately below because the daemon does NOT
@@ -2052,8 +2057,11 @@ mod tests {
         print_index_doctor(&serde_json::json!({
             "roots_checked": 2, "roots_present": 1, "roots_absent": 1,
             "orphan_files": 2, "ghost_folders": 1, "nested_standalone": 0,
-            "duplicate_name_workspaces": 0,
-            "samples": { "orphan_files": ["/a/b.rs", "/a/c.rs"], "ghost_folders": ["/a/gone"] }
+            "duplicate_name_workspaces": 0, "merged_workspaces": 1,
+            "samples": {
+                "orphan_files": ["/a/b.rs", "/a/c.rs"], "ghost_folders": ["/a/gone"],
+                "merged_workspaces": ["website (4 repos)"]
+            }
         }));
     }
 
