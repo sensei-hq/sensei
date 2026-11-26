@@ -1,22 +1,23 @@
-# Checkpoint — 2026-11-26 (#541 merged to develop)
+# Checkpoint — 2026-11-26 (#541 deployed + verified)
 
 **Slice:** #541 merged-workspace governance fix (4 parts).
-**Branch:** `develop` (merged b41ed6b9c, pushed).
+**Branch:** `develop` (pushed). Daemon 0.28.0 live via brew.
 
 ## Done
-- Fix 1: MCP `get_rules` sends `folder=<cwd match>`.
-- Fix 2: `resolve_folder` 409s on multi-repo workspaces.
-- Fix 3: scan mints distinct workspaces for non-nested same-name repos.
-- Fix 4: heal splits merged workspaces; index doctor Class 8.
-- Full suite green (5262 senseid + all crates, 0 failed).
-- Live: new MCP resolves caller's repo; 3 merged found (heal on deploy).
+- All 4 fixes merged; full suite green.
+- Deployed: release binaries built, installed over Cellar
+  (fresh inodes — truncate-in-place trips macOS CS_KILL).
+- Indexer crash fixed en route (Vue multibyte slice).
+- Live heal split 3 merged workspaces; doctor reads 0;
+  website session followed its repo; rules resolve.
 
 ## Remaining
-- Deploy → periodic audit splits the 3; doctor reads zero.
-- Close #541 after user confirms; main merge is user's call.
+- Close #541 after user confirms.
+- Next release tags a signed build (this deploy is adhoc-signed;
+  Keychain-backed remote features may degrade until then).
 
 ## Next command
-None — slice complete. Deploy when ready.
+None — slice complete and live.
 
 ## Open questions
 - None.
