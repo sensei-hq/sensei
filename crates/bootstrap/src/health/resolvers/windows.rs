@@ -179,8 +179,8 @@ impl Resolver for SenseiWindowsResolver {
                 cfg.senseid_binary(),
                 cfg.sensei_mcp_binary()
             ),
-            script: "start https://github.com/sensei-hq/sensei/releases/latest".into(),
-            url: Some("https://github.com/sensei-hq/sensei/releases/latest".into()),
+            script: format!("start {}", crate::config::RELEASES_LATEST_URL),
+            url: Some(crate::config::RELEASES_LATEST_URL.into()),
         }
     }
 }

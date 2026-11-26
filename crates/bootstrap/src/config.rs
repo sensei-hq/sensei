@@ -37,6 +37,11 @@ pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
 /// releases repo carries the issue tracker instead (#538).
 pub const REPORT_ISSUE_URL: &str = "https://github.com/sensei-hq/sensei-releases/issues";
 
+/// Latest public release (binaries only). Remedies that send users to download
+/// a build point here, never at the private source repo's releases (#538).
+pub const RELEASES_LATEST_URL: &str =
+    "https://github.com/sensei-hq/sensei-releases/releases/latest";
+
 // ── Binary names ──────────────────────────────────────────────────────────────
 //
 // Exposed as `const &str` so they can be used at attribute/macro time
