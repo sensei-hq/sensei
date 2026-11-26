@@ -1117,3 +1117,58 @@ async fn get_workspace_top_level_repos_excludes_nested_anchors() {
     }
     s.delete_workspace(&ws).await.ok();
 }
+
+/// #541 fix 3: same-name repos at non-nested paths must NOT reuse one
+/// workspace — mint a distinct row (identity is the path). Reuse happens only
+/// when the new path nests with (either direction, incl. equality) an
+/// existing anchor of a same-name workspace.
+#[tokio::test]
+async fn get_or_create_workspace_for_repo_splits_non_nested_same_name_repos() {
+    let s = PgStore::test_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let name = format!("_test:split:{uniq}");
+    let root_a = format!("/_test/split-{uniq}/a/dup");
+    let root_b = format!("/_test/split-{uniq}/b/dup");
+
+    // First repo mints.
+    let (w1, created1) = s.get_or_create_workspace_for_repo(&name, &root_a).await.unwrap();
+    assert!(created1, "first repo mints its workspace");
+    let (fa, _) =
+        create_test_repo_folder(&s, "dup", &root_a, &format!("test/split-{uniq}/a"), "git").await;
+    s.set_folder_workspace(&fa, &w1, "root", None).await.unwrap();
+
+    // A non-nested same-name repo mints a DISTINCT workspace.
+    let (w2, created2) = s.get_or_create_workspace_for_repo(&name, &root_b).await.unwrap();
+    assert!(created2, "non-nested same-name repo must not reuse");
+    assert_ne!(w1, w2, "distinct rows for distinct paths");
+    let (fb, _) =
+        create_test_repo_folder(&s, "dup", &root_b, &format!("test/split-{uniq}/b"), "git").await;
+    s.set_folder_workspace(&fb, &w2, "root", None).await.unwrap();
+
+    // Re-scan (equal path) reuses its own workspace — never the other's.
+    let (again_a, created3) = s.get_or_create_workspace_for_repo(&name, &root_a).await.unwrap();
+    assert_eq!((again_a, created3), (w1, false));
+    let (again_b, created4) = s.get_or_create_workspace_for_repo(&name, &root_b).await.unwrap();
+    assert_eq!((again_b, created4), (w2, false));
+    // Nested-under reuses the enclosing workspace ...
+    let (nested, created5) =
+        s.get_or_create_workspace_for_repo(&name, &format!("{root_a}/sub")).await.unwrap();
+    assert_eq!((nested, created5), (w1, false), "nested-under reuses the enclosing workspace");
+    // ... and an enclosing path reuses the nested one.
+    let enclosing = format!("/_test/split-{uniq}/a");
+    let (outer, created6) = s.get_or_create_workspace_for_repo(&name, &enclosing).await.unwrap();
+    assert_eq!((outer, created6), (w1, false), "enclosing path reuses the nested workspace");
+
+    // Each workspace holds exactly its own repo.
+    let repos1 = s.get_workspace_repos(&w1).await.unwrap();
+    assert_eq!(repos1.len(), 1);
+    assert_eq!(repos1[0]["path"], root_a);
+    let repos2 = s.get_workspace_repos(&w2).await.unwrap();
+    assert_eq!(repos2.len(), 1);
+    assert_eq!(repos2[0]["path"], root_b);
+
+    drop_folder(&s, &fa).await;
+    drop_folder(&s, &fb).await;
+    s.delete_workspace(&w1).await.ok();
+    s.delete_workspace(&w2).await.ok();
+}

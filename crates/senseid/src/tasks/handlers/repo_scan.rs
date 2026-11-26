@@ -2463,4 +2463,100 @@ public class Customer { public int Id { get; set; } public string Name { get; se
              stale but counted as decided: {unparsed:?}"
         );
     }
+
+    /// #541 fix 3: the DEFAULT (folder-name) path mints a distinct workspace
+    /// for a same-name repo at a non-nested path — the accident that merged
+    /// unrelated repos is no longer representable through the scan. A re-scan
+    /// still finds its own workspace by path equality.
+    #[tokio::test]
+    async fn resolve_workspace_mints_distinct_workspace_for_non_nested_same_name_repo() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let name = format!("ztest-split-{uniq}");
+        // Two real dirs, same leaf name, non-nested, no README (default path).
+        let repo_a = t.path().join("a").join(&name);
+        let repo_b = t.path().join("b").join(&name);
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+
+        let (w1, created1) = super::resolve_workspace(ctx.pg(), &repo_a, &name).await.unwrap();
+        assert!(created1, "first repo mints its workspace");
+        // The scan links the repo after resolving; mirror that so the second
+        // resolve sees the anchor it must not reuse.
+        let (fa, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            ctx.pg(),
+            &name,
+            &repo_a.to_string_lossy(),
+            &format!("test/scan541-{uniq}/a"),
+            "git",
+        )
+        .await;
+        ctx.pg().set_folder_workspace(&fa, &w1, "root", None).await.unwrap();
+
+        let (w2, created2) = super::resolve_workspace(ctx.pg(), &repo_b, &name).await.unwrap();
+        assert!(created2, "non-nested same-name repo must mint, not reuse");
+        assert_ne!(w1, w2, "distinct rows for distinct paths");
+
+        let (again, created3) = super::resolve_workspace(ctx.pg(), &repo_a, &name).await.unwrap();
+        assert_eq!((again, created3), (w1, false), "re-scan finds its own workspace");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fa)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
+        for w in [w1, w2] {
+            sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+                .bind(w)
+                .execute(ctx.pg().pool())
+                .await
+                .unwrap();
+        }
+    }
+
+    /// #541 fix 3 negative: explicit README `workspace:` is OPT-IN grouping —
+    /// non-nested repos that DECLARE the same workspace still share it.
+    #[tokio::test]
+    async fn resolve_workspace_explicit_frontmatter_still_groups_non_nested_repos() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let group = format!("ztest-group-{uniq}");
+        let leaf = format!("proj-{uniq}");
+        let repo_a = t.path().join("a").join(&leaf);
+        let repo_b = t.path().join("b").join(&leaf);
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+        std::fs::write(repo_a.join("README.md"), format!("---\nworkspace: {group}\n---\n# a\n"))
+            .unwrap();
+        std::fs::write(repo_b.join("README.md"), format!("---\nworkspace: {group}\n---\n# b\n"))
+            .unwrap();
+
+        let (w1, _) = super::resolve_workspace(ctx.pg(), &repo_a, &leaf).await.unwrap();
+        let (fa, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            ctx.pg(),
+            &leaf,
+            &repo_a.to_string_lossy(),
+            &format!("test/scan541-{uniq}/a"),
+            "git",
+        )
+        .await;
+        ctx.pg().set_folder_workspace(&fa, &w1, "root", None).await.unwrap();
+
+        let (w2, created2) = super::resolve_workspace(ctx.pg(), &repo_b, &leaf).await.unwrap();
+        assert_eq!(w1, w2, "opt-in grouping survives fix 3");
+        assert!(!created2, "the declared workspace is reused, not minted");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fa)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(w1)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
+    }
 }
