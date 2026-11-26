@@ -25,6 +25,12 @@ are marked **BREAKING**.
   candidates; and the index audit heals already-merged workspaces (one per
   repository), reported by `sensei index doctor`.
 
+### Removed
+
+- **CodeQL workflow.** The repository is private without GitHub Advanced
+  Security, so every run failed at the upload step. Restore
+  `.github/workflows/codeql.yml` from git history if code scanning returns.
+
 ## [0.28.0] — 2026-11-24
 
 ### Added

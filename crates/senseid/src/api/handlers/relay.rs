@@ -2523,15 +2523,24 @@ mod tests {
         let (status, refused) =
             call(&h, "POST", "/api/relay/resources/execute", Some(body()), Some(&token)).await;
         assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-        let (status, _) = call(
-            &h,
-            "POST",
-            "/api/relay/resources/request",
-            Some(json!({"lane_id": lane_id, "resource": "shared-build"})),
-            Some(&token),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
+        // Zero floors force the grant: the host's own disk never decides
+        // this test (a CI runner sits below the 25 GB default floor).
+        let user = h.state.pg.relay_current_user().await.unwrap();
+        let lease = h
+            .state
+            .pg
+            .relay_request_resource(
+                user,
+                lane_id.parse::<uuid::Uuid>().unwrap(),
+                crate::db::pg_store::relay::RelayResourceRequest {
+                    resource: "shared-build".into(),
+                    floors: Some(crate::relay::RelayFloors { disk_gb: 0, swap_gb: 0 }),
+                },
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(lease.state, crate::relay::RelayLeaseState::Granted);
         let (status, ran) =
             call(&h, "POST", "/api/relay/resources/execute", Some(body()), Some(&token)).await;
         assert_eq!(status, StatusCode::OK, "{ran}");
@@ -2593,16 +2602,13 @@ mod tests {
         assert_eq!(r_status, StatusCode::OK);
         assert_eq!(b_status, StatusCode::OK, "{b_ran}");
         assert!(b_ran["output"].as_str().unwrap().contains("built-ok"), "{b_ran}");
-        let (status, again) = call(
-            &h,
-            "POST",
-            "/api/relay/resources/request",
-            Some(json!({"lane_id": coord_id, "resource": "shared-build"})),
-            Some(&coord_token),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{again}");
-        assert_eq!(again["state"], "granted", "{again}");
+        let again = h
+            .state
+            .pg
+            .relay_request_resource(user, coord_id.parse::<uuid::Uuid>().unwrap(), req(), now)
+            .await
+            .unwrap();
+        assert_eq!(again.state, crate::relay::RelayLeaseState::Granted, "{again:?}");
     }
 
     #[tokio::test]
@@ -3425,6 +3431,19 @@ mod tests {
             event.data["op"].as_str().unwrap_or("").to_string(),
             event.data["task_id"].as_str().unwrap_or("").to_string(),
         )
+    }
+
+    #[tokio::test]
+    async fn a_critical_host_refuses_claims_with_503() {
+        // #444 §10.1: the claim gate holds at the endpoint — simulated here,
+        // since the test host's real disk must not decide the outcome.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (a, token_a) = register_contributor(&h, &coord.2).await;
+        let _full = crate::tasks::relay_health::test_probe::set((Some(1), None));
+        let (status, body) = claim_next(&h, &a, &token_a).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["error"], "relay_host_disk_exhausted");
     }
 
     #[tokio::test]

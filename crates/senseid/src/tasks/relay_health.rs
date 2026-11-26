@@ -77,7 +77,46 @@ fn swap_used_pct() -> Option<u8> {
 /// Claim gate: refuse new work while the host is critical (#444 §10.1).
 /// Called by both claim endpoints after auth. A blind probe passes.
 pub fn gate_claims() -> Result<(), crate::relay::RelayError> {
-    gate_claims_inner(probe())
+    #[cfg(test)]
+    let reading = test_probe::get();
+    #[cfg(not(test))]
+    let reading = probe();
+    gate_claims_inner(reading)
+}
+
+/// Under test the claim gate reads this, not the host: the disk of whatever
+/// machine runs the suite (a CI runner sits near the 15 GB watermark after a
+/// build) must not decide a handler test's outcome. Healthy by default; a test
+/// simulates a full host with `set`, which lasts until the guard drops.
+/// Thread-local, so parallel tests (each on its own current-thread runtime)
+/// never see one another's override.
+#[cfg(test)]
+pub mod test_probe {
+    use std::cell::Cell;
+
+    type Probe = (Option<u64>, Option<u8>);
+    const HEALTHY: Probe = (None, None);
+
+    thread_local! {
+        static PROBE: Cell<Probe> = const { Cell::new(HEALTHY) };
+    }
+
+    pub fn get() -> Probe {
+        PROBE.with(Cell::get)
+    }
+
+    pub fn set(probe: Probe) -> Guard {
+        PROBE.with(|p| p.set(probe));
+        Guard
+    }
+
+    pub struct Guard;
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            PROBE.with(|p| p.set(HEALTHY));
+        }
+    }
 }
 
 fn gate_claims_inner(
@@ -182,5 +221,19 @@ mod tests {
         let err = gate_claims_inner((Some(10), Some(10))).unwrap_err();
         assert_eq!(err.status(), 503);
         assert_eq!(err.code(), "relay_host_disk_exhausted");
+    }
+
+    /// The claim endpoints' tests must not depend on the disk of whatever
+    /// machine runs them: a CI runner sits near the 15 GB watermark after a
+    /// build, which turned every relay claim test into a coin toss. Under test
+    /// the gate reads an injected probe, healthy unless a test says otherwise.
+    #[test]
+    fn under_test_the_gate_reads_the_injected_probe_not_the_host() {
+        assert!(gate_claims().is_ok());
+        {
+            let _full = test_probe::set((Some(1), None));
+            assert_eq!(gate_claims().unwrap_err().code(), "relay_host_disk_exhausted");
+        }
+        assert!(gate_claims().is_ok(), "the override ends with its guard");
     }
 }

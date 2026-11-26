@@ -5,8 +5,13 @@ import { execFileSync } from 'child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 
+// GIT_* from the caller (a hook in a linked worktree exports GIT_DIR and
+// GIT_WORK_TREE) would aim every command at the caller's repo, not `dir`.
+const isolatedEnv = (): NodeJS.ProcessEnv =>
+  Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+
 const git = (dir: string, args: string[]) =>
-  execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', args, { cwd: dir, stdio: 'ignore', env: isolatedEnv() });
 
 /** A committed git repo at `dir` with `files` written into it. Idempotent:
 // a second call leaves an existing repo (and its history) intact. */
