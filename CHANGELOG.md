@@ -15,23 +15,7 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
-### Fixed
-
-- **Workspaces no longer merge unrelated same-named repos** (#541). The scan
-  mints a distinct workspace when a same-named repo is not nested with the
-  existing one (explicit README `workspace:` grouping is unchanged);
-  `get_rules` resolves by the caller's folder instead of the workspace name;
-  resolving rules by a workspace name spanning repositories is a 409 with
-  candidates; and the index audit heals already-merged workspaces (one per
-  repository), reported by `sensei index doctor`.
-
-### Removed
-
-- **CodeQL workflow.** The repository is private without GitHub Advanced
-  Security, so every run failed at the upload step. Restore
-  `.github/workflows/codeql.yml` from git history if code scanning returns.
-
-## [0.28.0] — 2026-11-24
+## [0.28.0] — 2026-11-26
 
 ### Added
 
@@ -62,11 +46,25 @@ are marked **BREAKING**.
 
 ### Fixed
 
+- **Workspaces no longer merge unrelated same-named repos** (#541). The scan
+  mints a distinct workspace when a same-named repo is not nested with the
+  existing one (explicit README `workspace:` grouping is unchanged);
+  `get_rules` resolves by the caller's folder instead of the workspace name;
+  resolving rules by a workspace name spanning repositories is a 409 with
+  candidates; and the index audit heals already-merged workspaces (one per
+  repository), reported by `sensei index doctor`.
+
 - **First-run setup installs pgvector.** The desktop app's health check
   started PostgreSQL 17 but never installed pgvector, so `CREATE EXTENSION
   vector` failed on a fresh machine. The postgres step now runs `brew install
   pgvector` once postgres is up, and the database step's remedy names it
   (instead of `createdb`) when the extension is missing.
+
+### Removed
+
+- **CodeQL workflow.** The repository is private without GitHub Advanced
+  Security, so every run failed at the upload step. Restore
+  `.github/workflows/codeql.yml` from git history if code scanning returns.
 
 ## [0.27.1] — 2026-11-23
 
