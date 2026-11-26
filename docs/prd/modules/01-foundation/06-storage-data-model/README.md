@@ -28,8 +28,8 @@ learned ever vanishes"*.
 
 ## Surfaces
 
-- **Daemon** — boot auto-apply reads the *released* DDL bundle (`database@vVERSION`);
-  `SENSEI_DDL_DIR` for local DDL; `make bump` to promote.
+- **Daemon** — boot auto-apply deploys the schema compiled into the binary (the git-tracked
+  `database/` files, written to `~/.sensei/schema/vVERSION/`); `SENSEI_DDL_DIR` for local DDL.
 - **CLI** — `dbd deploy` / `apply` / `graph` / `reconcile`; seeding via import procedures.
 - **Tests/CI** — `check-sql-in-layer`, `check-grant-targets`, `check-ddl-comments`,
   `check-brew-tokens` run in the repo gate; schema round-trip tests in `crates/senseid`.

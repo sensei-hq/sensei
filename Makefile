@@ -791,9 +791,11 @@ release:
 	  git merge --no-ff -q main -m "Merge main (v$(_v)) into develop" && \
 	  git push -q origin develop && echo "develop now carries main (v$(_v))"
 
-# Clear the dbd schema-source cache. The daemon resolves its DDL from
-# `sensei-hq/sensei/database@v<VERSION>` and dbd caches resolved sources per
-# version under ~/Library/Caches/dbd/. While we're pre-stable and NOT yet using
+# Clear the dbd schema-source cache. LEGACY: daemons before the embedded schema
+# (crates/bootstrap/src/schema.rs) resolved their DDL from
+# `sensei-hq/sensei/database@v<VERSION>` and dbd cached resolved sources per
+# version under ~/Library/Caches/dbd/. Current daemons never touch that cache, so
+# this is a no-op for them; drop it once no pre-embed daemon is installed. While we're pre-stable and NOT yet using
 # dbd snapshots/migrations (the schema is reapplied declaratively each deploy),
 # a stale cache entry makes a post-bump deploy reapply the PREVIOUS version's
 # DDL — recreating dropped objects / reverting view changes. `bump` invokes this

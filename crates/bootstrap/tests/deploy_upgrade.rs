@@ -88,6 +88,28 @@ async fn an_enum_an_older_release_created_gains_the_values_this_release_added() 
 
 #[tokio::test]
 #[ignore = "needs Postgres — rust.yml runs these with --ignored"]
+async fn a_fresh_install_from_the_schema_inside_the_binary_gets_the_whole_schema_and_its_seed() {
+    // What an installed binary deploys: the schema compiled into it, not the
+    // repo's database/ folder (which a user does not have) and not a download
+    // from the private source repo (which a user cannot reach).
+    let db = Scratch::new("embedded");
+    let backups = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let schema = sensei_bootstrap::schema::materialize(&scratch.path().join("v0.0.0"))
+        .expect("the embedded schema is written out");
+
+    sensei_bootstrap::database::deploy_to(&db.url(), &schema, backups.path())
+        .await
+        .expect("the embedded schema deploys onto an empty database");
+
+    assert_eq!(psql(&db.0, "select to_regclass('sensei.folders') is not null"), "t");
+    assert_eq!(psql(&db.0, "select to_regclass('sensei.graph_placement') is not null"), "t");
+    assert_eq!(psql(&db.0, "select count(*) > 0 from sensei.reason_codes"), "t");
+    assert_eq!(psql(&db.0, "select count(*) > 0 from sensei.rule_packs"), "t");
+}
+
+#[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
 async fn a_fresh_install_gets_the_whole_schema_and_its_seed() {
     let db = Scratch::new("fresh");
     let backups = tempfile::tempdir().unwrap();
