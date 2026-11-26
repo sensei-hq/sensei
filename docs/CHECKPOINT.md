@@ -1,22 +1,22 @@
-# Checkpoint — 2026-11-26 (#541 all 4 fixes done, verifying)
+# Checkpoint — 2026-11-26 (#541 merged to develop)
 
 **Slice:** #541 merged-workspace governance fix (4 parts).
-**Branch:** `fix/541-merged-workspaces` (pushed, 79a1e137f).
+**Branch:** `develop` (merged b41ed6b9c, pushed).
 
 ## Done
 - Fix 1: MCP `get_rules` sends `folder=<cwd match>`.
 - Fix 2: `resolve_folder` 409s on multi-repo workspaces.
 - Fix 3: scan mints distinct workspaces for non-nested same-name repos.
 - Fix 4: heal splits merged workspaces; index doctor Class 8.
-- Live: old MCP→another repo's rules ✗, new MCP→caller's repo ✓.
-- Live detect: 3 merged (website, database + 1 client repo);
-  other 5 same-name pairs share one repo (Class 5, not merged).
+- Full suite green (5262 senseid + all crates, 0 failed).
+- Live: new MCP resolves caller's repo; 3 merged found (heal on deploy).
 
 ## Remaining
-- Full suite green → merge to develop → push.
+- Deploy → periodic audit splits the 3; doctor reads zero.
+- Close #541 after user confirms; main merge is user's call.
 
 ## Next command
-`cargo test --workspace` (background), then merge.
+None — slice complete. Deploy when ready.
 
 ## Open questions
 - None.
