@@ -183,4 +183,18 @@ mod tests {
         assert_eq!(err.status(), 503);
         assert_eq!(err.code(), "relay_host_disk_exhausted");
     }
+
+    /// The claim endpoints' tests must not depend on the disk of whatever
+    /// machine runs them: a CI runner sits near the 15 GB watermark after a
+    /// build, which turned every relay claim test into a coin toss. Under test
+    /// the gate reads an injected probe, healthy unless a test says otherwise.
+    #[test]
+    fn under_test_the_gate_reads_the_injected_probe_not_the_host() {
+        assert!(gate_claims().is_ok());
+        {
+            let _full = test_probe::set((Some(1), None));
+            assert_eq!(gate_claims().unwrap_err().code(), "relay_host_disk_exhausted");
+        }
+        assert!(gate_claims().is_ok(), "the override ends with its guard");
+    }
 }

@@ -3428,6 +3428,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_critical_host_refuses_claims_with_503() {
+        // #444 §10.1: the claim gate holds at the endpoint — simulated here,
+        // since the test host's real disk must not decide the outcome.
+        let h = harness().await;
+        let coord = register_coordinator(&h).await;
+        let (a, token_a) = register_contributor(&h, &coord.2).await;
+        let _full = crate::tasks::relay_health::test_probe::set((Some(1), None));
+        let (status, body) = claim_next(&h, &a, &token_a).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["error"], "relay_host_disk_exhausted");
+    }
+
+    #[tokio::test]
     async fn claim_next_answers_review_then_task_then_none_with_the_design_shape() {
         // §6.3: a ready task comes back as the task shape, a floating review
         // as the review shape, nothing as `none`; each claim is announced.
