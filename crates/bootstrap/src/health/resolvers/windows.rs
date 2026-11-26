@@ -283,6 +283,15 @@ mod tests {
     }
 
     #[test]
+    fn the_missing_binaries_remedy_sends_users_to_the_public_releases_page() {
+        // The source repo is private; its releases page 404s for users (#538).
+        let r = SenseiWindowsResolver.fallback_remedy();
+        let expected = "https://github.com/sensei-hq/sensei-releases/releases/latest";
+        assert_eq!(r.url.as_deref(), Some(expected));
+        assert_eq!(r.script, format!("start {expected}"));
+    }
+
+    #[test]
     fn a_running_container_needs_nothing() {
         let r = DockerPostgresResolver {
             run: |a| if a[0] == "inspect" { ok("true") } else { ok("27") },
