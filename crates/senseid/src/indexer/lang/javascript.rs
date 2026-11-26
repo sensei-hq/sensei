@@ -686,8 +686,12 @@ fn vue_interpolations(text: &str, blocks: &[super::svelte::ScriptBlock]) -> Vec<
             break;
         }
         // A directive attribute: `:p=`, `@e=`, `v-x=`, and the `#slot` shorthand.
-        let directive =
-            bytes[i] == b':' || bytes[i] == b'@' || text[i..].starts_with("v-") || bytes[i] == b'#';
+        // The walk is byte-wise, so `i` can sit INSIDE a multibyte char — `get`
+        // answers "no match" there instead of panicking on the slice.
+        let directive = bytes[i] == b':'
+            || bytes[i] == b'@'
+            || text.get(i..).is_some_and(|s| s.starts_with("v-"))
+            || bytes[i] == b'#';
         if directive
             && i > 0
             && (bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b'<')
