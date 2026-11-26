@@ -80,7 +80,7 @@ impl DaemonRequest {
 /// Shape the daemon HTTP request the proxy sends for `tool`.
 ///
 /// `resolved_workspace` is the workspace **name** the binary already resolved
-/// (via `resolve_workspace` / `resolve_workspace_from_cwd`); `None` when nothing
+/// (via `resolve_workspace` / `resolve_cwd_from_daemon`); `None` when nothing
 /// resolved (equivalent to the binary's empty `repo_id`). `cwd` is the MCP
 /// process working directory — some tools (rules fallback, governance folder,
 /// workflow `workspace_path`) forward it.
@@ -137,6 +137,20 @@ pub fn daemon_request_for(
     cwd: &str,
     resolved_workspace: Option<&str>,
 ) -> Option<DaemonRequest> {
+    daemon_request_for_cwd(tool, args, cwd, resolved_workspace, "")
+}
+
+/// The folder-aware request builder the binary calls: `cwd_folder` is the
+/// cwd-matched repo-root abs_path ("" when the cwd matched no single folder),
+/// which `get_rules` prefers over the workspace name (#541). [`daemon_request_for`]
+/// is the no-cwd-match delegate (pin / explicit-name resolution).
+pub fn daemon_request_for_cwd(
+    tool: &str,
+    args: &Value,
+    cwd: &str,
+    resolved_workspace: Option<&str>,
+    cwd_folder: &str,
+) -> Option<DaemonRequest> {
     // The binary's `repo_id`: the resolved workspace NAME, or "" when unresolved.
     let repo_id = resolved_workspace.unwrap_or("");
     let named = args["workspace"].as_str().is_some_and(|s| !s.is_empty());
@@ -148,7 +162,7 @@ pub fn daemon_request_for(
     // of every tool had a cyclomatic complexity of 105).
     if let Some(req) = workspace_request(tool, args, repo_id, cwd)
         .or_else(|| code_lookup_request(tool, args, repo_id))
-        .or_else(|| context_lookup_request(tool, args, repo_id, cwd))
+        .or_else(|| context_lookup_request(tool, args, repo_id, cwd, cwd_folder))
         .or_else(|| knowledge_request(tool, args, repo_id, cwd))
         .or_else(|| relay_claim_request(tool, args))
         .or_else(|| relay_crew_request(tool, args))
@@ -329,6 +343,7 @@ fn context_lookup_request(
     args: &Value,
     repo_id: &str,
     cwd: &str,
+    cwd_folder: &str,
 ) -> Option<Option<DaemonRequest>> {
     Some(match tool {
         // ── Governance rules ────────────────────────────────────────────────
@@ -351,7 +366,7 @@ fn context_lookup_request(
         }
 
         "get_rules" => {
-            let (key, val) = rules_query_param(repo_id, cwd);
+            let (key, val) = rules_query_param(repo_id, cwd, cwd_folder);
             Some(DaemonRequest::get("/api/knowledge/rules").with_query(key, val))
         }
 
@@ -1926,12 +1941,24 @@ pub fn context_workspace_param<'a>(
 }
 
 /// Pure: pick the query param the daemon's `GET /api/knowledge/rules` accepts.
-/// Prefer the resolved workspace **name** (`workspace`) so the daemon resolves the
-/// governing folder itself; fall back to `folder=<cwd>` only when no workspace
-/// resolved. The original bug always sent the MCP process's own `cwd`, which is
-/// not the repo path.
-pub fn rules_query_param<'a>(repo_id: &'a str, cwd: &'a str) -> (&'static str, &'a str) {
-    if !repo_id.is_empty() { ("workspace", repo_id) } else { ("folder", cwd) }
+/// Prefer the cwd-matched folder's abs_path (`folder`) — exact even when
+/// same-named repos merged into one workspace (#541). Fall back to the resolved
+/// workspace **name** (`workspace`) when there was no cwd match (pin / explicit
+/// name); fall back to `folder=<cwd>` only when nothing resolved at all. The
+/// original bug always sent the MCP process's own `cwd`, which is not the repo
+/// path.
+pub fn rules_query_param<'a>(
+    repo_id: &'a str,
+    cwd: &'a str,
+    cwd_folder: &'a str,
+) -> (&'static str, &'a str) {
+    if !cwd_folder.is_empty() {
+        ("folder", cwd_folder)
+    } else if !repo_id.is_empty() {
+        ("workspace", repo_id)
+    } else {
+        ("folder", cwd)
+    }
 }
 
 /// Pure: map an MCP tool name to the daemon's internal tool name. Most pass
@@ -2060,11 +2087,15 @@ pub fn resolve_active_workspace_in(workspaces: &[Value], hint: &str) -> Option<A
     Some(ActiveWorkspace { id, name })
 }
 
-/// Pure function: resolve a workspace name from `cwd` by matching against each
-/// workspace's `folders[].abs_path`.  Picks the workspace whose folder has the
-/// longest `abs_path` that is a prefix of `cwd`.  Returns "" if no match.
-pub fn resolve_from_cwd_in(workspaces: &[Value], cwd: &str) -> String {
+/// Pure function: resolve a workspace (name, folder) from `cwd` by matching
+/// against each workspace's `folders[].abs_path` (repo roots only — the
+/// daemon's `?folders=roots` list). The folder is the matched root's abs_path;
+/// "" when the cwd matched no single folder. #541 needs BOTH: rules resolve
+/// per folder, and the workspace NAME is ambiguous once same-named repos have
+/// merged into one workspace — the folder is exact.
+pub fn resolve_cwd_match_in(workspaces: &[Value], cwd: &str) -> (String, String) {
     let mut best_name = String::default();
+    let mut best_folder = String::default();
     let mut best_len = 0usize;
 
     for p in workspaces {
@@ -2076,6 +2107,7 @@ pub fn resolve_from_cwd_in(workspaces: &[Value], cwd: &str) -> String {
                 {
                     best_len = abs_path.len();
                     best_name = p["name"].as_str().unwrap_or("").to_string();
+                    best_folder = abs_path.to_string();
                 }
             }
         }
@@ -2085,6 +2117,8 @@ pub fn resolve_from_cwd_in(workspaces: &[Value], cwd: &str) -> String {
     // If EXACTLY ONE registered repo is under cwd, that's unambiguous → pick it.
     // If several are, it's genuinely ambiguous → leave empty so the caller falls
     // back to the pin / an explicit workspace= (never guess a wrong workspace).
+    // The folder follows the same rule at FOLDER grain: one workspace with two
+    // folders under cwd still resolves the NAME while the folder stays empty.
     if best_name.is_empty() && !cwd.trim().is_empty() {
         let prefix = if cwd.ends_with('/') { cwd.to_string() } else { format!("{cwd}/") };
         let mut under: Vec<String> = workspaces
@@ -2102,9 +2136,33 @@ pub fn resolve_from_cwd_in(workspaces: &[Value], cwd: &str) -> String {
         if under.len() == 1 {
             best_name = under.remove(0);
         }
+        let mut under_folders: Vec<String> = workspaces
+            .iter()
+            .filter_map(|p| p["folders"].as_array())
+            .flat_map(|fs| fs.iter().filter_map(|f| f["abs_path"].as_str()))
+            .filter(|a| a.starts_with(&prefix))
+            .map(str::to_string)
+            .collect();
+        under_folders.sort_unstable();
+        under_folders.dedup();
+        if under_folders.len() == 1 {
+            best_folder = under_folders.remove(0);
+        }
     }
 
-    best_name
+    (best_name, best_folder)
+}
+
+/// Pure function: resolve a workspace name from `cwd` (see
+/// [`resolve_cwd_match_in`]). Returns "" if no match.
+pub fn resolve_from_cwd_in(workspaces: &[Value], cwd: &str) -> String {
+    resolve_cwd_match_in(workspaces, cwd).0
+}
+
+/// Pure function: resolve the cwd-matched repo-root folder's abs_path (see
+/// [`resolve_cwd_match_in`]). Returns "" if no single folder matched.
+pub fn resolve_folder_from_cwd_in(workspaces: &[Value], cwd: &str) -> String {
+    resolve_cwd_match_in(workspaces, cwd).1
 }
 
 #[cfg(test)]
