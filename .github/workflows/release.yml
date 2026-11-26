@@ -5,8 +5,8 @@ on:
     tags:
       - "v*"
 
-# Least-privilege default: read-only. Only the `release` job (which creates the
-# GitHub Release and uploads assets) elevates to `contents: write`.
+# Least-privilege default: read-only. No job elevates GITHUB_TOKEN: the release
+# is published to sensei-hq/sensei-releases with its own scoped token.
 permissions:
   contents: read
 
@@ -264,13 +264,15 @@ jobs:
           path: app/src-tauri/target/release/bundle/deb/*.deb
 
   # ── GitHub Release (all artifacts) ─────────────────────────────────────────
+  # Published to the PUBLIC, binaries-only repo sensei-hq/sensei-releases, not
+  # to this one: sensei-hq/sensei is private, so its release assets 404 for every
+  # user outside the org and `brew install` could not work (#538). The token is
+  # a fine-grained PAT with Contents: read/write on sensei-releases ONLY.
+  # The notes are a fixed install block, not generated: generated notes would
+  # publish this private repo's commit and PR titles.
   release:
     needs: [build-daemon, build-app, build-app-linux]
     runs-on: ubuntu-latest
-    # Elevated above the read-only top-level default: this job creates the
-    # GitHub Release and uploads assets via softprops/action-gh-release.
-    permissions:
-      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -278,10 +280,33 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create GitHub Release
+      - name: The releases token is set
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$RELEASES_TOKEN" ]; then
+            echo "::error::RELEASES_GITHUB_TOKEN is not set — binaries cannot be published to sensei-hq/sensei-releases."
+            exit 1
+          fi
+
+      - name: Create GitHub Release on sensei-releases
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
-          generate_release_notes: true
+          repository: sensei-hq/sensei-releases
+          token: ${{ secrets.RELEASES_GITHUB_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Sensei ${{ github.ref_name }}
+          generate_release_notes: false
+          body: |
+            Install or upgrade with Homebrew:
+
+            ```sh
+            brew tap sensei-hq/tap
+            brew install sensei-hq/tap/sensei            # CLI, daemon and MCP server
+            brew install --cask sensei-hq/tap/senseihq   # desktop app (macOS)
+            ```
+
+            Problems? Open an issue: https://github.com/sensei-hq/sensei-releases/issues
           files: |
             artifacts/*.tar.gz
             artifacts/*.dmg
@@ -340,19 +365,15 @@ jobs:
           VERSION="${TAG_NAME#v}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - name: Download CLI tarballs and compute SHA256s
+      - name: Download CLI tarballs anonymously and compute SHA256s
         run: |
-          # `gh release download` rather than `curl`, which authenticates via
-          # GH_TOKEN (set at the job level). The original reason — "the repo is
-          # private so a bare curl 404s" — is STALE: sensei-hq/sensei is public
-          # now, and the unauthenticated releases/download URL serves the same
-          # bytes (verified by re-fetching and re-hashing). Keeping `gh` anyway:
-          # it is rate-limited as an authenticated caller, and the formula's own
-          # URLs are the public ones either way, so nothing here depends on the
-          # repo's visibility.
+          # A plain, UNAUTHENTICATED curl of the exact URL the formula names —
+          # deliberately not `gh release download`. If a user could not download
+          # an asset, neither can this step, and the tap stays on the previous
+          # (installable) release instead of advertising a 404 (#538).
+          base="https://github.com/sensei-hq/sensei-releases/releases/download/${TAG}"
           for artifact in sensei-macos-arm64 sensei-macos-x86_64 sensei-linux-arm64 sensei-linux-x86_64; do
-            gh release download "${TAG}" --repo sensei-hq/sensei \
-              -p "${artifact}.tar.gz" -O "${artifact}.tar.gz" --clobber
+            curl -fsSL --retry 3 -o "${artifact}.tar.gz" "${base}/${artifact}.tar.gz"
             sha=$(sha256sum "${artifact}.tar.gz" | cut -d' ' -f1)
             key="SHA256_${artifact//-/_}"
             echo "${key}=${sha}" >> "$GITHUB_ENV"
@@ -360,7 +381,7 @@ jobs:
 
       - name: Find DMG asset and compute SHA256
         run: |
-          dmg_name=$(gh release view "${TAG}" --repo sensei-hq/sensei \
+          dmg_name=$(gh release view "${TAG}" --repo sensei-hq/sensei-releases \
             --json assets --jq '.assets[] | select(.name | endswith(".dmg")) | .name' \
             | head -1)
           # No `DMG_FOUND` flag: an UNSET `SHA256_dmg` is the signal, and the
@@ -368,8 +389,9 @@ jobs:
           # "publish a cask with no checksum". One piece of state instead of two
           # that can disagree.
           if [ -n "$dmg_name" ]; then
-            gh release download "${TAG}" --repo sensei-hq/sensei \
-              -p "$dmg_name" -O "$dmg_name" --clobber
+            # Anonymous, for the same reason as the tarballs above.
+            curl -fsSL --retry 3 -o "$dmg_name" \
+              "https://github.com/sensei-hq/sensei-releases/releases/download/${TAG}/${dmg_name}"
             sha=$(sha256sum "$dmg_name" | cut -d' ' -f1)
             echo "SHA256_dmg=${sha}" >> "$GITHUB_ENV"
           else

@@ -32,6 +32,11 @@ pub const GITHUB_REPO: &str = "sensei";
 /// Homebrew tap slug used in install/reinstall messages.
 pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
 
+/// Where users report problems (the app's Help → Report issue). The source repo
+/// is private, so its issues page 404s for users; the public, binaries-only
+/// releases repo carries the issue tracker instead (#538).
+pub const REPORT_ISSUE_URL: &str = "https://github.com/sensei-hq/sensei-releases/issues";
+
 // ── Binary names ──────────────────────────────────────────────────────────────
 //
 // Exposed as `const &str` so they can be used at attribute/macro time
@@ -664,6 +669,12 @@ mod tests {
         let script = cfg.brew_install_script();
         assert_eq!(script, "brew install sensei-hq/tap/sensei");
         assert!(!script.contains("--HEAD"));
+    }
+
+    #[test]
+    fn users_report_issues_on_the_public_releases_repo_not_the_private_source() {
+        // sensei-hq/sensei is private: its issues page 404s for users (#538).
+        assert_eq!(REPORT_ISSUE_URL, "https://github.com/sensei-hq/sensei-releases/issues");
     }
 
     #[test]

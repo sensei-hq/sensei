@@ -198,13 +198,13 @@ db-backup-essential:
 # Re-sign with hardened runtime so the Tauri sidecar can spawn them (macOS
 # Sequoia Code Signing Monitor level 2 requires this).
 install-service: db-backup-essential crates
-	@# Cold install: ensure the sensei formula is present. Try the release
-	@# tarball first; fall back to --HEAD (build from main) when no release
-	@# is tagged yet (typically right after `make bump` before CI publishes).
+	@# Cold install: ensure the sensei formula is present (its service plist is
+	@# what launchd runs). There is no --HEAD fallback: the source repo is
+	@# private (#538); the binaries are replaced from target/ below anyway.
 	@if ! brew list --formula sensei >/dev/null 2>&1; then \
 	  echo "Cold install: brew install sensei-hq/tap/sensei (one-time)..."; \
 	  brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap >/dev/null 2>&1 || true; \
-	  brew install sensei-hq/tap/sensei || brew install --HEAD sensei-hq/tap/sensei; \
+	  brew install sensei-hq/tap/sensei; \
 	fi
 	@# Stop via brew services FIRST, then pkill any stragglers. `pkill`
 	@# alone is not enough: launchd's keep_alive in the brew service plist
@@ -373,7 +373,7 @@ app-check:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-no-now-relay check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin test-db-apply
+test-fast: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-no-now-relay check-brew-tokens check-tap-render check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates-fast test-app-unit test-plugin test-db-apply
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -437,6 +437,12 @@ check-no-now-relay:
 check-brew-tokens:
 	@python3 scripts/check-brew-tokens.py
 
+# The tap renderer refuses any formula/cask a user outside the org cannot install
+# (a url off the public sensei-releases host, or a reference to the private
+# source repo — #538). The self-test renders the real templates.
+check-tap-render:
+	@python3 -I scripts/render-homebrew-tap.py --self-test >/dev/null 2>&1 || python3 -I scripts/render-homebrew-tap.py --self-test
+
 # Docs that still call trackers read-only (spec/daemon/tracker-metrics-writeback.md
 # gate 26): since 2026-10-26 the daemon writes usage metrics back, so every such
 # statement is narrowed and names the spec. The self-test runs first, so a broken
@@ -472,7 +478,7 @@ check-shared-js-specs:
 check-leak-guard:
 	@bash .githooks/check-no-leaks.sh --test >/dev/null || bash .githooks/check-no-leaks.sh --test
 
-test: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
+test: check-sql-in-layer check-no-fabrication check-doc-links check-ddl-grants check-ddl-comments check-brew-tokens check-tap-render check-shared-js-specs check-leak-guard check-tracker-docs check-jira-fields-script test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
 
 test-crates:
 	cargo test --workspace

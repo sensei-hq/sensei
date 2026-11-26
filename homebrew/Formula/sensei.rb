@@ -1,66 +1,43 @@
 # Homebrew formula for the Sensei CLI tools.
 # Installs: senseid (daemon), sensei (CLI), sensei-mcp (MCP server)
 #
-# Two install paths:
-#   brew install sensei-hq/tap/sensei          # released artefacts (default)
-#   brew install --HEAD sensei-hq/tap/sensei   # build from main branch source
+#   brew install sensei-hq/tap/sensei
 #
-# The HEAD path is the fallback when no release has been tagged yet (404 on
-# the tarball URL). Build invocation goes through `make crates-release` so
-# the formula and `make install-release` share one cargo invocation.
+# Binaries come from the public, binaries-only sensei-hq/sensei-releases repo.
+# The source repo is private, so there is no --HEAD (source) install (#538);
+# developers build with `make install`.
 
 class Sensei < Formula
   desc "AI development intelligence — CLI, daemon, and MCP server"
-  homepage "https://github.com/sensei-hq/sensei"
+  homepage "https://sensei-hq.com/sensei"
   version "0.28.0"
 
-  # Release archives built by GitHub Actions (release-daemon.yml).
+  # Release archives built by GitHub Actions (release.yml).
   # Each tarball contains a single directory named after the artifact
   # (e.g. sensei-macos-arm64/) holding senseid, sensei, and sensei-mcp.
   if OS.mac? && Hardware::CPU.arm?
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-macos-arm64.tar.gz"
+    url "https://github.com/sensei-hq/sensei-releases/releases/download/v#{version}/sensei-macos-arm64.tar.gz"
     sha256 "REPLACE_WITH_ARM64_SHA256"
   elsif OS.mac? && Hardware::CPU.intel?
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-macos-x86_64.tar.gz"
+    url "https://github.com/sensei-hq/sensei-releases/releases/download/v#{version}/sensei-macos-x86_64.tar.gz"
     sha256 "REPLACE_WITH_X86_64_SHA256"
   elsif OS.linux? && Hardware::CPU.arm?
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-linux-arm64.tar.gz"
+    url "https://github.com/sensei-hq/sensei-releases/releases/download/v#{version}/sensei-linux-arm64.tar.gz"
     sha256 "REPLACE_WITH_LINUX_ARM64_SHA256"
   else
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-linux-x86_64.tar.gz"
+    url "https://github.com/sensei-hq/sensei-releases/releases/download/v#{version}/sensei-linux-x86_64.tar.gz"
     sha256 "REPLACE_WITH_LINUX_X86_64_SHA256"
   end
 
-  # HEAD path: build from source on `main`.
-  # SSH (not HTTPS) so the private sensei-hq/sensei repo can be cloned via
-  # the developer's existing GitHub SSH key — HTTPS would prompt for
-  # username/password and hang brew bundle.
-  # `using: :git` forces the git download strategy — brew only auto-detects
-  # git from `.git`-suffixed HTTPS URLs, not from SSH-style URLs.
-  head "git@github.com:sensei-hq/sensei.git", branch: "main", using: :git
-
-  # Build-time deps are only consulted on the HEAD branch (source build).
-  depends_on "rust" => :build
-  depends_on "make" => :build
   # Runtime dep — sensei pins postgresql@17 so dev and prod use the same major.
   depends_on "postgresql@17"
 
   def install
-    if build.head?
-      # HEAD path: reuse `make crates-release` so this formula and
-      # `make install-release` share one cargo invocation.
-      system "make", "crates-release"
-      bin.install "target/release/senseid"
-      bin.install "target/release/sensei"
-      bin.install "target/release/sensei-mcp"
-    else
-      # Release-tarball path: binaries live inside the platform-specific
-      # subdirectory inside the tarball.
-      arch_dir = Dir["*/"].first || ""
-      bin.install "#{arch_dir}sensei"
-      bin.install "#{arch_dir}senseid"
-      bin.install "#{arch_dir}sensei-mcp"
-    end
+    # Binaries live in the platform-specific subdirectory inside the tarball.
+    arch_dir = Dir["*/"].first || ""
+    bin.install "#{arch_dir}sensei"
+    bin.install "#{arch_dir}senseid"
+    bin.install "#{arch_dir}sensei-mcp"
 
     # Adhoc codesign on macOS so the Tauri sidecar can spawn them.
     # (macOS Sequoia Code Signing Monitor at level 2 requires this.)
