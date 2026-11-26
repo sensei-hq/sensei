@@ -15,6 +15,16 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Workspaces no longer merge unrelated same-named repos** (#541). The scan
+  mints a distinct workspace when a same-named repo is not nested with the
+  existing one (explicit README `workspace:` grouping is unchanged);
+  `get_rules` resolves by the caller's folder instead of the workspace name;
+  resolving rules by a workspace name spanning repositories is a 409 with
+  candidates; and the index audit heals already-merged workspaces (one per
+  repository), reported by `sensei index doctor`.
+
 ## [0.28.0] — 2026-11-24
 
 ### Added
