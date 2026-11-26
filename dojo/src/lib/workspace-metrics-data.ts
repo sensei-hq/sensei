@@ -25,6 +25,8 @@ export interface WorkspaceMetricsWire {
 	since: string;
 	days: number;
 	rows: WorkspaceMetricPoint[];
+	/** Per-repo activity (#531) — the recency the cards sort by AND show. */
+	activity: Array<{ repository_id: string; last_activity_at: string | null }>;
 }
 
 /** `GET …/workspaces/{id}/metrics[?days=]` — the workspace's series over the

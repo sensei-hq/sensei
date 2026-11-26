@@ -1682,24 +1682,31 @@ async fn sole_definition_by_name_returns_none_when_ambiguous() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
-/// A doc's file reference resolves against the repo-relative path, which is the
-/// form `nodes.file_path` uses. Before this, refs were stored machine-absolute
-/// and could never match.
+/// A doc's file reference resolves to the file's module node — v2 mints no
+/// `kind = 'file'` node — against the repo-relative path, which is the form
+/// `nodes.file_path` uses. Sole rule: inline submodules make the file's
+/// identity ambiguous, and picking one would publish a guess.
 #[tokio::test]
 async fn file_node_lookup_matches_the_repo_relative_path() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("fileref_{}", uuid::Uuid::new_v4())).await;
 
     let f =
-        s.seed_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None).await.unwrap();
-    assert_eq!(s.file_node_id_by_path(&fid, "src/main.rs").await.unwrap(), Some(f));
+        s.seed_node(&fid, "module", "main", "src/main.rs", None, None, None, None).await.unwrap();
+    assert_eq!(s.module_node_id_by_file(&fid, "src/main.rs").await.unwrap(), Some(f));
     assert_eq!(
-        s.file_node_id_by_path(&fid, "/abs/root/src/main.rs").await.unwrap(),
+        s.module_node_id_by_file(&fid, "/abs/root/src/main.rs").await.unwrap(),
         None,
         "an absolute target cannot match a repo-relative file_path — the whole reason \
          doc references resolved at 0%"
     );
-    assert_eq!(s.file_node_id_by_path(&fid, "src/absent.rs").await.unwrap(), None);
+    assert_eq!(s.module_node_id_by_file(&fid, "src/absent.rs").await.unwrap(), None);
+    s.seed_node(&fid, "module", "sub", "src/main.rs", None, None, None, None).await.unwrap();
+    assert_eq!(
+        s.module_node_id_by_file(&fid, "src/main.rs").await.unwrap(),
+        None,
+        "two modules in one file is ambiguous: no guess"
+    );
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }

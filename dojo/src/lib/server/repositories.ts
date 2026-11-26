@@ -292,6 +292,9 @@ export interface MyRepository {
 	remedy: string | null;
 	reason_actor: string | null;
 	last_synced_at: string | null;
+	/** Newest reading landed or graph sync filed (#531) — the sort key the
+	 *  lists show, attached by `sortByActivity` (absent until then). */
+	last_activity_at?: string | null;
 	metric_rows: number | null;
 	/** The branches whose code graph this repository shares. Empty → the graph
 	 *  does not sync, never a guessed `main`. */
@@ -367,7 +370,7 @@ export function isBillingHiddenRepo(
  * One reader for both consumers — the plan AND the screen — so what a user is
  * shown and what the daemon pushes cannot disagree.
  */
-async function graphBranchesByRepo(db: DojoClient): Promise<Map<string, GraphBranch[]>> {
+export async function graphBranchesByRepo(db: DojoClient): Promise<Map<string, GraphBranch[]>> {
 	const branchRows = await readAllPages<{ repository_id: string; branch: string; is_default: boolean }>(
 		(from, to) =>
 			db.rpc('my_graph_branches').select('repository_id, branch, is_default').order('repository_id').order('branch').range(from, to)
@@ -394,11 +397,45 @@ export async function listMyRepositories(db: DojoClient): Promise<MyRepository[]
 		),
 		graphBranchesByRepo(db)
 	]);
-	return repos.map((r) => ({
+	const rows = repos.map((r) => ({
 		...r,
 		graph_branches: branchesOf.get(r.repository_id) ?? [],
 		billing_hidden: isBillingHiddenRepo(r)
 	}));
+	return sortByActivity(db, rows);
+}
+
+/**
+ * Order `rows` most-recently-active first by `dojo.repository_activity`
+ * (#531): the newest reading landed or graph sync filed per repository. One
+ * rpc carrying the listed ids; the function answers only for repositories
+ * the caller may read. Each row carries its `last_activity_at` — the shown
+ * timestamp IS the sort key, so the two can never disagree. Quiet rows keep
+ * API order, last; ties break on repo_key (stable). Fails closed
+ * (AdminError): a broken activity read is an error, never the unsorted
+ * list. No rows, no read.
+ */
+async function sortByActivity(db: DojoClient, rows: MyRepository[]): Promise<MyRepository[]> {
+	if (rows.length === 0) return rows;
+	const { data, error } = await db.rpc('repository_activity', { p_ids: rows.map((r) => r.repository_id) });
+	if (error) throw new AdminError(500, error.message);
+	const at = new Map<string, number>();
+	const shown = new Map<string, string | null>();
+	for (const r of (data ?? []) as unknown as Array<{ repository_id: string; last_activity_at: string | null }>) {
+		shown.set(r.repository_id, r.last_activity_at);
+		const t = r.last_activity_at ? Date.parse(r.last_activity_at) : NaN;
+		if (!Number.isNaN(t)) at.set(r.repository_id, t);
+	}
+	return rows
+		.map((r) => ({ ...r, last_activity_at: shown.get(r.repository_id) ?? null }))
+		.sort((a, b) => {
+			const ta = at.get(a.repository_id);
+			const tb = at.get(b.repository_id);
+			if (ta === undefined && tb === undefined) return 0;
+			if (ta === undefined) return 1;
+			if (tb === undefined) return -1;
+			return tb - ta || (a.repo_key < b.repo_key ? -1 : a.repo_key > b.repo_key ? 1 : 0);
+		});
 }
 
 /** What `dojo.set_graph_branch` reports — the branch's tracking after the write. */

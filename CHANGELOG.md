@@ -15,6 +15,57 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-11-26
+
+### Added
+
+- **Linux desktop app** (`.deb`, Ubuntu 22.04 or newer, x86_64). `release.yml`
+  gains `build-app-linux`, built on `ubuntu-22.04` and attached to the GitHub
+  release; README gains an *Install (Linux)* section.
+- **Relay archive** (#393). Ended runs and closed crews move to
+  `relay_archive` mirror tables (10 per sweep pass while backfilling) and are
+  purged 30 days after `archived_at`, with archived/deleted events. History
+  reads span live and archive through union views; auth, gates, close,
+  unregister and reregister keep their documented answers on archived rows.
+- **Dōjō repo diagrams** (#268). A repository route draws one tracked
+  branch's files, nodes and edges (resolved at read time), with a branch
+  picker, a lens switcher and a schema ER lens. A tracked-branch manager
+  tracks and untracks branches behind an authority check and an in-page
+  confirm; its errors render through `Notice`.
+- **Relay health sentinel** (#444 §10.1). A scheduled task watches disk and
+  swap: at ≤ 25 GB free or ≥ 60 % swap it warns and cleans up; below 15 GB or
+  above 80 % swap relay claims are refused (`relay_host_disk_exhausted`).
+
+### Changed
+
+- **Relay builds share compiler caches** (#444 §10.3). Broker builds are
+  serialized process-wide; a lane's build offload waits for the shared build
+  to finish, records its properties and frees its slot.
+- **Dead worktrees are reclaimed** (#444 §10.2) by the relay janitor, hourly
+  and when a run ends.
+
+### Fixed
+
+- **Workspaces no longer merge unrelated same-named repos** (#541). The scan
+  mints a distinct workspace when a same-named repo is not nested with the
+  existing one (explicit README `workspace:` grouping is unchanged);
+  `get_rules` resolves by the caller's folder instead of the workspace name;
+  resolving rules by a workspace name spanning repositories is a 409 with
+  candidates; and the index audit heals already-merged workspaces (one per
+  repository), reported by `sensei index doctor`.
+
+- **First-run setup installs pgvector.** The desktop app's health check
+  started PostgreSQL 17 but never installed pgvector, so `CREATE EXTENSION
+  vector` failed on a fresh machine. The postgres step now runs `brew install
+  pgvector` once postgres is up, and the database step's remedy names it
+  (instead of `createdb`) when the extension is missing.
+
+### Removed
+
+- **CodeQL workflow.** The repository is private without GitHub Advanced
+  Security, so every run failed at the upload step. Restore
+  `.github/workflows/codeql.yml` from git history if code scanning returns.
+
 ## [0.27.1] — 2026-11-23
 
 ### Fixed

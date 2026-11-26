@@ -28,6 +28,7 @@
 	import type { MyRepoWire } from '$lib/client-data';
 	import { authorityLabel, visibilityLabel } from '$lib/you-state.svelte';
 	import { GRAPH_LABELS } from '$lib/graph-labels';
+	import { relativeAge } from '$lib/admin-view';
 
 	interface Props {
 		repos: MyRepoWire[];
@@ -101,6 +102,7 @@
 						<span class="text-sm text-ink">{r.name ?? r.repo_key}</span>
 						<span class="text-xs text-ink-mute">
 							{r.tenant} · {visibilityLabel(r.forge_visibility)} · {authorityLabel(r)}
+							{#if r.last_activity_at}· Active {relativeAge(r.last_activity_at)}{:else}· No activity yet{/if}
 						</span>
 						{#if !r.sync_enabled && r.reason}
 							<!-- The refusal names itself AND what to do. A bare "off" here is

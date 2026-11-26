@@ -13,10 +13,10 @@ select a.user_id, a.crew_id, a.task_id, a.id as action_id, l.code as lane_code,
   a.props->'gates' as gates,
   a.props->'options' as options,
   a.props->'to' as "to"
-from relay.actions a
-left join relay.lanes l on l.user_id = a.user_id and l.id = a.lane_id
+from relay.actions_all a
+left join relay.lanes_all l on l.user_id = a.user_id and l.id = a.lane_id
 where a.task_id is not null
 order by a.created_at desc, a.id desc;
 
 comment on view relay.task_history is
-'Task history, newest first as the view orders it. lane_code is null when the person acted.';
+'Task history, newest first as the view orders it. lane_code is null when the person acted. Reads live UNION ALL archive (#393).';

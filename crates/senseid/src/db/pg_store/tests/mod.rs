@@ -113,6 +113,37 @@ pub(crate) async fn create_test_folder_unattributed(s: &PgStore, suffix: &str) -
     row.0
 }
 
+/// A repo folder with explicit identity — the merged-workspace fixture shape
+/// [`create_test_folder`] cannot produce (it derives name, path AND repository
+/// from one suffix, so two folders can neither share a name nor a repository).
+/// Returns (folder_id, repository_id). `kind` is a `folder_kind` value.
+pub(crate) async fn create_test_repo_folder(
+    s: &PgStore,
+    name: &str,
+    abs_path: &str,
+    repo_key: &str,
+    kind: &str,
+) -> (uuid::Uuid, uuid::Uuid) {
+    use sqlx_core::query_as::query_as;
+    s.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+    let (rid,): (uuid::Uuid,) = query_as(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) \
+         ON CONFLICT(repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(repo_key)
+    .bind(name)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    let rel = abs_path.strip_prefix("/_test/").unwrap_or(abs_path);
+    let (fid,): (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) VALUES('00000000-0000-0000-0000-000000000001', $1::sensei.folder_kind, $2, $3, $4, $5) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name, repository_id = EXCLUDED.repository_id RETURNING id"
+        ).bind(kind).bind(name).bind(rel).bind(abs_path).bind(rid).fetch_one(s.pool()).await.unwrap();
+    (fid, rid)
+}
+
 /// Create a unique (workspace, folder) pair for FK tests that need both,
 /// wiring the folder to the workspace. Used by the pattern tests since
 /// detected_patterns is workspace-scoped (#82) and needs a non-null

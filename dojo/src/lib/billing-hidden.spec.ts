@@ -26,6 +26,7 @@ const wire = (id: string, org: string | null, billing_hidden: boolean, reason_co
 	remedy: null,
 	reason_actor: null,
 	last_synced_at: null,
+	last_activity_at: null,
 	metric_rows: 0,
 	graph_branches: [],
 	billing_hidden

@@ -1,30 +1,26 @@
-# Checkpoint — 2026-11-23 (perf-indexer-storm landed)
+# Checkpoint — 2026-11-26 (#541 deployed + verified)
 
-**Slice:** P1–P5 storm follow-ups + 4.4 harness fix.
-**Branch:** `develop` (pushed, 8 commits past v0.26.0 checkpoint).
-Tag `v0.26.0` on main; deploy-dojo still waits on user approval.
+**Slice:** #541 merged-workspace governance fix (4 parts).
+**Branch:** `develop` (pushed). Daemon 0.28.0 live via brew.
 
 ## Done
-- P1 governor (cap 2 + dedup; tsconfig skip reverted, regressed).
-- P2 stale prune (live-folder gate in community + git_history).
-- P3 phase timing (phases_ms JSONB; task-local outbox; spans).
-- P4 list caps (200 + overflow in 4 ops sections).
-- P5 clear redelivery (pending + timeout + ack-cancel + gens).
-- 4.4 root-caused (harness-side webview sleep; keep-awake read).
-- Gates: unit 4102, senseid exit-0, clippy clean, check clean,
-  crash 5/5 + ops-center 5/5 Tauri matrices green.
+- All 4 fixes merged; full suite green.
+- Deployed: release binaries built, installed over Cellar
+  (fresh inodes — truncate-in-place trips macOS CS_KILL).
+- Indexer crash fixed en route (Vue multibyte slice).
+- Live heal split 3 merged workspaces; doctor reads 0;
+  website session followed its repo; rules resolve.
 
 ## Remaining
-- User: approve deploy-dojo in GitHub.
-- Follow-ups (in tasks.md, not this change): 1.5 ts-driver hang,
-  5.5 event-driven alert derive (poll is sleep-prone backstop).
+- Close #541 after user confirms.
+- Next release tags a signed build (this deploy is adhoc-signed;
+  Keychain-backed remote features may degrade until then).
 
 ## Next command
-None — verify live, then pick a follow-up or cut 0.27.0.
+None — slice complete and live.
 
 ## Open questions
-- 6 process.rs fmt spots: local 1.99.1/1.100.0 flag what CI
-  stable accepts. Left untouched (fixing flips CI red).
+- None.
 
 ## Known-broken
 - None.

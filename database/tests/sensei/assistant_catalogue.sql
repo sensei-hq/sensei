@@ -19,7 +19,7 @@ begin;
 set local client_min_messages = warning;
 
 create temp table catalogue_seed (line text);
-\copy catalogue_seed from '../import/staging/assistant_catalogue.jsonl'
+\copy catalogue_seed from '../import/staging/assistant_catalogue.jsonl' with (format csv, quote e'\x01', delimiter e'\x02')
 truncate staging.assistant_catalogue;
 insert into staging.assistant_catalogue (id, name, kind, aliases, joins_crew, sequence, modified_at)
   select line::jsonb->>'id'

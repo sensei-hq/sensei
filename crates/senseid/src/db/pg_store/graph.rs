@@ -766,24 +766,30 @@ impl PgStore {
     /// and [`sensei.node_paths`] reports the same grain, so the two match
     /// directly. A path that names nothing indexed simply will not match, which
     /// is the correct answer rather than a failure.
-    pub async fn file_node_id_by_path(
+    /// A file's module node — the identity of the file itself (#246). v2 mints
+    /// no `kind = 'file'` node, so the old lookup by that kind answered None
+    /// for every production file and the doc file-ref arm never resolved.
+    /// Resolves ONLY when the file declares exactly one module: inline
+    /// submodules make the file's identity ambiguous, and picking one would
+    /// publish a guess — the same sole rule as `sole_definition_id_by_name`.
+    pub async fn module_node_id_by_file(
         &self,
         folder_id: &uuid::Uuid,
         rel_path: &str,
     ) -> Result<Option<uuid::Uuid>, String> {
-        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT n.id FROM sensei.nodes n
                JOIN sensei.node_paths np ON np.node_id = n.id
               WHERE n.folder_id = $1 AND np.file_path = $2
-                AND n.kind = 'file'::sensei.node_kind
-              LIMIT 1",
+                AND n.kind = 'module'::sensei.node_kind
+              LIMIT 2",
         )
         .bind(folder_id)
         .bind(rel_path)
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("file_node_id_by_path: {e}"))?;
-        Ok(row.map(|(id,)| id))
+        .map_err(|e| format!("module_node_id_by_file: {e}"))?;
+        Ok(if rows.len() == 1 { Some(rows[0].0) } else { None })
     }
 
     /// A definition node for `name`, but ONLY when exactly one exists in the

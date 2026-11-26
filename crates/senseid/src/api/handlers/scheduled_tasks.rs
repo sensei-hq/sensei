@@ -63,6 +63,14 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("metrics", "Metrics engine — one compute wave per workspace against its watermark"),
     ("reconcile", "Folder/index reconcile — self-healing scan-drift repair"),
     (
+        "relay_health",
+        "Relay health sentinel — disk and swap watermarks, warns and throttles claims when the host fills",
+    ),
+    (
+        "relay_janitor",
+        "Relay janitor — prunes dead worktrees, scavenges scratch, runs manifest cleans, compacts old action logs",
+    ),
+    (
         "relay_lease",
         "Relay lease sweeper — expires lapsed lane leases, suspends their work, re-offers past the grace, re-picks dead reviewers",
     ),

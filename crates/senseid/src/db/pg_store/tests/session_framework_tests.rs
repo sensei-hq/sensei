@@ -238,12 +238,15 @@ async fn a_probe_that_hangs_times_out_as_failed() {
     let s = PgStore::test_store().await;
     let folder = repo(&s, "/_fw/hung").await;
     let id = session(&s, Some(folder), 10, &[prompt("hi")]).await;
+    // The probe hangs far longer than the pass is allowed, and the pass's
+    // bound leaves room for its own DB work on a loaded CI runner (a 2 s
+    // bound failed there): finishing at all proves the probe did not hold it.
     let slow: Probe = Arc::new(|_: &std::path::Path| {
-        std::thread::sleep(Duration::from_secs(3));
+        std::thread::sleep(Duration::from_secs(30));
         Ok(true)
     });
     let r = tokio::time::timeout(
-        Duration::from_secs(2),
+        Duration::from_secs(15),
         pass_with(&s, NOW, 10_000, slow, Duration::from_millis(200)),
     )
     .await

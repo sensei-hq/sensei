@@ -113,6 +113,35 @@ impl GateRunner for GitGateRunner {
     }
 }
 
+/// Serializes broker-executed builds process-wide (#444 §10.3): one compile
+/// at a time, so parallel gates and lane offloads never stampede the host.
+/// A mutex, not a lease row — the stampede is within this daemon, and the
+/// lease table's holder is a lane, which the broker is not. Lanes still
+/// take the `shared-build` resource lease through the request endpoint;
+/// this guard is the belt behind it (and the gate's own, lanless builds).
+pub struct SharedBuildSerial {
+    _guard: tokio::sync::MutexGuard<'static, ()>,
+}
+
+static SHARED_BUILD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+impl SharedBuildSerial {
+    pub async fn acquire() -> Self {
+        Self { _guard: SHARED_BUILD.lock().await }
+    }
+}
+
+/// Shared compiler caches for broker builds (#444 §10.3): one target dir,
+/// one sccache, one pnpm store across every verify worktree.
+pub fn shared_build_env() -> Vec<(String, String)> {
+    let dir = crate::paths::sensei_dir().join("build-cache");
+    vec![
+        ("CARGO_TARGET_DIR".into(), dir.join("cargo-target").display().to_string()),
+        ("SCCACHE_DIR".into(), dir.join("sccache").display().to_string()),
+        ("PNPM_STORE_DIR".into(), dir.join("pnpm-store").display().to_string()),
+    ]
+}
+
 /// How much of a command's output a verdict carries.
 const TAIL_CHARS: usize = 2000;
 /// Cleanup commands (worktree removal, merge abort) never spend the gate's
@@ -162,6 +191,32 @@ async fn run_in(
     );
     let cmd = AgentCommand::new(program, args.iter().map(|a| a.to_string()).collect(), timeout)
         .with_cwd(dir);
+    let out = run_agent(&cmd).await.map_err(|e| format!("{shown}: {e:?}"))?;
+    if out.timed_out {
+        return Err(format!("gate timed out during `{shown}`"));
+    }
+    Ok(out)
+}
+
+/// `run_in` with extra environment, for builds: the shared compiler caches
+/// plus whatever the caller passes.
+async fn run_env_in(
+    program: &str,
+    args: &[&str],
+    dir: &Path,
+    timeout: Duration,
+    env: &[(String, String)],
+) -> Result<AgentOutput, String> {
+    let shown = format!(
+        "{} {}",
+        Path::new(program).file_name().map_or(program, |n| n.to_str().unwrap_or(program)),
+        args.join(" ")
+    );
+    let mut cmd = AgentCommand::new(program, args.iter().map(|a| a.to_string()).collect(), timeout)
+        .with_cwd(dir);
+    for (k, v) in env {
+        cmd = cmd.with_env(k, v);
+    }
     let out = run_agent(&cmd).await.map_err(|e| format!("{shown}: {e:?}"))?;
     if out.timed_out {
         return Err(format!("gate timed out during `{shown}`"));
@@ -290,8 +345,18 @@ async fn verify_merged_tree(
             ));
         }
         let sh = sensei_bootstrap::util::which_binary("sh").ok_or("sh not installed")?;
-        let out =
-            run_in(&sh, &["-c", verify_cmd], &worktree, budget.remaining("the verify")?).await?;
+        // Broker builds serialize on the shared-build guard and share the
+        // compiler caches (#444 §10.3).
+        let _build = SharedBuildSerial::acquire().await;
+        let out = run_env_in(
+            &sh,
+            &["-c", verify_cmd],
+            &worktree,
+            budget.remaining("the verify")?,
+            &shared_build_env(),
+        )
+        .await?;
+        drop(_build);
         match out.exit_code {
             Some(0) => Ok(None),
             Some(exit) => Ok(Some(GateOutcome::VerifyFailed {
@@ -557,5 +622,32 @@ mod tests {
         let GateOutcome::Error(why) = out else { panic!("{out:?}") };
         assert!(why.contains("time"), "{why}");
         assert_eq!(worktrees(dir), 1);
+    }
+
+    /// #444 §10.3: broker builds serialize on the shared-build guard — two
+    /// concurrent holders never overlap.
+    #[tokio::test]
+    async fn shared_builds_serialize() {
+        use std::sync::{Arc, Mutex};
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel::<()>();
+        let o1 = order.clone();
+        let first = tokio::spawn(async move {
+            let _guard = SharedBuildSerial::acquire().await;
+            o1.lock().unwrap().push("enter1");
+            let _ = entered_tx.send(());
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            o1.lock().unwrap().push("exit1");
+        });
+        entered_rx.await.unwrap();
+        let o2 = order.clone();
+        let second = tokio::spawn(async move {
+            let _guard = SharedBuildSerial::acquire().await;
+            o2.lock().unwrap().push("enter2");
+            o2.lock().unwrap().push("exit2");
+        });
+        first.await.unwrap();
+        second.await.unwrap();
+        assert_eq!(order.lock().unwrap().as_slice(), ["enter1", "exit1", "enter2", "exit2"]);
     }
 }

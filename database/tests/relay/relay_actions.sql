@@ -182,13 +182,11 @@ begin
     raise exception 'an action by a missing lane was accepted.';
   exception when foreign_key_violation then null;
   end;
-  begin
-    insert into relay.actions (user_id, id, crew_id, kind, reply_to) values
-      ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f761',
-       '11111111-1111-7000-8000-00000000f701', 'read', '11111111-1111-7000-8000-00000000f799');
-    raise exception 'an action replying to a missing action was accepted.';
-  exception when foreign_key_violation then null;
-  end;
+  -- reply_to is a plain id (#393): a live action may answer an archived one.
+  insert into relay.actions (user_id, id, crew_id, kind, reply_to) values
+    ('a1111111-1111-4111-8111-111111111111', '11111111-1111-7000-8000-00000000f761',
+     '11111111-1111-7000-8000-00000000f701', 'read', '11111111-1111-7000-8000-00000000f799');
+  delete from relay.actions where id = '11111111-1111-7000-8000-00000000f761';
 
   -- References are user-scoped: a U1 action on U2's task fails (composite FK).
   begin

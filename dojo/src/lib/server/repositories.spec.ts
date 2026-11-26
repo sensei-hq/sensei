@@ -428,7 +428,12 @@ describe('listMyRepositories — what a human is shown', () => {
 	function view(rows: Record<string, unknown>[]): Record<string, FakeTable> {
 		// The branches read is the shared set's default-empty, as
 		// metric_activations is in tables(): no rows means nothing tracked.
-		return { 'rpc:my_repositories': { rows }, 'rpc:my_graph_branches': { rows: [] } };
+		// Same for the activity read: no rows means every repo is quiet.
+		return {
+			'rpc:my_repositories': { rows },
+			'rpc:my_graph_branches': { rows: [] },
+			'rpc:repository_activity': { rows: [] }
+		};
 	}
 	const ROW = {
 		repository_id: 'r1',
@@ -489,7 +494,8 @@ describe('listMyRepositories — what a human is shown', () => {
 					{ repository_id: 'r1', branch: 'develop', is_default: false },
 					{ repository_id: 'r1', branch: 'main', is_default: true }
 				]
-			}
+			},
+			'rpc:repository_activity': { rows: [] }
 		});
 		const [api, web] = await listMyRepositories(db as never);
 		expect(api.graph_branches).toEqual([
@@ -540,6 +546,42 @@ describe('listMyRepositories — what a human is shown', () => {
 		// visible one does not. Both screens read this flag.
 		expect(out[0].billing_hidden).toBe(true);
 		expect(out[1].billing_hidden).toBe(false);
+	});
+
+	it('sorts most-recently-active first, quiet last, repo_key tiebreak — and attaches the sort key (#531)', async () => {
+		// The activity timestamp shown IS the sort key: the row carries
+		// `last_activity_at`, so a screen can never show one recency and sort
+		// by another.
+		const db = fakeDojoDb({
+			'rpc:my_repositories': {
+				rows: [
+					{ ...ROW, repository_id: 'r-quiet', repo_key: 'github.com/acme/aaa', name: 'aaa' },
+					{ ...ROW, repository_id: 'r-old', repo_key: 'github.com/acme/mmm', name: 'mmm' },
+					{ ...ROW, repository_id: 'r-new', repo_key: 'github.com/acme/zzz', name: 'zzz' }
+				]
+			},
+			'rpc:my_graph_branches': { rows: [] },
+			'rpc:repository_activity': {
+				rows: [
+					{ repository_id: 'r-new', last_activity_at: '2026-11-06T10:00:00Z' },
+					{ repository_id: 'r-old', last_activity_at: '2026-11-04T10:00:00Z' },
+					{ repository_id: 'r-quiet', last_activity_at: null }
+				]
+			}
+		});
+		const out = await listMyRepositories(db as never);
+		expect(out.map((r) => r.repository_id)).toEqual(['r-new', 'r-old', 'r-quiet']);
+		expect(out[0].last_activity_at).toBe('2026-11-06T10:00:00Z');
+		expect(out[2].last_activity_at).toBeNull();
+	});
+
+	it('a broken activity read is an error, never the unsorted list', async () => {
+		const db = fakeDojoDb({
+			'rpc:my_repositories': { rows: [ROW] },
+			'rpc:my_graph_branches': { rows: [] },
+			'rpc:repository_activity': { rows: [], error: { message: 'boom' } }
+		});
+		await expect(listMyRepositories(db as never)).rejects.toThrow(/boom/);
 	});
 
 	it('selects entitlement_refusal (and origin): the predicate reads columns, not the fixture', async () => {
@@ -684,7 +726,8 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	it('returns EVERY repository past the first page, not the first 1000', async () => {
 		const db = fakeDojoDb({
 			'rpc:my_repositories': { rows: manyRows(2350) },
-			'rpc:my_graph_branches': { rows: [] }
+			'rpc:my_graph_branches': { rows: [] },
+			'rpc:repository_activity': { rows: [] }
 		});
 		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(2350);
@@ -697,7 +740,8 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 		// page looks identical to "there is more".
 		const db = fakeDojoDb({
 			'rpc:my_repositories': { rows: manyRows(1000) },
-			'rpc:my_graph_branches': { rows: [] }
+			'rpc:my_graph_branches': { rows: [] },
+			'rpc:repository_activity': { rows: [] }
 		});
 		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(1000);

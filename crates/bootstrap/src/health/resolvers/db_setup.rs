@@ -55,6 +55,18 @@ fn db_failed_remedy(db_name: &str, detail: String) -> Remedy {
             url: None,
         };
     }
+    // Postgres is up but has no pgvector files (installed or started outside
+    // the postgres resolver, which installs the formula alongside it).
+    if detail.contains("vector.control") || detail.contains("extension \"vector\" is not available")
+    {
+        return Remedy {
+            message: format!(
+                "PostgreSQL is running but the pgvector extension is not installed ({detail}). Install it, then re-run the health check."
+            ),
+            script: "brew install pgvector".to_string(),
+            url: None,
+        };
+    }
     Remedy {
         message: format!(
             "Couldn't set up the database automatically ({detail}). Make sure PostgreSQL is running, then create the database manually. The pgvector extension and schema are deployed by `dbd` on the next run."
@@ -89,6 +101,19 @@ mod tests {
             r.message.contains("dbd"),
             "remedy message should explain that dbd handles the extension + schema"
         );
+    }
+
+    #[test]
+    fn failed_remedy_for_missing_vector_extension_installs_pgvector() {
+        // psql's message when the server has no pgvector files (PG 17).
+        let detail = "failed to enable pgvector: ERROR:  extension \"vector\" is not available\n\
+            DETAIL:  Could not open extension control file \
+            \"/home/linuxbrew/.linuxbrew/opt/postgresql@17/share/postgresql@17/extension/vector.control\": \
+            No such file or directory.";
+        let r = db_failed_remedy("sensei", detail.to_string());
+        assert_eq!(r.script, "brew install pgvector");
+        assert!(r.message.contains("pgvector"));
+        assert!(!r.script.contains("createdb"));
     }
 
     #[test]

@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	ClientApiError,
 	dojoApiUrl,
+	getGraphLevel0,
+	getGraphModule,
+	getGraphFile,
+	getGraphZones,
+	getGraphSchema,
+	getRepoMetrics,
 	listWorkspaces,
 	listUserWorkspaces,
 	getWorkspaceConstitution,
@@ -181,6 +187,49 @@ describe('setGraphBranch — track vs untrack', () => {
 			repo_key: 'github.com/acme/api',
 			branch: 'develop'
 		});
+	});
+});
+
+describe('graph reads — one branch\u2019s diagrams (#268)', () => {
+	const ctx = { repoKey: 'github.com/acme/api', branch: 'main' };
+
+	it('getGraphLevel0 GETs level0 with groupBy and the focus', async () => {
+		const { fn, calls } = fakeFetch(200, { ok: true, data: { level: 'module' } });
+		await getGraphLevel0({ ...ctx, groupBy: 'folders', focus: { kind: 'module', id: 'shop' }, fetch: fn });
+		expect(calls[0].url).toBe(
+			`${dojoApiUrl}/v1/you/graph/level0?repo_key=github.com%2Facme%2Fapi&branch=main&groupBy=folders&focus=shop`
+		);
+	});
+
+	it('getGraphLevel0 sends a segment focus as segment', async () => {
+		const { fn, calls } = fakeFetch(200, { ok: true });
+		await getGraphLevel0({ ...ctx, groupBy: 'layers', focus: { kind: 'segment', id: 'L0' }, fetch: fn });
+		expect(calls[0].url).toContain('segment=L0');
+		expect(calls[0].url).not.toContain('focus=');
+	});
+
+	it('getGraphModule/getGraphFile/getGraphZones carry repo, branch and id', async () => {
+		const mod = fakeFetch(200, { ok: true });
+		await getGraphModule({ ...ctx, id: 'shop', fetch: mod.fn });
+		expect(mod.calls[0].url).toBe(`${dojoApiUrl}/v1/you/graph/module?repo_key=github.com%2Facme%2Fapi&branch=main&id=shop`);
+		const file = fakeFetch(200, { ok: true });
+		await getGraphFile({ ...ctx, id: 'shop/cart.ts', fetch: file.fn });
+		expect(file.calls[0].url).toContain('id=shop%2Fcart.ts');
+		const zones = fakeFetch(200, { ok: true });
+		await getGraphZones({ ...ctx, fetch: zones.fn });
+		expect(zones.calls[0].url).toBe(`${dojoApiUrl}/v1/you/graph/zones?repo_key=github.com%2Facme%2Fapi&branch=main`);
+	});
+
+	it('getGraphSchema GETs the v3 payload for repo and branch', async () => {
+		const { fn, calls } = fakeFetch(200, { version: 3 });
+		expect(await getGraphSchema({ ...ctx, fetch: fn })).toEqual({ version: 3 });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/graph/schema?repo_key=github.com%2Facme%2Fapi&branch=main`);
+	});
+
+	it('getRepoMetrics GETs the tenant repo series with the window (#532)', async () => {
+		const { fn, calls } = fakeFetch(200, { rows: [] });
+		await getRepoMetrics('organization/acme', 'r1', { days: 30, fetch: fn });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/organization/acme/repositories/r1/metrics?days=30`);
 	});
 });
 

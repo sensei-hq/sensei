@@ -23,7 +23,7 @@ begin;
 -- The seed through the real path: the JSONL into staging, then the proc.
 -- (\copy resolves from the psql cwd: run from database/tests/.)
 create temp table fc_seed (line text);
-\copy fc_seed from '../import/staging/finding_classes.jsonl'
+\copy fc_seed from '../import/staging/finding_classes.jsonl' with (format csv, quote e'\x01', delimiter e'\x02')
 insert into staging.finding_classes (code, label)
   select line::jsonb->>'code', line::jsonb->>'label' from fc_seed;
 call staging.import_finding_classes();

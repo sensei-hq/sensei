@@ -12,9 +12,10 @@
 //! IMPORTANT: `checker_for` uses exhaustive `match id { ... }` (no `_ =>`).
 //! Adding a new ComponentId is a compile error here until handled.
 
+use super::{DAEMON_PORT_TIMEOUT, OLLAMA_PORT_TIMEOUT, POSTGRES_PORT_TIMEOUT, port};
 use crate::config::{OLLAMA_PORT, POSTGRES_PORT, SenseiConfig};
 use crate::health::checker::Checker;
-use crate::health::checkers::{AndChecker, BinaryChecker, PortChecker, PostgresDatabaseChecker};
+use crate::health::checkers::{AndChecker, BinaryChecker, PostgresDatabaseChecker};
 // Note: Ollama deliberately uses *only* PortChecker (not AndChecker over the
 // CLI binary too). Sensei talks to Ollama via HTTP on `OLLAMA_PORT`; the
 // `ollama` CLI on PATH is incidental. This matters when Ollama is installed
@@ -44,27 +45,6 @@ impl PlatformProvider for MacOSProvider {
     }
 
     fn checker_for(&self, id: ComponentId, retry: bool) -> Box<dyn Checker> {
-        // Port-checker timeouts are sized for the resolve-phase re-check.
-        // `brew services start postgresql@17` takes 1-5s before the port
-        // is bound; `senseid start` daemonizes and binds within 1-2s.
-        // The initial check (retry=false) uses a 400ms single-attempt probe
-        // so closed ports report failed in ~ms instead of paying the full
-        // patient deadline (which used to add 13s of wasted wall time).
-        const POSTGRES_PORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-        const OLLAMA_PORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-        const DAEMON_PORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-        fn port(
-            label: &'static str,
-            port: u16,
-            retry: bool,
-            recheck_timeout: std::time::Duration,
-        ) -> Box<dyn Checker> {
-            if retry {
-                Box::new(PortChecker::with_timeout(label, port, recheck_timeout))
-            } else {
-                Box::new(PortChecker::new(label, port))
-            }
-        }
         match id {
             ComponentId::Postgres => Box::new(AndChecker {
                 checkers: vec![

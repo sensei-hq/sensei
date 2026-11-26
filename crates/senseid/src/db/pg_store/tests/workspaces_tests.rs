@@ -1049,3 +1049,356 @@ async fn a_repository_whose_code_is_all_tests_is_tagged_quality() {
     assert_eq!(role(chosen).as_deref(), Some("library"), "a chosen role is never overridden");
     assert_eq!(role(empty), None, "no code is not 'all tests'");
 }
+
+/// #541 fix 2: the rules resolver must see only TOP-LEVEL anchors — a nested
+/// subtree is not a second repo, and structural `folder` rows never are. Each
+/// row carries its repository so the resolver can count distinct repos.
+#[tokio::test]
+async fn get_workspace_top_level_repos_excludes_nested_anchors() {
+    let s = PgStore::test_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let ws = s.create_workspace(&format!("_test:toplevel:{uniq}"), None, None).await.unwrap();
+    let root = format!("/_test/toplevel-{uniq}");
+    let (one, _) = create_test_repo_folder(
+        &s,
+        "one",
+        &format!("{root}/one"),
+        &format!("test/tl-{uniq}/one"),
+        "git",
+    )
+    .await;
+    let (nested, _) = create_test_repo_folder(
+        &s,
+        "nested",
+        &format!("{root}/one/nested"),
+        &format!("test/tl-{uniq}/nested"),
+        "subtree",
+    )
+    .await;
+    let (two, _) = create_test_repo_folder(
+        &s,
+        "two",
+        &format!("{root}/two"),
+        &format!("test/tl-{uniq}/two"),
+        "git",
+    )
+    .await;
+    let (docs, _) = create_test_repo_folder(
+        &s,
+        "docs",
+        &format!("{root}/one/docs"),
+        &format!("test/tl-{uniq}/one"),
+        "folder",
+    )
+    .await;
+    for fid in [&one, &nested, &two, &docs] {
+        s.set_folder_workspace(fid, &ws, "root", None).await.unwrap();
+    }
+
+    let tops = s.get_workspace_top_level_repos(&ws).await.unwrap();
+    let names: Vec<String> =
+        tops.iter().filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
+    assert_eq!(
+        names,
+        vec!["one".to_string(), "two".to_string()],
+        "nested subtree + structural folder excluded"
+    );
+    assert!(
+        tops.iter().all(|r| r.get("repository_id").and_then(|v| v.as_str()).is_some()),
+        "each top-level row carries its repository"
+    );
+    assert_ne!(
+        tops[0]["repository_id"], tops[1]["repository_id"],
+        "the two tops are distinct repositories"
+    );
+
+    for fid in [&one, &nested, &two, &docs] {
+        drop_folder(&s, fid).await;
+    }
+    s.delete_workspace(&ws).await.ok();
+}
+
+/// #541 fix 3: same-name repos at non-nested paths must NOT reuse one
+/// workspace — mint a distinct row (identity is the path). Reuse happens only
+/// when the new path nests with (either direction, incl. equality) an
+/// existing anchor of a same-name workspace.
+#[tokio::test]
+async fn get_or_create_workspace_for_repo_splits_non_nested_same_name_repos() {
+    let s = PgStore::test_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    let name = format!("_test:split:{uniq}");
+    let root_a = format!("/_test/split-{uniq}/a/dup");
+    let root_b = format!("/_test/split-{uniq}/b/dup");
+
+    // First repo mints.
+    let (w1, created1) = s.get_or_create_workspace_for_repo(&name, &root_a).await.unwrap();
+    assert!(created1, "first repo mints its workspace");
+    let (fa, _) =
+        create_test_repo_folder(&s, "dup", &root_a, &format!("test/split-{uniq}/a"), "git").await;
+    s.set_folder_workspace(&fa, &w1, "root", None).await.unwrap();
+
+    // A non-nested same-name repo mints a DISTINCT workspace.
+    let (w2, created2) = s.get_or_create_workspace_for_repo(&name, &root_b).await.unwrap();
+    assert!(created2, "non-nested same-name repo must not reuse");
+    assert_ne!(w1, w2, "distinct rows for distinct paths");
+    let (fb, _) =
+        create_test_repo_folder(&s, "dup", &root_b, &format!("test/split-{uniq}/b"), "git").await;
+    s.set_folder_workspace(&fb, &w2, "root", None).await.unwrap();
+
+    // Re-scan (equal path) reuses its own workspace — never the other's.
+    let (again_a, created3) = s.get_or_create_workspace_for_repo(&name, &root_a).await.unwrap();
+    assert_eq!((again_a, created3), (w1, false));
+    let (again_b, created4) = s.get_or_create_workspace_for_repo(&name, &root_b).await.unwrap();
+    assert_eq!((again_b, created4), (w2, false));
+    // Nested-under reuses the enclosing workspace ...
+    let (nested, created5) =
+        s.get_or_create_workspace_for_repo(&name, &format!("{root_a}/sub")).await.unwrap();
+    assert_eq!((nested, created5), (w1, false), "nested-under reuses the enclosing workspace");
+    // ... and an enclosing path reuses the nested one.
+    let enclosing = format!("/_test/split-{uniq}/a");
+    let (outer, created6) = s.get_or_create_workspace_for_repo(&name, &enclosing).await.unwrap();
+    assert_eq!((outer, created6), (w1, false), "enclosing path reuses the nested workspace");
+
+    // Each workspace holds exactly its own repo.
+    let repos1 = s.get_workspace_repos(&w1).await.unwrap();
+    assert_eq!(repos1.len(), 1);
+    assert_eq!(repos1[0]["path"], root_a);
+    let repos2 = s.get_workspace_repos(&w2).await.unwrap();
+    assert_eq!(repos2.len(), 1);
+    assert_eq!(repos2[0]["path"], root_b);
+
+    drop_folder(&s, &fa).await;
+    drop_folder(&s, &fb).await;
+    s.delete_workspace(&w1).await.ok();
+    s.delete_workspace(&w2).await.ok();
+}
+
+/// #541 fix 4: merged = >1 distinct top-level repository AND the same-name
+/// collision signature (>1 top-level anchor sharing the workspace's name).
+/// Opt-in multi-repo grouping and one-repo checkouts are NOT merged.
+#[tokio::test]
+async fn detect_merged_workspaces_finds_same_name_collision_only() {
+    let s = PgStore::test_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+
+    // Merged: two same-name anchors, distinct repos, one workspace — the
+    // workspace carries the colliding folder name (as `website` does live).
+    let mname = format!("mgsite-{uniq}");
+    let mw = s.create_workspace(&mname, None, None).await.unwrap();
+    let (ma, _) = create_test_repo_folder(
+        &s,
+        &mname,
+        &format!("/_test/mg-{uniq}/a/site"),
+        &format!("test/mg-{uniq}/a"),
+        "git",
+    )
+    .await;
+    let (mb, _) = create_test_repo_folder(
+        &s,
+        &mname,
+        &format!("/_test/mg-{uniq}/b/site"),
+        &format!("test/mg-{uniq}/b"),
+        "git",
+    )
+    .await;
+    s.set_folder_workspace(&ma, &mw, "root", None).await.unwrap();
+    s.set_folder_workspace(&mb, &mw, "root", None).await.unwrap();
+
+    // Opt-in grouping: two DIFFERENT-name anchors, distinct repos — untouched.
+    let gname = format!("_test:grouped:{uniq}");
+    let gw = s.create_workspace(&gname, None, None).await.unwrap();
+    let (ga, _) = create_test_repo_folder(
+        &s,
+        "frontend",
+        &format!("/_test/mg-{uniq}/fe"),
+        &format!("test/mg-{uniq}/fe"),
+        "git",
+    )
+    .await;
+    let (gb, _) = create_test_repo_folder(
+        &s,
+        "backend",
+        &format!("/_test/mg-{uniq}/be"),
+        &format!("test/mg-{uniq}/be"),
+        "git",
+    )
+    .await;
+    s.set_folder_workspace(&ga, &gw, "root", None).await.unwrap();
+    s.set_folder_workspace(&gb, &gw, "root", None).await.unwrap();
+
+    // One repo, two checkouts — untouched.
+    let cname = format!("_test:checkout:{uniq}");
+    let cw = s.create_workspace(&cname, None, None).await.unwrap();
+    let crepo = format!("test/mg-{uniq}/co");
+    let (ca, _) =
+        create_test_repo_folder(&s, "co", &format!("/_test/mg-{uniq}/c1/co"), &crepo, "git").await;
+    let (cb, _) =
+        create_test_repo_folder(&s, "co", &format!("/_test/mg-{uniq}/c2/co"), &crepo, "git").await;
+    s.set_folder_workspace(&ca, &cw, "root", None).await.unwrap();
+    s.set_folder_workspace(&cb, &cw, "root", None).await.unwrap();
+
+    // Contains-style: detection is global and the clone may hold other
+    // tests' rows; scope every assertion to this test's unique names.
+    let merged = s.detect_merged_workspaces().await.unwrap();
+    let names: Vec<String> =
+        merged.iter().filter_map(|m| m["name"].as_str().map(str::to_string)).collect();
+    assert!(names.contains(&mname), "the same-name collision is merged: {names:?}");
+    assert!(!names.contains(&gname), "opt-in grouping is not merged: {names:?}");
+    assert!(!names.contains(&cname), "one-repo checkouts are not merged: {names:?}");
+    let mine = merged.iter().find(|m| m["name"] == mname).unwrap();
+    assert_eq!(mine["id"], serde_json::json!(mw.to_string()));
+    assert_eq!(mine["repos"], 2);
+
+    for fid in [&ma, &mb, &ga, &gb, &ca, &cb] {
+        drop_folder(&s, fid).await;
+    }
+    for w in [&mw, &gw, &cw] {
+        s.delete_workspace(w).await.ok();
+    }
+}
+
+/// #541 fix 4: the heal splits a merged workspace one-per-top-level-repo.
+/// Nested anchors follow their enclosing root, sessions follow their folder's
+/// repo, memories stay with the survivor. Idempotent.
+#[tokio::test]
+async fn heal_merged_workspaces_splits_one_per_repo_nested_follows() {
+    let s = PgStore::test_store().await;
+    let uniq = uuid::Uuid::new_v4().to_string();
+    // The workspace carries the colliding folder name (as `website` does live).
+    let name = format!("healsite-{uniq}");
+    let ws = s.create_workspace(&name, None, None).await.unwrap();
+    let root_a = format!("/_test/heal-{uniq}/a/site");
+    let root_b = format!("/_test/heal-{uniq}/b/site");
+    let repo_a = format!("test/heal-{uniq}/a");
+    let repo_b = format!("test/heal-{uniq}/b");
+    let repo_sub = format!("test/heal-{uniq}/sub");
+    // Repo A: root + nested own-repo subtree + structural docs.
+    let (fa, _) = create_test_repo_folder(&s, &name, &root_a, &repo_a, "git").await;
+    let (fsub, _) =
+        create_test_repo_folder(&s, "sub", &format!("{root_a}/sub"), &repo_sub, "subtree").await;
+    let (fdocs, _) =
+        create_test_repo_folder(&s, "docs", &format!("{root_a}/docs"), &repo_a, "folder").await;
+    // Repo B: root.
+    let (fb, _) = create_test_repo_folder(&s, &name, &root_b, &repo_b, "git").await;
+    for fid in [&fa, &fsub, &fdocs, &fb] {
+        s.set_folder_workspace(fid, &ws, "root", None).await.unwrap();
+    }
+    // One session per repo + one workspace memory.
+    let (sess_a,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO activity.sessions(folder_id, workspace_id, task) VALUES($1, $2, $3) RETURNING id",
+    )
+    .bind(fa)
+    .bind(ws)
+    .bind(format!("_test:heal-sess-a:{uniq}"))
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    let (sess_b,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO activity.sessions(folder_id, workspace_id, task) VALUES($1, $2, $3) RETURNING id",
+    )
+    .bind(fb)
+    .bind(ws)
+    .bind(format!("_test:heal-sess-b:{uniq}"))
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    let mem = s
+        .insert_memory(&crate::db::pg_store::InsertMemory {
+            workspace_id: Some(ws),
+            scope: "workspace".to_string(),
+            scope_filter: None,
+            mtype: "convention".to_string(),
+            title: format!("_test:heal-mem:{uniq}"),
+            content: "always foo".to_string(),
+            impact: None,
+            tags: Vec::new(),
+            triage_signal: None,
+            status: "active".to_string(),
+            namespace_id: None,
+            enforcement: None,
+            origin: Some("learned".to_string()),
+            source_id: None,
+            spine_slot: None,
+            feature: None,
+        })
+        .await
+        .unwrap();
+
+    async fn sole(s: &PgStore, fid: &uuid::Uuid) -> uuid::Uuid {
+        let (w,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT sensei.sole_workspace_of(id) FROM sensei.folders WHERE id = $1",
+        )
+        .bind(fid)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+        w.unwrap()
+    }
+
+    let n = s.heal_merged_workspaces().await.unwrap();
+    assert!(n >= 1, "our merged workspace was split");
+    let ids: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+        "SELECT id FROM sensei.workspaces WHERE name = $1 ORDER BY id",
+    )
+    .bind(&name)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(ids.len(), 2, "one workspace per top-level repo");
+    async fn ws_of(s: &PgStore, sess: &uuid::Uuid) -> uuid::Uuid {
+        let (w,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT workspace_id FROM activity.sessions WHERE id = $1",
+        )
+        .bind(sess)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+        w.unwrap()
+    }
+    // The repos parted: A (root + subtree + docs) in one, B in the other.
+    let wa = sole(&s, &fa).await;
+    let wb = sole(&s, &fb).await;
+    assert_ne!(wa, wb, "the two repos no longer share a workspace");
+    assert!(wa == ws || wb == ws, "the survivor keeps the original id");
+    assert_eq!(sole(&s, &fsub).await, wa, "nested subtree follows its root");
+    assert_eq!(sole(&s, &fdocs).await, wa, "structural docs follow their repo");
+    // Sessions follow their folder's repo; the memory stays with the survivor.
+    assert_eq!(ws_of(&s, &sess_a).await, wa);
+    assert_eq!(ws_of(&s, &sess_b).await, wb);
+    let (mem_ws,): (Option<uuid::Uuid>,) =
+        sqlx_core::query_as::query_as("SELECT workspace_id FROM sensei.memories WHERE id = $1")
+            .bind(mem)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(mem_ws, Some(ws), "memories stay with the survivor");
+
+    // Idempotent: a second run splits nothing of ours.
+    s.heal_merged_workspaces().await.unwrap();
+    let (count,): (i64,) =
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE name = $1")
+            .bind(&name)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(count, 2, "re-run is a no-op for our rows");
+
+    for sess in [&sess_a, &sess_b] {
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+            .bind(sess)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+    sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1")
+        .bind(mem)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    for fid in [&fa, &fsub, &fdocs, &fb] {
+        drop_folder(&s, fid).await;
+    }
+    for (wid,) in &ids {
+        s.delete_workspace(wid).await.ok();
+    }
+}

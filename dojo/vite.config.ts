@@ -52,7 +52,7 @@ export default defineConfig({
 	server: devServer,
 	// The shared packages (../packages — Notice, Screen) import rokkit, which this
 	// host installs: resolve it from here, as the desktop app does.
-	resolve: { dedupe: ['@rokkit/ui', '@rokkit/states', '@rokkit/core', '@rokkit/app'] },
+	resolve: { dedupe: ['@rokkit/ui', '@rokkit/states', '@rokkit/core', '@rokkit/app', '@rokkit/graph'] },
 	optimizeDeps: {
 		exclude: ['@rokkit/app', '@rokkit/ui', '@rokkit/states', '@rokkit/actions']
 	}

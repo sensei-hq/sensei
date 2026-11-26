@@ -26,18 +26,29 @@
   on PR #510 after 3 rounds: Unix-only signal/script/permission tests gated, two tests' path expectations fixed
 
 ## 3. Daemon lifecycle (slice 3, depends on 1)
-- [ ] 3.1 `service` module with start/stop/restart/status: Homebrew services on macOS/Linux (current behaviour,
-  tests unchanged), Task Scheduler logon task on Windows
-- [ ] 3.2 `sensei start|stop|restart` and `senseid stop` call it; the `kill <pid>` fallback is Unix-only
+- [x] 3.1 `service` module with start/stop/restart: Homebrew services on macOS/Linux (current behaviour,
+  tests unchanged), Task Scheduler logon task `sensei-senseid` on Windows. No `status`: daemon status
+  stays the direct `/health` probe (D2)
+- [x] 3.2 `sensei start|stop|restart` and the daemon-start resolver call it; `senseid start|stop` use the
+  shared `util::pid_alive`/`util::terminate` instead of `kill`, and the daemon starts with no console
+  window on Windows
 - [ ] 3.3 Manual check on a Windows host: start, sign out/in (daemon back), stop (graceful shutdown logged)
 
 ## 4. Prerequisite checker (slice 4, depends on 3)
-- [ ] 4.1 Git for Windows checker + `winget install Git.Git` remedy
-- [ ] 4.0 Read `~/.sensei/.env` (`PGUSER`, `PGPASSWORD`; env vars win) where the connection URL is built;
-  macOS/Linux unchanged without the file; password redacted in logs/errors (tests for each)
-- [ ] 4.2 Docker CLI/engine checkers + `sensei-pg` container checker; remedy creates or starts the container
-- [ ] 4.3 Ollama checker + `winget install Ollama.Ollama` remedy; daemon and database checkers
-- [ ] 4.4 Replace the stub's "not yet implemented" tests with per-component tests against fake probes
+- [x] 4.1 Git for Windows checker (under the sensei component) + `winget install Git.Git` resolver
+- [x] 4.0 Read `~/.sensei/.env` (`PGUSER`, `PGPASSWORD`; env vars win) into the process environment at
+  startup of the daemon, CLI and app — every client reads them there, so no URL carries them; macOS/Linux
+  unchanged without the file; parse errors name the line, never its text (tests for each)
+- [x] 4.2 Docker CLI/engine + `sensei-pg` container checker; resolver creates or starts the container and
+  waits for `pg_isready`; Postgres tools run in the container via `docker exec` (`pg_container::pg_tool`);
+  the pre-upgrade backup streams through stdout to a host file
+- [x] 4.3 Ollama checker + `winget install Ollama.Ollama` resolver; daemon and database checkers (database
+  behind the credentials check); daemon-start remedies use the platform's service commands
+- [x] 4.4 Replace the stub's "not yet implemented" tests with per-component tests against fake probes
+- [ ] 4.5 On a Windows host: `sensei doctor` on a fresh machine lists each missing component; `--fix`
+  creates `sensei-pg`, sets up the database and starts the daemon
+- [ ] 4.6 The daemon-start resolver's "binary missing" remedy still says `brew install` on Windows (slice 5
+  defines the Windows install)
 
 ## 5. Distribution (slice 5, depends on 2–4)
 - [ ] 5.1 `release.yml`: `windows-latest` job building `sensei-windows-x86_64.zip`, attached to the release

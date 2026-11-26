@@ -300,6 +300,11 @@ begin
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000143"}', true);
     select count(*) into n from dojo.graph_nodes where repository_id = repo;
     if n <> 0 then raise exception 'read: a contributor with no role on the repository read % node(s)', n; end if;
+    -- #268: the diagram reads touch files and edges too — same rule, same silence.
+    select count(*) into n from dojo.graph_files where repository_id = repo;
+    if n <> 0 then raise exception 'read: a contributor with no role on the repository read % file(s)', n; end if;
+    select count(*) into n from dojo.graph_edges where repository_id = repo;
+    if n <> 0 then raise exception 'read: a contributor with no role on the repository read % edge(s)', n; end if;
     -- …yet she may SYNC it (the organisation shares its private repositories), so
     -- her daemon must see what the dōjō holds, or it re-pushes every file forever.
     select count(*) into n from dojo.graph_file_hashes(repo, 'main');

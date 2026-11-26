@@ -718,6 +718,12 @@ async fn write_file_rows(
 /// FAILS rather than fabricating: minting a synthetic `p-<name>` id here once
 /// pushed a phantom workspace into the UI that matched no row and never
 /// reconciled. An error aborts this repo and the scan retries next tick.
+///
+/// Reuse is by NAME only when the grouping is certain: an explicit README
+/// `workspace:` (opt-in) or a subtree inheriting its parent's workspace.
+/// The default folder-name path reuses only a same-name workspace the new
+/// repo nests with — otherwise it mints a distinct row, so unrelated
+/// same-named repos never merge (#541).
 pub(crate) async fn resolve_workspace(
     pg: &crate::db::pg_store::PgStore,
     repo_path: &Path,
@@ -725,7 +731,7 @@ pub(crate) async fn resolve_workspace(
 ) -> Result<(uuid::Uuid, bool), String> {
     crate::tasks::processors::metadata::migrate_readme_workspace_key(repo_path)?;
     let fm = crate::tasks::processors::metadata::read_frontmatter(repo_path).unwrap_or_default();
-    let name: String = match folder_name.split_once(':') {
+    let (name, reuse_by_name): (String, bool) = match folder_name.split_once(':') {
         Some((parent_repo, _)) if fm.workspace.is_none() => {
             let parent_workspace = pg
                 .get_repo_by_name(parent_repo)
@@ -733,7 +739,7 @@ pub(crate) async fn resolve_workspace(
                 .ok()
                 .flatten()
                 .and_then(|f| crate::api::util::json_uuid(&f["workspace_id"]));
-            match parent_workspace {
+            let parent_name = match parent_workspace {
                 Some(pid) => pg
                     .get_workspace(&pid)
                     .await
@@ -742,11 +748,19 @@ pub(crate) async fn resolve_workspace(
                     .and_then(|p| p["name"].as_str().map(String::from))
                     .unwrap_or_else(|| parent_repo.to_string()),
                 None => parent_repo.to_string(),
-            }
+            };
+            (parent_name, true)
         }
-        _ => fm.workspace.clone().unwrap_or_else(|| folder_name.to_string()),
+        _ => (
+            fm.workspace.clone().unwrap_or_else(|| folder_name.to_string()),
+            fm.workspace.is_some(),
+        ),
     };
-    pg.get_or_create_workspace_by_name(&name).await
+    if reuse_by_name {
+        pg.get_or_create_workspace_by_name(&name).await
+    } else {
+        pg.get_or_create_workspace_for_repo(&name, &repo_path.to_string_lossy()).await
+    }
 }
 
 /// THE REPO SCAN. `ScanRoot` enqueues one of these per repository it found.
@@ -2462,5 +2476,101 @@ public class Customer { public int Id { get; set; } public string Name { get; se
             "a CHANGED file was not reopened for parsing — its declarations are now \
              stale but counted as decided: {unparsed:?}"
         );
+    }
+
+    /// #541 fix 3: the DEFAULT (folder-name) path mints a distinct workspace
+    /// for a same-name repo at a non-nested path — the accident that merged
+    /// unrelated repos is no longer representable through the scan. A re-scan
+    /// still finds its own workspace by path equality.
+    #[tokio::test]
+    async fn resolve_workspace_mints_distinct_workspace_for_non_nested_same_name_repo() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let name = format!("ztest-split-{uniq}");
+        // Two real dirs, same leaf name, non-nested, no README (default path).
+        let repo_a = t.path().join("a").join(&name);
+        let repo_b = t.path().join("b").join(&name);
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+
+        let (w1, created1) = super::resolve_workspace(ctx.pg(), &repo_a, &name).await.unwrap();
+        assert!(created1, "first repo mints its workspace");
+        // The scan links the repo after resolving; mirror that so the second
+        // resolve sees the anchor it must not reuse.
+        let (fa, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            ctx.pg(),
+            &name,
+            &repo_a.to_string_lossy(),
+            &format!("test/scan541-{uniq}/a"),
+            "git",
+        )
+        .await;
+        ctx.pg().set_folder_workspace(&fa, &w1, "root", None).await.unwrap();
+
+        let (w2, created2) = super::resolve_workspace(ctx.pg(), &repo_b, &name).await.unwrap();
+        assert!(created2, "non-nested same-name repo must mint, not reuse");
+        assert_ne!(w1, w2, "distinct rows for distinct paths");
+
+        let (again, created3) = super::resolve_workspace(ctx.pg(), &repo_a, &name).await.unwrap();
+        assert_eq!((again, created3), (w1, false), "re-scan finds its own workspace");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fa)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
+        for w in [w1, w2] {
+            sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+                .bind(w)
+                .execute(ctx.pg().pool())
+                .await
+                .unwrap();
+        }
+    }
+
+    /// #541 fix 3 negative: explicit README `workspace:` is OPT-IN grouping —
+    /// non-nested repos that DECLARE the same workspace still share it.
+    #[tokio::test]
+    async fn resolve_workspace_explicit_frontmatter_still_groups_non_nested_repos() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let group = format!("ztest-group-{uniq}");
+        let leaf = format!("proj-{uniq}");
+        let repo_a = t.path().join("a").join(&leaf);
+        let repo_b = t.path().join("b").join(&leaf);
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+        std::fs::write(repo_a.join("README.md"), format!("---\nworkspace: {group}\n---\n# a\n"))
+            .unwrap();
+        std::fs::write(repo_b.join("README.md"), format!("---\nworkspace: {group}\n---\n# b\n"))
+            .unwrap();
+
+        let (w1, _) = super::resolve_workspace(ctx.pg(), &repo_a, &leaf).await.unwrap();
+        let (fa, _) = crate::db::pg_store::tests::create_test_repo_folder(
+            ctx.pg(),
+            &leaf,
+            &repo_a.to_string_lossy(),
+            &format!("test/scan541-{uniq}/a"),
+            "git",
+        )
+        .await;
+        ctx.pg().set_folder_workspace(&fa, &w1, "root", None).await.unwrap();
+
+        let (w2, created2) = super::resolve_workspace(ctx.pg(), &repo_b, &leaf).await.unwrap();
+        assert_eq!(w1, w2, "opt-in grouping survives fix 3");
+        assert!(!created2, "the declared workspace is reused, not minted");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fa)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(w1)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
     }
 }
