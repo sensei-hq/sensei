@@ -60,7 +60,6 @@ crates/bootstrap/src/tracing_init.rs	R2	std::fs::create_dir_all(dir.as_ref()).ok
 crates/bootstrap/src/util.rs	R6	let Ok(entries) = std::fs::read_dir(prefix) else {	GENUINE-EMPTY	let Ok( — absent prefix dir skipped	audit 2026-11-03 App. C	2026-11-03
 crates/cli/src/main.rs	R1	.unwrap_or(false)	GENUINE-EMPTY	.unwrap_or( — health probe false = not available	audit 2026-11-03 App. C	2026-11-03
 crates/cli/src/main.rs	R1	let body: String = r.text().unwrap_or_default();	PARSE-DEFAULT	.unwrap_or_default( — error body text best-effort	audit 2026-11-03 App. C	2026-11-03
-crates/cli/src/main.rs	R3	Err(e) => {	GENUINE-EMPTY	Err( — arm prints error and returns	audit 2026-11-03 App. C	2026-11-03
 crates/cli/src/tracker.rs	R1	Err(describe_error(status, &resp.json().unwrap_or(Value::Null)))	PARSE-DEFAULT	.unwrap_or( — error body optional for message	audit 2026-11-03 App. C	2026-11-03
 crates/mcp/src/main.rs	R1	let body = resp.text().unwrap_or_default();	PARSE-DEFAULT	.unwrap_or_default( — error body text best-effort	audit 2026-11-03 App. C	2026-11-03
 crates/mcp/src/main.rs	R5	.ok()	PARSE-DEFAULT	.ok( — error detail extract, falls back to body	audit 2026-11-03 App. C	2026-11-03

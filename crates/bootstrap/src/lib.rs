@@ -12,13 +12,16 @@
 //!   * util::*                      — small utilities (unchanged).
 
 pub mod config;
+pub mod credentials;
 pub mod database;
 pub mod engines;
 pub mod hardware;
 pub mod health;
 pub mod host;
 pub mod models;
+pub mod pg_container;
 pub mod schema;
+pub mod service;
 pub mod startup_error;
 pub mod tracing_init;
 pub mod upgrade;
