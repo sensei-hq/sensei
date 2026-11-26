@@ -267,4 +267,21 @@ mod tests {
             .expect("the template call is a reference");
         assert_eq!(call.from.to_string(), "typescript·pkg·lib·Comp·mod");
     }
+
+    /// Multibyte template text (a curly quote) must not panic the region
+    /// finder: it walks BYTES, so a mid-char index must simply not match —
+    /// never slice. Both the mustache and the directive past the quote are
+    /// still found.
+    ///
+    /// MUTATION: slice `text[i..]` unguarded — the walk panics the moment it
+    /// steps inside the quote (this crashed the daemon on a live .vue file).
+    #[test]
+    fn multibyte_template_text_does_not_panic_the_region_finder() {
+        let facts = facts(
+            "<script>\nclass Store { load() {} save() {} }\nconst store = new Store();\n</script>\n\
+             <template>\n<p>it’s {{ store.load() }}</p>\n<button @click=\"store.save()\">go</button>\n</template>\n",
+        );
+        assert_eq!(named(&facts, "load").len(), 1, "mustache past the quote found");
+        assert_eq!(named(&facts, "save").len(), 1, "directive past the quote found");
+    }
 }
