@@ -1,4 +1,4 @@
-# Checkpoint — 2026-11-26 (#538 public install: code done, release pending)
+# Checkpoint — 2026-11-26 (#538 public install: PR mergeable, release pending)
 
 **Slice:** #538 — brew + first-run schema 404 for users outside the org.
 **Branch:** `fix/public-install` (off develop, pushed; not merged).
@@ -12,10 +12,13 @@
   update-tap downloads anonymously before rendering; renderer refuses
   non-public URLs (`make check-tap-render`, in CI); formula drops SSH
   `--HEAD` + rust/make build deps; Report issue → sensei-releases.
+- `2a2a2e8b0` merged develop (#511 Windows lifecycle) into the branch.
+- `925b12d3b` Windows missing-binaries remedy → sensei-releases
+  (`RELEASES_LATEST_URL`); it pointed at the private repo's releases.
+- Owner added `RELEASES_GITHUB_TOKEN` (confirmed via `gh secret list`).
 
 ## Remain
-1. Owner: repo secret `RELEASES_GITHUB_TOKEN` (fine-grained PAT, Contents
-   r/w on sensei-hq/sensei-releases only) — release fails loudly without it.
+1. CI green on #539.
 2. Merge `fix/public-install` → develop → main; cut the release.
 3. Verify: anonymous `brew install sensei-hq/tap/sensei` on a clean user,
    then `sensei start` creates the DB with no network.
@@ -23,7 +26,7 @@
    merge; #292 stale vs #536; candidates #522, #533, #301/#283.
 
 ## Next command
-`gh pr create --base develop --head fix/public-install`
+`gh pr checks 539 --watch`
 
 ## Open questions
 - Licence swap + third-party notices: separate slices
