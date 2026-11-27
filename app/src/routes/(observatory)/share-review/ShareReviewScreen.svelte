@@ -2,7 +2,7 @@
   import { Notice, EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
-  import { PageHeader, Screen } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
   import { Button } from '@rokkit/ui';
   import { typePill, attributionSummary, type ChipClasses } from '$lib/dojo-artifacts.js';
   import type { ShareReviewBatch, ShareReviewItem, PublishBatchOutcome } from '$lib/types.js';
@@ -140,15 +140,16 @@
   </section>
 {/snippet}
 
-<Screen>
-    {#snippet header()}
-    <PageHeader
-      eyebrow="Observatory · Share review"
-      kanji="送" icon={railIcon("/share-review")}
-      title="Ready to share."
-      description="Lessons that generalised cleanly enough to leave this machine, scoped and attributed by origin. Review what's about to go, then publish. Held items stay back until the confidentiality gate clears — client work always leaves with its source dropped."
-    />
-    {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow/description are
+     the shell's; the review body moves in unchanged. -->
+<ShellScreen
+    viewId="observatory.share-review"
+    mark={{ kanji: '送', icon: railIcon('/share-review') }}
+    title="Ready to share."
+    context="Observatory · Share review"
+    description="Lessons that generalised cleanly enough to leave this machine, scoped and attributed by origin. Review what's about to go, then publish. Held items stay back until the confidentiality gate clears — client work always leaves with its source dropped."
+    search={false}
+>
 
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-share-review>
       {#if loadError}
@@ -272,4 +273,4 @@
       {/if}
       {/if}
     </div>
-</Screen>
+</ShellScreen>

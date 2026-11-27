@@ -6,7 +6,7 @@
   import type { ProxyItem } from '@rokkit/states';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
   import { railIcon } from '../observatory-nav';
   import { workspaceStatus, type EnrichedWorkspace } from './buckets.js';
   import { workspacesView, type WorkspaceFilter, type WorkspaceView } from './workspaces-view.svelte.js';
@@ -66,19 +66,11 @@
   ];
 </script>
 
-<Screen data-screen="workspaces">
-  {#snippet header()}
-    <div class="bg-paper">
-      <PageHeader kanji="場" icon={railIcon('/workspaces')} eyebrow="Workspaces" title="All the places you work.">
-        {#snippet right()}
-          <span class="font-mono text-xs text-ink-mute py-1 px-2 border border-paper-edge rounded">
-            ⌘K to jump
-          </span>
-        {/snippet}
-      </PageHeader>
-      <!-- Filter chips + view toggle + search -->
-      {#if !data.error}
-      <div class="py-3 px-7 gap-4 border-b border-paper-edge flex items-center">
+{#snippet filterBand()}
+  <!-- Filter chips + view toggle + search — the shell's filters band (D87 §9).
+       Bindings and state untouched; still hidden when the read failed. -->
+  {#if !data.error}
+  <div class="py-3 px-7 gap-4 flex items-center">
         <Toggle
           options={filterOptions}
           value={workspacesView.filter}
@@ -130,10 +122,22 @@
           {filtered.length} of {counts.all}
         </span>
       </div>
-
       {/if}
-    </div>
-  {/snippet}
+{/snippet}
+
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow are the
+     shell's, the ⌘K hint reads as its description, the filter bar is the
+     filters band, the cards/rows move in unchanged. -->
+<ShellScreen
+  viewId="observatory.workspaces"
+  mark={{ kanji: '場', icon: railIcon('/workspaces') }}
+  title="All the places you work."
+  context="Workspaces"
+  description="⌘K to jump"
+  search={false}
+  filters={filterBand}
+  data-screen="workspaces"
+>
   <div class="bg-paper min-h-full pt-5 pb-6 px-7">
     {#if data.error}
       <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
@@ -159,4 +163,4 @@
       </div>
     {/if}
   </div>
-</Screen>
+</ShellScreen>

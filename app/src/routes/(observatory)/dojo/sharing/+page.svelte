@@ -5,7 +5,8 @@
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, Kanji } from '$lib/components';
+  import { Kanji } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
   import {
     CollectiveSharing,
     ATTRIBUTION_OPTIONS,
@@ -58,15 +59,16 @@
   </div>
 {/snippet}
 
-<Screen>
-    {#snippet header()}
-    <PageHeader
-      eyebrow="Observatory · Collective"
-      kanji="群" icon={railIcon("/dojo/sharing")}
-      title="What your sensei shares, and toward whom."
-      description="Choose where anonymized insight goes, how often batches are prepared, and which categories may leave. Only the generalized rewrite of a learning is shared — never the original text of a memory. File paths, workspace, client and person names are stripped from everything that goes, and anything that still looks identifying is held back instead of sent. Review each batch before it leaves."
-    />
-    {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow/description are
+     the shell's; the preferences form moves in unchanged. -->
+<ShellScreen
+    viewId="observatory.dojo-sharing"
+    mark={{ kanji: '群', icon: railIcon('/dojo/sharing') }}
+    title="What your sensei shares, and toward whom."
+    context="Observatory · Collective"
+    description="Choose where anonymized insight goes, how often batches are prepared, and which categories may leave. Only the generalized rewrite of a learning is shared — never the original text of a memory. File paths, workspace, client and person names are stripped from everything that goes, and anything that still looks identifying is held back instead of sent. Review each batch before it leaves."
+    search={false}
+>
 
     {#if data.error || !state}
       <div class="max-w-[1060px] mx-auto px-7 pb-10">
@@ -192,4 +194,4 @@
       </section>
     </div>
     {/if}
-</Screen>
+</ShellScreen>

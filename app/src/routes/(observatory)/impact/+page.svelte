@@ -2,7 +2,9 @@
     import { EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   import { invalidateAll } from '$app/navigation';
-  import { MoeReasoningPanel, PageHeader, Screen, UnreadWorkspacesNotice } from '$lib/components';
+  import { MoeReasoningPanel, UnreadWorkspacesNotice } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
+  import type { ShellStat } from '@rokkit/app';
   import { railIcon } from '../observatory-nav';
   import {
     deltaView,
@@ -18,6 +20,18 @@
 
   // No buckets means the read failed (#288): the page shows that error.
   const buckets = $derived(data.buckets ?? bucketImpact([]));
+  // The header's verdict counts, as the shell's stats band — absent on a
+  // failed read (the band hides with them, per the error-state spec).
+  const cards = $derived<ShellStat[] | undefined>(
+    data.error
+      ? undefined
+      : [
+          { id: 'positive', title: 'Positive', value: buckets.positive.length, tone: 'success' as const },
+          { id: 'neutral', title: 'Neutral', value: buckets.neutral.length, tone: 'ink' as const },
+          { id: 'negative', title: 'Negative', value: buckets.negative.length, tone: 'warning' as const },
+          { id: 'pending', title: 'Pending', value: buckets.pending.length, tone: 'muted' as const },
+        ],
+  );
 
   // Flatten buckets into a single ordered feed for the aside list.
   // Order — negative first (loudest to act on), then positive, neutral,
@@ -40,39 +54,19 @@
 </script>
 
 <!-- List beside detail: each column scrolls itself, under a fixed header (#293). -->
-<Screen fill data-impact-total={data.error ? undefined : data.total}>
-  {#snippet header()}
-    <PageHeader
-      kanji="果"
-      icon={railIcon('/impact')}
-      eyebrow="Observatory · Change impact"
-      title="Did sensei's advice actually work?"
-      description="Each accepted recommendation gets a measurement window. FTR baseline vs current is compared. The MOE panel writes the reasoning."
-    >
-      {#snippet right()}
-        {#if !data.error}
-          <div class="flex gap-5 pl-5 border-l border-paper-edge">
-            <div class="text-center">
-              <div class="font-mono text-lg font-light text-success">{buckets.positive.length}</div>
-              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">positive</div>
-            </div>
-            <div class="text-center">
-              <div class="font-mono text-lg font-light text-ink">{buckets.neutral.length}</div>
-              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">neutral</div>
-            </div>
-            <div class="text-center">
-              <div class="font-mono text-lg font-light text-warning">{buckets.negative.length}</div>
-              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">negative</div>
-            </div>
-            <div class="text-center">
-              <div class="font-mono text-lg font-light text-ink-mute">{buckets.pending.length}</div>
-              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">pending</div>
-            </div>
-          </div>
-        {/if}
-      {/snippet}
-    </PageHeader>
-  {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow/description are
+     the shell's, the verdict counts are its stats band, the body moves in
+     unchanged. -->
+<ShellScreen
+  viewId="observatory.impact"
+  mark={{ kanji: '果', icon: railIcon('/impact') }}
+  title="Did sensei's advice actually work?"
+  context="Observatory · Change impact"
+  description="Each accepted recommendation gets a measurement window. FTR baseline vs current is compared. The MOE panel writes the reasoning."
+  search={false}
+  stats={cards}
+  data-impact-total={data.error ? undefined : data.total}
+>
   {#if data.error}
     <div class="p-8">
       <StateView status="error" error={data.error} onretry={() => invalidateAll()} />
@@ -200,4 +194,4 @@
     </div>
   {/if}
   {/if}
-</Screen>
+</ShellScreen>

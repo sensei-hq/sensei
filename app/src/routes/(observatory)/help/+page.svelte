@@ -1,12 +1,17 @@
 <script lang="ts">
-    import { PageHeader, Screen } from '$lib/components';
+    // On the ScreenShell (D87 §9): the header's mark/title/eyebrow are the
+    // shell's, the static body moves in unchanged.
+    import { ShellScreen } from '@sensei/ui';
     import { SHORTCUTS } from '$lib/shortcuts.js';
 </script>
 
-<Screen>
-    {#snippet header()}
-    <PageHeader kanji="助" icon="i-solar-question-circle-bold-duotone" eyebrow="Sensei" title="Help" size="lg" />
-    {/snippet}
+<ShellScreen
+    viewId="observatory.help"
+    mark={{ kanji: '助', icon: 'i-solar-question-circle-bold-duotone' }}
+    title="Help"
+    context="Sensei"
+    search={false}
+>
     <div class="max-w-[640px] px-8 pt-8 pb-16">
 
         <section class="mb-7">
@@ -83,7 +88,7 @@
             </dl>
         </section>
     </div>
-</Screen>
+</ShellScreen>
 
 <style>
     .shortcuts-row {

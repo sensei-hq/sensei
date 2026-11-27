@@ -3,7 +3,8 @@
     import { driftChipClasses } from '$lib/traceability.svelte.js';
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, UnreadWorkspacesNotice } from '$lib/components';
+  import { UnreadWorkspacesNotice } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
   import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
   import {
     rollupHeadline,
@@ -49,15 +50,16 @@
   </section>
 {/snippet}
 
-<Screen>
-    {#snippet header()}
-    <PageHeader
-      eyebrow="Observatory · Document traceability"
-      kanji="巻" icon={railIcon("/traceability")}
-      title="Where the docs and the code disagree."
-      description="Every doc-to-symbol link, checked nightly. Drift surfaces here before someone reads a stale doc and writes the wrong thing."
-    />
-    {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow/description are
+     the shell's; the body moves in unchanged. -->
+<ShellScreen
+    viewId="observatory.traceability"
+    mark={{ kanji: '巻', icon: railIcon('/traceability') }}
+    title="Where the docs and the code disagree."
+    context="Observatory · Document traceability"
+    description="Every doc-to-symbol link, checked nightly. Drift surfaces here before someone reads a stale doc and writes the wrong thing."
+    search={false}
+>
 
     {#if !data.rollup || !data.groups}
     <div class="max-w-[1060px] mx-auto px-7 pb-10">
@@ -87,4 +89,4 @@
       {/if}
     </div>
     {/if}
-</Screen>
+</ShellScreen>

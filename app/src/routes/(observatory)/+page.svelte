@@ -1,7 +1,9 @@
 <script lang="ts">
   import { StateView } from '@sensei/ui';
   import { invalidateAll } from '$app/navigation';
-  import { Eyebrow, FtrStrip, Kanji, Screen } from '$lib/components';
+  import { Eyebrow, FtrStrip, Kanji } from '$lib/components';
+  import { KANJI_ICONS } from '$lib/glyph-vocabulary';
+  import { ShellScreen } from '@sensei/ui';
   import RecentSessions from './RecentSessions.svelte';
   import HeroKoan from './HeroKoan.svelte';
   import InsightCard from './InsightCard.svelte';
@@ -23,17 +25,19 @@
   const greeting = $derived(greetingLine(home?.greeting ?? ''));
 </script>
 
-<Screen>
-  {#snippet header()}
-    {#if home}
-      <!-- Pinned greeting + FTR header -->
-      <div class="max-w-[1060px] mx-auto px-7 pt-6 pb-4 flex items-start justify-between" data-today-header>
-        <div>
-          <p class="m-0 mb-2"><Eyebrow>{home.today}</Eyebrow></p>
-          <h1 class="display text-2xl font-normal m-0 tracking-tight">{greeting}</h1>
-        </div>
-
-        <div data-ftr-header class="flex items-end gap-5 text-right" data-dim={mode === 'early' || undefined}>
+<!-- On the ScreenShell (D87 §9): the greeting and date are the shell's title
+     and context; the FTR block moves to the top of the body with its strip
+     and states untouched; the rest moves in unchanged. -->
+<ShellScreen
+  viewId="observatory.today"
+  mark={{ kanji: '観', icon: KANJI_ICONS['観'] }}
+  title={greeting}
+  context={home?.today ?? ''}
+  search={false}
+>
+  {#if home}
+    <div class="max-w-[1060px] mx-auto px-7 pt-6 pb-4 flex justify-end" data-today-header>
+      <div data-ftr-header class="flex items-end gap-5 text-right" data-dim={mode === 'early' || undefined}>
           <div>
             <p class="m-0 mb-1"><Eyebrow>First-Try-Right · 14d</Eyebrow></p>
             <div class="flex items-baseline gap-2 justify-end">
@@ -60,7 +64,6 @@
         </div>
       </div>
     {/if}
-  {/snippet}
   {#if !home}
     <div class="max-w-[1060px] mx-auto px-7 py-6 pb-16">
       <StateView status="error" error={data.todayError} onretry={() => invalidateAll()} />
@@ -120,7 +123,7 @@
     <RecentSessions sessions={data.recentSessions} />
   </div>
   {/if}
-</Screen>
+</ShellScreen>
 
 {#snippet sectionHead(title: string, href: string, linkText: string)}
   <div class="flex items-baseline justify-between mb-4">

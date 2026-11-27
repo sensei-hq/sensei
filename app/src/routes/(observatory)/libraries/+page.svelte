@@ -4,7 +4,8 @@
     import { untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import { Eyebrow, PageHeader, Screen } from "$lib/components";
+    import { Eyebrow } from "$lib/components";
+    import { ShellScreen } from '@sensei/ui';
     import { LibrariesState } from "./libraries-state.svelte.js";
 
     let { data } = $props();
@@ -20,10 +21,15 @@
     });
 </script>
 
-<Screen>
-    {#snippet header()}
-    <PageHeader kanji="書" icon={railIcon("/libraries")} eyebrow="Libraries" title="Libraries" />
-    {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow are the
+     shell's; the search and lists move in unchanged. -->
+<ShellScreen
+    viewId="observatory.libraries"
+    mark={{ kanji: '書', icon: railIcon('/libraries') }}
+    title="Libraries"
+    context="Libraries"
+    search={false}
+>
     <div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
         <!-- Search -->
@@ -153,7 +159,7 @@
             </div>
         {/if}
     </div>
-</Screen>
+</ShellScreen>
 
 {#snippet provides(title: string, items: { key: string; label: string; note: string | null; body: string | null }[])}
     {#if items.length}

@@ -7,7 +7,8 @@
     import { senseiApi } from "$lib/api.js";
     import { ftrReadLabel } from "$lib/ftr.js";
     import SignalCard from "$lib/components/SignalCard.svelte";
-    import { Eyebrow, Kanji, Screen } from "$lib/components";
+    import { Eyebrow, Kanji } from "$lib/components";
+    import { ShellScreen } from '@sensei/ui';
     import { Button, Select } from "@rokkit/ui";
     import { mcp, toolHealthView, toolUsageTotals } from "$lib/state/mcp.svelte.js";
     import { buildPlaygroundGroups, groupNotice, serversByFamily, type PlaygroundTool } from "./playground-groups.js";
@@ -166,21 +167,19 @@
 <!-- Hero + tabs stay in place over the scrolling body (#293). Full width — no
      max-w wrapper — so the panels below fill the observatory main pane
      edge-to-edge (fixes the L/R gap the user hit). -->
-<Screen>
-    {#snippet header()}
-    <div class="bg-paper">
-        <div class="flex items-end gap-4 pt-5 pb-4 px-7 border-b border-paper-edge" data-testid="instruments-hero">
-            <Kanji char={currentTab.kanji} icon={currentTab.icon} mode={glyphs} size="4xl" />
-            <div class="flex-1 min-w-0">
-                <div class="text-xs uppercase tracking-[0.18em] text-ink-soft mb-1">
-                    Instruments · {currentTab.label}
-                </div>
-                <h1 class="display text-xl font-normal m-0 text-ink">{heroCopy.tagline}</h1>
-                <p class="text-sm text-ink-mute leading-normal mt-1 mb-0 max-w-[680px]">
-                    {heroCopy.sub}
-                </p>
-            </div>
-        </div>
+<!-- On the ScreenShell (D87 §9): the hero's mark/title/eyebrow/sub are the
+     shell's (all tab-reactive, as before); the tabs stay atop the body; the
+     tab bodies move in unchanged. -->
+<ShellScreen
+    viewId="observatory.instruments"
+    mark={{ kanji: currentTab.kanji, icon: currentTab.icon }}
+    title={heroCopy.tagline}
+    context="Instruments · {currentTab.label}"
+    description={heroCopy.sub}
+    glyphs={glyphs}
+    search={false}
+>
+    <div>
         <div class="flex px-7 border-b border-paper-edge" role="tablist" aria-label="Instruments tabs" data-testid="instrument-tabs">
             {#each instrumentTabs as t}
                 {@const on = t.id === ins.tab}
@@ -200,7 +199,6 @@
             {/each}
         </div>
     </div>
-    {/snippet}
     <!-- Body is full width; Playground/Replay use their own internal grids,
          Health gets horizontal padding so cards breathe but still reach the
          edges (no centered max-w wrapper any more). -->
@@ -720,7 +718,7 @@
             </div>
         {/if}
     </div>
-</Screen>
+</ShellScreen>
 
 {#snippet KpiCard(kanji: string, label: string, value: string, hint: string)}
     <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">

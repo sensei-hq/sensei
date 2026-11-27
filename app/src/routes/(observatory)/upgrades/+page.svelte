@@ -5,7 +5,8 @@
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, UnreadWorkspacesNotice } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
+  import { UnreadWorkspacesNotice } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import type { DojoUpgrade } from '$lib/types.js';
   import { KIND_META, type Upgrade, type UpgradeKind } from './buckets.js';
@@ -175,16 +176,16 @@
   {/if}
 {/snippet}
 
-<Screen>
-    {#snippet header()}
-    <PageHeader
-      eyebrow="Observatory · Upgrades"
-      kanji="贈" icon={railIcon("/upgrades")}
-      title="Upgrades waiting for your call."
-      description="Practice arriving from your Dōjō, and candidate skills, agents, rules and lints your own analyzer is asking for. Review each, then apply it or set it aside."
-    />
-    {/snippet}
-
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow/description are
+     the shell's; the two lanes move in unchanged. -->
+<ShellScreen
+    viewId="observatory.upgrades"
+    mark={{ kanji: '贈', icon: railIcon('/upgrades') }}
+    title="Upgrades waiting for your call."
+    context="Observatory · Upgrades"
+    description="Practice arriving from your Dōjō, and candidate skills, agents, rules and lints your own analyzer is asking for. Review each, then apply it or set it aside."
+    search={false}
+>
     <div
       class="max-w-[1060px] mx-auto px-7 pb-10"
       data-upgrades-total={data.total}
@@ -253,4 +254,4 @@
         {/if}
       </section>
     </div>
-</Screen>
+</ShellScreen>

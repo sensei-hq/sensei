@@ -2,7 +2,8 @@
   import { EmptyState, StateView } from '@sensei/ui';
     import { railIcon } from "../../observatory-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, Kanji } from '$lib/components';
+  import { Kanji } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
   import type { DojoMembership } from '$lib/types.js';
   import {
     boundWorkspacesSummary,
@@ -65,23 +66,18 @@
   </article>
 {/snippet}
 
-<Screen>
-    {#snippet header()}
-    <PageHeader
-      eyebrow="Observatory · Dōjō connections"
-      kanji="連" icon={railIcon("/dojo/connections")}
-      title="Where your sensei meets the team's Dōjō."
-      description="Every company, client, or community Dōjō you belong to joins here when you sign in — share what you learn and receive what the team already knows. You can belong to several at once."
-    >
-      {#snippet right()}
-        <a
-          href="/settings/dojo"
-          data-sign-in
-          class="px-3 py-2 rounded-md border border-paper-edge bg-transparent text-sm text-ink-mute no-underline"
-        >Sign in to a Dōjō</a>
-      {/snippet}
-    </PageHeader>
-    {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow/description are
+     the shell's, the sign-in link is its toolbar (kept an anchor with its
+     hook), the cards move in unchanged. -->
+<ShellScreen
+    viewId="observatory.dojo-connections"
+    mark={{ kanji: '連', icon: railIcon('/dojo/connections') }}
+    title="Where your sensei meets the team's Dōjō."
+    context="Observatory · Dōjō connections"
+    description="Every company, client, or community Dōjō you belong to joins here when you sign in — share what you learn and receive what the team already knows. You can belong to several at once."
+    search={false}
+    toolbar={{ add: [{ id: 'sign-in', label: 'Sign in to a Dōjō', icon: 'i-solar-user-id-bold-duotone', href: '/settings/dojo', attrs: { 'data-sign-in': '' } }] }}
+>
 
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-connections-total={data.connections.length}>
       {#if data.error}
@@ -101,4 +97,4 @@
         {/each}
       {/if}
     </div>
-</Screen>
+</ShellScreen>

@@ -2,7 +2,8 @@
     import { EmptyState, StateView } from '@sensei/ui';
     import Kanji from '$lib/components/Kanji.svelte';
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
+  import type { ShellStat } from '@rokkit/app';
   import { railIcon } from '../observatory-nav';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
@@ -20,6 +21,17 @@
   const ruleset = $derived<ConsolidatedRuleset | null>(data.ruleset);
   const meta = $derived(ruleset ? statusMeta(ruleset.status) : null);
   const sections = $derived(ruleset ? splitSections(ruleset.content) : []);
+  // The header's version/sections/status trio, as the shell's stats band —
+  // absent until a ruleset reads (the band hides with it).
+  const cards = $derived<ShellStat[] | undefined>(
+    ruleset && meta
+      ? [
+          { id: 'version', title: 'Version', value: `v${ruleset.version}`, tone: meta.tone },
+          { id: 'sections', title: 'Sections', value: sections.filter((s) => s.heading).length, tone: 'ink' as const },
+          { id: 'status', title: 'Status', value: meta.label, tone: meta.tone },
+        ]
+      : undefined,
+  );
   // Source raw-rule count isn't on the consolidated wire shape (it's global
   // scope, resolved daemon-side), so the "rules on disk" delta is omitted.
   const stats = $derived(ruleset ? diffStats(ruleset, null) : []);
@@ -32,35 +44,19 @@
   const approve = () => (ruleset ? cs.approve(api, ruleset.id, invalidateAll) : undefined);
 </script>
 
-<Screen data-consolidation-status={ruleset?.status ?? 'none'}>
-  {#snippet header()}
-    <PageHeader
-      kanji="統"
-      icon={railIcon('/consolidation')}
-      eyebrow="Governance · Ruleset consolidation"
-      title="One coherent ruleset from many raw rules."
-      description="Tier-1 gathers every rule governing this scope. Tier-2 asks a model to merge them into one deduped ruleset. Nothing changes until you approve — leaving it unapproved keeps the raw rules separate."
-    >
-      {#snippet right()}
-        {#if ruleset && meta}
-          <div class="flex gap-5 pl-5 border-l border-paper-edge">
-            <div class="text-center">
-              <div class="font-mono text-lg font-light {toneClass(meta.tone)}">v{ruleset.version}</div>
-              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">version</div>
-            </div>
-            <div class="text-center">
-              <div class="font-mono text-lg font-light text-ink">{sections.filter((s) => s.heading).length}</div>
-              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">sections</div>
-            </div>
-            <div class="text-center">
-              <div class="font-mono text-lg font-light {toneClass(meta.tone)}">{meta.label}</div>
-              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">status</div>
-            </div>
-          </div>
-        {/if}
-      {/snippet}
-    </PageHeader>
-  {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow/description are
+     the shell's, the version/sections/status trio is its stats band, the body
+     moves in unchanged. -->
+<ShellScreen
+  viewId="observatory.consolidation"
+  mark={{ kanji: '統', icon: railIcon('/consolidation') }}
+  title="One coherent ruleset from many raw rules."
+  context="Governance · Ruleset consolidation"
+  description="Tier-1 gathers every rule governing this scope. Tier-2 asks a model to merge them into one deduped ruleset. Nothing changes until you approve — leaving it unapproved keeps the raw rules separate."
+  search={false}
+  stats={cards}
+  data-consolidation-status={ruleset?.status ?? 'none'}
+>
   {#if data.error}
     <StateView status="error" error={data.error} failure={data.failure} onretry={invalidateAll} />
   {:else if !ruleset}
@@ -165,4 +161,4 @@
       </div>
     </div>
   {/if}
-</Screen>
+</ShellScreen>

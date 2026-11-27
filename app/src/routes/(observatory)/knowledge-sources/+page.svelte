@@ -4,7 +4,7 @@
     import { untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import { PageHeader, Screen } from "$lib/components";
+    import { ShellScreen } from '@sensei/ui';
     import { Button } from "@rokkit/ui";
     import { KnowledgeSourcesState } from "$lib/knowledge-sources.svelte.js";
 
@@ -21,10 +21,15 @@
     });
 </script>
 
-<Screen>
-    {#snippet header()}
-    <PageHeader kanji="連" icon={railIcon("/knowledge-sources")} eyebrow="Federation" title="Knowledge sources" />
-    {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow are the
+     shell's; the form and cards move in unchanged. -->
+<ShellScreen
+    viewId="observatory.knowledge-sources"
+    mark={{ kanji: '連', icon: railIcon('/knowledge-sources') }}
+    title="Knowledge sources"
+    context="Federation"
+    search={false}
+>
     <div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
         <!-- Add a source -->
@@ -105,7 +110,7 @@
             <p class="text-xs text-error mt-4">{state.error}</p>
         {/if}
     </div>
-</Screen>
+</ShellScreen>
 
 <style>
     .ks-input:focus {

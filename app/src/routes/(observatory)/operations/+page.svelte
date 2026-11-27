@@ -3,7 +3,7 @@
   // Now, Queue, Failures, Schedules, Pipelines, Sync. The sections read the
   // ops singletons; the page only attaches them, so navigation never loses
   // their state.
-  import { PageHeader, Screen } from '$lib/components';
+  import { ShellScreen } from '@sensei/ui';
   import OpsAlertsSection from '$lib/components/operations/OpsAlertsSection.svelte';
   import OpsNowSection from '$lib/components/operations/OpsNowSection.svelte';
   import OpsQueueSection from '$lib/components/operations/OpsQueueSection.svelte';
@@ -33,16 +33,17 @@
   });
 </script>
 
-<Screen data-operations>
-  {#snippet header()}
-    <PageHeader
-      kanji="運"
-      icon={railIcon('/operations')}
-      eyebrow="Operations · Background work"
-      title="Every job, queue, and schedule, live."
-      description="What is running now, what waits, what failed and why, when each worker runs next, and when every entity last agreed with the dōjō."
-    />
-  {/snippet}
+<!-- On the ScreenShell (D87 §9): the header's mark/title/eyebrow/description are
+     the shell's; the seven sections move in unchanged. -->
+<ShellScreen
+  viewId="observatory.operations"
+  mark={{ kanji: '運', icon: railIcon('/operations') }}
+  title="Every job, queue, and schedule, live."
+  context="Operations · Background work"
+  description="What is running now, what waits, what failed and why, when each worker runs next, and when every entity last agreed with the dōjō."
+  search={false}
+  data-operations
+>
   {#snippet children()}
     <OpsAlertsSection />
     <OpsNowSection />
@@ -52,4 +53,4 @@
     <OpsPipelinesSection />
     <OpsSyncSection />
   {/snippet}
-</Screen>
+</ShellScreen>
