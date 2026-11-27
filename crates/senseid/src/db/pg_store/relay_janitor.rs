@@ -4,11 +4,18 @@
 use super::PgStore;
 
 impl PgStore {
-    /// Every git checkout's local path, for worktree pruning and manifest
-    /// cleans. Oldest first — hygiene starts where rot is likeliest.
+    /// The local checkouts of repositories the relay has worked in (a live or
+    /// archived task names their `repo_key`), for worktree pruning, scratch
+    /// scavenging and manifest cleans. A repository sensei merely indexed is
+    /// never the janitor's to touch (#543).
     pub async fn janitor_git_roots(&self) -> Result<Vec<String>, String> {
         sqlx_core::query_scalar::query_scalar(
-            "select abs_path from sensei.folders where kind = 'git' order by abs_path",
+            "select f.abs_path from sensei.folders f
+               join sensei.repositories r on r.id = f.repository_id
+              where f.kind = 'git'
+                and r.repo_key in (select repo_key from relay.tasks
+                                   union select repo_key from relay_archive.tasks)
+              order by f.abs_path",
         )
         .fetch_all(self.pool())
         .await
@@ -117,6 +124,57 @@ mod tests {
         assert!(got.contains(&dead), "{got:?}");
         assert!(!got.contains(&live));
         assert!(!got.contains(&relative));
+    }
+
+    /// #543: the janitor's roots are the checkouts of repositories the relay
+    /// has worked in, never every repository sensei indexed. A checkout of a
+    /// repository no relay task names is someone else's, and stays untouched.
+    #[tokio::test]
+    async fn git_roots_are_only_checkouts_of_repositories_the_relay_worked_in() {
+        let pg = PgStore::test_store().await;
+        let tag = uuid::Uuid::now_v7().simple().to_string();
+        let worked = format!("janitor-worked-{tag}");
+        let other = format!("janitor-other-{tag}");
+        crate::db::pg_store::tests::create_test_folder(&pg, &worked).await;
+        crate::db::pg_store::tests::create_test_folder(&pg, &other).await;
+        let (user, crew, task) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+        sqlx_core::query::query(
+            "insert into relay.crews (user_id, id, status) values ($1, $2, 'active')",
+        )
+        .bind(user)
+        .bind(crew)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query(
+            "insert into relay.tasks (user_id, id, crew_id, repo_key, title, phase, state)
+             values ($1, $2, $3, $4, 'T', 'impl', 'cancelled')",
+        )
+        .bind(user)
+        .bind(task)
+        .bind(crew)
+        .bind(format!("test/{worked}"))
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let roots = pg.janitor_git_roots().await.unwrap();
+
+        sqlx_core::query::query("delete from relay.tasks where id = $1")
+            .bind(task)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("delete from relay.crews where id = $1")
+            .bind(crew)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        assert!(roots.contains(&format!("/_test/{worked}")), "{roots:?}");
+        assert!(
+            !roots.contains(&format!("/_test/{other}")),
+            "a repository no relay task names is never a janitor root: {roots:?}"
+        );
     }
 
     #[tokio::test]

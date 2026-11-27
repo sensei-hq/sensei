@@ -15,6 +15,12 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The relay janitor only cleans repositories the relay worked in (#543).** Its hourly scratch scavenge and
+  manifest cleans (`make clean-temp`, `pnpm store prune`, …) ran in every repository sensei had indexed. They now
+  run only in checkouts of a repository a relay task names.
+
 ## [0.28.1] — 2026-11-27
 
 ### Fixed
