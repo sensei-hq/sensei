@@ -15,6 +15,20 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.28.1] — 2026-11-27
+
+### Fixed
+
+- **The relay janitor no longer deletes worktrees it did not create.**
+  0.28.0's janitor (#444 §10.2) ran `git worktree remove --force` on every
+  linked worktree no live lane held, in every indexed repository, so a
+  person's own worktrees were deleted with their uncommitted changes. It now
+  removes only a worktree the relay recorded for a lane that has since
+  unregistered (absolute paths only), and never forces: git refuses a tree
+  with changes, so uncommitted work survives. **Upgrade from 0.28.0
+  immediately**; until then, stop the daemon (`sensei stop`) if you keep
+  worktrees outside the relay.
+
 ## [0.28.0] — 2026-11-26
 
 ### Added
