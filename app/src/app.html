@@ -28,6 +28,11 @@
                     : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
                 document.documentElement.dataset.mode = mode;
                 document.body.dataset.mode = mode;
+                // The overlay title bar (traffic lights over the content) is
+                // macOS only. Elsewhere the OS draws its own title bar, so the
+                // strips and inset reserved for the overlay are dropped (app.css).
+                document.documentElement.dataset.titlebar =
+                    /Macintosh|Mac OS X/.test(navigator.userAgent) ? "overlay" : "native";
             })();
         </script>
         <div style="display: contents">%sveltekit.body%</div>

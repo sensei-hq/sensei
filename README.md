@@ -63,6 +63,44 @@ sudo apt install ./Sensei_<version>_amd64.deb   # then open Sensei from the app 
 
 Without the desktop app: `brew install sensei-hq/tap/sensei pgvector`, then `sensei start`.
 
+## Install (Windows)
+
+Windows 10 or 11, x64. These are unsigned test builds. Postgres runs in Docker, and sensei's
+hooks run under Git for Windows' `sh`.
+
+1. Install the prerequisites, then start Docker Desktop once:
+
+   ```powershell
+   winget install --id Git.Git -e
+   winget install --id Docker.DockerDesktop -e   # Rancher Desktop or Podman also work
+   ```
+
+2. Choose the database credentials. Create `%USERPROFILE%\.sensei\.env` with two lines:
+
+   ```text
+   PGUSER=sensei
+   PGPASSWORD=<a password you choose>
+   ```
+
+   sensei creates its Postgres container with these and connects with them. Nothing is generated
+   for you, and environment variables of the same names take precedence over the file.
+
+3. Download `Sensei_<version>_x64-setup.exe` from the
+   [release](https://github.com/sensei-hq/sensei/releases) and run it. The installer is not
+   signed, so SmartScreen shows "Windows protected your PC": choose **More info**, then
+   **Run anyway**. It installs for your user only (no administrator) and puts `sensei`,
+   `senseid` and `sensei-mcp` on your `PATH`. Without the desktop app, unzip
+   `sensei-windows-x86_64.zip` instead and add its folder to your `PATH`.
+
+4. In a new terminal:
+
+   ```powershell
+   sensei doctor --fix   # creates the sensei-pg container, installs Ollama, sets up the database
+   sensei start          # starts the daemon now and each time you sign in
+   ```
+
+Claude Code has to run on Windows itself, not inside WSL, for sensei's hooks to reach the daemon.
+
 ### Indexing engines
 
 The indexer places call edges with each language's own compiler:

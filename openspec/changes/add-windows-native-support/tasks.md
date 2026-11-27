@@ -8,7 +8,8 @@
 - [x] 1.6 Remaining items from 1.1 until the Windows check is green (4 rounds: Unix-only script/symlink tests
   gated, exec-bit check split; green on PR #507)
 - [ ] 1.7 Make the `windows` job a required check on develop/main (branch protection — the user's call)
-- [ ] 1.8 Extend the Windows job to `app/src-tauri` (its own workspace; not covered by 1.1)
+- [x] 1.8 Extend the Windows job to `app/src-tauri` (its own workspace; not covered by 1.1): frontend build,
+  clippy and tests
 
 ## 2. Runtime on Windows (slice 2, depends on 1)
 - [x] 2.1 POSIX shell lookup in `bootstrap::util` (Git `sh.exe` on Windows; a miss names Git for Windows)
@@ -51,11 +52,13 @@
   defines the Windows install)
 
 ## 5. Distribution (slice 5, depends on 2–4)
-- [ ] 5.1 `release.yml`: `windows-latest` job building `sensei-windows-x86_64.zip`, attached to the release
+- [x] 5.1 `release.yml`: `windows-latest` leg of `build-daemon` building `sensei-windows-x86_64.zip`, attached
+  to the release (first exercised by the next tag)
 - [ ] 5.2 Tauri NSIS installer (unsigned), shipping the three binaries on the user `PATH`; Windows fallback for
   `titleBarStyle: Overlay` / `macOSPrivateApi`
 - [ ] 5.3 Hooks end to end on Windows through `run-hook.cmd` → Git Bash (session-start, forward, nudge, pre-compact)
-- [ ] 5.4 README: Windows install (Git for Windows, Docker, the installer, SmartScreen prompt, `sensei doctor --fix`)
+- [x] 5.4 README: Windows install (Git for Windows, Docker, `.env` credentials, the installer, SmartScreen
+  prompt, `sensei doctor --fix`, `sensei start`)
 
 ## 6. Verification
 - [ ] 6.1 Clean Windows 11 VM: follow the README only, end with `sensei doctor` all green, a workspace indexed,
