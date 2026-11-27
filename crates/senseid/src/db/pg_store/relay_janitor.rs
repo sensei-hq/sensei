@@ -26,6 +26,19 @@ impl PgStore {
         .map_err(|e| format!("read live worktrees: {e}"))
     }
 
+    /// Worktrees the relay recorded for lanes that have since unregistered:
+    /// the only worktrees the janitor may remove. Absolute paths only — a
+    /// relative one can never match what `git worktree list` prints.
+    pub async fn janitor_dead_lane_worktrees(&self) -> Result<Vec<String>, String> {
+        sqlx_core::query_scalar::query_scalar(
+            "select distinct worktree from relay.lanes
+              where worktree like '/%' and unregistered_at is not null",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| format!("read dead lane worktrees: {e}"))
+    }
+
     /// Compact action logs (#444 §10.2.4): null the raw stdout/stderr
     /// attachments (`body_md`, `report_md`) on actions of tasks completed
     /// more than 7 days ago, live and archived alike. Structured metadata
@@ -57,6 +70,54 @@ impl PgStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a worktree the relay recorded for a lane that has since
+    /// unregistered is the janitor's to remove. A live lane's, a relative
+    /// path (it can never match what `git worktree list` prints) and a lane
+    /// without one never are.
+    #[tokio::test]
+    async fn dead_lane_worktrees_are_only_absolute_paths_of_unregistered_lanes() {
+        let pg = PgStore::test_store().await;
+        let user = uuid::Uuid::now_v7();
+        let crew = uuid::Uuid::now_v7();
+        sqlx_core::query::query(
+            "insert into relay.crews (user_id, id, status) values ($1, $2, 'active')",
+        )
+        .bind(user)
+        .bind(crew)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let tag = uuid::Uuid::now_v7();
+        let dead = format!("/tmp/janitor-{tag}/dead");
+        let live = format!("/tmp/janitor-{tag}/live");
+        let relative = format!("lanes/janitor-{tag}");
+        let gone = Some(chrono::Utc::now());
+        for (code, worktree, unregistered) in [
+            ("D", Some(dead.as_str()), gone),
+            ("L", Some(live.as_str()), None),
+            ("R", Some(relative.as_str()), gone),
+            ("N", None, gone),
+        ] {
+            sqlx_core::query::query(
+                "insert into relay.lanes (user_id, id, crew_id, code, family, token_hash, worktree, unregistered_at)
+                 values ($1, $2, $3, $4, 'claude', 'h', $5, $6)",
+            )
+            .bind(user)
+            .bind(uuid::Uuid::now_v7())
+            .bind(crew)
+            .bind(code)
+            .bind(worktree)
+            .bind(unregistered)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        let got = pg.janitor_dead_lane_worktrees().await.unwrap();
+        assert!(got.contains(&dead), "{got:?}");
+        assert!(!got.contains(&live));
+        assert!(!got.contains(&relative));
+    }
 
     #[tokio::test]
     async fn compacting_nulls_old_attachments_and_keeps_metadata() {

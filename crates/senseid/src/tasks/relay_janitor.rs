@@ -72,13 +72,15 @@ fn which(program: &str) -> bool {
 }
 
 /// Parse `git worktree list --porcelain` (`worktree <path>` lines) against
-/// the worktrees live lanes hold: `(to_prune, to_remove)`. Missing dirs
-/// are dangling admin entries for `git worktree prune`; existing dirs no
-/// live lane claims go to `git worktree remove --force`. Only listed paths
-/// are ever touched — anything else under the repo is not ours to delete.
+/// the worktrees lanes hold: `(to_prune, to_remove)`. Missing dirs are
+/// dangling admin entries for `git worktree prune`. An existing dir is
+/// removed only when the relay recorded it for a lane (`owned`) and no live
+/// lane holds it: every other worktree a repo lists belongs to a person or
+/// another tool, never to the janitor.
 pub fn dead_worktrees(
     porcelain: &str,
     live: &std::collections::HashSet<PathBuf>,
+    owned: &std::collections::HashSet<PathBuf>,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut prune = Vec::new();
     let mut remove = Vec::new();
@@ -86,7 +88,7 @@ pub fn dead_worktrees(
         let p = PathBuf::from(line);
         if !p.exists() {
             prune.push(p);
-        } else if !live.contains(&p) {
+        } else if owned.contains(&p) && !live.contains(&p) {
             remove.push(p);
         }
     }
@@ -151,10 +153,17 @@ pub async fn run(pg: &crate::db::pg_store::PgStore) -> JanitorReport {
         .into_iter()
         .map(PathBuf::from)
         .collect();
+    let owned: std::collections::HashSet<PathBuf> = match pg.janitor_dead_lane_worktrees().await {
+        Ok(paths) => paths.into_iter().map(PathBuf::from).collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "janitor: dead lane worktrees unread; removal skipped");
+            std::collections::HashSet::new()
+        }
+    };
 
     // Stage 1: dangling worktree pruning.
     for root in &roots {
-        match prune_root(root, &live).await {
+        match prune_root(root, &live, &owned).await {
             Ok(n) => report.pruned_worktrees += n,
             Err(e) => tracing::warn!(root = %root.display(), error = %e, "janitor: prune failed"),
         }
@@ -198,7 +207,11 @@ pub async fn run(pg: &crate::db::pg_store::PgStore) -> JanitorReport {
     report
 }
 
-async fn prune_root(root: &Path, live: &std::collections::HashSet<PathBuf>) -> Result<u64, String> {
+async fn prune_root(
+    root: &Path,
+    live: &std::collections::HashSet<PathBuf>,
+    owned: &std::collections::HashSet<PathBuf>,
+) -> Result<u64, String> {
     let out = tokio::process::Command::new("git")
         .args(["worktree", "list", "--porcelain"])
         .current_dir(root)
@@ -208,7 +221,7 @@ async fn prune_root(root: &Path, live: &std::collections::HashSet<PathBuf>) -> R
     if !out.status.success() {
         return Err(format!("git worktree list exited {}", out.status));
     }
-    let (prune, remove) = dead_worktrees(&String::from_utf8_lossy(&out.stdout), live);
+    let (prune, remove) = dead_worktrees(&String::from_utf8_lossy(&out.stdout), live, owned);
     let mut n = 0u64;
     if !prune.is_empty() {
         let st = tokio::process::Command::new("git")
@@ -221,9 +234,11 @@ async fn prune_root(root: &Path, live: &std::collections::HashSet<PathBuf>) -> R
             n += prune.len() as u64;
         }
     }
+    // Never `--force`: git refuses a tree with changes, so uncommitted work
+    // in a dead lane's worktree survives the janitor.
     for path in remove {
         let st = tokio::process::Command::new("git")
-            .args(["worktree", "remove", "--force"])
+            .args(["worktree", "remove"])
             .arg(&path)
             .current_dir(root)
             .status()
@@ -322,22 +337,93 @@ mod tests {
         let mut live = HashSet::new();
         live.insert(live_wt);
         live.insert(PathBuf::from("/repo/lanes/L2"));
-        let (prune, remove) = dead_worktrees(&porcelain, &live);
+        let (prune, remove) = dead_worktrees(&porcelain, &live, &HashSet::new());
         // L2's dir is missing too: a missing dir prunes even for a live lane.
         assert_eq!(prune, vec![PathBuf::from("/repo/lanes/L2"), PathBuf::from("/gone/wt")]);
         assert!(remove.is_empty());
-        // An existing dir no live lane claims goes to remove, not prune.
-        let mut live2 = HashSet::new();
-        live2.insert(live_root.path().join("lanes/L1"));
-        let (prune, remove) = dead_worktrees(&porcelain, &live2);
-        assert_eq!(prune.len(), 2);
-        assert!(remove.is_empty(), "L2's dir is missing too");
+        // An existing dir a dead lane recorded, no live lane claims, is removed.
         let l2dir = live_root.path().join("lanes/L2");
         std::fs::create_dir_all(&l2dir).unwrap();
         let porcelain2 = format!("worktree {}\n", l2dir.display());
-        let (prune, remove) = dead_worktrees(&porcelain2, &HashSet::new());
+        let owned: HashSet<PathBuf> = [l2dir.clone()].into();
+        let (prune, remove) = dead_worktrees(&porcelain2, &HashSet::new(), &owned);
         assert!(prune.is_empty());
         assert_eq!(remove, vec![l2dir]);
+    }
+
+    /// 0.28.0 force-removed every linked worktree no live lane held, in every
+    /// indexed repo: a person's own worktrees went with their uncommitted
+    /// work. Only a worktree the relay recorded for a lane is ever its to
+    /// remove; anything else it lists is someone else's.
+    #[test]
+    fn a_worktree_the_relay_never_recorded_is_never_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let mine = root.path().join("lanes/merge");
+        std::fs::create_dir_all(&mine).unwrap();
+        let porcelain = format!("worktree {}\nHEAD x\n", mine.display());
+        let (prune, remove) = dead_worktrees(&porcelain, &HashSet::new(), &HashSet::new());
+        assert!(prune.is_empty());
+        assert!(remove.is_empty(), "not the relay's worktree: {remove:?}");
+    }
+
+    #[test]
+    fn a_recorded_worktree_a_live_lane_holds_is_kept() {
+        let root = tempfile::tempdir().unwrap();
+        let wt = root.path().join("lanes/L3");
+        std::fs::create_dir_all(&wt).unwrap();
+        let porcelain = format!("worktree {}\n", wt.display());
+        let both: HashSet<PathBuf> = [wt.clone()].into();
+        let (_, remove) = dead_worktrees(&porcelain, &both, &both);
+        assert!(remove.is_empty(), "a live lane re-registered on it");
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let st = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .status()
+            .unwrap();
+        assert!(st.success(), "git {args:?}");
+    }
+
+    /// Even a dead lane's own worktree keeps uncommitted work: removal never
+    /// forces, so git refuses a tree with changes and the janitor leaves it.
+    #[tokio::test]
+    async fn removal_never_discards_uncommitted_work() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "i",
+            ],
+        );
+        let clean = tmp.path().join("clean");
+        let dirty = tmp.path().join("dirty");
+        git(&repo, &["worktree", "add", "-q", "-b", "c", clean.to_str().unwrap()]);
+        git(&repo, &["worktree", "add", "-q", "-b", "d", dirty.to_str().unwrap()]);
+        std::fs::write(dirty.join("work.txt"), "unsaved\n").unwrap();
+        // git prints canonical paths (macOS /var → /private/var).
+        let clean = clean.canonicalize().unwrap();
+        let dirty = dirty.canonicalize().unwrap();
+        let owned: HashSet<PathBuf> = [clean.clone(), dirty.clone()].into();
+        let n = prune_root(&repo, &HashSet::new(), &owned).await.unwrap();
+        assert_eq!(n, 1, "only the clean dead worktree is reclaimed");
+        assert!(!clean.exists());
+        assert_eq!(std::fs::read_to_string(dirty.join("work.txt")).unwrap(), "unsaved\n");
     }
 
     // mtime aging needs utimes; the scavenger itself is portable.
