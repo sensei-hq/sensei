@@ -35,6 +35,10 @@ pub struct PgStore {
 /// and `the_test_suite_fits_postgres_connection_budget` checks the sum.
 pub(crate) const TEST_POOL_MAX_CONNECTIONS: u32 = 4;
 
+/// How often a backend running a statement checks that its client is still
+/// there, aborting the statement when it is not (Postgres 14+).
+const DB_CLIENT_CHECK_INTERVAL_SECS: u32 = 5;
+
 /// One node keyed by its fqn, as [`PgStore::upsert_node_by_fqn`] writes it: a
 /// REFERENCE (`def: None`) creates or returns the unresolved stub; a DEFINITION
 /// (`def: Some`) creates or enriches the same node in place.
@@ -684,12 +688,23 @@ impl PgStore {
             // on Postgres's default path. Every table this code touches is
             // schema-qualified, so this only affects extension type/operator
             // resolution (and keeps working if a DB has vector in `public`).
+            //
+            // `client_connection_check_interval`: Postgres otherwise notices a
+            // vanished client only when it next writes to it, so a long
+            // statement from a daemon that exited (or was killed) keeps running
+            // and holding its locks — on 2026-11-27 for 47 minutes, stalling the
+            // restarted daemon's boot and every HTTP request behind it.
             .after_connect(|conn, _meta| {
                 Box::pin(async move {
                     sqlx_core::query::query("SET search_path TO \"$user\", public, extensions")
                         .execute(&mut *conn)
-                        .await
-                        .map(|_| ())
+                        .await?;
+                    sqlx_core::query::query(&format!(
+                        "SET client_connection_check_interval = '{DB_CLIENT_CHECK_INTERVAL_SECS}s'"
+                    ))
+                    .execute(&mut *conn)
+                    .await
+                    .map(|_| ())
                 })
             })
             .connect(database_url)

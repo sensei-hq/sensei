@@ -17,6 +17,12 @@ are marked **BREAKING**.
 
 ### Fixed
 
+- **The daemon answers requests while it boots.** Boot's database work (schema deploy, startup reconciles, the
+  version rescan, scan resume) ran before the HTTP server started, so when one step waited on database locks every
+  request, `/health` included, hung with it — for 40+ minutes on one machine. Boot now runs in the background.
+- **A query from a daemon that has exited no longer keeps running.** Postgres only noticed a vanished client when
+  it next wrote to it, so a long statement kept its locks after a restart. The daemon's connections now ask Postgres
+  to check every 5 seconds (`client_connection_check_interval`) and abort statements whose client is gone.
 - **The relay janitor only cleans repositories the relay worked in (#543).** Its hourly scratch scavenge and
   manifest cleans (`make clean-temp`, `pnpm store prune`, …) ran in every repository sensei had indexed. They now
   run only in checkouts of a repository a relay task names.
