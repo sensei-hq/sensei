@@ -1,28 +1,25 @@
-# Checkpoint — 2026-11-27 (#538 public install: develop merged in, CI pending)
+# Checkpoint — 2026-11-27 (v0.28.2 released; public downloads verified)
 
-**Slice:** #538 — the website, brew and DMG downloads 404 for users outside
-the org (binaries live only on the private `sensei` repo's releases).
-**Branch:** `fix/public-install` (worktree `lanes/public-install`), PR #539.
+**Slice:** #538 public install + daemon serve-while-booting + #543 janitor.
+**Branch:** `develop` == `main` @ v0.28.2 (`bed44f5c6`).
 
 ## Done
-- `65d29e974` schema embedded in the binary; deploy writes it to
-  `~/.sensei/schema/v{ver}/`; `SENSEI_DDL_DIR` still overrides.
-- `4e621174f` binaries publish to public `sensei-hq/sensei-releases`;
-  update-tap downloads anonymously before rendering; renderer refuses
-  non-public URLs (`make check-tap-render`, in CI).
-- `925b12d3b` Windows missing-binaries remedy → sensei-releases.
-- Develop (0.28.1 + #543 janitor + daemon serve-while-booting) merged in.
-  The earlier CI `test` red was `relay_host_disk_exhausted` on the runner,
-  which develop's relay-health seam fixes.
+- #539 merged (develop brought in; CI red was `relay_host_disk_exhausted`
+  on the runner, fixed by develop's relay-health seam).
+- v0.28.2 tagged; release run 46097239465: builds, `release` (to public
+  `sensei-hq/sensei-releases`) and `update-tap` green.
+- Verified logged out: website Download → sensei-releases v0.28.2; DMG and
+  macOS tarball download 200; checksums equal the tap's; DMG verifies;
+  `sensei --version` = 0.28.2; tokenless `brew fetch` of formula + cask OK.
 
 ## Remain
-1. CI green on #539 (repo public for the run, private after).
-2. Merge → develop; bump 0.28.2 → main; `make release`.
-3. Verify logged-out: website Download link, DMG, tarball, fresh
-   `brew install sensei-hq/tap/sensei`.
+1. `deploy-dojo` awaits the owner's approval in Actions.
+2. After it completes: `gh repo edit sensei-hq/sensei --visibility private --accept-visibility-change-consequences`.
+3. Not yet verified: first run on a clean user creates the DB from the
+   embedded schema with no network.
 
 ## Next command
-`gh pr checks 539 --watch`
+`gh run view 46097239465` (after approval), then the visibility flip.
 
 ## Open questions
-- `sensei-releases` has zero releases today: 0.28.2 is the first mirrored one.
+- Follow-ups #544 (version rescan never commits), #545 (slow folder delete).
