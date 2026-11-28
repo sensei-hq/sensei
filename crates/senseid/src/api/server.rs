@@ -431,6 +431,20 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         logger: task_logger,
         notifier: Arc::new(crate::notifications::DesktopNotifier),
     });
+    // The router needs only `state`, so it serves while boot runs. Boot's steps
+    // wait on the database (schema deploy, startup reconciles, the version
+    // rescan, scan resume), and any of them can stall behind another session's
+    // locks; awaited here, they held `axum::serve` — every request, `/health`
+    // included — for as long (40+ minutes on 2026-11-27).
+    let router = create_router(state.clone());
+    tokio::spawn(boot(state, task_queue.clone(), task_ctx));
+    (router, task_queue)
+}
+
+/// Boot's ordered work: schema, startup reconciles, task workers, schedulers,
+/// the version rescan and scan resume. Runs in its own task, off the serving
+/// path (see [`build_full_app`]); its steps keep their order.
+async fn boot(state: Arc<SharedState>, task_queue: Arc<TaskQueue>, task_ctx: Arc<TaskContext>) {
     // Schema first (#260): a new binary deploys its release's schema before any
     // worker touches the database — `brew upgrade` neither deploys nor restarts.
     crate::tasks::schema_deploy::on_boot(&state.pg).await;
@@ -860,8 +874,6 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             }
         });
     }
-
-    (create_router(state), task_queue)
 }
 
 /// Start root watchers for persisted scanned roots.
@@ -1045,5 +1057,47 @@ mod worker_count_tests {
         for remedy in ["dbd reset", "dropdb", "sensei bootstrap"] {
             assert!(!msg.contains(remedy), "provisioning is not actionable: `{remedy}`");
         }
+    }
+}
+
+#[cfg(test)]
+mod serve_while_booting_tests {
+    use tower::ServiceExt;
+
+    /// The HTTP surface answers while boot's database work is still blocked.
+    ///
+    /// On 2026-11-27 boot's version rescan waited 40+ minutes on another
+    /// session's locks, and because `axum::serve` only started after
+    /// `build_full_app` returned, every request — `/health` included — hung
+    /// for as long. Here a held lock on `activity.task_executions` (written by
+    /// boot's orphan reconcile) stands in for that contention.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn the_router_is_ready_while_boot_waits_on_a_lock() {
+        use sqlx_core::connection::Connection;
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let mut locker = pg.pool().acquire().await.unwrap().detach();
+        sqlx_core::query::query("begin").execute(&mut locker).await.unwrap();
+        sqlx_core::query::query("lock table activity.task_executions in access exclusive mode")
+            .execute(&mut locker)
+            .await
+            .unwrap();
+
+        let built =
+            tokio::time::timeout(std::time::Duration::from_secs(30), super::build_full_app(pg))
+                .await;
+
+        sqlx_core::query::query("rollback").execute(&mut locker).await.unwrap();
+        let _ = locker.close().await;
+        let (router, _queue) = built.expect("build_full_app waited on boot's database work");
+        let res = router
+            .oneshot(
+                axum::http::Request::get("/health")
+                    .header(axum::http::header::HOST, "127.0.0.1:7744")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
     }
 }

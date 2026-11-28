@@ -149,23 +149,11 @@ pub(crate) fn untrusted_tap_remedy(formula: &str, tap: &str) -> Remedy {
 }
 
 pub(crate) fn generic_brew_remedy(formula: &str, stderr_tail: &str) -> Remedy {
-    // Sensei's tap formula (`sensei-hq/tap/sensei`) carries a `head` block,
-    // so when the published-tarball install fails — most often because a
-    // `make bump` just landed and GitHub Actions hasn't built the v0.X.Y
-    // assets yet (404 on the download URL) — the user's manual retry should
-    // chain into `--HEAD` to build from source. The Makefile target already
-    // does this; the remedy script must match so the loop "run the suggested
-    // script → it fails the same way → remedy reappears" doesn't trap the user.
-    //
-    // We only chain for sensei tap formulas because third-party formulas
-    // (postgresql@17, ollama, etc.) don't declare a `head` block — running
-    // `brew install --HEAD postgresql@17` would just produce a different
-    // error and confuse things further.
-    let script = if formula.starts_with("sensei-hq/tap/sensei") {
-        format!("brew install {formula} || brew install --HEAD {formula}")
-    } else {
-        format!("brew install {formula}")
-    };
+    // A plain retry for every formula, sensei's included. Sensei's formula no
+    // longer has a `head` block (the source repo is private, #538), and the tap
+    // only advances once the release assets are publicly downloadable, so the
+    // old "tap ahead of its tarball → chain --HEAD" case cannot arise.
+    let script = format!("brew install {formula}");
     Remedy {
         message: format!(
             "Couldn't install `{formula}` automatically. Last brew output was:\n\n```\n{stderr_tail}\n```\n\nRun the script below to retry."
@@ -422,19 +410,15 @@ Please create a new installation in /opt/homebrew using one of the
     }
 
     #[test]
-    fn sensei_tap_formula_chains_head_fallback_in_remedy_script() {
-        // The freshly-bumped-version case: a `make bump` just landed but
-        // GitHub Actions hasn't built the v0.X.Y release tarball yet, so
-        // `brew install sensei-hq/tap/sensei` 404s. The remedy script the
-        // user copy-pastes must chain `--HEAD` so their manual retry isn't
-        // trapped in the same 404 loop (just like the Makefile already does).
+    fn sensei_tap_formula_remedy_is_a_plain_retry_with_no_head_build() {
+        // The formula has no `head` block any more: the source repo is private,
+        // so a user's `--HEAD` build could only fail (#538). Nor is it needed —
+        // the tap advances only after the release assets are publicly
+        // downloadable, so there is no "tap ahead of its tarball" window.
         let r = generic_brew_remedy(
             "sensei-hq/tap/sensei",
             "Failed to download resource \"sensei (0.2.15)\"",
         );
-        assert_eq!(
-            r.script,
-            "brew install sensei-hq/tap/sensei || brew install --HEAD sensei-hq/tap/sensei"
-        );
+        assert_eq!(r.script, "brew install sensei-hq/tap/sensei");
     }
 }

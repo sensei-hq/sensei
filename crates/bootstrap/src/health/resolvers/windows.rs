@@ -179,8 +179,8 @@ impl Resolver for SenseiWindowsResolver {
                 cfg.senseid_binary(),
                 cfg.sensei_mcp_binary()
             ),
-            script: "start https://github.com/sensei-hq/sensei/releases/latest".into(),
-            url: Some("https://github.com/sensei-hq/sensei/releases/latest".into()),
+            script: format!("start {}", crate::config::RELEASES_LATEST_URL),
+            url: Some(crate::config::RELEASES_LATEST_URL.into()),
         }
     }
 }
@@ -280,6 +280,15 @@ mod tests {
             ResolveOutcome::NeedsHumanAction(r) => r,
             ResolveOutcome::Resolved => panic!("expected a remedy"),
         }
+    }
+
+    #[test]
+    fn the_missing_binaries_remedy_sends_users_to_the_public_releases_page() {
+        // The source repo is private; its releases page 404s for users (#538).
+        let r = SenseiWindowsResolver.fallback_remedy();
+        let expected = "https://github.com/sensei-hq/sensei-releases/releases/latest";
+        assert_eq!(r.url.as_deref(), Some(expected));
+        assert_eq!(r.script, format!("start {expected}"));
     }
 
     #[test]

@@ -15,6 +15,26 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sensei installs for people outside the org (#538).** Release binaries, the DMG and the `.deb` were published
+  only to the private `sensei` repo, so the website's download link, `brew install` and the cask all hit a 404.
+  They now publish to the public `sensei-hq/sensei-releases`, and the tap is rendered only after an anonymous
+  download of each asset succeeds. "Report an issue" links point there too.
+- **A fresh install creates its database with no network.** The schema ships inside the binary and is written to
+  `~/.sensei/schema/v{version}/` on first run, instead of being fetched from the private repo. `SENSEI_DDL_DIR`
+  still overrides it.
+
+- **The daemon answers requests while it boots.** Boot's database work (schema deploy, startup reconciles, the
+  version rescan, scan resume) ran before the HTTP server started, so when one step waited on database locks every
+  request, `/health` included, hung with it — for 40+ minutes on one machine. Boot now runs in the background.
+- **A query from a daemon that has exited no longer keeps running.** Postgres only noticed a vanished client when
+  it next wrote to it, so a long statement kept its locks after a restart. The daemon's connections now ask Postgres
+  to check every 5 seconds (`client_connection_check_interval`) and abort statements whose client is gone.
+- **The relay janitor only cleans repositories the relay worked in (#543).** Its hourly scratch scavenge and
+  manifest cleans (`make clean-temp`, `pnpm store prune`, …) ran in every repository sensei had indexed. They now
+  run only in checkouts of a repository a relay task names.
+
 ## [0.28.1] — 2026-11-27
 
 ### Fixed

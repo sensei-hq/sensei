@@ -50,7 +50,7 @@ Homebrew formulae live in [sensei-hq/homebrew-tap](https://github.com/sensei-hq/
 ## Install (Linux)
 
 The desktop app ships as a `.deb` (Ubuntu 22.04 or newer, x86_64) on each
-[release](https://github.com/sensei-hq/sensei/releases). Its first-run health check installs
+[release](https://github.com/sensei-hq/sensei-releases/releases). Its first-run health check installs
 the rest through Homebrew — PostgreSQL 17 with pgvector, Ollama and the sensei binaries — then
 creates the database and starts the daemon. It needs Homebrew itself first:
 

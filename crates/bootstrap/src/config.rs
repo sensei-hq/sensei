@@ -15,8 +15,8 @@
 //! clean slate is needed, drop and re-create the DB.
 //!
 //! The one remaining knob: `SENSEI_DDL_DIR=/path/to/database` overrides the
-//! schema source at runtime, so DDL changes can be tested locally before
-//! pushing a release tag.
+//! schema compiled into the binary, so DDL changes can be tested locally
+//! before they ship.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,16 @@ pub const GITHUB_REPO: &str = "sensei";
 
 /// Homebrew tap slug used in install/reinstall messages.
 pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
+
+/// Where users report problems (the app's Help → Report issue). The source repo
+/// is private, so its issues page 404s for users; the public, binaries-only
+/// releases repo carries the issue tracker instead (#538).
+pub const REPORT_ISSUE_URL: &str = "https://github.com/sensei-hq/sensei-releases/issues";
+
+/// Latest public release (binaries only). Remedies that send users to download
+/// a build point here, never at the private source repo's releases (#538).
+pub const RELEASES_LATEST_URL: &str =
+    "https://github.com/sensei-hq/sensei-releases/releases/latest";
 
 // ── Binary names ──────────────────────────────────────────────────────────────
 //
@@ -248,21 +258,18 @@ impl SenseiConfig {
         MCP_REGISTRY_KEY
     }
 
-    /// Resolve the database schema source string for dbd-core's
-    /// `resolve_source()`.
-    ///
-    /// Default: the GitHub-tagged release matching `version`.
-    /// Override: set `SENSEI_DDL_DIR=/abs/path/to/database` to point at a
-    /// local directory — useful when iterating on DDL before publishing a
-    /// release tag. The env var is read at runtime so a single binary
-    /// supports both flows.
-    pub fn db_schema_source(&self, version: &str) -> String {
-        if let Ok(local) = std::env::var("SENSEI_DDL_DIR")
-            && !local.is_empty()
-        {
-            return local;
-        }
-        format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
+    /// A local schema directory that replaces the embedded one: set
+    /// `SENSEI_DDL_DIR=/abs/path/to/database` to deploy DDL you are iterating
+    /// on. Read at runtime, so one binary supports both flows. `None` (the
+    /// default) deploys the schema compiled into this binary
+    /// ([`crate::schema`]).
+    pub fn db_schema_override(&self) -> Option<String> {
+        std::env::var("SENSEI_DDL_DIR").ok().filter(|s| !s.is_empty())
+    }
+
+    /// Where the embedded schema for `version` is written before a deploy.
+    pub fn embedded_schema_dir(&self, version: &str) -> PathBuf {
+        self.sensei_dir().join("schema").join(format!("v{version}"))
     }
 }
 
@@ -670,6 +677,12 @@ mod tests {
     }
 
     #[test]
+    fn users_report_issues_on_the_public_releases_repo_not_the_private_source() {
+        // sensei-hq/sensei is private: its issues page 404s for users (#538).
+        assert_eq!(REPORT_ISSUE_URL, "https://github.com/sensei-hq/sensei-releases/issues");
+    }
+
+    #[test]
     fn mcp_registry_key_is_sensei() {
         let cfg = SenseiConfig::from_env();
         assert_eq!(MCP_REGISTRY_KEY, "sensei");
@@ -693,9 +706,14 @@ mod tests {
         }
         let cfg = SenseiConfig::from_env();
         assert_eq!(
-            cfg.db_schema_source("1.2.3"),
-            "sensei-hq/sensei/database@v1.2.3",
-            "default → GitHub tag",
+            cfg.db_schema_override(),
+            None,
+            "default → no override: the embedded schema is used",
+        );
+        assert_eq!(
+            cfg.embedded_schema_dir("1.2.3"),
+            cfg.sensei_dir().join("schema").join("v1.2.3"),
+            "embedded schema is written per version under the sensei dir",
         );
 
         unsafe {
@@ -703,8 +721,8 @@ mod tests {
         }
         let cfg = SenseiConfig::from_env();
         assert_eq!(
-            cfg.db_schema_source("1.2.3"),
-            "/tmp/test-ddl",
+            cfg.db_schema_override().as_deref(),
+            Some("/tmp/test-ddl"),
             "SENSEI_DDL_DIR set → override path",
         );
 

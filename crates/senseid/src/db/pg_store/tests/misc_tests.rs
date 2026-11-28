@@ -361,3 +361,60 @@ async fn knowledge_source_crud_roundtrip() {
     assert!(pg.delete_knowledge_source(&id).await.unwrap());
     assert!(pg.get_knowledge_source(&id).await.unwrap().is_none());
 }
+
+// ── Orphaned backends ─────────────────────────────────────────────
+
+/// A query whose daemon is gone must not keep running on the server.
+///
+/// Postgres only notices a vanished client when it next writes to it, so a
+/// long statement outlives the process that issued it. On 2026-11-27 a folder
+/// delete from a daemon that had already exited ran for 47 minutes, and its
+/// locks held the restarted daemon's boot (and with it every HTTP request)
+/// for as long. The pool's connections must ask Postgres to check.
+#[tokio::test]
+async fn a_query_whose_client_is_gone_is_aborted_by_the_server() {
+    use sqlx_core::connection::Connection;
+    let s = pg_store().await;
+    let tag = format!("orphan-probe-{}", uuid::Uuid::now_v7().simple());
+    let conn = s.pool().acquire().await.unwrap().detach();
+    let sql = format!("select pg_sleep(120), '{tag}'");
+    let running = tokio::spawn(async move {
+        let mut conn = conn;
+        let _ = sqlx_core::query::query(&sql).execute(&mut conn).await;
+        let _ = conn.close().await;
+    });
+    let count = |s: &crate::db::pg_store::PgStore, tag: String| {
+        let pool = s.pool().clone();
+        async move {
+            let (n,): (i64,) = sqlx_core::query_as::query_as(
+                "select count(*) from pg_stat_activity
+                  where query like '%' || $1 || '%' and pid <> pg_backend_pid()",
+            )
+            .bind(tag)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            n
+        }
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while count(&s, tag.clone()).await == 0 {
+        assert!(std::time::Instant::now() < deadline, "the probe query never started");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    // The client vanishes mid-statement: its socket closes, nothing is sent.
+    running.abort();
+    let _ = running.await;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if count(&s, tag.clone()).await == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server kept running a query whose client is gone"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
