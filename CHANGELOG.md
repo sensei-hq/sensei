@@ -15,7 +15,33 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
-## [0.28.0] — 2026-11-24
+### Fixed
+
+- **The daemon answers requests while it boots.** Boot's database work (schema deploy, startup reconciles, the
+  version rescan, scan resume) ran before the HTTP server started, so when one step waited on database locks every
+  request, `/health` included, hung with it — for 40+ minutes on one machine. Boot now runs in the background.
+- **A query from a daemon that has exited no longer keeps running.** Postgres only noticed a vanished client when
+  it next wrote to it, so a long statement kept its locks after a restart. The daemon's connections now ask Postgres
+  to check every 5 seconds (`client_connection_check_interval`) and abort statements whose client is gone.
+- **The relay janitor only cleans repositories the relay worked in (#543).** Its hourly scratch scavenge and
+  manifest cleans (`make clean-temp`, `pnpm store prune`, …) ran in every repository sensei had indexed. They now
+  run only in checkouts of a repository a relay task names.
+
+## [0.28.1] — 2026-11-27
+
+### Fixed
+
+- **The relay janitor no longer deletes worktrees it did not create.**
+  0.28.0's janitor (#444 §10.2) ran `git worktree remove --force` on every
+  linked worktree no live lane held, in every indexed repository, so a
+  person's own worktrees were deleted with their uncommitted changes. It now
+  removes only a worktree the relay recorded for a lane that has since
+  unregistered (absolute paths only), and never forces: git refuses a tree
+  with changes, so uncommitted work survives. **Upgrade from 0.28.0
+  immediately**; until then, stop the daemon (`sensei stop`) if you keep
+  worktrees outside the relay.
+
+## [0.28.0] — 2026-11-26
 
 ### Added
 
@@ -46,11 +72,25 @@ are marked **BREAKING**.
 
 ### Fixed
 
+- **Workspaces no longer merge unrelated same-named repos** (#541). The scan
+  mints a distinct workspace when a same-named repo is not nested with the
+  existing one (explicit README `workspace:` grouping is unchanged);
+  `get_rules` resolves by the caller's folder instead of the workspace name;
+  resolving rules by a workspace name spanning repositories is a 409 with
+  candidates; and the index audit heals already-merged workspaces (one per
+  repository), reported by `sensei index doctor`.
+
 - **First-run setup installs pgvector.** The desktop app's health check
   started PostgreSQL 17 but never installed pgvector, so `CREATE EXTENSION
   vector` failed on a fresh machine. The postgres step now runs `brew install
   pgvector` once postgres is up, and the database step's remedy names it
   (instead of `createdb`) when the extension is missing.
+
+### Removed
+
+- **CodeQL workflow.** The repository is private without GitHub Advanced
+  Security, so every run failed at the upload step. Restore
+  `.github/workflows/codeql.yml` from git history if code scanning returns.
 
 ## [0.27.1] — 2026-11-23
 

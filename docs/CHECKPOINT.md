@@ -1,38 +1,28 @@
-# Checkpoint — 2026-11-26 (#538 public install: PR mergeable, release pending)
+# Checkpoint — 2026-11-27 (#538 public install: develop merged in, CI pending)
 
-**Slice:** #538 — brew + first-run schema 404 for users outside the org.
-**Branch:** `fix/public-install` (off develop, pushed; not merged).
+**Slice:** #538 — the website, brew and DMG downloads 404 for users outside
+the org (binaries live only on the private `sensei` repo's releases).
+**Branch:** `fix/public-install` (worktree `lanes/public-install`), PR #539.
 
 ## Done
-- `65d29e974` schema embedded in the binary (build.rs, git-tracked
-  `database/` only — never untracked capture); deploy writes it to
-  `~/.sensei/schema/v{ver}/`; `SENSEI_DDL_DIR` still overrides. Fresh
-  install from the embedded schema verified on Postgres.
+- `65d29e974` schema embedded in the binary; deploy writes it to
+  `~/.sensei/schema/v{ver}/`; `SENSEI_DDL_DIR` still overrides.
 - `4e621174f` binaries publish to public `sensei-hq/sensei-releases`;
   update-tap downloads anonymously before rendering; renderer refuses
-  non-public URLs (`make check-tap-render`, in CI); formula drops SSH
-  `--HEAD` + rust/make build deps; Report issue → sensei-releases.
-- `2a2a2e8b0` merged develop (#511 Windows lifecycle) into the branch.
-- `925b12d3b` Windows missing-binaries remedy → sensei-releases
-  (`RELEASES_LATEST_URL`); it pointed at the private repo's releases.
-- Owner added `RELEASES_GITHUB_TOKEN` (confirmed via `gh secret list`).
+  non-public URLs (`make check-tap-render`, in CI).
+- `925b12d3b` Windows missing-binaries remedy → sensei-releases.
+- Develop (0.28.1 + #543 janitor + daemon serve-while-booting) merged in.
+  The earlier CI `test` red was `relay_host_disk_exhausted` on the runner,
+  which develop's relay-health seam fixes.
 
 ## Remain
-1. CI green on #539.
-2. Merge `fix/public-install` → develop → main; cut the release.
-3. Verify: anonymous `brew install sensei-hq/tap/sensei` on a clean user,
-   then `sensei start` creates the DB with no network.
-4. Carried: #513/#512/#444/#393/#268/#531/#532/#430 close on the next main
-   merge; #292 stale vs #536; candidates #522, #533, #301/#283.
+1. CI green on #539 (repo public for the run, private after).
+2. Merge → develop; bump 0.28.2 → main; `make release`.
+3. Verify logged-out: website Download link, DMG, tarball, fresh
+   `brew install sensei-hq/tap/sensei`.
 
 ## Next command
 `gh pr checks 539 --watch`
 
 ## Open questions
-- Licence swap + third-party notices: separate slices
-  (website `docs/plan/site-split.md` §5).
-- 6 process.rs fmt spots (local vs CI toolchain) — untouched.
-
-## Known-broken
-- Until the next release the tap points at v0.27.1 on the private repo,
-  so `brew install` 404s for users.
+- `sensei-releases` has zero releases today: 0.28.2 is the first mirrored one.

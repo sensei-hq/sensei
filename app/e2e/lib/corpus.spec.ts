@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { execFileSync } from 'child_process';
 import { mkdtempSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -50,4 +51,42 @@ describe('corpus fixtures', () => {
     expect(existsSync(dir)).toBe(false);
     expect(() => cleanupCorpus(join(sandbox(), 'never-there'))).not.toThrow();
   });
+
+  // A git hook in a linked worktree exports GIT_DIR/GIT_WORK_TREE; inherited,
+  // they aimed the fixture's init/config/add/commit at the outer repo (it set
+  // core.bare and a test identity there). The fixture must ignore them.
+  it('builds its own repo even when the caller exports GIT_DIR', () => {
+    const decoy = join(sandbox(), 'decoy');
+    execFileSync('git', ['init', '-q', decoy], { env: cleanGitEnv() });
+    const saved = { dir: process.env.GIT_DIR, tree: process.env.GIT_WORK_TREE };
+    process.env.GIT_DIR = join(decoy, '.git');
+    process.env.GIT_WORK_TREE = decoy;
+    const dir = join(sandbox(), 'repo');
+    try {
+      makeGitRepo(dir, { 'a.txt': 'one\n' });
+    } finally {
+      restore('GIT_DIR', saved.dir);
+      restore('GIT_WORK_TREE', saved.tree);
+    }
+    const log = (repo: string) =>
+      execFileSync('git', ['-C', repo, 'log', '--format=%s'], {
+        env: cleanGitEnv(),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim();
+    expect(log(dir)).toBe('init');
+    expect(() => log(decoy)).toThrow();
+    const decoyConfig = readFileSync(join(decoy, '.git', 'config'), 'utf8');
+    expect(decoyConfig).not.toContain('test@sensei.test');
+    expect(decoyConfig).toContain('bare = false');
+  });
 });
+
+function cleanGitEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+}
+
+function restore(key: string, value: string | undefined) {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
