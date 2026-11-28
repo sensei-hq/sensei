@@ -17,6 +17,14 @@ are marked **BREAKING**.
 
 ### Fixed
 
+- **Sensei installs for people outside the org (#538).** Release binaries, the DMG and the `.deb` were published
+  only to the private `sensei` repo, so the website's download link, `brew install` and the cask all hit a 404.
+  They now publish to the public `sensei-hq/sensei-releases`, and the tap is rendered only after an anonymous
+  download of each asset succeeds. "Report an issue" links point there too.
+- **A fresh install creates its database with no network.** The schema ships inside the binary and is written to
+  `~/.sensei/schema/v{version}/` on first run, instead of being fetched from the private repo. `SENSEI_DDL_DIR`
+  still overrides it.
+
 - **The daemon answers requests while it boots.** Boot's database work (schema deploy, startup reconciles, the
   version rescan, scan resume) ran before the HTTP server started, so when one step waited on database locks every
   request, `/health` included, hung with it — for 40+ minutes on one machine. Boot now runs in the background.
