@@ -90,6 +90,9 @@ jobs:
       - name: Homebrew tokens in the docs
         run: make check-brew-tokens
 
+      - name: Homebrew formula and cask install from public downloads
+        run: make check-tap-render
+
       # app and dojo are two installs; a spec they share must be the same in both.
       - name: Shared JS dependency specs
         run: make check-shared-js-specs

@@ -66,6 +66,25 @@ URL_THEN_SHA = re.compile(
 )
 
 
+# Where users download from. sensei-hq/sensei is PRIVATE: a formula pointing at
+# its releases 404s for everyone outside the org (#538). Binaries are published
+# to this public, binaries-only repo instead, and nothing else may be rendered.
+PUBLIC_DOWNLOADS = "https://github.com/sensei-hq/sensei-releases/releases/download/"
+PRIVATE_SOURCE = re.compile(r"github\.com[:/]sensei-hq/sensei(?:\.git)?(?![-\w])")
+
+
+def check_public(text: str, path: Path) -> None:
+    """Refuse a formula or cask a user outside the org could not install."""
+    urls = re.findall(r'^\s*url "([^"]*)"', text, re.MULTILINE)
+    if not urls:
+        die(f"{path}: no url found")
+    for url in urls:
+        if not url.startswith(PUBLIC_DOWNLOADS):
+            die(f"{path}: url is not on the public downloads host ({PUBLIC_DOWNLOADS}): {url}")
+    if m := PRIVATE_SOURCE.search(text):
+        die(f"{path}: references the private source repo ({m.group(0)}) — users cannot reach it")
+
+
 def die(msg: str) -> "NoReturn":  # type: ignore[valid-type]
     print(f"render-homebrew-tap: {msg}", file=sys.stderr)
     raise SystemExit(1)
@@ -133,7 +152,37 @@ def verify(text: str, shas: dict[str, str], path: Path) -> None:
     print(f"render-homebrew-tap: {path.name} — {len(pairs)} url/checksum pairs, all correct.")
 
 
+def self_test() -> int:
+    """Render the real templates into a scratch tap, and prove a private URL is refused."""
+    import tempfile
+
+    root = Path(__file__).resolve().parent.parent
+    for i, var in enumerate(list(ARTIFACTS.values()) + ["SHA_DMG"], 1):
+        os.environ[var] = f"{i:x}" * 64
+    for name in ("Formula/sensei.rb", "Casks/senseihq.rb"):
+        check_public((root / "homebrew" / name).read_text(), Path(name))
+    with tempfile.TemporaryDirectory() as tap:
+        (Path(tap) / "Formula").mkdir()
+        (Path(tap) / "Casks").mkdir()
+        sys.argv = [sys.argv[0], tap, "9.9.9"]
+        main()
+        for name in ("Formula/sensei.rb", "Casks/senseihq.rb"):
+            check_public((Path(tap) / name).read_text(), Path(name))
+
+    private = 'url "https://github.com/sensei-hq/sensei/releases/download/v1/sensei-macos-arm64.tar.gz"'
+    try:
+        check_public(private, Path("bad.rb"))
+    except SystemExit:
+        pass
+    else:
+        die("self-test: a download from the private repo was not refused")
+    print("render-homebrew-tap: self-test ok")
+    return 0
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
     if len(sys.argv) != 3:
         die("usage: render-homebrew-tap.py <tap-dir> <version>")
     tap = Path(sys.argv[1])
@@ -156,6 +205,7 @@ def main() -> int:
     formula = set_version(formula_src.read_text(), version, formula_src)
     formula = fill_formula(formula, shas, formula_src)
     verify(formula, shas, formula_src)
+    check_public(formula, formula_src)
     (tap / "Formula" / "sensei.rb").write_text(formula)
 
     # The cask is OPTIONAL: a release without a DMG is a valid release (the
@@ -174,6 +224,7 @@ def main() -> int:
             die(f"{cask_src}: expected exactly one `sha256 \"…\"`, replaced {n}")
         if "REPLACE_WITH_" in cask:
             die(f"{cask_src}: placeholder survived rendering")
+        check_public(cask, cask_src)
         (tap / "Casks" / "senseihq.rb").write_text(cask)
         print("render-homebrew-tap: senseihq.rb — version and checksum written.")
 

@@ -273,12 +273,8 @@ pub fn run() {
                     }
                     "report-issue" => {
                         use tauri_plugin_opener::OpenerExt;
-                        let url = format!(
-                            "https://github.com/{}/{}/issues",
-                            sensei_bootstrap::GITHUB_ORG,
-                            sensei_bootstrap::GITHUB_REPO,
-                        );
-                        let _ = app.opener().open_url(&url, None::<&str>);
+                        let _ =
+                            app.opener().open_url(sensei_bootstrap::REPORT_ISSUE_URL, None::<&str>);
                     }
                     // Window menu → raise the chosen open workspace window.
                     id if id.starts_with("focus-window:") => {

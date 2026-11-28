@@ -1,26 +1,28 @@
-# Checkpoint — 2026-11-26 (#541 deployed + verified)
+# Checkpoint — 2026-11-27 (#538 public install: develop merged in, CI pending)
 
-**Slice:** #541 merged-workspace governance fix (4 parts).
-**Branch:** `develop` (pushed). Daemon 0.28.0 live via brew.
+**Slice:** #538 — the website, brew and DMG downloads 404 for users outside
+the org (binaries live only on the private `sensei` repo's releases).
+**Branch:** `fix/public-install` (worktree `lanes/public-install`), PR #539.
 
 ## Done
-- All 4 fixes merged; full suite green.
-- Deployed: release binaries built, installed over Cellar
-  (fresh inodes — truncate-in-place trips macOS CS_KILL).
-- Indexer crash fixed en route (Vue multibyte slice).
-- Live heal split 3 merged workspaces; doctor reads 0;
-  website session followed its repo; rules resolve.
+- `65d29e974` schema embedded in the binary; deploy writes it to
+  `~/.sensei/schema/v{ver}/`; `SENSEI_DDL_DIR` still overrides.
+- `4e621174f` binaries publish to public `sensei-hq/sensei-releases`;
+  update-tap downloads anonymously before rendering; renderer refuses
+  non-public URLs (`make check-tap-render`, in CI).
+- `925b12d3b` Windows missing-binaries remedy → sensei-releases.
+- Develop (0.28.1 + #543 janitor + daemon serve-while-booting) merged in.
+  The earlier CI `test` red was `relay_host_disk_exhausted` on the runner,
+  which develop's relay-health seam fixes.
 
-## Remaining
-- Close #541 after user confirms.
-- Next release tags a signed build (this deploy is adhoc-signed;
-  Keychain-backed remote features may degrade until then).
+## Remain
+1. CI green on #539 (repo public for the run, private after).
+2. Merge → develop; bump 0.28.2 → main; `make release`.
+3. Verify logged-out: website Download link, DMG, tarball, fresh
+   `brew install sensei-hq/tap/sensei`.
 
 ## Next command
-None — slice complete and live.
+`gh pr checks 539 --watch`
 
 ## Open questions
-- None.
-
-## Known-broken
-- None.
+- `sensei-releases` has zero releases today: 0.28.2 is the first mirrored one.

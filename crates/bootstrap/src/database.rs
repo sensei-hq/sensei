@@ -9,9 +9,8 @@
 //!
 //! All public functions return `Result<(), String>` so resolvers can convert
 //! errors to a `Remedy`. The `deploy` path uses dbd-core with the schema
-//! source produced by `SenseiConfig::db_schema_source(version)` — the
-//! GitHub-tagged release in prod, the workspace `database/` directory in
-//! dev. Compile-time decision; no env vars involved.
+//! compiled into the binary ([`crate::schema`]), or a local directory when
+//! `SENSEI_DDL_DIR` is set.
 
 use dbd_core::adapter::postgres::PostgresAdapter;
 use dbd_core::design::Progress;
@@ -92,14 +91,21 @@ pub fn ensure_extensions(db_name: &str) -> Result<(), String> {
 /// Deploy the sensei schema via dbd-core. Idempotent — dbd tracks state in
 /// `_dbd_meta` and only applies pending changes. Requires a reachable DB.
 ///
-/// `app_version` chooses the schema source: by default the GitHub tag
-/// `v{app_version}` of `sensei-hq/sensei/database`. Override at runtime by
-/// setting `SENSEI_DDL_DIR=/abs/path/to/database` to point at a local
-/// directory — useful when iterating on DDL before publishing a release.
+/// The schema is the one compiled into this binary, written to
+/// `~/.sensei/schema/v{app_version}/` first — no network, and never a schema
+/// from a different version. Override at runtime by setting
+/// `SENSEI_DDL_DIR=/abs/path/to/database` to deploy a local directory —
+/// useful when iterating on DDL.
 pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
     let cfg = SenseiConfig::from_env();
     let backup_dir = cfg.sensei_dir().join("backup").join("pre-reconcile");
-    deploy_with_source(db_name, app_version, &cfg.db_schema_source(app_version), &backup_dir)
+    let source = match cfg.db_schema_override() {
+        Some(dir) => dir,
+        None => crate::schema::materialize(&cfg.embedded_schema_dir(app_version))?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    deploy_with_source(db_name, app_version, &source, &backup_dir)
 }
 
 /// `sensei.config` key holding the version whose schema this database has.
@@ -859,7 +865,7 @@ mod tests {
         assert!(url.ends_with("sensei_test"));
     }
 
-    // Schema-source resolution (default GitHub tag vs SENSEI_DDL_DIR override)
+    // Schema-source resolution (embedded schema vs SENSEI_DDL_DIR override)
     // is covered by the unit tests in config::tests — duplicating them here
     // races on the shared env var across test threads.
 

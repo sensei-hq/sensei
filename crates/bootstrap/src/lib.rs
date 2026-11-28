@@ -20,6 +20,7 @@ pub mod health;
 pub mod host;
 pub mod models;
 pub mod pg_container;
+pub mod schema;
 pub mod service;
 pub mod startup_error;
 pub mod tracing_init;
@@ -30,8 +31,8 @@ pub use config::{
     BREW_PATHS, BREW_TAP, DAEMON_PORT, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS,
     DB_POOL_MAX_CONNECTIONS, DB_POOL_MAX_LIFETIME_SECS, DB_POOL_MIN_CONNECTIONS, GITHUB_ORG,
     GITHUB_REPO, HOMEBREW_TAP_REPO, HOMEBREW_TAP_URL, MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
-    MCP_REGISTRY_KEY, OLLAMA_PORT, POSTGRES_PORT, SENSEI_BIN, SENSEI_MCP_BIN, SENSEID_BIN,
-    SenseiConfig, SenseiLocalConfig, engines_dir, home_dir,
+    MCP_REGISTRY_KEY, OLLAMA_PORT, POSTGRES_PORT, REPORT_ISSUE_URL, SENSEI_BIN, SENSEI_MCP_BIN,
+    SENSEID_BIN, SenseiConfig, SenseiLocalConfig, engines_dir, home_dir,
 };
 pub use hardware::{HardwareInfo, ModelTier};
 #[allow(unused_imports)]
